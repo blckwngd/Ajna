@@ -37,10 +37,59 @@ const canvas = document.getElementById("renderCanvas")
 const engine = new BABYLON.Engine(canvas, true)
 const scene = new BABYLON.Scene(engine)
 
-const camera = new BABYLON.FreeCamera("cam", new BABYLON.Vector3(0, 1.6, 0), scene)
+// Kamera
+const camera = new BABYLON.ArcRotateCamera(
+    "camera",
+    Math.PI / 2,
+    Math.PI / 3,
+    50,
+    new BABYLON.Vector3(0, 0, 0),
+    scene
+)
+
 camera.attachControl(canvas, true)
 
-const light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0,1,0), scene)
+// Licht
+const light = new BABYLON.HemisphericLight(
+    "light",
+    new BABYLON.Vector3(0, 1, 0),
+    scene
+)
+
+light.intensity = 0.9
+
+// Boden
+const ground = BABYLON.MeshBuilder.CreateGround(
+    "ground",
+    { width: 500, height: 500 },
+    scene
+)
+
+const groundMat = new BABYLON.StandardMaterial("groundMat", scene)
+groundMat.diffuseColor = new BABYLON.Color3(0.2, 0.6, 0.2)
+ground.material = groundMat
+
+// Skybox
+const skybox = BABYLON.MeshBuilder.CreateBox(
+    "skyBox",
+    { size: 1000.0 },
+    scene
+)
+
+const skyboxMaterial = new BABYLON.StandardMaterial("skyBox", scene)
+skyboxMaterial.backFaceCulling = false
+skyboxMaterial.disableLighting = true
+
+skyboxMaterial.reflectionTexture = new BABYLON.CubeTexture(
+    "https://playground.babylonjs.com/textures/skybox",
+    scene
+)
+
+skyboxMaterial.reflectionTexture.coordinatesMode =
+    BABYLON.Texture.SKYBOX_MODE
+
+skybox.material = skyboxMaterial
+
 
 // XR Support
 scene.createDefaultXRExperienceAsync({})
