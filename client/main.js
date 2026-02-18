@@ -1,5 +1,11 @@
-import * as BABYLON from "https://cdn.babylonjs.com/babylon.js"
+/*import * as BABYLON from "https://cdn.babylonjs.com/babylon.js"
 import "https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"
+import { Engine } from "@babylonjs/core/Engines/engine"
+import { Scene } from "@babylonjs/core/scene"
+import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera"
+import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight"
+import { Vector3 } from "@babylonjs/core/Maths/math.vector"
+*/
 import PocketBase from "https://unpkg.com/pocketbase/dist/pocketbase.es.mjs"
 
 const pb = new PocketBase("http://localhost:8090")
