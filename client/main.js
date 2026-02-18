@@ -38,14 +38,21 @@ const engine = new BABYLON.Engine(canvas, true)
 const scene = new BABYLON.Scene(engine)
 
 // Kamera
-const camera = new BABYLON.ArcRotateCamera(
-    "camera",
-    Math.PI / 2,
-    Math.PI / 3,
-    50,
-    new BABYLON.Vector3(0, 0, 0),
-    scene
-)
+/*const xrSupported = await BABYLON.WebXRSessionManager.IsSessionSupportedAsync("immersive-vr")
+if (xrSupported) {
+  // xr available, session supported
+  const sessionManager = new BABYLON.WebXRSessionManager(scene)
+  const camera = new BABYLON.WebXRCamera("camera", scene, xrSessionManager)
+} else {*/
+  const camera = new BABYLON.ArcRotateCamera(
+      "camera",
+      Math.PI / 2,
+      Math.PI / 3,
+      50,
+      new BABYLON.Vector3(0, 0, 2 0),
+      scene
+  )
+//}
 
 camera.attachControl(canvas, true)
 
