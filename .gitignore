@@ -8,6 +8,7 @@ lerna-debug.log*
 
 # Pocketbase
 pocketbase/pocketbase.exe
+pocketbase/pocketbase
 pocketbase/pb_data/
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
