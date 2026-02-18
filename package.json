@@ -1,0 +1,22 @@
+{
+  "name": "ajna",
+  "version": "0.1.0",
+  "description": "Ajna - Geo-referenced WebXR multiplayer demo with BabylonJS and PocketBase",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "nodemon server/index.js",
+    "serve-client": "npx serve client",
+    "start:all": "concurrently \"npm run start\" \"npm run serve-client\""
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pocketbase": "^0.21.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0",
+    "concurrently": "^8.2.2",
+    "serve": "^14.2.1"
+  }
+}
