@@ -49,7 +49,7 @@ if (xrSupported) {
       Math.PI / 2,
       Math.PI / 3,
       50,
-      new BABYLON.Vector3(0, 0, 2 0),
+      new BABYLON.Vector3(0, 0, 20),
       scene
   )
 //}
