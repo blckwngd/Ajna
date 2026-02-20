@@ -1,16 +1,11 @@
-/*import * as BABYLON from "https://cdn.babylonjs.com/babylon.js"
-import "https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"
-import { Engine } from "@babylonjs/core/Engines/engine"
-import { Scene } from "@babylonjs/core/scene"
-import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera"
-import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight"
-import { Vector3 } from "@babylonjs/core/Maths/math.vector"
-*/
 import PocketBase from "https://unpkg.com/pocketbase/dist/pocketbase.es.mjs"
 
 const pb = new PocketBase("http://localhost:8090")
+const DEBUG_WORLD = true
 
-// ---------------- AUTH ----------------
+// ==========================================================
+// AUTH
+// ==========================================================
 
 const status = document.getElementById("status")
 
@@ -31,56 +26,71 @@ document.getElementById("logoutBtn").onclick = () => {
   status.innerText = "Logged out"
 }
 
-// ---------------- BABYLON SETUP ----------------
+// ==========================================================
+// BABYLON SETUP
+// ==========================================================
 
 const canvas = document.getElementById("renderCanvas")
 const engine = new BABYLON.Engine(canvas, true)
 const scene = new BABYLON.Scene(engine)
 
-// Kamera
-/*const xrSupported = await BABYLON.WebXRSessionManager.IsSessionSupportedAsync("immersive-vr")
-if (xrSupported) {
-  // xr available, session supported
-  const sessionManager = new BABYLON.WebXRSessionManager(scene)
-  const camera = new BABYLON.WebXRCamera("camera", scene, xrSessionManager)
-} else {*/
-  const camera = new BABYLON.ArcRotateCamera(
-      "camera",
-      Math.PI / 2,
-      Math.PI / 3,
-      50,
-      new BABYLON.Vector3(0, 0, 20),
-      scene
-  )
-//}
+// Kamera (Z+ = Norden, X+ = Osten)
+const camera = new BABYLON.ArcRotateCamera(
+  "camera",
+  Math.PI / 2,
+  Math.PI / 3,
+  50,
+  new BABYLON.Vector3(0, 0, 0),
+  scene
+)
 
 camera.attachControl(canvas, true)
 
 // Licht
 const light = new BABYLON.HemisphericLight(
-    "light",
-    new BABYLON.Vector3(0, 1, 0),
-    scene
+  "light",
+  new BABYLON.Vector3(0, 1, 0),
+  scene
 )
 
 light.intensity = 0.9
 
 // Boden
 const ground = BABYLON.MeshBuilder.CreateGround(
-    "ground",
-    { width: 500, height: 500 },
-    scene
+  "ground",
+  { width: 500, height: 500 },
+  scene
 )
 
 const groundMat = new BABYLON.StandardMaterial("groundMat", scene)
 groundMat.diffuseColor = new BABYLON.Color3(0.2, 0.6, 0.2)
 ground.material = groundMat
 
+// Debug Grid + Achsen
+if (DEBUG_WORLD) {
+  const gridMaterial = new BABYLON.GridMaterial("gridMat", scene)
+  gridMaterial.majorUnitFrequency = 10
+  gridMaterial.minorUnitVisibility = 0.45
+  gridMaterial.gridRatio = 1
+  gridMaterial.backFaceCulling = false
+
+  const grid = BABYLON.MeshBuilder.CreateGround(
+    "grid",
+    { width: 500, height: 500 },
+    scene
+  )
+
+  grid.material = gridMaterial
+  grid.position.y = 0.01
+
+  showWorldAxes(20)
+}
+
 // Skybox
 const skybox = BABYLON.MeshBuilder.CreateBox(
-    "skyBox",
-    { size: 1000.0 },
-    scene
+  "skyBox",
+  { size: 1000 },
+  scene
 )
 
 const skyboxMaterial = new BABYLON.StandardMaterial("skyBox", scene)
@@ -88,72 +98,94 @@ skyboxMaterial.backFaceCulling = false
 skyboxMaterial.disableLighting = true
 
 skyboxMaterial.reflectionTexture = new BABYLON.CubeTexture(
-    "https://playground.babylonjs.com/textures/skybox",
-    scene
+  "https://playground.babylonjs.com/textures/skybox",
+  scene
 )
 
 skyboxMaterial.reflectionTexture.coordinatesMode =
-    BABYLON.Texture.SKYBOX_MODE
+  BABYLON.Texture.SKYBOX_MODE
 
 skybox.material = skyboxMaterial
 
+// Player Mesh
+const playerMesh = BABYLON.MeshBuilder.CreateSphere(
+  "player",
+  { diameter: 2 },
+  scene
+)
 
-// XR Support
+const playerMat = new BABYLON.StandardMaterial("playerMat", scene)
+playerMat.diffuseColor = new BABYLON.Color3(1, 0, 0)
+playerMesh.material = playerMat
+
+// XR
 scene.createDefaultXRExperienceAsync({})
 
-// ---------------- POSITION PROVIDER ----------------
+// ==========================================================
+// GEO TRANSFORMER
+// ==========================================================
 
-class GPSProvider {
-  constructor(callback) {
-    navigator.geolocation.watchPosition(pos => {
-      callback({
-        lat: pos.coords.latitude,
-        lon: pos.coords.longitude,
-        altitude: pos.coords.altitude || 0,
-        accuracy: pos.coords.accuracy,
-        source: "gps"
-      })
-    }, console.error, { enableHighAccuracy: true })
-  }
-}
-
-// UWBProvider (Placeholder)
-class UWBProvider {
-  constructor(callback) {
-    // später: Trilateration mit Ankerdaten
-    // callback({lat, lon, altitude, source:"uwb"})
-  }
-}
-
-// ---------------- GEO TRANSFORM ----------------
+/*
+  Transformiert GPS Koordinaten in lokale Weltkoordinaten.
+  Z+ = Norden
+  X+ = Osten
+  Y+ = Höhe
+*/
 
 class GeoTransformer {
   constructor() {
     this.origin = null
+    this.earthRadius = 6378137
   }
 
   setOrigin(lat, lon, altitude) {
     this.origin = { lat, lon, altitude }
   }
 
-  toLocal(lat, lon, altitude) {
-    if (!this.origin) return new BABYLON.Vector3.Zero()
+  toLocal(lat, lon, altitude = 0) {
+    if (!this.origin) return BABYLON.Vector3.Zero()
 
-    const metersPerDegLat = 111320
-    const metersPerDegLon =
-      111320 * Math.cos(this.origin.lat * Math.PI / 180)
+    const dLat = (lat - this.origin.lat) * Math.PI / 180
+    const dLon = (lon - this.origin.lon) * Math.PI / 180
 
-    const dx = (lon - this.origin.lon) * metersPerDegLon
-    const dz = (lat - this.origin.lat) * metersPerDegLat
-    const dy = altitude - this.origin.altitude
+    const meanLat =
+      (lat + this.origin.lat) / 2 * Math.PI / 180
 
-    return new BABYLON.Vector3(dx, dy, -dz)
+    const x = dLon * this.earthRadius * Math.cos(meanLat)
+    const z = dLat * this.earthRadius
+    const y = altitude - this.origin.altitude
+
+    return new BABYLON.Vector3(x, y, z)
   }
 }
 
 const geo = new GeoTransformer()
 
-// ---------------- LOAD OBJECTS ----------------
+// ==========================================================
+// POSITION PROVIDER
+// ==========================================================
+
+class GPSProvider {
+  constructor(callback) {
+    navigator.geolocation.watchPosition(
+      pos => {
+        callback({
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+          altitude: pos.coords.altitude || 0,
+          accuracy: pos.coords.accuracy,
+          source: "gps"
+        })
+      },
+      console.error,
+      { enableHighAccuracy: true }
+    )
+  }
+}
+
+// ==========================================================
+// OBJECT LOADING
+// ==========================================================
 
 const objectMap = new Map()
 
@@ -168,8 +200,12 @@ async function loadObjects() {
       scene,
       meshes => {
         const root = meshes[0]
-        const pos = geo.toLocal(obj.lat, obj.lon, obj.altitude)
-        root.position = pos
+
+        root.position = geo.toLocal(
+          obj.lat,
+          obj.lon,
+          obj.altitude
+        )
 
         root.rotation = new BABYLON.Vector3(
           obj.rotation.x,
@@ -189,15 +225,30 @@ async function loadObjects() {
   })
 }
 
-// ---------------- POSITION UPDATE ----------------
+// ==========================================================
+// GPS UPDATE FLOW
+// ==========================================================
 
 new GPSProvider(position => {
 
+  // Erstes GPS Signal definiert Weltursprung
   if (!geo.origin) {
-    geo.setOrigin(position.lat, position.lon, position.altitude)
+    geo.setOrigin(
+      position.lat,
+      position.lon,
+      position.altitude
+    )
     loadObjects()
   }
 
+  // Spielerposition relativ zum Ursprung berechnen
+  playerMesh.position = geo.toLocal(
+    position.lat,
+    position.lon,
+    position.altitude
+  )
+
+  // Server Update nur bei Login
   if (pb.authStore.isValid) {
     fetch("http://localhost:3000/api/update-position", {
       method: "POST",
@@ -210,7 +261,40 @@ new GPSProvider(position => {
   }
 })
 
-// ---------------- RENDER LOOP ----------------
+// ==========================================================
+// DEBUG AXES
+// ==========================================================
+
+function showWorldAxes(size) {
+
+  const axisX = BABYLON.MeshBuilder.CreateLines("axisX", {
+    points: [
+      BABYLON.Vector3.Zero(),
+      new BABYLON.Vector3(size, 0, 0)
+    ]
+  }, scene)
+  axisX.color = new BABYLON.Color3(1, 0, 0)
+
+  const axisZ = BABYLON.MeshBuilder.CreateLines("axisZ", {
+    points: [
+      BABYLON.Vector3.Zero(),
+      new BABYLON.Vector3(0, 0, size)
+    ]
+  }, scene)
+  axisZ.color = new BABYLON.Color3(0, 0, 1)
+
+  const axisY = BABYLON.MeshBuilder.CreateLines("axisY", {
+    points: [
+      BABYLON.Vector3.Zero(),
+      new BABYLON.Vector3(0, size, 0)
+    ]
+  }, scene)
+  axisY.color = new BABYLON.Color3(0, 1, 0)
+}
+
+// ==========================================================
+// RENDER LOOP
+// ==========================================================
 
 engine.runRenderLoop(() => {
   scene.render()
