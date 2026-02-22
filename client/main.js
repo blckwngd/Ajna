@@ -1,5 +1,8 @@
 import PocketBase from "https://unpkg.com/pocketbase/dist/pocketbase.es.mjs"
 import { GameObject } from "./GameObject.js"
+import { GeospatialComponent } from "./GeospatialComponent.js"
+import { TransformComponent } from "./TransformComponent.js"
+import { RotationComponent } from "./RotationComponent.js"
 
 const pb = new PocketBase("http://localhost:8090")
 const DEBUG_WORLD = true
@@ -191,15 +194,45 @@ class GPSProvider {
 const objectMap = new Map()
 
 async function loadObjects() {
+
   const objects = await pb.collection("objects").getFullList()
 
   for (const obj of objects) {
 
-    const gameObject = new GameObject(scene, obj.id)
+    const go = new GameObject(scene, obj.id)
 
-    await gameObject.loadFromData(obj, geo)
+    await go.loadFromData(obj, geo)
 
-    objectMap.set(obj.id, gameObject)
+    // Geospatial Component
+    go.addComponent(
+      new GeospatialComponent(
+        geo,
+        obj.lat,
+        obj.lon,
+        obj.altitude ?? 0
+      )
+    )
+
+    // Transform Component
+    go.addComponent(
+      new TransformComponent(
+        new BABYLON.Vector3(
+          obj.rotation?.x ?? 0,
+          obj.rotation?.y ?? 0,
+          obj.rotation?.z ?? 0
+        ),
+        new BABYLON.Vector3(
+          obj.scale?.x ?? 1,
+          obj.scale?.y ?? 1,
+          obj.scale?.z ?? 1
+        )
+      )
+    )
+
+    // Optional: Debug Rotation
+    // go.addComponent(new RotationComponent(0.3))
+
+    objectMap.set(obj.id, go)
   }
 }
 
@@ -275,6 +308,11 @@ function showWorldAxes(size) {
 // ==========================================================
 
 engine.runRenderLoop(() => {
+
+  const delta = engine.getDeltaTime() / 1000
+
+  objectMap.forEach(go => go.update(delta))
+
   scene.render()
 })
 

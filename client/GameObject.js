@@ -9,6 +9,7 @@ export class GameObject {
 
     this.meshes = []
     this.animationGroups = []
+    this.components = []
   }
 
   async loadFromData(data, geo) {
@@ -100,7 +101,23 @@ export class GameObject {
     this.animationGroups.forEach(anim => anim.start(loop))
   }
 
+  addComponent(component) {
+    component.init(this)
+    this.components.push(component)
+    return component
+  }
+
+  getComponent(type) {
+    return this.components.find(c => c instanceof type)
+  }
+
+  update(deltaTime) {
+    this.components.forEach(c => c.update(deltaTime))
+  }
+
   dispose() {
+    this.components.forEach(c => c.dispose())
     this.root.dispose()
   }
+
 }
