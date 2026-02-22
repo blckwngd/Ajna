@@ -1,4 +1,5 @@
 import PocketBase from "https://unpkg.com/pocketbase/dist/pocketbase.es.mjs"
+import { GameObject } from "./GameObject.js"
 
 const pb = new PocketBase("http://localhost:8090")
 const DEBUG_WORLD = true
@@ -192,74 +193,14 @@ const objectMap = new Map()
 async function loadObjects() {
   const objects = await pb.collection("objects").getFullList()
 
-  objects.forEach(obj => {
+  for (const obj of objects) {
 
-    const position = geo.toLocal(
-      obj.lat,
-      obj.lon,
-      obj.altitude ?? 0
-    )
+    const gameObject = new GameObject(scene, obj.id)
 
-    // Fallback Werte
-    const rotation = obj.rotation
-      ? new BABYLON.Vector3(
-          obj.rotation.x ?? 0,
-          obj.rotation.y ?? 0,
-          obj.rotation.z ?? 0
-        )
-      : BABYLON.Vector3.Zero()
+    await gameObject.loadFromData(obj, geo)
 
-    const scaling = obj.scale
-      ? new BABYLON.Vector3(
-          obj.scale.x ?? 1,
-          obj.scale.y ?? 1,
-          obj.scale.z ?? 1
-        )
-      : new BABYLON.Vector3(1, 1, 1)
-
-    // Wenn Model URL existiert → laden
-    if (obj.model_url) {
-
-      BABYLON.SceneLoader.ImportMesh(
-        "",
-        "",
-        obj.model_url,
-        scene,
-        meshes => {
-
-          const root = meshes[0]
-
-          root.position = position
-          root.rotation = rotation
-          root.scaling = scaling
-
-          objectMap.set(obj.id, root)
-        }
-      )
-
-    } else {
-
-      // Fallback: 1x1x1 Würfel
-      const cube = BABYLON.MeshBuilder.CreateBox(
-        `placeholder_${obj.id}`,
-        { size: 1 },
-        scene
-      )
-
-      const mat = new BABYLON.StandardMaterial(
-        `mat_${obj.id}`,
-        scene
-      )
-      mat.diffuseColor = new BABYLON.Color3(0.8, 0.2, 0.2)
-      cube.material = mat
-
-      cube.position = position
-      cube.rotation = rotation
-      cube.scaling = scaling
-
-      objectMap.set(obj.id, cube)
-    }
-  })
+    objectMap.set(obj.id, gameObject)
+  }
 }
 
 // ==========================================================
