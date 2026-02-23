@@ -3,6 +3,9 @@ import { GameObject } from "./GameObject.js"
 import { GeospatialComponent } from "./GeospatialComponent.js"
 import { TransformComponent } from "./TransformComponent.js"
 import { RotationComponent } from "./RotationComponent.js"
+import { CameraComponent } from "./CameraComponent.js"
+import { DebugCameraComponent } from "./DebugCameraComponent.js"
+import { PlayerGPSComponent } from "./PlayerGPSComponent.js"
 
 const pb = new PocketBase("http://localhost:8090")
 const DEBUG_WORLD = true
@@ -30,111 +33,117 @@ document.getElementById("logoutBtn").onclick = () => {
   status.innerText = "Logged out"
 }
 
+
 // ==========================================================
-// BABYLON SETUP
+// PHASE 1: INITIALIZATION
 // ==========================================================
 
-const canvas = document.getElementById("renderCanvas")
-const engine = new BABYLON.Engine(canvas, true)
-const scene = new BABYLON.Scene(engine)
+async function init() {
 
-// Kamera (Z+ = Norden, X+ = Osten)
-const camera = new BABYLON.ArcRotateCamera(
-  "camera",
-  Math.PI / 2,
-  Math.PI / 3,
-  50,
-  new BABYLON.Vector3(0, 0, 0),
-  scene
-)
+  // Babylon Setup
+  const canvas = document.getElementById("renderCanvas")
+  const engine = new BABYLON.Engine(canvas, true)
 
-camera.attachControl(canvas, true)
+  const scene = new BABYLON.Scene(engine)
 
-// Licht
-const light = new BABYLON.HemisphericLight(
-  "light",
-  new BABYLON.Vector3(0, 1, 0),
-  scene
-)
+  await setupScene(scene, engine, canvas, geo)
 
-light.intensity = 0.9
+  // XR
+  await scene.createDefaultXRExperienceAsync()
 
-// Boden
-const ground = BABYLON.MeshBuilder.CreateGround(
-  "ground",
-  { width: 500, height: 500 },
-  scene
-)
+  engine.runRenderLoop(() => {
+    const delta = engine.getDeltaTime() / 1000
+    objectMap.forEach(go => go.update(delta))
+    scene.render()
+  })
+}
 
-const groundMat = new BABYLON.StandardMaterial("groundMat", scene)
-groundMat.diffuseColor = new BABYLON.Color3(0.2, 0.6, 0.2)
-ground.material = groundMat
 
-// Debug Grid + Achsen
-if (DEBUG_WORLD) {
-  const gridMaterial = new BABYLON.GridMaterial("gridMat", scene)
-  gridMaterial.majorUnitFrequency = 10
-  gridMaterial.minorUnitVisibility = 0.45
-  gridMaterial.gridRatio = 1
-  gridMaterial.backFaceCulling = false
+// ==========================================================
+// PHASE 2: SETUP SCENE
+// ==========================================================
 
-  const grid = BABYLON.MeshBuilder.CreateGround(
-    "grid",
+async function setupScene(scene, engine, canvas, geo) {
+
+  const player = new GameObject(scene, "player")
+
+  const cameraComponent = player.addComponent(
+    new CameraComponent(canvas)
+  )
+
+  player.addComponent(new PlayerGPSComponent(geo))
+
+  player.addComponent(
+    new DebugCameraComponent(canvas, cameraComponent, DEBUG_WORLD)
+  )
+
+  objectMap.set("player", player)
+
+  // Licht
+  const light = new BABYLON.HemisphericLight(
+    "light",
+    new BABYLON.Vector3(0, 1, 0),
+    scene
+  )
+
+  light.intensity = 0.9
+
+  // Boden
+  const ground = BABYLON.MeshBuilder.CreateGround(
+    "ground",
     { width: 500, height: 500 },
     scene
   )
 
-  grid.material = gridMaterial
-  grid.position.y = 0.01
+  const groundMat = new BABYLON.StandardMaterial("groundMat", scene)
+  groundMat.diffuseColor = new BABYLON.Color3(0.2, 0.6, 0.2)
+  ground.material = groundMat
 
-  showWorldAxes(20)
+  // Debug Grid + Achsen
+  if (DEBUG_WORLD) {
+    const gridMaterial = new BABYLON.GridMaterial("gridMat", scene)
+    gridMaterial.majorUnitFrequency = 10
+    gridMaterial.minorUnitVisibility = 0.45
+    gridMaterial.gridRatio = 1
+    gridMaterial.backFaceCulling = false
+
+    const grid = BABYLON.MeshBuilder.CreateGround(
+      "grid",
+      { width: 500, height: 500 },
+      scene
+    )
+
+    grid.material = gridMaterial
+    grid.position.y = 0.01
+
+    showWorldAxes(20, scene)
+  }
+
+  // Skybox
+  const skybox = BABYLON.MeshBuilder.CreateBox(
+    "skyBox",
+    { size: 1000 },
+    scene
+  )
+
+  const skyboxMaterial = new BABYLON.StandardMaterial("skyBox", scene)
+  skyboxMaterial.backFaceCulling = false
+  skyboxMaterial.disableLighting = true
+
+  skyboxMaterial.reflectionTexture = new BABYLON.CubeTexture(
+    "https://playground.babylonjs.com/textures/skybox",
+    scene
+  )
+
+  skyboxMaterial.reflectionTexture.coordinatesMode =
+    BABYLON.Texture.SKYBOX_MODE
+
+  skybox.material = skyboxMaterial
+
+
+  await loadObjects(scene, geo)
 }
 
-// Skybox
-const skybox = BABYLON.MeshBuilder.CreateBox(
-  "skyBox",
-  { size: 1000 },
-  scene
-)
-
-const skyboxMaterial = new BABYLON.StandardMaterial("skyBox", scene)
-skyboxMaterial.backFaceCulling = false
-skyboxMaterial.disableLighting = true
-
-skyboxMaterial.reflectionTexture = new BABYLON.CubeTexture(
-  "https://playground.babylonjs.com/textures/skybox",
-  scene
-)
-
-skyboxMaterial.reflectionTexture.coordinatesMode =
-  BABYLON.Texture.SKYBOX_MODE
-
-skybox.material = skyboxMaterial
-
-// Player Mesh
-const playerMesh = BABYLON.MeshBuilder.CreateSphere(
-  "player",
-  { diameter: 2 },
-  scene
-)
-
-const playerMat = new BABYLON.StandardMaterial("playerMat", scene)
-playerMat.diffuseColor = new BABYLON.Color3(1, 0, 0)
-playerMesh.material = playerMat
-
-// XR
-scene.createDefaultXRExperienceAsync({})
-
-// ==========================================================
-// GEO TRANSFORMER
-// ==========================================================
-
-/*
-  Transformiert GPS Koordinaten in lokale Weltkoordinaten.
-  Z+ = Norden
-  X+ = Osten
-  Y+ = Höhe
-*/
 
 class GeoTransformer {
   constructor() {
@@ -163,7 +172,6 @@ class GeoTransformer {
   }
 }
 
-const geo = new GeoTransformer()
 
 // ==========================================================
 // POSITION PROVIDER
@@ -193,7 +201,7 @@ class GPSProvider {
 
 const objectMap = new Map()
 
-async function loadObjects() {
+async function loadObjects(scene, geo) {
 
   const objects = await pb.collection("objects").getFullList()
 
@@ -253,11 +261,12 @@ new GPSProvider(position => {
   }
 
   // Spielerposition relativ zum Ursprung berechnen
-  playerMesh.position = geo.toLocal(
+/*  playerMesh.position = geo.toLocal(
     position.lat,
     position.lon,
     position.altitude
-  )
+  )*/
+
 
   // Server Update nur bei Login
   if (pb.authStore.isValid) {
@@ -276,7 +285,7 @@ new GPSProvider(position => {
 // DEBUG AXES
 // ==========================================================
 
-function showWorldAxes(size) {
+function showWorldAxes(size, scene) {
 
   const axisX = BABYLON.MeshBuilder.CreateLines("axisX", {
     points: [
@@ -303,17 +312,8 @@ function showWorldAxes(size) {
   axisY.color = new BABYLON.Color3(0, 1, 0)
 }
 
-// ==========================================================
-// RENDER LOOP
-// ==========================================================
-
-engine.runRenderLoop(() => {
-
-  const delta = engine.getDeltaTime() / 1000
-
-  objectMap.forEach(go => go.update(delta))
-
-  scene.render()
-})
-
 window.addEventListener("resize", () => engine.resize())
+
+
+const geo = new GeoTransformer()
+init()
