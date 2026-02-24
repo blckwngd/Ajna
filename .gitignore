@@ -6,6 +6,9 @@ yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 
+# OLD versions
+OLD/
+
 # Pocketbase
 pocketbase/pocketbase.exe
 pocketbase/pocketbase
@@ -13,6 +16,9 @@ pocketbase/pb_data/
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Zips
+*.zip
 
 # Runtime data
 pids

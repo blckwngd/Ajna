@@ -1,11 +1,16 @@
 import PocketBase from "https://unpkg.com/pocketbase/dist/pocketbase.es.mjs"
-import { GameObject } from "./GameObject.js"
-import { GeospatialComponent } from "./GeospatialComponent.js"
-import { TransformComponent } from "./TransformComponent.js"
-import { RotationComponent } from "./RotationComponent.js"
-import { CameraComponent } from "./CameraComponent.js"
-import { DebugCameraComponent } from "./DebugCameraComponent.js"
-import { PlayerGPSComponent } from "./PlayerGPSComponent.js"
+import { World } from "./engine/World.js"
+import { GameObject } from "./engine/GameObject.js"
+import { GeoTransformer } from "./core/GeoTransformer.js"
+import { GPSProvider } from "./core/GPSProvider.js"
+import { GeospatialComponent } from "./engine/components/GeospatialComponent.js"
+import { TransformComponent } from "./engine/components/TransformComponent.js"
+import { RotationComponent } from "./engine/components/RotationComponent.js"
+import { CameraComponent } from "./engine/components/CameraComponent.js"
+import { DebugCameraComponent } from "./engine/components/DebugCameraComponent.js"
+import { PlayerGPSComponent } from "./engine/components/PlayerGPSComponent.js"
+import { buildDebugScene } from "./engine/debug/DebugSceneBuilder.js"
+import { buildEnvironment } from "./engine/environment/EnvironmentBuilder.js"
 
 const pb = new PocketBase("http://localhost:8090")
 const DEBUG_WORLD = true
@@ -45,6 +50,12 @@ async function init() {
   const engine = new BABYLON.Engine(canvas, true)
   const scene = new BABYLON.Scene(engine)
   
+  const world = new World(scene)
+  const geo = new GeoTransformer()
+
+
+  await setupPlayer(scene, world, geo, canvas)
+
   window.addEventListener("resize", () => engine.resize())
 
     
@@ -58,7 +69,7 @@ async function init() {
         position.lon,
         position.altitude
       )
-      loadObjects(scene, geo)
+      loadObjects(scene, world, geo)
     }
 
     // Server Update nur bei Login
@@ -74,155 +85,30 @@ async function init() {
     }
   })
 
+  buildEnvironment(scene)
 
-  await setupScene(scene, engine, canvas, geo)
+  if (DEBUG_WORLD) {
+    buildDebugScene(scene)
+  }
 
-  // XR
-  await scene.createDefaultXRExperienceAsync()
+  if (scene.createDefaultXRExperienceAsync) {
+    await scene.createDefaultXRExperienceAsync()
+  }
 
   engine.runRenderLoop(() => {
     const delta = engine.getDeltaTime() / 1000
     objectMap.forEach(go => go.update(delta))
     scene.render()
   })
-}
 
-
-// ==========================================================
-// PHASE 2: SETUP SCENE
-// ==========================================================
-
-async function setupScene(scene, engine, canvas, geo) {
-
-  const player = new GameObject(scene, "player")
-
-  const cameraComponent = player.addComponent(
-    new CameraComponent(canvas)
-  )
-
-  player.addComponent(new PlayerGPSComponent(geo))
-
-  player.addComponent(
-    new DebugCameraComponent(canvas, cameraComponent, DEBUG_WORLD)
-  )
-
-  objectMap.set("player", player)
-
-  // Licht
-  const light = new BABYLON.HemisphericLight(
-    "light",
-    new BABYLON.Vector3(0, 1, 0),
-    scene
-  )
-
-  light.intensity = 0.9
-
-  // Boden
-  const ground = BABYLON.MeshBuilder.CreateGround(
-    "ground",
-    { width: 500, height: 500 },
-    scene
-  )
-
-  const groundMat = new BABYLON.StandardMaterial("groundMat", scene)
-  groundMat.diffuseColor = new BABYLON.Color3(0.2, 0.6, 0.2)
-  ground.material = groundMat
-
-  // Debug Grid + Achsen
+  
+  await waitForOrigin(geo)
   if (DEBUG_WORLD) {
-    const gridMaterial = new BABYLON.GridMaterial("gridMat", scene)
-    gridMaterial.majorUnitFrequency = 10
-    gridMaterial.minorUnitVisibility = 0.45
-    gridMaterial.gridRatio = 1
-    gridMaterial.backFaceCulling = false
-
-    const grid = BABYLON.MeshBuilder.CreateGround(
-      "grid",
-      { width: 500, height: 500 },
-      scene
-    )
-
-    grid.material = gridMaterial
-    grid.position.y = 0.01
-
-    showWorldAxes(20, scene)
+    buildSatelliteGround(scene, geo.origin.lat, geo.origin.lon)
   }
-
-  // Skybox
-  const skybox = BABYLON.MeshBuilder.CreateBox(
-    "skyBox",
-    { size: 1000 },
-    scene
-  )
-
-  const skyboxMaterial = new BABYLON.StandardMaterial("skyBox", scene)
-  skyboxMaterial.backFaceCulling = false
-  skyboxMaterial.disableLighting = true
-
-  skyboxMaterial.reflectionTexture = new BABYLON.CubeTexture(
-    "https://playground.babylonjs.com/textures/skybox",
-    scene
-  )
-
-  skyboxMaterial.reflectionTexture.coordinatesMode =
-    BABYLON.Texture.SKYBOX_MODE
-
-  skybox.material = skyboxMaterial
-
-
-  await loadObjects(scene, geo)
+  await loadObjects(scene, world, geo)
 }
 
-
-class GeoTransformer {
-  constructor() {
-    this.origin = null
-    this.earthRadius = 6378137
-  }
-
-  setOrigin(lat, lon, altitude) {
-    this.origin = { lat, lon, altitude }
-  }
-
-  toLocal(lat, lon, altitude = 0) {
-    if (!this.origin) return BABYLON.Vector3.Zero()
-
-    const dLat = (lat - this.origin.lat) * Math.PI / 180
-    const dLon = (lon - this.origin.lon) * Math.PI / 180
-
-    const meanLat =
-      (lat + this.origin.lat) / 2 * Math.PI / 180
-
-    const x = dLon * this.earthRadius * Math.cos(meanLat)
-    const z = dLat * this.earthRadius
-    const y = altitude - this.origin.altitude
-
-    return new BABYLON.Vector3(x, y, z)
-  }
-}
-
-
-// ==========================================================
-// POSITION PROVIDER
-// ==========================================================
-
-class GPSProvider {
-  constructor(callback) {
-    navigator.geolocation.watchPosition(
-      pos => {
-        callback({
-          lat: pos.coords.latitude,
-          lon: pos.coords.longitude,
-          altitude: pos.coords.altitude || 0,
-          accuracy: pos.coords.accuracy,
-          source: "gps"
-        })
-      },
-      console.error,
-      { enableHighAccuracy: true }
-    )
-  }
-}
 
 // ==========================================================
 // OBJECT LOADING
@@ -230,14 +116,14 @@ class GPSProvider {
 
 const objectMap = new Map()
 
-async function loadObjects(scene, geo) {
+async function loadObjects(scene, world, geo) {
 
   const objects = await pb.collection("objects").getFullList()
 
   for (const obj of objects) {
 
     const go = new GameObject(scene, obj.id)
-
+    console.log(geo);
     await go.loadFromData(obj, geo)
 
     // Geospatial Component
@@ -273,6 +159,44 @@ async function loadObjects(scene, geo) {
   }
 }
 
+async function setupPlayer(scene, world, geo, canvas) {
+
+  const player = new GameObject(scene, "player")
+
+  const cameraComponent = player.addComponent(
+    new CameraComponent(canvas)
+  )
+
+  player.addComponent(new PlayerGPSComponent(geo))
+
+  player.addComponent(
+    new DebugCameraComponent(canvas, cameraComponent, DEBUG_WORLD)
+  )
+
+  world.add(player)
+}
+
+
+function waitForOrigin(geo) {
+  return new Promise(resolve => {
+
+    new GPSProvider(position => {
+
+      if (!geo.origin) {
+        geo.setOrigin(
+          position.lat,
+          position.lon,
+          position.altitude
+        )
+        resolve()
+      }
+
+    })
+
+  })
+}
+
+
 // ==========================================================
 // DEBUG AXES
 // ==========================================================
@@ -304,6 +228,4 @@ function showWorldAxes(size, scene) {
   axisY.color = new BABYLON.Color3(0, 1, 0)
 }
 
-
-const geo = new GeoTransformer()
 init()
