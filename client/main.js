@@ -52,39 +52,26 @@ async function init() {
   
   const world = new World(scene)
   const geo = new GeoTransformer()
+  const gps = new GPSProvider()
 
 
   await setupPlayer(scene, world, geo, canvas)
 
   window.addEventListener("resize", () => engine.resize())
 
-    
-  // GPS UPDATE FLOW
-  new GPSProvider(position => {
 
-    // Erstes GPS Signal definiert Weltursprung
-    if (!geo.origin) {
-      geo.setOrigin(
-        position.lat,
-        position.lon,
-        position.altitude
-      )
-      loadObjects(scene, world, geo)
-    }
-
-    // Server Update nur bei Login
-    if (pb.authStore.isValid) {
-      fetch("http://localhost:3000/api/update-position", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${pb.authStore.token}`
-        },
-        body: JSON.stringify(position)
-      })
-    }
-  })
-
+  // Server Update nur bei Login
+  if (pb.authStore.isValid) {
+    fetch("http://localhost:3000/api/update-position", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${pb.authStore.token}`
+      },
+      body: JSON.stringify(position)
+    })
+  }
+  
   buildEnvironment(scene)
 
   if (DEBUG_WORLD) {
@@ -101,12 +88,26 @@ async function init() {
     scene.render()
   })
 
-  
-  await waitForOrigin(geo)
+
+  // GPS UPDATE FLOW
+  gps.start()
+
+  const firstPosition = await gps.waitForFirstFix()
+
+  geo.setOrigin(
+    firstPosition.lat,
+    firstPosition.lon,
+    firstPosition.altitude
+  )
+  loadObjects(scene, world, geo)
+
+  gps.onPosition(position => {
+    // Player-Update hier
+  })
+
   if (DEBUG_WORLD) {
     buildSatelliteGround(scene, geo.origin.lat, geo.origin.lon)
   }
-  await loadObjects(scene, world, geo)
 }
 
 
@@ -123,7 +124,6 @@ async function loadObjects(scene, world, geo) {
   for (const obj of objects) {
 
     const go = new GameObject(scene, obj.id)
-    console.log(geo);
     await go.loadFromData(obj, geo)
 
     // Geospatial Component
@@ -194,38 +194,6 @@ function waitForOrigin(geo) {
     })
 
   })
-}
-
-
-// ==========================================================
-// DEBUG AXES
-// ==========================================================
-
-function showWorldAxes(size, scene) {
-
-  const axisX = BABYLON.MeshBuilder.CreateLines("axisX", {
-    points: [
-      BABYLON.Vector3.Zero(),
-      new BABYLON.Vector3(size, 0, 0)
-    ]
-  }, scene)
-  axisX.color = new BABYLON.Color3(1, 0, 0)
-
-  const axisZ = BABYLON.MeshBuilder.CreateLines("axisZ", {
-    points: [
-      BABYLON.Vector3.Zero(),
-      new BABYLON.Vector3(0, 0, size)
-    ]
-  }, scene)
-  axisZ.color = new BABYLON.Color3(0, 0, 1)
-
-  const axisY = BABYLON.MeshBuilder.CreateLines("axisY", {
-    points: [
-      BABYLON.Vector3.Zero(),
-      new BABYLON.Vector3(0, size, 0)
-    ]
-  }, scene)
-  axisY.color = new BABYLON.Color3(0, 1, 0)
 }
 
 init()

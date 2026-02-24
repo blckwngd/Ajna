@@ -65,6 +65,7 @@ export function buildSatelliteGround(scene, lat, lon, zoom = 18) {
   const y = lat2tile(lat, zoom)
 
   const url = `https://tile.openstreetmap.org/${zoom}/${x}/${y}.png`
+  console.log(url)
 
   const ground = BABYLON.MeshBuilder.CreateGround(
     "satGround",
@@ -79,5 +80,5 @@ export function buildSatelliteGround(scene, lat, lon, zoom = 18) {
 
   ground.material = mat
 
-  return ground
+  //return ground
 }
