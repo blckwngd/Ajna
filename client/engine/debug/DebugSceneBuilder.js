@@ -80,5 +80,5 @@ export function buildSatelliteGround(scene, lat, lon, zoom = 18) {
 
   ground.material = mat
 
-  //return ground
+  return ground
 }

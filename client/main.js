@@ -9,7 +9,7 @@ import { RotationComponent } from "./engine/components/RotationComponent.js"
 import { CameraComponent } from "./engine/components/CameraComponent.js"
 import { DebugCameraComponent } from "./engine/components/DebugCameraComponent.js"
 import { PlayerGPSComponent } from "./engine/components/PlayerGPSComponent.js"
-import { buildDebugScene } from "./engine/debug/DebugSceneBuilder.js"
+import { buildDebugScene, buildSatelliteGround } from "./engine/debug/DebugSceneBuilder.js"
 import { buildEnvironment } from "./engine/environment/EnvironmentBuilder.js"
 
 const pb = new PocketBase("http://localhost:8090")
