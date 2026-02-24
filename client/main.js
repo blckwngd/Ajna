@@ -43,8 +43,37 @@ async function init() {
   // Babylon Setup
   const canvas = document.getElementById("renderCanvas")
   const engine = new BABYLON.Engine(canvas, true)
-
   const scene = new BABYLON.Scene(engine)
+  
+  window.addEventListener("resize", () => engine.resize())
+
+    
+  // GPS UPDATE FLOW
+  new GPSProvider(position => {
+
+    // Erstes GPS Signal definiert Weltursprung
+    if (!geo.origin) {
+      geo.setOrigin(
+        position.lat,
+        position.lon,
+        position.altitude
+      )
+      loadObjects(scene, geo)
+    }
+
+    // Server Update nur bei Login
+    if (pb.authStore.isValid) {
+      fetch("http://localhost:3000/api/update-position", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${pb.authStore.token}`
+        },
+        body: JSON.stringify(position)
+      })
+    }
+  })
+
 
   await setupScene(scene, engine, canvas, geo)
 
@@ -245,43 +274,6 @@ async function loadObjects(scene, geo) {
 }
 
 // ==========================================================
-// GPS UPDATE FLOW
-// ==========================================================
-
-new GPSProvider(position => {
-
-  // Erstes GPS Signal definiert Weltursprung
-  if (!geo.origin) {
-    geo.setOrigin(
-      position.lat,
-      position.lon,
-      position.altitude
-    )
-    loadObjects()
-  }
-
-  // Spielerposition relativ zum Ursprung berechnen
-/*  playerMesh.position = geo.toLocal(
-    position.lat,
-    position.lon,
-    position.altitude
-  )*/
-
-
-  // Server Update nur bei Login
-  if (pb.authStore.isValid) {
-    fetch("http://localhost:3000/api/update-position", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${pb.authStore.token}`
-      },
-      body: JSON.stringify(position)
-    })
-  }
-})
-
-// ==========================================================
 // DEBUG AXES
 // ==========================================================
 
@@ -311,8 +303,6 @@ function showWorldAxes(size, scene) {
   }, scene)
   axisY.color = new BABYLON.Color3(0, 1, 0)
 }
-
-window.addEventListener("resize", () => engine.resize())
 
 
 const geo = new GeoTransformer()
