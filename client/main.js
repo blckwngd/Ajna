@@ -3,12 +3,10 @@ import { World } from "./engine/World.js"
 import { GameObject } from "./engine/GameObject.js"
 import { GeoTransformer } from "./core/GeoTransformer.js"
 import { GPSProvider } from "./core/GPSProvider.js"
-import { GeospatialComponent } from "./engine/components/GeospatialComponent.js"
-import { TransformComponent } from "./engine/components/TransformComponent.js"
-import { RotationComponent } from "./engine/components/RotationComponent.js"
 import { CameraComponent } from "./engine/components/CameraComponent.js"
 import { DebugCameraComponent } from "./engine/components/DebugCameraComponent.js"
 import { PlayerGPSComponent } from "./engine/components/PlayerGPSComponent.js"
+import { NetworkSyncComponent } from "./engine/components/NetworkSyncComponent.js"
 import { buildDebugScene, buildSatelliteGround } from "./engine/debug/DebugSceneBuilder.js"
 import { buildEnvironment } from "./engine/environment/EnvironmentBuilder.js"
 
@@ -121,47 +119,63 @@ async function loadObjects(scene, world, geo) {
 
   const objects = await pb.collection("objects").getFullList()
 
+  // Alle Objekte initial laden
   for (const obj of objects) {
-
-    const go = new GameObject(scene, obj.id)
-    await go.loadFromData(obj, geo)
-
-    // Geospatial Component
-    go.addComponent(
-      new GeospatialComponent(
-        geo,
-        obj.lat,
-        obj.lon,
-        obj.altitude ?? 0
-      )
-    )
-
-    // Transform Component
-    go.addComponent(
-      new TransformComponent(
-        new BABYLON.Vector3(
-          obj.rotation?.x ?? 0,
-          obj.rotation?.y ?? 0,
-          obj.rotation?.z ?? 0
-        ),
-        new BABYLON.Vector3(
-          obj.scale?.x ?? 1,
-          obj.scale?.y ?? 1,
-          obj.scale?.z ?? 1
-        )
-      )
-    )
-
-    // Optional: Debug Rotation
-    // go.addComponent(new RotationComponent(0.3))
-
+    const go = await GameObject.createFromPBData(scene, obj, geo, true)
     objectMap.set(obj.id, go)
   }
+
+  // Globaler Realtime Listener für neue/gelöschte Objekte
+  pb.collection("objects").subscribe("*", async (e) => {
+    console.log("Object event:", e.action, e.record.id)
+
+    if (e.action === "create") {
+      // Neues Objekt erstellen
+      if (!objectMap.has(e.record.id)) {
+        const go = await GameObject.createFromPBData(scene, e.record, geo, true)
+        
+        // NetworkSyncComponent abonnieren
+        const networkSync = go.getComponent(NetworkSyncComponent)
+        if (networkSync) {
+          networkSync.subscribeToUpdates(pb)
+        }
+        
+        objectMap.set(e.record.id, go)
+      }
+    } else if (e.action === "delete") {
+      // Objekt entfernen
+      if (objectMap.has(e.record.id)) {
+        const go = objectMap.get(e.record.id)
+        go.dispose()
+        objectMap.delete(e.record.id)
+      }
+    }
+  })
+
+  // Für bestehende Objekte die NetworkSync-Listener aktivieren
+  objectMap.forEach(go => {
+    const networkSync = go.getComponent(NetworkSyncComponent)
+    if (networkSync) {
+      networkSync.subscribeToUpdates(pb)
+    }
+  })
 }
 
 async function setupPlayer(scene, world, geo, canvas) {
 
   const player = new GameObject(scene, "player")
+
+  // Player-Avatar erstellen
+  const sphere = BABYLON.MeshBuilder.CreateSphere(
+    "playerAvatar",
+    { diameter: 0.5 },
+    scene
+  )
+  const mat = new BABYLON.StandardMaterial("playerMat", scene)
+  mat.diffuseColor = new BABYLON.Color3(0.2, 0.8, 0.2)
+  sphere.material = mat
+  sphere.parent = player.root
+  player.meshes = [sphere]
 
   const cameraComponent = player.addComponent(
     new CameraComponent(canvas)

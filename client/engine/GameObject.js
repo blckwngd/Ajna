@@ -1,3 +1,7 @@
+import { GeospatialComponent } from "./components/GeospatialComponent.js"
+import { TransformComponent } from "./components/TransformComponent.js"
+import { NetworkSyncComponent } from "./components/NetworkSyncComponent.js"
+
 export class GameObject {
 
   constructor(scene, id) {
@@ -10,6 +14,47 @@ export class GameObject {
     this.meshes = []
     this.animationGroups = []
     this.components = []
+  }
+
+  // Factory-Methode zum Erstellen eines GameObjects mit Standard-Komponenten
+  static async createFromPBData(scene, data, geo, includeNetworkSync = false) {
+    const go = new GameObject(scene, data.id)
+    await go.loadFromData(data, geo)
+
+    // Geospatial Component
+    go.addComponent(
+      new GeospatialComponent(
+        geo,
+        data.lat,
+        data.lon,
+        data.altitude ?? 0
+      )
+    )
+
+    // Transform Component
+    go.addComponent(
+      new TransformComponent(
+        new BABYLON.Vector3(
+          data.rotation?.x ?? 0,
+          data.rotation?.y ?? 0,
+          data.rotation?.z ?? 0
+        ),
+        new BABYLON.Vector3(
+          data.scale?.x ?? 1,
+          data.scale?.y ?? 1,
+          data.scale?.z ?? 1
+        )
+      )
+    )
+
+    // Network Sync Component (optional)
+    if (includeNetworkSync) {
+      go.addComponent(
+        new NetworkSyncComponent(data.id, geo)
+      )
+    }
+
+    return go
   }
 
   async loadFromData(data, geo) {
