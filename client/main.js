@@ -9,6 +9,7 @@ import { DebugCameraComponent } from "./engine/components/DebugCameraComponent.j
 import { PlayerGPSComponent } from "./engine/components/PlayerGPSComponent.js"
 import { NetworkSyncComponent } from "./engine/components/NetworkSyncComponent.js"
 import { buildDebugScene, buildSatelliteGround } from "./engine/debug/DebugSceneBuilder.js"
+import { DebugUIManager } from "./engine/debug/DebugUIManager.js"
 import { buildEnvironment } from "./engine/environment/EnvironmentBuilder.js"
 
 const pb = new PocketBase("http://localhost:8090")
@@ -77,6 +78,13 @@ async function init() {
 
   if (DEBUG_WORLD) {
     buildDebugScene(scene)
+    let player = objectMap.get("player")
+    new DebugUIManager({
+      geo,
+      gps,
+      player,
+      objectMap
+    })
   }
 
   if (scene.createDefaultXRExperienceAsync) {

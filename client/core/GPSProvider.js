@@ -56,6 +56,8 @@ export class GPSProvider {
 
   handlePosition(position) {
 
+    if (this.dummyMode) return
+
     const coords = position.coords
 
     const data = {
@@ -121,6 +123,27 @@ export class GPSProvider {
     return new Promise(resolve => {
       this._firstFixResolver = resolve
     })
+  }
+
+  setDummyPosition(lat, lon, altitude = 0) {
+
+    const data = {
+      lat,
+      lon,
+      altitude,
+      accuracy: 0,
+      altitudeAccuracy: 0
+    }
+
+    console.log("GPSProvider: dummy position set", data)
+
+    if (this.onPositionCallback) {
+      this.onPositionCallback(data)
+    }
+  }
+
+  enableDummyMode(enabled) {
+    this.dummyMode = enabled
   }
 
 }
