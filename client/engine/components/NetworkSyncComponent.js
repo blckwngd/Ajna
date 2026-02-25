@@ -1,67 +1,81 @@
 import { BaseComponent } from "../BaseComponent.js"
+export class NetworkSyncComponent extends BaseComponent{
 
-export class NetworkSyncComponent extends BaseComponent {
-
-  constructor(objectId, geo) {
+  constructor() {
     super()
-    this.objectId = objectId
-    this.geo = geo
-    this.subscription = null
+    
+    this.targetPosition = null
+    this.targetRotation = null
+
+    this.velocity = null
+    this.angularVelocity = null
+
+    this.lastUpdateTime = 0
   }
 
-  init(gameObject) {
-    super.init(gameObject)
-    this.startListening()
-  }
+  applyNetworkState(state) {
 
-  startListening() {
-    // Wird von außen gesetzt, um auf globale PocketBase Instanz zuzugreifen
-    // Idealerweise durch dependency injection oder globals
-  }
-
-  // Diese Methode wird von außen aufgerufen um die PocketBase subscription zu setzen
-  subscribeToUpdates(pb) {
-    if (!pb) return
-
-    pb.collection("objects").subscribe(this.objectId, (e) => {
-      if (e.action === "update") {
-        this.applyUpdate(e.record)
-      } else if (e.action === "delete") {
-        this.gameObject.dispose()
-      }
-    })
-  }
-
-  applyUpdate(data) {
-    // Position
-    const position = this.geo.toLocal(
-      data.lat,
-      data.lon,
-      data.altitude ?? 0
+    this.targetPosition = new BABYLON.Vector3(
+      state.x, state.y, state.z
     )
-    this.gameObject.root.position = position
 
-    // Rotation
-    const rotation = new BABYLON.Vector3(
-      data.rotation?.x ?? 0,
-      data.rotation?.y ?? 0,
-      data.rotation?.z ?? 0
+    this.targetRotation = new BABYLON.Vector3(
+      state.rx, state.ry, state.rz
     )
-    this.gameObject.root.rotation = rotation
 
-    // Skalierung
-    const scaling = new BABYLON.Vector3(
-      data.scale?.x ?? 1,
-      data.scale?.y ?? 1,
-      data.scale?.z ?? 1
-    )
-    this.gameObject.root.scaling = scaling
+    this.velocity = state.velocity
+      ? new BABYLON.Vector3(
+          state.velocity.x,
+          state.velocity.y,
+          state.velocity.z
+        )
+      : BABYLON.Vector3.Zero()
+
+    this.angularVelocity = state.angularVelocity
+      ? new BABYLON.Vector3(
+          state.angularVelocity.x,
+          state.angularVelocity.y,
+          state.angularVelocity.z
+        )
+      : BABYLON.Vector3.Zero()
+
+    this.lastUpdateTime = performance.now()
   }
 
-  dispose() {
-    if (this.subscription) {
-      // Subscription wird von PocketBase verwaltet
-      // Die unsubscribe-Logik wird von außen behandelt
-    }
+  applyState(state) {
+    this.targetPosition = state.position
+    this.targetRotation = state.rotation
+    this.velocity = state.velocity
+    this.angularVelocity = state.angularVelocity
+    this.lastUpdateTime = state.serverTime
+  }
+}
+
+export function mapPocketBaseRecord(record, geo) {
+
+  const worldPos = geo.toLocal(
+    record.lat,
+    record.lon,
+    record.altitude
+  )
+
+  return {
+    position: worldPos,
+    rotation: new BABYLON.Vector3(
+      record.rotation_x ?? 0,
+      record.rotation_y ?? 0,
+      record.rotation_z ?? 0
+    ),
+    velocity: new BABYLON.Vector3(
+      record.velocity_x ?? 0,
+      record.velocity_y ?? 0,
+      record.velocity_z ?? 0
+    ),
+    angularVelocity: new BABYLON.Vector3(
+      record.angular_velocity_x ?? 0,
+      record.angular_velocity_y ?? 0,
+      record.angular_velocity_z ?? 0
+    ),
+    serverTime: record.server_timestamp ?? performance.now()
   }
 }

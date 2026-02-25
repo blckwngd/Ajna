@@ -3,6 +3,7 @@ import { World } from "./engine/World.js"
 import { GameObject } from "./engine/GameObject.js"
 import { GeoTransformer } from "./core/GeoTransformer.js"
 import { GPSProvider } from "./core/GPSProvider.js"
+import { NetworkSystem } from "./core/NetworkSystem.js"
 import { CameraComponent } from "./engine/components/CameraComponent.js"
 import { DebugCameraComponent } from "./engine/components/DebugCameraComponent.js"
 import { PlayerGPSComponent } from "./engine/components/PlayerGPSComponent.js"
@@ -52,6 +53,8 @@ async function init() {
   const geo = new GeoTransformer()
   const gps = new GPSProvider()
 
+  const networkSystem = new NetworkSystem(pb, geo, objectMap)
+  networkSystem.start()
 
   await setupPlayer(scene, world, geo, canvas)
 
@@ -85,7 +88,6 @@ async function init() {
     objectMap.forEach(go => go.update(delta))
     scene.render()
   })
-
 
   // GPS UPDATE FLOW
   gps.start()
@@ -125,40 +127,6 @@ async function loadObjects(scene, world, geo) {
     objectMap.set(obj.id, go)
   }
 
-  // Globaler Realtime Listener für neue/gelöschte Objekte
-  pb.collection("objects").subscribe("*", async (e) => {
-    console.log("Object event:", e.action, e.record.id)
-
-    if (e.action === "create") {
-      // Neues Objekt erstellen
-      if (!objectMap.has(e.record.id)) {
-        const go = await GameObject.createFromPBData(scene, e.record, geo, true)
-        
-        // NetworkSyncComponent abonnieren
-        const networkSync = go.getComponent(NetworkSyncComponent)
-        if (networkSync) {
-          networkSync.subscribeToUpdates(pb)
-        }
-        
-        objectMap.set(e.record.id, go)
-      }
-    } else if (e.action === "delete") {
-      // Objekt entfernen
-      if (objectMap.has(e.record.id)) {
-        const go = objectMap.get(e.record.id)
-        go.dispose()
-        objectMap.delete(e.record.id)
-      }
-    }
-  })
-
-  // Für bestehende Objekte die NetworkSync-Listener aktivieren
-  objectMap.forEach(go => {
-    const networkSync = go.getComponent(NetworkSyncComponent)
-    if (networkSync) {
-      networkSync.subscribeToUpdates(pb)
-    }
-  })
 }
 
 async function setupPlayer(scene, world, geo, canvas) {
@@ -180,7 +148,6 @@ async function setupPlayer(scene, world, geo, canvas) {
   const cameraComponent = player.addComponent(
     new CameraComponent(canvas)
   )
-
   player.addComponent(new PlayerGPSComponent(geo))
 
   player.addComponent(
@@ -190,6 +157,17 @@ async function setupPlayer(scene, world, geo, canvas) {
   world.add(player)
 }
 
+function handleRealtimeEvent(e) {
+
+  const go = objectMap.get(e.record.id)
+
+  if (!go) return
+
+  const net = go.getComponent("NetworkSyncComponent")
+  if (!net) return
+
+  net.applyNetworkState(e.record)
+}
 
 function waitForOrigin(geo) {
   return new Promise(resolve => {

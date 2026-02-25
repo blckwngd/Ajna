@@ -49,9 +49,7 @@ export class GameObject {
 
     // Network Sync Component (optional)
     if (includeNetworkSync) {
-      go.addComponent(
-        new NetworkSyncComponent(data.id, geo)
-      )
+      go.addComponent(new NetworkSyncComponent())
     }
 
     return go
@@ -153,10 +151,43 @@ export class GameObject {
   }
 
   getComponent(type) {
+    console.log(type)
+    console.log(this)
     return this.components.find(c => c instanceof type)
   }
 
-  update(deltaTime) {
+  update(delta) {
+
+    const net = this.getComponent("NetworkSyncComponent")
+    const transform = this.getComponent("TransformComponent")
+
+    if (!net || !transform || !net.targetPosition) return
+
+    const now = performance.now()
+    const timeSinceUpdate = (now - net.lastUpdateTime) / 1000
+
+    // Extrapolation mit Velocity
+    const predictedPosition = net.targetPosition.add(
+      net.velocity.scale(timeSinceUpdate)
+    )
+
+    transform.position = BABYLON.Vector3.Lerp(
+      transform.position,
+      predictedPosition,
+      0.1
+    )
+
+    // Rotation
+    const predictedRotation = net.targetRotation.add(
+      net.angularVelocity.scale(timeSinceUpdate)
+    )
+
+    transform.rotation = BABYLON.Vector3.Lerp(
+      transform.rotation,
+      predictedRotation,
+      0.1
+    )
+    
     this.components.forEach(c => c.update(deltaTime))
   }
 
