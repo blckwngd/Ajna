@@ -151,8 +151,6 @@ export class GameObject {
   }
 
   getComponent(type) {
-    console.log(type)
-    console.log(this)
     return this.components.find(c => c instanceof type)
   }
 

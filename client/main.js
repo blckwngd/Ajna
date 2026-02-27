@@ -7,6 +7,7 @@ import { NetworkSystem } from "./core/NetworkSystem.js"
 import { CameraComponent } from "./engine/components/CameraComponent.js"
 import { DebugCameraComponent } from "./engine/components/DebugCameraComponent.js"
 import { PlayerGPSComponent } from "./engine/components/PlayerGPSComponent.js"
+import { TransformComponent } from "./engine/components/TransformComponent.js"
 import { NetworkSyncComponent } from "./engine/components/NetworkSyncComponent.js"
 import { buildDebugScene, buildSatelliteGround } from "./engine/debug/DebugSceneBuilder.js"
 import { DebugUIManager } from "./engine/debug/DebugUIManager.js"
@@ -57,7 +58,7 @@ async function init() {
   const networkSystem = new NetworkSystem(pb, geo, objectMap)
   networkSystem.start()
 
-  await setupPlayer(scene, world, geo, canvas)
+  const player = await setupPlayer(scene, world, geo, canvas)
 
   window.addEventListener("resize", () => engine.resize())
 
@@ -78,7 +79,6 @@ async function init() {
 
   if (DEBUG_WORLD) {
     buildDebugScene(scene)
-    let player = objectMap.get("player")
     new DebugUIManager({
       geo,
       gps,
@@ -157,12 +157,15 @@ async function setupPlayer(scene, world, geo, canvas) {
     new CameraComponent(canvas)
   )
   player.addComponent(new PlayerGPSComponent(geo))
+  player.addComponent(new TransformComponent())
 
   player.addComponent(
     new DebugCameraComponent(canvas, cameraComponent, DEBUG_WORLD)
   )
 
   world.add(player)
+
+  return player
 }
 
 function handleRealtimeEvent(e) {

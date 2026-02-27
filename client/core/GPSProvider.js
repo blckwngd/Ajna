@@ -60,7 +60,7 @@ export class GPSProvider {
 
     const coords = position.coords
 
-    const data = {
+    this.data = {
       lat: coords.latitude,
       lon: coords.longitude,
       altitude: coords.altitude ?? 0,
@@ -69,16 +69,16 @@ export class GPSProvider {
     }
 
     if (this.debug) {
-      console.log("GPSProvider: position update", data)
+      console.log("GPSProvider: position update", this.data)
     }
 
     if (this.onPositionCallback) {
-      this.onPositionCallback(data)
+      this.onPositionCallback(this.data)
     }
 
     if (!this.firstFixResolved && this._firstFixResolver) {
       this.firstFixResolved = true
-      this._firstFixResolver(data)
+      this._firstFixResolver(this.data)
 
       if (this.debug) {
         console.log("GPSProvider: first fix resolved")
@@ -127,7 +127,7 @@ export class GPSProvider {
 
   setDummyPosition(lat, lon, altitude = 0) {
 
-    const data = {
+    this.data = {
       lat,
       lon,
       altitude,
@@ -135,15 +135,19 @@ export class GPSProvider {
       altitudeAccuracy: 0
     }
 
-    console.log("GPSProvider: dummy position set", data)
+    console.log("GPSProvider: dummy position set", this.data)
 
     if (this.onPositionCallback) {
-      this.onPositionCallback(data)
+      this.onPositionCallback(this.data)
     }
   }
 
   enableDummyMode(enabled) {
     this.dummyMode = enabled
+  }
+
+  getWorldPosition() {
+    return this.data;
   }
 
 }
