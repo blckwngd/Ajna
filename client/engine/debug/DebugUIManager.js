@@ -103,6 +103,14 @@ export class DebugUIManager {
 
       if (!playerTransform) return
 
+
+      sceneInfo.innerText =
+        `X: ${scene.activeCamera.position.x.toFixed(2)}
+        Y: ${scene.activeCamera.position.y.toFixed(2)}
+        Z: ${scene.activeCamera.position.z.toFixed(2)}`
+
+      objectCount.innerText = this.objectMap.size
+
       const worldPos = this.gps.getWorldPosition()
       if (!worldPos)
         return
@@ -119,13 +127,6 @@ export class DebugUIManager {
 Lon: ${worldPos.lon.toFixed(6)}
 Alt: ${worldPos.altitude.toFixed(2)}`
 
-/*
-      sceneInfo.innerText =
-        `X: ${playerTransform.position.x.toFixed(2)}
-Y: ${playerTransform.position.y.toFixed(2)}
-Z: ${playerTransform.position.z.toFixed(2)}`
-*/
-      objectCount.innerText = this.objectMap.size
 
     }, 500)
   }

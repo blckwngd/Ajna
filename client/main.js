@@ -60,6 +60,16 @@ async function init() {
 
   const player = await setupPlayer(scene, world, geo, canvas)
 
+  if (DEBUG_WORLD) { 
+    window.engine= engine
+    window.scene = scene
+    window.world = world
+    window.geo = geo
+    window.gps = gps
+    window.player = player
+    window.objectMap = objectMap
+  }
+  
   window.addEventListener("resize", () => engine.resize())
 
 

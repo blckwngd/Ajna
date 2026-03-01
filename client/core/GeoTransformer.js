@@ -23,4 +23,19 @@ export class GeoTransformer {
 
     return new BABYLON.Vector3(x, y, z)
   }
+
+  toWorld(x, y, z) {
+    if (!this.origin) return { lat: 0, lon: 0, altitude: 0 }
+
+    const dLat = z / this.earthRadius
+    const lat = this.origin.lat + dLat * 180 / Math.PI
+
+    const meanLat = (lat + this.origin.lat) / 2 * Math.PI / 180
+    const lon = this.origin.lon +
+      x / (this.earthRadius * Math.cos(meanLat)) * 180 / Math.PI
+
+    const altitude = this.origin.altitude + y
+
+    return { lat, lon, altitude }
+  }
 }
