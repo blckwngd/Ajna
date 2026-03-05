@@ -156,8 +156,8 @@ export class GameObject {
 
   update(delta) {
 
-    const net = this.getComponent("NetworkSyncComponent")
-    const transform = this.getComponent("TransformComponent")
+    const net = this.getComponent(NetworkSyncComponent)
+    const transform = this.getComponent(TransformComponent)
 
     if (!net || !transform || !net.targetPosition) return
 

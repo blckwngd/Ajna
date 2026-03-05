@@ -6,17 +6,23 @@
   "private": true,
   "scripts": {
     "start": "node server/index.js",
-    "dev": "nodemon server/index.js",
     "serve-client": "npx serve client",
-    "start:all": "concurrently \"npm run start\" \"npm run serve-client\""
+    "start:all": "concurrently \"npm run start\" \"npm run serve-client\"",
+    "start:dev": "concurrently \"npm run start\" \"http-server -p 443 -S -C cert.pem -o client\"",
+    "validate-tiles3d": "node validate-tiles3d.js",
+    "build": "webpack",
+    "dev": "webpack --watch"
   },
   "dependencies": {
+    "3d-tiles-renderer": "^0.3.46",
     "express": "^4.19.2",
-    "pocketbase": "^0.21.0"
+    "pocketbase": "^0.21.5"
   },
   "devDependencies": {
-    "nodemon": "^3.1.0",
     "concurrently": "^8.2.2",
-    "serve": "^14.2.1"
+    "nodemon": "^3.1.0",
+    "serve": "^14.2.1",
+    "webpack": "^5.105.4",
+    "webpack-cli": "^6.0.1"
   }
 }

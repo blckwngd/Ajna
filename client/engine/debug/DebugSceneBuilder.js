@@ -89,6 +89,9 @@ export function buildSatelliteGround(scene, lat, lon, zoom = 18) {
   return ground
 }
 
+export { Tiles3DManager, TILESET_URLS, createCommonTilesets } from "./Tiles3DManager.js"
+export { Tiles3DUI } from "./Tiles3DUI.js"
+
 export class TileManager {
   constructor(scene, geo, zoom = 18, radius = 2) {
     this.scene = scene

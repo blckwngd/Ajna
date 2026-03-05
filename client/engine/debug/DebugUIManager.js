@@ -2,12 +2,13 @@ import { TransformComponent } from "../components/TransformComponent.js"
 
 export class DebugUIManager {
 
-  constructor({ geo, gps, player, objectMap }) {
+  constructor({ geo, gps, player, objectMap, tiles3DManager }) {
 
     this.geo = geo
     this.gps = gps
     this.player = player
     this.objectMap = objectMap
+    this.tiles3DManager = tiles3DManager
 
     console.log(player)
 
@@ -66,7 +67,24 @@ export class DebugUIManager {
         <strong>Loaded Objects</strong><br>
         <div id="objectCount"></div>
       </div>
-    `
+
+      <hr>
+
+      <div>
+        <strong>3D Tiles</strong><br>
+        <label>
+          <input type="checkbox" id="tiles3DToggle">
+          Enable 3D Tiles
+        </label><br>
+        <select id="tilesetSelect" style="width: 100%; margin: 4px 0;">
+          <option value="">Select Tileset...</option>
+          <option value="sample">Sample Dataset (NASA)</option>
+          <option value="osm-buildings">OSM Buildings (Cesium)</option>
+          <option value="photorealistic">Photorealistic (Google)</option>
+        </select><br>
+        <button id="loadTilesetBtn" style="width: 100%;">Load Tileset</button>
+        <div id="tiles3DInfo" style="margin-top: 4px; font-size: 12px;"></div>
+      </div>`
 
     document.body.appendChild(this.container)
 
@@ -89,6 +107,68 @@ export class DebugUIManager {
 
       this.gps.setDummyPosition(lat, lon, alt)
     })
+
+    // 3D Tiles controls
+    document.getElementById("tiles3DToggle").addEventListener("change", (e) => {
+      if (this.tiles3DManager) {
+        this.tiles3DManager.setEnabled(e.target.checked)
+      }
+    })
+
+    document.getElementById("loadTilesetBtn").addEventListener("click", async () => {
+      const select = document.getElementById("tilesetSelect")
+      const tilesetType = select.value
+
+      if (!tilesetType || !this.tiles3DManager) return
+
+      const btn = document.getElementById("loadTilesetBtn")
+      const originalText = btn.textContent
+      btn.textContent = "Loading..."
+      btn.disabled = true
+
+      try {
+        let success = false
+
+        switch (tilesetType) {
+          case "sample":
+            success = await this.tiles3DManager.loadTileset("sample", "https://nasa-ammos.github.io/3DTilesRendererJS/example/tileset.json")
+            break
+
+          case "osm-buildings":
+            // Get current GPS position for centering
+            const worldPos = this.gps.getWorldPosition()
+            if (worldPos) {
+              success = await this.tiles3DManager.loadTileset("osm-buildings", "https://assets.cesium.com/96188/tileset.json", {
+                position: { lat: worldPos.lat, lon: worldPos.lon, alt: 0 }
+              })
+            } else {
+              success = await this.tiles3DManager.loadTileset("osm-buildings", "https://assets.cesium.com/96188/tileset.json")
+            }
+            break
+
+          case "photorealistic":
+            // Note: Requires Google Maps API key
+            alert("Google Photorealistic 3D Tiles requires an API key. Please configure it in your tileset URL.")
+            break
+        }
+
+        if (success) {
+          console.log(`Loaded 3D tileset: ${tilesetType}`)
+          // Auto-enable if loaded successfully
+          document.getElementById("tiles3DToggle").checked = true
+          this.tiles3DManager.setEnabled(true)
+        } else {
+          console.error(`Failed to load 3D tileset: ${tilesetType}`)
+        }
+
+      } catch (error) {
+        console.error("Error loading tileset:", error)
+        alert(`Error loading tileset: ${error.message}`)
+      } finally {
+        btn.textContent = originalText
+        btn.disabled = false
+      }
+    })
   }
 
   startUpdateLoop() {
@@ -98,6 +178,7 @@ export class DebugUIManager {
       const gpsInfo = document.getElementById("gpsInfo")
       const sceneInfo = document.getElementById("sceneInfo")
       const objectCount = document.getElementById("objectCount")
+      const tiles3DInfo = document.getElementById("tiles3DInfo")
 
       const playerTransform = this.player.getComponent(TransformComponent)
 
@@ -126,6 +207,13 @@ export class DebugUIManager {
         `Lat: ${worldPos.lat.toFixed(6)}
 Lon: ${worldPos.lon.toFixed(6)}
 Alt: ${worldPos.altitude.toFixed(2)}`
+
+      // Update 3D Tiles info
+      if (this.tiles3DManager) {
+        const info = this.tiles3DManager.getInfo()
+        const tilesetNames = Object.keys(info.tilesets)
+        tiles3DInfo.innerText = `Enabled: ${info.enabled}\nTilesets: ${tilesetNames.length}`
+      }
 
 
     }, 500)

@@ -1,4 +1,5 @@
-import PocketBase from "https://unpkg.com/pocketbase/dist/pocketbase.es.mjs"
+//import PocketBase from "https://unpkg.com/pocketbase/dist/pocketbase.es.mjs"
+import PocketBase  from 'pocketbase'
 import { World } from "./engine/World.js"
 import { GameObject } from "./engine/GameObject.js"
 import { GeoTransformer } from "./core/GeoTransformer.js"
@@ -9,7 +10,7 @@ import { DebugCameraComponent } from "./engine/components/DebugCameraComponent.j
 import { PlayerGPSComponent } from "./engine/components/PlayerGPSComponent.js"
 import { TransformComponent } from "./engine/components/TransformComponent.js"
 import { NetworkSyncComponent } from "./engine/components/NetworkSyncComponent.js"
-import { buildDebugScene, buildSatelliteGround } from "./engine/debug/DebugSceneBuilder.js"
+import { buildDebugScene, buildSatelliteGround, Tiles3DManager, Tiles3DUI } from "./engine/debug/DebugSceneBuilder.js"
 import { DebugUIManager } from "./engine/debug/DebugUIManager.js"
 import { buildEnvironment } from "./engine/environment/EnvironmentBuilder.js"
 
@@ -87,13 +88,25 @@ async function init() {
   
   buildEnvironment(scene)
 
+  // Initialize 3D Tiles Manager
+  let tiles3DManager = null
+  let tiles3DUI = null
+
+  tiles3DManager = new Tiles3DManager(scene, engine, geo)
+  tiles3DUI = new Tiles3DUI(tiles3DManager, {
+    position: 'bottom-right',
+    compact: !DEBUG_WORLD // Compact mode in standard mode
+  })
+  console.log("3D Tiles Manager initialized")
+
   if (DEBUG_WORLD) {
     buildDebugScene(scene)
     new DebugUIManager({
       geo,
       gps,
       player,
-      objectMap
+      objectMap,
+      tiles3DManager
     })
   }
 
@@ -104,6 +117,17 @@ async function init() {
   engine.runRenderLoop(() => {
     const delta = engine.getDeltaTime() / 1000
     objectMap.forEach(go => go.update(delta))
+    
+    // Update 3D Tiles
+    if (tiles3DManager) {
+      tiles3DManager.update()
+    }
+    
+    // Update 3D Tiles UI
+    if (tiles3DUI) {
+      tiles3DUI.updateInfo()
+    }
+    
     scene.render()
   })
 

@@ -21,7 +21,20 @@ input { display:block; margin:4px 0; }
 <script src="https://cdn.babylonjs.com/babylon.js"></script>
 <script src="https://cdn.babylonjs.com/materialsLibrary/babylon.gridMaterial.min.js"></script>
 
-</head>
+<!-- Use import map to resolve module specifiers for 3D Tiles -->
+<script type="importmap">
+{
+  "imports": {
+    "@babylonjs/core": "https://cdn.jsdelivr.net/npm/@babylonjs/core@6.37.1/+esm",
+    "@babylonjs/core/": "https://cdn.jsdelivr.net/npm/@babylonjs/core@6.37.1/",
+    "@babylonjs/loaders": "https://cdn.jsdelivr.net/npm/@babylonjs/loaders@6.37.1?module",
+    "@babylonjs/materials": "https://cdn.jsdelivr.net/npm/@babylonjs/materials@6.37.1?module",
+    "@babylonjs/gui": "https://cdn.jsdelivr.net/npm/@babylonjs/gui@6.37.1?module",
+    "@nasa/3d-tiles-renderer": "https://cdn.jsdelivr.net/npm/@nasa/3d-tiles-renderer@0.3.22/+esm",
+    "@nasa/3d-tiles-renderer/": "https://cdn.jsdelivr.net/npm/@nasa/3d-tiles-renderer@0.3.22/"
+  }
+}
+</script>
 <body>
 
 <div id="ui">
@@ -34,6 +47,6 @@ input { display:block; margin:4px 0; }
 
 <canvas id="renderCanvas"></canvas>
 
-<script type="module" src="main.js"></script>
+<script src="dist/bundle.js"></script>
 </body>
 </html>
