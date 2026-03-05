@@ -62,6 +62,14 @@ Nicht implementiert:
 
 ---
 
+## Start der Anwendung über HTTPS
+
+- npm install -g http-server
+- openssl req -newkey rsa:2048 -new -nodes -x509 -days 3650 -keyout key.pem -out cert.pem
+- http-server -p 443 -S -C cert.pem -o client
+
+---
+
 ## Datenschutzstrategie
 
 Aktuell werden exakte Positionen nur im Arbeitsspeicher des Servers gehalten und nicht persistiert. Die Architektur erlaubt es, zukünftig auf ein Modell umzusteigen, bei dem der Server nur ungefähre Regionen speichert oder exakte Koordinaten ausschließlich clientseitig verbleiben.
