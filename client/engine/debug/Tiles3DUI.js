@@ -1,134 +1,246 @@
 /**
- * Tiles3DUI - UI Component for 3D Tiles Control
+ * Tiles3DUI - UI Component for 3D Tiles Control using BabylonJS GUI
  *
  * Can be used in both debug and standard mode
  */
 
 export class Tiles3DUI {
-  constructor(tiles3DManager, options = {}) {
+  constructor(tiles3DManager, engine, scene, options = {}) {
     this.tiles3DManager = tiles3DManager
+    this.engine = engine
+    this.scene = scene
     this.options = {
       position: 'bottom-right', // 'top-left', 'top-right', 'bottom-left', 'bottom-right'
       compact: false,
       ...options
     }
 
-    this.container = null
+    this.guiTexture = null
+    this.rootPanel = null
     this.visible = true
     this.buildUI()
   }
 
   buildUI() {
-    this.container = document.createElement("div")
-    this.container.style.position = "absolute"
-    this.container.style.background = "rgba(0,0,0,0.8)"
-    this.container.style.color = "white"
-    this.container.style.padding = "8px"
-    this.container.style.borderRadius = "4px"
-    this.container.style.fontFamily = "Arial, sans-serif"
-    this.container.style.fontSize = "12px"
-    this.container.style.zIndex = 1000
-    this.container.style.minWidth = "200px"
+    // Create the GUI texture
+    this.guiTexture = GUI.AdvancedDynamicTexture.CreateFullscreenUI("TilesUI", true, this.scene)
 
-    // Position the container
-    this.setPosition(this.options.position)
+    // Create root panel for the UI
+    this.rootPanel = new GUI.StackPanel()
+    this.rootPanel.width = "250px"
+    this.rootPanel.verticalAlignment = GUI.Control.VERTICAL_ALIGNMENT_BOTTOM
+    this.rootPanel.horizontalAlignment = this.getHorizontalAlignment()
+    this.rootPanel.paddingLeftInPixels = 10
+    this.rootPanel.paddingRightInPixels = 10
+    this.rootPanel.paddingTopInPixels = 10
+    this.rootPanel.paddingBottomInPixels = 10
+    this.rootPanel.spacing = 8
+
+    this.guiTexture.addControl(this.rootPanel)
 
     if (this.options.compact) {
       this.buildCompactUI()
     } else {
       this.buildFullUI()
     }
+  }
 
-    document.body.appendChild(this.container)
+  getHorizontalAlignment() {
+    if (this.options.position.includes('left')) {
+      return GUI.Control.HORIZONTAL_ALIGNMENT_LEFT
+    }
+    return GUI.Control.HORIZONTAL_ALIGNMENT_RIGHT
   }
 
   buildCompactUI() {
-    this.container.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 8px;">
-        <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
-          <input type="checkbox" id="tiles3DCompactToggle" style="margin: 0;">
-          <span>3D Tiles</span>
-        </label>
-        <select id="tilesetCompactSelect" style="flex: 1; padding: 2px; font-size: 11px;">
-          <option value="sample">Sample</option>
-          <option value="osm-buildings">OSM Buildings</option>
-        </select>
-        <button id="loadCompactBtn" style="padding: 2px 6px; font-size: 11px;">Load</button>
-      </div>
-      <div id="tiles3DCompactInfo" style="margin-top: 4px; font-size: 10px; color: #ccc;"></div>
-    `
+    // Title
+    const titleBlock = new GUI.TextBlock()
+    titleBlock.text = "3D Tiles"
+    titleBlock.height = "30px"
+    titleBlock.fontSize = 14
+    titleBlock.fontWeight = "bold"
+    titleBlock.color = "white"
+    this.rootPanel.addControl(titleBlock)
 
-    this.attachCompactEvents()
+    // Enable toggle - horizontal panel for checkbox and label
+    const togglePanel = new GUI.StackPanel()
+    togglePanel.isVertical = false
+    togglePanel.spacing = 8
+    togglePanel.height = "30px"
+    this.rootPanel.addControl(togglePanel)
+
+    const toggleCheckbox = new GUI.Checkbox()
+    toggleCheckbox.width = "20px"
+    toggleCheckbox.height = "20px"
+    toggleCheckbox.isChecked = false
+    toggleCheckbox.onIsCheckedChangedObservable.add((value) => {
+      if (this.tiles3DManager) {
+        this.tiles3DManager.setEnabled(value)
+      }
+    })
+    togglePanel.addControl(toggleCheckbox)
+
+    const toggleLabel = new GUI.TextBlock()
+    toggleLabel.text = "Enable"
+    toggleLabel.fontSize = 12
+    toggleLabel.color = "white"
+    toggleLabel.verticalAlignment = GUI.Control.VERTICAL_ALIGNMENT_CENTER
+    togglePanel.addControl(toggleLabel)
+
+    // Tileset selector
+    const selectPanel = new GUI.StackPanel()
+    selectPanel.isVertical = true
+    selectPanel.spacing = 6
+    selectPanel.width = "100%"
+    this.rootPanel.addControl(selectPanel)
+
+    const sampleBtn = GUI.Button.CreateSimpleButton("sample", "Sample Tiles")
+    sampleBtn.width = "100%"
+    sampleBtn.height = "25px"
+    sampleBtn.fontSize = 11
+    sampleBtn.background = "rgba(100,150,200,0.5)"
+    sampleBtn.color = "white"
+    sampleBtn.cornerRadius = 4
+    sampleBtn.onPointerClickObservable.add(() => {
+      this.handleCompactSelection("sample", sampleBtn)
+    })
+    selectPanel.addControl(sampleBtn)
+    this.sampleBtn = sampleBtn
+
+    const osmBtn = GUI.Button.CreateSimpleButton("osm", "OSM Buildings")
+    osmBtn.width = "100%"
+    osmBtn.height = "25px"
+    osmBtn.fontSize = 11
+    osmBtn.background = "rgba(100,150,200,0.5)"
+    osmBtn.color = "white"
+    osmBtn.cornerRadius = 4
+    osmBtn.onPointerClickObservable.add(() => {
+      this.handleCompactSelection("osm-buildings", osmBtn)
+    })
+    selectPanel.addControl(osmBtn)
+    this.osmBtn = osmBtn
+
+    // Info display
+    this.infoBlock = new GUI.TextBlock()
+    this.infoBlock.text = "Ready"
+    this.infoBlock.height = "40px"
+    this.infoBlock.fontSize = 10
+    this.infoBlock.color = "#ccc"
+    this.infoBlock.textWrapping = true
+    this.rootPanel.addControl(this.infoBlock)
+  }
+
+  handleCompactSelection(tilesetType, button) {
+    this.loadTileset(tilesetType, button)
   }
 
   buildFullUI() {
-    this.container.innerHTML = `
-      <div style="margin-bottom: 8px; font-weight: bold;">3D Tiles Control</div>
+    // Title
+    const titleBlock = new GUI.TextBlock()
+    titleBlock.text = "3D Tiles Control"
+    titleBlock.height = "30px"
+    titleBlock.fontSize = 14
+    titleBlock.fontWeight = "bold"
+    titleBlock.color = "white"
+    this.rootPanel.addControl(titleBlock)
 
-      <div style="margin-bottom: 8px;">
-        <label style="display: flex; align-items: center; gap: 4px;">
-          <input type="checkbox" id="tiles3DFullToggle">
-          <span>Enable 3D Tiles</span>
-        </label>
-      </div>
+    // Enable toggle
+    const togglePanel = new GUI.StackPanel()
+    togglePanel.isVertical = false
+    togglePanel.spacing = 8
+    togglePanel.height = "30px"
+    this.rootPanel.addControl(togglePanel)
 
-      <div style="margin-bottom: 8px;">
-        <select id="tilesetFullSelect" style="width: 100%; padding: 4px;">
-          <option value="">Select Tileset...</option>
-          <option value="sample">Sample Dataset (NASA)</option>
-          <option value="osm-buildings">OSM Buildings (Cesium)</option>
-          <option value="photorealistic">Photorealistic (Google)</option>
-        </select>
-      </div>
-
-      <div style="margin-bottom: 8px;">
-        <button id="loadFullBtn" style="width: 100%; padding: 6px;">Load Tileset</button>
-      </div>
-
-      <div id="tiles3DFullInfo" style="font-size: 11px; color: #ccc;"></div>
-    `
-
-    this.attachFullEvents()
-  }
-
-  attachCompactEvents() {
-    const toggle = document.getElementById("tiles3DCompactToggle")
-    const select = document.getElementById("tilesetCompactSelect")
-    const loadBtn = document.getElementById("loadCompactBtn")
-
-    toggle.addEventListener("change", (e) => {
+    const toggleCheckbox = new GUI.Checkbox()
+    toggleCheckbox.width = "20px"
+    toggleCheckbox.height = "20px"
+    toggleCheckbox.isChecked = false
+    toggleCheckbox.onIsCheckedChangedObservable.add((value) => {
       if (this.tiles3DManager) {
-        this.tiles3DManager.setEnabled(e.target.checked)
+        this.tiles3DManager.setEnabled(value)
       }
     })
+    togglePanel.addControl(toggleCheckbox)
 
-    loadBtn.addEventListener("click", async () => {
-      await this.loadTileset(select.value, loadBtn, "Loading...")
+    const toggleLabel = new GUI.TextBlock()
+    toggleLabel.text = "Enable 3D Tiles"
+    toggleLabel.fontSize = 12
+    toggleLabel.color = "white"
+    toggleLabel.verticalAlignment = GUI.Control.VERTICAL_ALIGNMENT_CENTER
+    togglePanel.addControl(toggleLabel)
+
+    // Tileset selection buttons
+    const tilesetLabel = new GUI.TextBlock()
+    tilesetLabel.text = "Select Tileset:"
+    tilesetLabel.height = "20px"
+    tilesetLabel.fontSize = 11
+    tilesetLabel.color = "white"
+    this.rootPanel.addControl(tilesetLabel)
+
+    const selectPanel = new GUI.StackPanel()
+    selectPanel.isVertical = true
+    selectPanel.spacing = 6
+    selectPanel.width = "100%"
+    this.rootPanel.addControl(selectPanel)
+
+    // Sample button
+    const sampleBtn = GUI.Button.CreateSimpleButton("sample", "Sample Dataset")
+    sampleBtn.width = "100%"
+    sampleBtn.height = "30px"
+    sampleBtn.fontSize = 12
+    sampleBtn.background = "rgba(100,150,200,0.5)"
+    sampleBtn.color = "white"
+    sampleBtn.cornerRadius = 4
+    sampleBtn.onPointerClickObservable.add(() => {
+      this.loadTileset("sample", sampleBtn)
     })
+    selectPanel.addControl(sampleBtn)
+    this.sampleBtn = sampleBtn
+
+    // OSM Buildings button
+    const osmBtn = GUI.Button.CreateSimpleButton("osm", "OSM Buildings")
+    osmBtn.width = "100%"
+    osmBtn.height = "30px"
+    osmBtn.fontSize = 12
+    osmBtn.background = "rgba(100,150,200,0.5)"
+    osmBtn.color = "white"
+    osmBtn.cornerRadius = 4
+    osmBtn.onPointerClickObservable.add(() => {
+      this.loadTileset("osm-buildings", osmBtn)
+    })
+    selectPanel.addControl(osmBtn)
+    this.osmBtn = osmBtn
+
+    // Photorealistic button
+    const photoBtn = GUI.Button.CreateSimpleButton("photo", "Photorealistic")
+    photoBtn.width = "100%"
+    photoBtn.height = "30px"
+    photoBtn.fontSize = 12
+    photoBtn.background = "rgba(100,150,200,0.5)"
+    photoBtn.color = "white"
+    photoBtn.cornerRadius = 4
+    photoBtn.onPointerClickObservable.add(() => {
+      this.loadTileset("photorealistic", photoBtn)
+    })
+    selectPanel.addControl(photoBtn)
+    this.photoBtn = photoBtn
+
+    // Info display
+    this.infoBlock = new GUI.TextBlock()
+    this.infoBlock.text = "Select a tileset to load"
+    this.infoBlock.height = "50px"
+    this.infoBlock.fontSize = 10
+    this.infoBlock.color = "#ccc"
+    this.infoBlock.textWrapping = true
+    this.rootPanel.addControl(this.infoBlock)
   }
 
-  attachFullEvents() {
-    const toggle = document.getElementById("tiles3DFullToggle")
-    const select = document.getElementById("tilesetFullSelect")
-    const loadBtn = document.getElementById("loadFullBtn")
-
-    toggle.addEventListener("change", (e) => {
-      if (this.tiles3DManager) {
-        this.tiles3DManager.setEnabled(e.target.checked)
-      }
-    })
-
-    loadBtn.addEventListener("click", async () => {
-      await this.loadTileset(select.value, loadBtn, "Loading...")
-    })
-  }
-
-  async loadTileset(tilesetType, button, loadingText) {
+  async loadTileset(tilesetType, button) {
     if (!tilesetType || !this.tiles3DManager) return
 
-    const originalText = button.textContent
-    button.textContent = loadingText
-    button.disabled = true
+    const originalText = button.text
+    button.text = "Loading..."
+    button.isEnabled = false
 
     try {
       let success = false
@@ -147,7 +259,7 @@ export class Tiles3DUI {
 
         case "photorealistic":
           // Google Photorealistic requires API key
-          alert("Google Photorealistic 3D Tiles requires an API key. Please configure it properly.")
+          this.updateInfo("Google Photorealistic requires an API key")
           return
       }
 
@@ -157,77 +269,38 @@ export class Tiles3DUI {
 
       if (success) {
         console.log(`Loaded 3D tileset: ${tilesetType}`)
-        // Auto-enable if loaded successfully
-        const toggle = this.options.compact ?
-          document.getElementById("tiles3DCompactToggle") :
-          document.getElementById("tiles3DFullToggle")
-        if (toggle) {
-          toggle.checked = true
-          this.tiles3DManager.setEnabled(true)
-        }
+        this.updateInfo(`Loaded: ${tilesetType}`)
       } else {
         console.error(`Failed to load 3D tileset: ${tilesetType}`)
-        alert(`Failed to load tileset: ${tilesetType}`)
+        this.updateInfo(`Failed to load: ${tilesetType}`)
       }
 
     } catch (error) {
       console.error("Error loading tileset:", error)
-      alert(`Error loading tileset: ${error.message}`)
+      this.updateInfo(`Error: ${error.message}`)
     } finally {
-      button.textContent = originalText
-      button.disabled = false
+      button.text = originalText
+      button.isEnabled = true
+    }
+  }
+
+  updateInfo(message) {
+    if (this.infoBlock) {
+      this.infoBlock.text = message
     }
   }
 
   setPosition(position) {
-    const margin = "10px"
-
-    switch (position) {
-      case 'top-left':
-        this.container.style.top = margin
-        this.container.style.left = margin
-        break
-      case 'top-right':
-        this.container.style.top = margin
-        this.container.style.right = margin
-        break
-      case 'bottom-left':
-        this.container.style.bottom = margin
-        this.container.style.left = margin
-        break
-      case 'bottom-right':
-      default:
-        this.container.style.bottom = margin
-        this.container.style.right = margin
-        break
+    // Position is handled by the rootPanel configuration
+    if (position.includes('top')) {
+      this.rootPanel.verticalAlignment = GUI.Control.VERTICAL_ALIGNMENT_TOP
+    } else {
+      this.rootPanel.verticalAlignment = GUI.Control.VERTICAL_ALIGNMENT_BOTTOM
     }
   }
 
   setVisible(visible) {
     this.visible = visible
-    this.container.style.display = visible ? 'block' : 'none'
-  }
-
-  updateInfo() {
-    if (!this.tiles3DManager) return
-
-    const info = this.tiles3DManager.getInfo()
-    const tilesetNames = Object.keys(info.tilesets)
-
-    const infoText = `Enabled: ${info.enabled} | Tilesets: ${tilesetNames.length}`
-
-    if (this.options.compact) {
-      const infoEl = document.getElementById("tiles3DCompactInfo")
-      if (infoEl) infoEl.textContent = infoText
-    } else {
-      const infoEl = document.getElementById("tiles3DFullInfo")
-      if (infoEl) infoEl.textContent = infoText
-    }
-  }
-
-  dispose() {
-    if (this.container && this.container.parentNode) {
-      this.container.parentNode.removeChild(this.container)
-    }
+    this.rootPanel.isVisible = visible
   }
 }

@@ -14,14 +14,20 @@
     "dev": "webpack --watch"
   },
   "dependencies": {
+    "@babylonjs/core": "^8.54.3",
     "3d-tiles-renderer": "^0.3.46",
+    "babylonjs-gui": "^8.54.1",
+    "eventsource": "^4.1.0",
     "express": "^4.19.2",
     "pocketbase": "^0.21.5"
   },
   "devDependencies": {
+    "@babylonjs/materials": "^8.54.3",
     "concurrently": "^8.2.2",
     "nodemon": "^3.1.0",
     "serve": "^14.2.1",
+    "ts-loader": "^9.5.4",
+    "typescript": "^5.9.3",
     "webpack": "^5.105.4",
     "webpack-cli": "^6.0.1"
   }

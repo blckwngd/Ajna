@@ -54,17 +54,17 @@ export class Tiles3DManager {
       const tilesRenderer = new TilesRenderer(tilesetUrl, this.scene, this.engine)
 
       // Configure renderer
-      tilesRenderer.setResolutionFromRenderer(this.engine.getRenderWidth(), this.engine.getRenderHeight())
+      //tilesRenderer.setResolutionFromRenderer(this.engine.getRenderWidth(), this.engine.getRenderHeight())
       tilesRenderer.setCamera(this.scene.activeCamera)
 
       // Set position if provided (convert from lat/lon to world coordinates)
       if (options.position) {
-        const worldPos = this.geo.fromWorld(options.position.lat, options.position.lon, options.position.alt || 0)
+        const worldPos = this.geo.toLocal(options.position.lat, options.position.lon, options.position.alt || 0)
         tilesRenderer.group.position.set(worldPos.x, worldPos.y, worldPos.z)
       }
 
       // Add to scene
-      this.scene.add(tilesRenderer.group)
+      this.scene.addGeometry(tilesRenderer.group)
 
       // Store renderer
       this.tilesRenderers.set(name, {

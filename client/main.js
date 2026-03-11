@@ -1,5 +1,15 @@
 //import PocketBase from "https://unpkg.com/pocketbase/dist/pocketbase.es.mjs"
 import PocketBase  from 'pocketbase'
+import { EventSource } from "eventsource";
+
+import * as GUI from 'babylonjs-gui'
+//import * as BABYLON from '@babylonjs/core/Legacy/legacy.js'
+
+import { Engine, Scene, ArcRotateCamera, Vector3, HemisphericLight, Mesh, MeshBuilder } from "@babylonjs/core"
+import { GridMaterial } from "@babylonjs/materials"
+
+BABYLON.GridMaterial = GridMaterial
+
 import { World } from "./engine/World.js"
 import { GameObject } from "./engine/GameObject.js"
 import { GeoTransformer } from "./core/GeoTransformer.js"
@@ -16,6 +26,7 @@ import { buildEnvironment } from "./engine/environment/EnvironmentBuilder.js"
 
 const pb = new PocketBase("http://localhost:8090")
 const DEBUG_WORLD = true
+window.GUI = GUI
 
 // ==========================================================
 // AUTH
@@ -51,6 +62,7 @@ async function init() {
   const canvas = document.getElementById("renderCanvas")
   const engine = new BABYLON.Engine(canvas, true)
   const scene = new BABYLON.Scene(engine)
+  scene.useRightHandedSystem = true
   
   const world = new World(scene)
   const geo = new GeoTransformer()
@@ -93,7 +105,7 @@ async function init() {
   let tiles3DUI = null
 
   tiles3DManager = new Tiles3DManager(scene, engine, geo)
-  tiles3DUI = new Tiles3DUI(tiles3DManager, {
+  tiles3DUI = new Tiles3DUI(tiles3DManager, engine, scene, {
     position: 'bottom-right',
     compact: !DEBUG_WORLD // Compact mode in standard mode
   })
@@ -121,11 +133,6 @@ async function init() {
     // Update 3D Tiles
     if (tiles3DManager) {
       tiles3DManager.update()
-    }
-    
-    // Update 3D Tiles UI
-    if (tiles3DUI) {
-      tiles3DUI.updateInfo()
     }
     
     scene.render()
