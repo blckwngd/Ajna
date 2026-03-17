@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Ajna 2D Map Client</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<style>
+body{margin:0;height:100vh;display:flex;}
+#map{flex:1;}
+#sidebar{width:320px;background:#f4f4f4;border-left:1px solid #ccc;padding:10px;overflow:auto;transition: transform 0.25s ease, opacity 0.25s ease;}
+.object-row{border-bottom:1px solid #ccc;padding:4px;cursor:pointer;}
+#loginSection{margin-bottom:12px;padding:8px;background:#fff;border:1px solid #ddd;}
+#editorToggle{display:none; margin-top:8px;}
+@media (max-width: 850px) {
+  body{flex-direction:column;}
+  #map{height:60vh;}
+  #sidebar{width:100%;height:40vh;border-left:none;border-top:1px solid #ccc;}
+  #editorSection{display:none;}
+  #editorSection.visible{display:block;}
+  #editorToggle{display:block;}
+}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="sidebar">
+  <div id="loginSection">
+    <h3>Anmelden</h3>
+    <input id="email" type="email" placeholder="Email" style="width:100%;margin-bottom:4px">
+    <input id="password" type="password" placeholder="Passwort" style="width:100%;margin-bottom:4px">
+    <button id="loginBtn" style="width:100%;margin-bottom:4px">Login</button>
+    <button id="logoutBtn" style="width:100%;margin-bottom:4px;display:none">Logout</button>
+    <div id="loginStatus" style="font-size:0.9rem;color:#333;min-height:1.2em">Nicht angemeldet</div>
+  </div>
+  <h3>Objektliste</h3>
+  <button id="refreshBtn">Neu laden</button>
+  <div id="status" style="margin:6px 0;font-size:0.9rem;color:#333;">Status...</div>
+  <div id="objectList" style="max-height:220px;overflow:auto;border:1px solid #ddd;padding:6px;background:#fff;"></div>
+  <button id="editorToggle" style="display:none;">Editor anzeigen</button>
+
+  <div id="newObjectSection">
+    <h3>Neues Objekt</h3>
+    <label>Lat <input id="newLat" type="number" step="0.000001" value="51.1657"></label>
+    <label>Lon <input id="newLon" type="number" step="0.000001" value="10.4515"></label>
+    <button id="newObjectBtn">Erstellen</button>
+  </div>
+
+  <div id="editorSection">
+    <h3>Editor</h3>
+    <form id="editor">
+    <input type="hidden" name="objectId">
+    <label>Name <input name="name"></label>
+    <label>Lat <input name="lat" type="number" step="0.000001"></label>
+    <label>Lon <input name="lon" type="number" step="0.000001"></label>
+    <label>Alt <input name="altitude" type="number" step="0.1" value="0"></label>
+    <button type="submit">Speichern</button>
+    <button id="deleteBtn" type="button">Löschen</button>
+  </form>
+  </div>
+  <p>Klicke auf Karte, um Koordinaten in den Objekt-Editor zu übernehmen; nutze ‚Erstellen‘ für Persistenz.</p>
+  <p><a href="index-ar.html">Zur AR-Ansicht wechseln</a></p>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+     crossorigin=""></script>
+<script src="dist/map.bundle.js"></script>
+</body>
+</html>

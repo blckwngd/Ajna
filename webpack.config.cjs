@@ -2,9 +2,12 @@ const path = require("path");
 
 module.exports = {
   mode: "development",
-  entry: "./client/main.js",
+  entry: {
+    ar: "./client/main.js",
+    map: "./client/map.js"
+  },
   output: {
-    filename: "bundle.js",
+    filename: "[name].bundle.js",
     path: path.resolve(__dirname, "client/dist"),
     publicPath: "/",
   },

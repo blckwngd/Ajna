@@ -1,20 +1,42 @@
 export function buildDebugScene(scene) {
 
-  const size = 50
+  const size = 200
 
-  /*const grid = BABYLON.MeshBuilder.CreateGround(
+  if (typeof BABYLON.GridMaterial === 'undefined') {
+    console.warn('buildDebugScene: GridMaterial nicht verfügbar. Benutze Ersatzmaterial.')
+  }
+
+  const grid = BABYLON.MeshBuilder.CreateGround(
     "debugGrid",
     { width: size, height: size },
     scene
-  )*/
+  )
 
-  const gridMaterial = new BABYLON.GridMaterial("gridMat", scene)
-  gridMaterial.majorUnitFrequency = 5
-  gridMaterial.minorUnitVisibility = 0.45
-  gridMaterial.gridRatio = 1
-  gridMaterial.backFaceCulling = false
+  grid.position.y = 0
+  grid.isPickable = false
 
-  //grid.material = gridMaterial
+  let gridMaterial
+  if (typeof BABYLON.GridMaterial !== 'undefined') {
+    gridMaterial = new BABYLON.GridMaterial("gridMat", scene)
+    gridMaterial.majorUnitFrequency = 10
+    gridMaterial.minorUnitVisibility = 0.45
+    gridMaterial.gridRatio = 1
+    gridMaterial.opacity = 0.75
+    gridMaterial.lineColor = new BABYLON.Color3(0.7, 0.7, 0.7)
+    gridMaterial.mainColor = new BABYLON.Color3(0.12, 0.12, 0.12)
+    gridMaterial.backFaceCulling = false
+  } else {
+    gridMaterial = new BABYLON.StandardMaterial("gridMatFallback", scene)
+    gridMaterial.diffuseColor = new BABYLON.Color3(0.2, 0.2, 0.2)
+    gridMaterial.specularColor = new BABYLON.Color3(0,0,0)
+    gridMaterial.emissiveColor = new BABYLON.Color3(0.15,0.15,0.15)
+  }
+
+  grid.material = gridMaterial
+  grid.receiveShadows = true
+  grid.checkCollisions = false
+
+  console.log('buildDebugScene: Grid erstellt', {grid})
 
   // Achsen
   const axisX = BABYLON.MeshBuilder.CreateLines("axisX", {
@@ -43,50 +65,6 @@ export function buildDebugScene(scene) {
   }, scene)
 
   axisZ.color = new BABYLON.Color3(0, 0, 1)
-}
-
-export function buildSatelliteGround(scene, lat, lon, zoom = 18) {
-
-  const tileSize = 256
-  const earthRadius = 6378137
-
-  const tileManager = new TileManager(scene, geo, zoom, 2)
-  
-  scene.registerBeforeRender(() => {
-    tileManager.update()
-  })
-
-  function lon2tile(lon, zoom) {
-    return Math.floor((lon + 180) / 360 * Math.pow(2, zoom))
-  }
-
-  function lat2tile(lat, zoom) {
-    return Math.floor(
-      (1 - Math.log(Math.tan(lat * Math.PI/180) + 1 / Math.cos(lat * Math.PI/180)) / Math.PI) / 2
-      * Math.pow(2, zoom)
-    )
-  }
-
-  const x = lon2tile(lon, zoom)
-  const y = lat2tile(lat, zoom)
-
-  const url = `https://tile.openstreetmap.org/${zoom}/${x}/${y}.png`
-  console.log(url)
-
-  const ground = BABYLON.MeshBuilder.CreateGround(
-    "satGround",
-    { width: 200, height: 200 },
-    scene
-  )
-
-  const mat = new BABYLON.StandardMaterial("satMat", scene)
-  mat.diffuseTexture = new BABYLON.Texture(url, scene)
-  mat.diffuseTexture.uScale = 1
-  mat.diffuseTexture.vScale = 1
-
-  ground.material = mat
-
-  return ground
 }
 
 export { Tiles3DManager, TILESET_URLS, createCommonTilesets } from "./Tiles3DManager.js"

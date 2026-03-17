@@ -70,7 +70,7 @@ export class DebugUIManager {
 
       <hr>
 
-      <div>
+      <div id="tiles3DSection">
         <strong>3D Tiles</strong><br>
         <label>
           <input type="checkbox" id="tiles3DToggle">
@@ -87,6 +87,13 @@ export class DebugUIManager {
       </div>`
 
     document.body.appendChild(this.container)
+
+    if (!this.tiles3DManager) {
+      const tiles3DSection = document.getElementById('tiles3DSection')
+      if (tiles3DSection) {
+        tiles3DSection.style.display = 'none'
+      }
+    }
 
     this.attachEvents()
   }

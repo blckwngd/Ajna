@@ -9,22 +9,27 @@ import { Engine, Scene, ArcRotateCamera, Vector3, HemisphericLight, Mesh, MeshBu
 import { GridMaterial } from "@babylonjs/materials"
 
 BABYLON.GridMaterial = GridMaterial
+// Ensure the shader repository path is valid for GridMaterial shader loading in bundled environments.
+// Uses CDN as fallback to avoid local 404 from relative paths.
+BABYLON.Engine.ShadersRepository = "https://cdn.babylonjs.com/shaders/"
 
 import { World } from "./engine/World.js"
 import { GameObject } from "./engine/GameObject.js"
 import { GeoTransformer } from "./core/GeoTransformer.js"
 import { GPSProvider } from "./core/GPSProvider.js"
 import { NetworkSystem } from "./core/NetworkSystem.js"
+import { AjnaManager } from "./core/AjnaManager.js"
 import { CameraComponent } from "./engine/components/CameraComponent.js"
 import { DebugCameraComponent } from "./engine/components/DebugCameraComponent.js"
 import { PlayerGPSComponent } from "./engine/components/PlayerGPSComponent.js"
 import { TransformComponent } from "./engine/components/TransformComponent.js"
 import { NetworkSyncComponent } from "./engine/components/NetworkSyncComponent.js"
-import { buildDebugScene, buildSatelliteGround, Tiles3DManager, Tiles3DUI } from "./engine/debug/DebugSceneBuilder.js"
+import { buildDebugScene } from "./engine/debug/DebugSceneBuilder.js"
 import { DebugUIManager } from "./engine/debug/DebugUIManager.js"
 import { buildEnvironment } from "./engine/environment/EnvironmentBuilder.js"
 
 const pb = new PocketBase("http://localhost:8090")
+const ajnaManager = new AjnaManager("http://localhost:8090")
 const DEBUG_WORLD = true
 window.GUI = GUI
 
@@ -84,41 +89,16 @@ async function init() {
   }
   
   window.addEventListener("resize", () => engine.resize())
-
-
-  // Server Update nur bei Login
-  if (pb.authStore.isValid) {
-    fetch("http://localhost:3000/api/update-position", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${pb.authStore.token}`
-      },
-      body: JSON.stringify(position)
-    })
-  }
   
   buildEnvironment(scene)
-
-  // Initialize 3D Tiles Manager
-  let tiles3DManager = null
-  let tiles3DUI = null
-
-  tiles3DManager = new Tiles3DManager(scene, engine, geo)
-  tiles3DUI = new Tiles3DUI(tiles3DManager, engine, scene, {
-    position: 'bottom-right',
-    compact: !DEBUG_WORLD // Compact mode in standard mode
-  })
-  console.log("3D Tiles Manager initialized")
+  buildDebugScene(scene)
 
   if (DEBUG_WORLD) {
-    buildDebugScene(scene)
     new DebugUIManager({
       geo,
       gps,
       player,
-      objectMap,
-      tiles3DManager
+      objectMap
     })
   }
 
@@ -129,34 +109,18 @@ async function init() {
   engine.runRenderLoop(() => {
     const delta = engine.getDeltaTime() / 1000
     objectMap.forEach(go => go.update(delta))
-    
-    // Update 3D Tiles
-    if (tiles3DManager) {
-      tiles3DManager.update()
-    }
-    
     scene.render()
   })
 
   // GPS UPDATE FLOW
   gps.start()
 
-  const firstPosition = await gps.waitForFirstFix()
-
-  geo.setOrigin(
-    firstPosition.lat,
-    firstPosition.lon,
-    firstPosition.altitude
-  )
+  await waitForOrigin(geo, gps)
   loadObjects(scene, world, geo)
 
   gps.onPosition(position => {
     // Player-Update hier
   })
-
-  if (DEBUG_WORLD) {
-    buildSatelliteGround(scene, geo.origin.lat, geo.origin.lon)
-  }
 }
 
 
@@ -168,7 +132,7 @@ const objectMap = new Map()
 
 async function loadObjects(scene, world, geo) {
 
-  const objects = await pb.collection("objects").getFullList()
+  const objects = await ajnaManager.loadObjects()
 
   // Alle Objekte initial laden
   for (const obj of objects) {
@@ -221,23 +185,22 @@ function handleRealtimeEvent(e) {
   net.applyNetworkState(e.record)
 }
 
-function waitForOrigin(geo) {
-  return new Promise(resolve => {
+async function waitForOrigin(geo, gps) {
+  // GPSProvider bietet waitForFirstFix() selbst an.
+  // Falls bereits fix verfügbar, nutzen wir diese Position.
+  if (!geo.origin) {
+    const firstPosition = gps.getWorldPosition?.() || await gps.waitForFirstFix()
 
-    new GPSProvider(position => {
+    if (firstPosition && !geo.origin) {
+      geo.setOrigin(
+        firstPosition.lat,
+        firstPosition.lon,
+        firstPosition.altitude || 0
+      )
+    }
+  }
 
-      if (!geo.origin) {
-        geo.setOrigin(
-          position.lat,
-          position.lon,
-          position.altitude
-        )
-        resolve()
-      }
-
-    })
-
-  })
+  return geo.origin
 }
 
 init()
