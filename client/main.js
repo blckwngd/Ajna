@@ -5,13 +5,10 @@ import { EventSource } from "eventsource";
 import * as GUI from 'babylonjs-gui'
 //import * as BABYLON from '@babylonjs/core/Legacy/legacy.js'
 
-import { Engine, Scene, ArcRotateCamera, Vector3, HemisphericLight, Mesh, MeshBuilder } from "@babylonjs/core"
+import { Engine, Scene, ArcRotateCamera, Vector3, HemisphericLight, Mesh, MeshBuilder, Shaders } from "@babylonjs/core"
+import "@babylonjs/loaders"
+import { ShowInspector } from "@babylonjs/inspector"
 import { GridMaterial } from "@babylonjs/materials"
-
-BABYLON.GridMaterial = GridMaterial
-// Ensure the shader repository path is valid for GridMaterial shader loading in bundled environments.
-// Uses CDN as fallback to avoid local 404 from relative paths.
-BABYLON.Engine.ShadersRepository = "https://cdn.babylonjs.com/shaders/"
 
 import { World } from "./engine/World.js"
 import { GameObject } from "./engine/GameObject.js"
@@ -32,6 +29,7 @@ const pb = new PocketBase("http://localhost:8090")
 const ajnaManager = new AjnaManager("http://localhost:8090")
 const DEBUG_WORLD = true
 window.GUI = GUI
+window.GridMaterial = GridMaterial
 
 // ==========================================================
 // AUTH
@@ -91,7 +89,6 @@ async function init() {
   window.addEventListener("resize", () => engine.resize())
   
   buildEnvironment(scene)
-  buildDebugScene(scene)
 
   if (DEBUG_WORLD) {
     new DebugUIManager({
@@ -111,12 +108,15 @@ async function init() {
     objectMap.forEach(go => go.update(delta))
     scene.render()
   })
+  
+  ShowInspector(scene);
 
   // GPS UPDATE FLOW
   gps.start()
 
   await waitForOrigin(geo, gps)
   loadObjects(scene, world, geo)
+  buildDebugScene(scene)
 
   gps.onPosition(position => {
     // Player-Update hier

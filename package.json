@@ -14,6 +14,8 @@
   },
   "dependencies": {
     "@babylonjs/core": "^8.54.3",
+    "@babylonjs/inspector": "^8.55.3",
+    "@babylonjs/materials": "^8.55.3",
     "3d-tiles-renderer": "^0.3.46",
     "babylonjs-gui": "^8.54.1",
     "eventsource": "^4.1.0",
@@ -21,7 +23,7 @@
     "pocketbase": "^0.21.5"
   },
   "devDependencies": {
-    "@babylonjs/materials": "^8.54.3",
+    "@babylonjs/materials": "^8.55.3",
     "concurrently": "^8.2.2",
     "nodemon": "^3.1.0",
     "serve": "^14.2.1",

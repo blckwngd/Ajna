@@ -2,29 +2,31 @@ export function buildDebugScene(scene) {
 
   const size = 200
 
-  if (typeof BABYLON.GridMaterial === 'undefined') {
+  if (typeof window.GridMaterial === 'undefined') {
     console.warn('buildDebugScene: GridMaterial nicht verfügbar. Benutze Ersatzmaterial.')
   }
 
-  const grid = BABYLON.MeshBuilder.CreateGround(
+/*  const grid = BABYLON.MeshBuilder.CreateGround(
     "debugGrid",
     { width: size, height: size },
     scene
-  )
+  )*/
+  const grid = BABYLON.Mesh.CreateGround("ground1", size, size, 5, scene);   
 
   grid.position.y = 0
   grid.isPickable = false
 
+
   let gridMaterial
-  if (typeof BABYLON.GridMaterial !== 'undefined') {
-    gridMaterial = new BABYLON.GridMaterial("gridMat", scene)
-    gridMaterial.majorUnitFrequency = 10
-    gridMaterial.minorUnitVisibility = 0.45
-    gridMaterial.gridRatio = 1
-    gridMaterial.opacity = 0.75
-    gridMaterial.lineColor = new BABYLON.Color3(0.7, 0.7, 0.7)
-    gridMaterial.mainColor = new BABYLON.Color3(0.12, 0.12, 0.12)
-    gridMaterial.backFaceCulling = false
+  if (true || typeof window.GridMaterial !== 'undefined') {
+    gridMaterial = new window.GridMaterial("gridMat", scene)
+    gridMaterial.majorUnitFrequency = 5
+    gridMaterial.minorUnitVisibility = 0.3
+    gridMaterial.gridRatio = 2
+    gridMaterial.opacity = 1
+    gridMaterial.lineColor = new BABYLON.Color3(0.7, 0, 0)
+    gridMaterial.mainColor = new BABYLON.Color3(0, 0.7, 0)
+    //gridMaterial.backFaceCulling = false
   } else {
     gridMaterial = new BABYLON.StandardMaterial("gridMatFallback", scene)
     gridMaterial.diffuseColor = new BABYLON.Color3(0.2, 0.2, 0.2)
