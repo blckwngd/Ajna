@@ -63,7 +63,7 @@ async function init() {
 
   // Babylon Setup
   const canvas = document.getElementById("renderCanvas")
-  const engine = new BABYLON.Engine(canvas, true)
+  const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true })
   const scene = new BABYLON.Scene(engine)
   scene.useRightHandedSystem = true
   

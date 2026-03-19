@@ -15,7 +15,6 @@
   "dependencies": {
     "@babylonjs/core": "^8.54.3",
     "@babylonjs/inspector": "^8.55.3",
-    "@babylonjs/materials": "^8.55.3",
     "3d-tiles-renderer": "^0.3.46",
     "babylonjs-gui": "^8.54.1",
     "eventsource": "^4.1.0",
