@@ -1,4 +1,5 @@
 import { AjnaManager } from "./core/AjnaManager.js"
+import "leaflet-gps"
 
 const ajna = new AjnaManager("http://localhost:8090")
 
@@ -131,7 +132,8 @@ async function init() {
     throw new Error('DOM-Element #map nicht gefunden. Bitte stelle sicher, dass index-map.html ein <div id="map"> hat.')
   }
 
-  const map = window.L.map('map').setView([51.1657, 10.4515], 6)
+  const map = window.L.map('map').setView([51.1657, 10.4515], 9)
+  map.addControl( new L.Control.Gps({ autoActive: true, position: "topleft", setView: true }) );
   window.map = map
 
   window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {

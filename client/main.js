@@ -109,7 +109,23 @@ async function init() {
     scene.render()
   })
   
-  ShowInspector(scene);
+  if (ajnaManager.isLoggedIn()) {
+    document.getElementById("email").value = ajnaManager.getCurrentUser().email
+    document.getElementById("email").disabled = true
+    document.getElementById("password").style.display = "none"
+    document.getElementById("loginBtn").style.display = "none"
+    document.getElementById("logoutBtn").style.display = "block"
+    console.log('User is logged in:', pb.authStore.model);
+
+  } else {
+    console.log('User is not logged in');
+    document.getElementById("email").value = ""
+    document.getElementById("email").disabled = false
+    document.getElementById("password").style.display = "block"
+    document.getElementById("loginBtn").style.display = "block"
+    document.getElementById("logoutBtn").style.display = "none"
+    console.log('User is not logged in:', pb.authStore.model);
+  }
 
   // GPS UPDATE FLOW
   gps.start()

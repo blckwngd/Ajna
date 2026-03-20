@@ -7,8 +7,8 @@ export function buildDebugScene(scene) {
   }
 
   const ground = BABYLON.MeshBuilder.CreateGround('ground', { width: 30, height: 30, subdivisions: 30 }, scene)
-  const groundMat = new StandardMaterial('groundMat', scene)
-  groundMat.diffuseColor = new Color3(0.2, 0.3, 0.4)
+  const groundMat = new BABYLON.StandardMaterial('groundMat', scene)
+  groundMat.diffuseColor = new BABYLON.Color3(0.2, 0.3, 0.4)
   groundMat.wireframe = true
   ground.material = groundMat
 
