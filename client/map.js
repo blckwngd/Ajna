@@ -1,5 +1,7 @@
 import { AjnaManager } from "./core/AjnaManager.js"
 import "leaflet-gps"
+import "leaflet/dist/leaflet.css"
+import "leaflet-gps/dist/leaflet-gps.min.css"
 
 const ajna = new AjnaManager("http://localhost:8090")
 
