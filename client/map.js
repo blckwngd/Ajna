@@ -10,6 +10,7 @@ let canCreate = false
 
 function updateAuthUI() {
   const loggedIn = ajna.isLoggedIn()
+  console.log("User logged in:", loggedIn)
   canCreate = loggedIn
 
   const loginBtn = document.getElementById('loginBtn')
@@ -17,19 +18,27 @@ function updateAuthUI() {
   const loginStatus = document.getElementById('loginStatus')
   const newSection = document.getElementById('newObjectSection')
   const editSection = document.getElementById('editorSection')
+  const emailInput = document.getElementById('email')
+  const passwordInput = document.getElementById('password')
 
   if (!loginBtn || !logoutBtn || !loginStatus) return
 
   if (loggedIn) {
     loginBtn.style.display = 'none'
     logoutBtn.style.display = 'block'
-    loginStatus.innerText = `Angemeldet als ${ajna.getCurrentUser()?.email || 'Benutzer'}`
+    emailInput.value = ajna.getCurrentUser().email
+    emailInput.disabled = true
+    passwordInput.style.display = "none"
+    //loginStatus.innerText = `Angemeldet als ${ajna.getCurrentUser()?.email || 'Benutzer'}`
     if (newSection) newSection.style.display = ''
     if (editSection) editSection.style.display = ''
   } else {
     loginBtn.style.display = 'block'
     logoutBtn.style.display = 'none'
-    loginStatus.innerText = 'Nicht angemeldet'
+    emailInput.value = ""
+    emailInput.disabled = false
+    passwordInput.style.display = "block"
+    //loginStatus.innerText = 'Nicht angemeldet'
     if (newSection) newSection.style.display = 'none'
     if (editSection) editSection.style.display = 'none'
   }
@@ -134,8 +143,8 @@ async function init() {
     throw new Error('DOM-Element #map nicht gefunden. Bitte stelle sicher, dass index-map.html ein <div id="map"> hat.')
   }
 
-  const map = window.L.map('map').setView([51.1657, 10.4515], 9)
-  map.addControl( new L.Control.Gps({ autoActive: true, position: "topleft", setView: true }) );
+  const map = window.L.map('map').setView([51.1657, 10.4515], 14)
+  map.addControl( new L.Control.Gps({ autoActive: true, position: "topleft", setView: true, autoCenter: true }) );
   window.map = map
 
   window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -156,8 +165,10 @@ async function init() {
 
   const editor = document.getElementById('editor')
   editor.addEventListener('submit', async (ev) => {
+    console.log("Form submitted")
     ev.preventDefault()
     const id = editor.objectId.value
+    console.log("Editing object with id:", id)
     if (!id) return
 
     const updated = await ajna.updateObject(id, {

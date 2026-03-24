@@ -31,7 +31,7 @@ body{margin:0;height:100vh;display:flex;}
     <input id="password" type="password" placeholder="Passwort" style="width:100%;margin-bottom:4px">
     <button id="loginBtn" style="width:100%;margin-bottom:4px">Login</button>
     <button id="logoutBtn" style="width:100%;margin-bottom:4px;display:none">Logout</button>
-    <div id="loginStatus" style="font-size:0.9rem;color:#333;min-height:1.2em">Nicht angemeldet</div>
+    <!--<div id="loginStatus" style="font-size:0.9rem;color:#333;min-height:1.2em">Nicht angemeldet</div>-->
   </div>
   <h3>Objektliste</h3>
   <button id="refreshBtn">Neu laden</button>
@@ -50,10 +50,10 @@ body{margin:0;height:100vh;display:flex;}
     <h3>Editor</h3>
     <form id="editor">
     <input type="hidden" name="objectId">
-    <label>Name <input name="name"></label>
-    <label>Lat <input name="lat" type="number" step="0.000001"></label>
-    <label>Lon <input name="lon" type="number" step="0.000001"></label>
-    <label>Alt <input name="altitude" type="number" step="0.1" value="0"></label>
+    <label>Name <input name="name"></label><br/>
+    <label>Lat <input name="lat" type="number" step="0.000001"></label><br/>
+    <label>Lon <input name="lon" type="number" step="0.000001"></label><br/>
+    <label>Alt <input name="altitude" type="number" step="0.1" value="0"></label><br/>
     <button type="submit">Speichern</button>
     <button id="deleteBtn" type="button">Löschen</button>
   </form>
