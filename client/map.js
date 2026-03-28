@@ -16,7 +16,6 @@ function updateAuthUI() {
   const loginBtn = document.getElementById('loginBtn')
   const logoutBtn = document.getElementById('logoutBtn')
   const loginStatus = document.getElementById('loginStatus')
-  const newSection = document.getElementById('newObjectSection')
   const editSection = document.getElementById('editorSection')
   const emailInput = document.getElementById('email')
   const passwordInput = document.getElementById('password')
@@ -30,7 +29,6 @@ function updateAuthUI() {
     emailInput.disabled = true
     passwordInput.style.display = "none"
     //loginStatus.innerText = `Angemeldet als ${ajna.getCurrentUser()?.email || 'Benutzer'}`
-    if (newSection) newSection.style.display = ''
     if (editSection) editSection.style.display = ''
   } else {
     loginBtn.style.display = 'block'
@@ -39,7 +37,6 @@ function updateAuthUI() {
     emailInput.disabled = false
     passwordInput.style.display = "block"
     //loginStatus.innerText = 'Nicht angemeldet'
-    if (newSection) newSection.style.display = 'none'
     if (editSection) editSection.style.display = 'none'
   }
 
@@ -75,9 +72,9 @@ function fillEditor(obj){
   const form = document.getElementById("editor")
   form.objectId.value = obj.id
   form.name.value = obj.name || ""
-  form.lat.value = obj.lat || 0
-  form.lon.value = obj.lon || 0
-  form.altitude.value = obj.altitude || 0
+  form.lat.value = obj.lat.toFixed(6) || 0
+  form.lon.value = obj.lon.toFixed(6) || 0
+  form.altitude.value = obj.altitude.toFixed(3) || 0
 }
 
 function updateMarker(obj) {
@@ -152,33 +149,31 @@ async function init() {
     attribution: '&copy; OpenStreetMap contributors'
   }).addTo(map)
 
-  document.getElementById('newObjectBtn').onclick = async () => {
-    const lat = parseFloat(document.getElementById('newLat').value)
-    const lon = parseFloat(document.getElementById('newLon').value)
-    if (Number.isNaN(lat) || Number.isNaN(lon)) {
-      return alert('Bitte gültige Koordinaten eingeben')
-    }
-    const obj = await ajna.createObject({ name: `obj-${Date.now()}`, lat, lon, altitude: 0 })
-    addMarker(obj)
-    await refreshObjects()
-  }
-
   const editor = document.getElementById('editor')
   editor.addEventListener('submit', async (ev) => {
     console.log("Form submitted")
     ev.preventDefault()
     const id = editor.objectId.value
-    console.log("Editing object with id:", id)
-    if (!id) return
-
-    const updated = await ajna.updateObject(id, {
-      name: editor.name.value,
-      lat: parseFloat(editor.lat.value),
-      lon: parseFloat(editor.lon.value),
-      altitude: parseFloat(editor.altitude.value)
-    })
-    fillEditor(updated)
-    updateMarker(updated)
+    const name = editor.name.value || `obj-${Date.now()}`
+    const lat = parseFloat(editor.lat.value)
+    const lon = parseFloat(editor.lon.value)
+    const altitude = parseFloat(editor.altitude.value)
+    let obj = {}
+    if (!id) {
+      console.log("Creating new object ", name)
+      obj = await ajna.createObject({ name: name, lat, lon, altitude })
+      addMarker(obj)
+    } else {
+      console.log("Editing object with id:", id)
+      obj = await ajna.updateObject(id, {
+        name: name,
+        lat: lat,
+        lon: lon,
+        altitude: altitude
+      })
+    }
+    fillEditor(obj)
+    updateMarker(obj)
     await refreshObjects()
   })
 
@@ -246,8 +241,6 @@ async function init() {
     }
 
     const { lat, lng } = event.latlng
-    document.getElementById('newLat').value = lat.toFixed(6)
-    document.getElementById('newLon').value = lng.toFixed(6)
     fillEditor({ id: '', name: '', lat, lon: lng, altitude: 0 })
     document.getElementById('status').innerText = `Koordinaten gesetzt: ${lat.toFixed(6)}, ${lng.toFixed(6)}. Drücke 'Erstellen'`;
   })
