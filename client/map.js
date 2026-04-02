@@ -1,124 +1,22 @@
 import { AjnaManager } from "./core/AjnaManager.js"
+import { EditorUI } from "./core/EditorUI.js"
 import "leaflet-gps"
 import "leaflet/dist/leaflet.css"
 import "leaflet-gps/dist/leaflet-gps.min.css"
 
 const ajna = new AjnaManager("http://localhost:8090")
-
 const markerLayer = new Map()
-let canCreate = false
 
-function updateAuthUI() {
-  const loggedIn = ajna.isLoggedIn()
-  console.log("User logged in:", loggedIn)
-  canCreate = loggedIn
+let editorUI = null
 
-  const loginBtn = document.getElementById('loginBtn')
-  const logoutBtn = document.getElementById('logoutBtn')
-  const loginStatus = document.getElementById('loginStatus')
-  const editSection = document.getElementById('editorSection')
-  const emailInput = document.getElementById('email')
-  const passwordInput = document.getElementById('password')
-
-  if (!loginBtn || !logoutBtn || !loginStatus) return
-
-  if (loggedIn) {
-    loginBtn.style.display = 'none'
-    logoutBtn.style.display = 'block'
-    emailInput.value = ajna.getCurrentUser().email
-    emailInput.disabled = true
-    passwordInput.style.display = "none"
-    //loginStatus.innerText = `Angemeldet als ${ajna.getCurrentUser()?.email || 'Benutzer'}`
-    if (editSection) editSection.style.display = ''
-  } else {
-    loginBtn.style.display = 'block'
-    logoutBtn.style.display = 'none'
-    emailInput.value = ""
-    emailInput.disabled = false
-    passwordInput.style.display = "block"
-    //loginStatus.innerText = 'Nicht angemeldet'
-    if (editSection) editSection.style.display = 'none'
-  }
-
-  // Tablet/Mobile-Editor-Toggle an/aus
-  const editorToggle = document.getElementById('editorToggle')
-  if (editorToggle) {
-    editorToggle.style.display = window.innerWidth <= 850 ? 'block' : 'none'
-    if (!loggedIn) {
-      editorToggle.style.display = 'none'
-    }
-  }
-}
-
-async function renderObjectList(objects) {
-  const listEl = document.getElementById("objectList")
-  listEl.innerHTML = ""
-
-  for (const obj of objects) {
-    const row = document.createElement("div")
-    row.className = "object-row"
-    row.innerHTML = `<strong>${obj.name || "unnamed"}</strong> <small>(${obj.lat.toFixed(5)}, ${obj.lon.toFixed(5)})</small>`
-    row.onclick = () => {
-      const marker = markerLayer.get(obj.id)
-      if (marker) marker.openPopup()
-      window.map.setView([obj.lat, obj.lon], 16)
-      fillEditor(obj)
-    }
-    listEl.appendChild(row)
-  }
-}
-
-function fillEditor(obj){
-  const form = document.getElementById("editor")
-  form.objectId.value = obj.id
-  form.name.value = obj.name || ""
-  form.lat.value = obj.lat.toFixed(6) || 0
-  form.lon.value = obj.lon.toFixed(6) || 0
-  form.altitude.value = obj.altitude.toFixed(3) || 0
-}
-
-function updateMarker(obj) {
-  const marker = markerLayer.get(obj.id)
-  if (marker) {
-    marker.setLatLng([obj.lat, obj.lon])
-    marker.bindPopup(`<strong>${obj.name || 'unnamed'}</strong><br>${obj.lat.toFixed(5)}, ${obj.lon.toFixed(5)}`)
-  }
-}
-
-function addMarker(obj) {
-  if (!window.L) return
-  if (markerLayer.has(obj.id)) return
-
-  const marker = window.L.marker([obj.lat, obj.lon], { draggable: true }).addTo(window.map)
-  marker.bindPopup(`<strong>${obj.name || 'unnamed'}</strong><br>id: ${obj.id}`)
-
-  marker.on('dragend', async (event) => {
-    const { lat, lng } = event.target.getLatLng()
-    const updated = await ajna.updateObject(obj.id, { lat, lon: lng })
-    marker.setLatLng([lat, lng])
-    marker.bindPopup(`<strong>${updated.name || 'unnamed'}</strong><br>${lat.toFixed(5)}, ${lng.toFixed(5)}`)
-    await refreshObjects()
-  })
-
-  marker.on('click', () => fillEditor(obj))
-  markerLayer.set(obj.id, marker)
-}
-
-function removeMarker(id) {
-  const marker = markerLayer.get(id)
-  if (marker) {
-    window.map.removeLayer(marker)
-    markerLayer.delete(id)
-  }
-}
-
-async function refreshObjects() {
-  const objects = ajna.getObjectList()
-  await renderObjectList(objects)
+function mapUpdateMarkers(objects) {
+  if (!window.map) return
 
   for (const obj of objects) {
     if (markerLayer.has(obj.id)) {
-      updateMarker(obj)
+      const marker = markerLayer.get(obj.id)
+      marker.setLatLng([obj.lat, obj.lon])
+      marker.bindPopup(`<strong>${obj.name || 'unnamed'}</strong><br>${obj.lat.toFixed(5)}, ${obj.lon.toFixed(5)}`)
     } else {
       addMarker(obj)
     }
@@ -131,17 +29,55 @@ async function refreshObjects() {
   }
 }
 
+function addMarker(obj) {
+  if (!window.L || markerLayer.has(obj.id)) return
+
+  const icon = window.L.divIcon({
+    className: 'map-marker',
+    iconSize: [28, 28],
+    html: `❌ ${obj.name}`
+  })
+
+  const marker = window.L.marker([obj.lat, obj.lon], { icon, draggable: true }).addTo(window.map)
+  marker.bindPopup(`<strong>${obj.name || 'unnamed'}</strong><br>id: ${obj.id}`)
+
+  marker.on('dragend', async event => {
+    const { lat, lng } = event.target.getLatLng()
+    const updated = await ajna.updateObject(obj.id, { lat, lon: lng })
+    marker.setLatLng([lat, lng])
+    marker.bindPopup(`<strong>${updated.name || 'unnamed'}</strong><br>${lat.toFixed(5)}, ${lng.toFixed(5)}`)
+    await ajna.loadObjects()
+    mapUpdateMarkers(ajna.getObjectList())
+  })
+
+  marker.on('click', () => {
+    if (editorUI && typeof editorUI.fillEditor === 'function') {
+      editorUI.fillEditor(obj)
+    }
+  })
+
+  markerLayer.set(obj.id, marker)
+}
+
+function removeMarker(id) {
+  const marker = markerLayer.get(id)
+  if (marker) {
+    window.map.removeLayer(marker)
+    markerLayer.delete(id)
+  }
+}
+
 async function init() {
   if (!window.L) {
-    throw new Error('Leaflet ist nicht geladen: Bitte überprüfe, ob leaflet.js vor map.bundle.js eingebunden ist (index-map.html).')
+    throw new Error('Leaflet ist nicht geladen')
   }
 
   if (!document.getElementById('map')) {
-    throw new Error('DOM-Element #map nicht gefunden. Bitte stelle sicher, dass index-map.html ein <div id="map"> hat.')
+    throw new Error('DOM-Element #map nicht gefunden')
   }
 
   const map = window.L.map('map').setView([51.1657, 10.4515], 14)
-  map.addControl( new L.Control.Gps({ autoActive: true, position: "topleft", setView: true, autoCenter: true }) );
+  map.addControl(new L.Control.Gps({ autoActive: true, position: 'topleft', setView: true, autoCenter: true }))
   window.map = map
 
   window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -149,101 +85,21 @@ async function init() {
     attribution: '&copy; OpenStreetMap contributors'
   }).addTo(map)
 
-  const editor = document.getElementById('editor')
-  editor.addEventListener('submit', async (ev) => {
-    console.log("Form submitted")
-    ev.preventDefault()
-    const id = editor.objectId.value
-    const name = editor.name.value || `obj-${Date.now()}`
-    const lat = parseFloat(editor.lat.value)
-    const lon = parseFloat(editor.lon.value)
-    const altitude = parseFloat(editor.altitude.value)
-    let obj = {}
-    if (!id) {
-      console.log("Creating new object ", name)
-      obj = await ajna.createObject({ name: name, lat, lon, altitude })
-      addMarker(obj)
-    } else {
-      console.log("Editing object with id:", id)
-      obj = await ajna.updateObject(id, {
-        name: name,
-        lat: lat,
-        lon: lon,
-        altitude: altitude
-      })
-    }
-    fillEditor(obj)
-    updateMarker(obj)
-    await refreshObjects()
+  const editorSection = document.getElementById('editorSection')
+  editorUI = new EditorUI({
+    ajna,
+    container: editorSection,
+    mode: 'map',
+    onObjectSelected: obj => map.setView([obj.lat, obj.lon], 16),
+    onObjectsUpdated: objects => mapUpdateMarkers(objects)
   })
 
-  document.getElementById('deleteBtn').onclick = async () => {
-    const id = editor.objectId.value
-    if (!id) return
-    await ajna.deleteObject(id)
-    removeMarker(id)
-    editor.reset()
-    await refreshObjects()
-  }
+  await editorUI.init()
+  mapUpdateMarkers(ajna.getObjectList())
 
-  document.getElementById('refreshBtn').onclick = async () => {
-    await ajna.loadObjects()
-    await refreshObjects()
-    document.getElementById('status').innerText = 'Objekte geladen'
-  }
-
-  ajna.onObjectsChanged(async () => {
-    await refreshObjects()
-  })
-
-  document.getElementById('loginBtn').onclick = async () => {
-    const email = document.getElementById('email').value
-    const password = document.getElementById('password').value
-    try {
-      await ajna.login(email, password)
-      updateAuthUI()
-      document.getElementById('status').innerText = 'Login erfolgreich'
-      await ajna.loadObjects()
-      await refreshObjects()
-    } catch (error) {
-      document.getElementById('loginStatus').innerText = 'Login fehlgeschlagen'
-      console.error('Login error', error)
-    }
-  }
-
-  document.getElementById('logoutBtn').onclick = async () => {
-    ajna.logout()
-    updateAuthUI()
-    document.getElementById('status').innerText = 'Abgemeldet'
-    await ajna.loadObjects()
-    await refreshObjects()
-  }
-
-  const editorToggle = document.getElementById('editorToggle')
-  if (editorToggle) {
-    editorToggle.onclick = () => {
-      const es = document.getElementById('editorSection')
-      if (!es) return
-      const isVisible = es.classList.toggle('visible')
-      editorToggle.innerText = isVisible ? 'Editor ausblenden' : 'Editor anzeigen'
-    }
-  }
-
-  await ajna.loadObjects()
-  await refreshObjects()
-
-  updateAuthUI()
-
-  map.on('click', (event) => {
-    if (!canCreate) {
-      document.getElementById('status').innerText = 'Klicken nicht erlaubt: fehlende Berechtigung.'
-      return
-    }
-
-    const { lat, lng } = event.latlng
-    fillEditor({ id: '', name: '', lat, lon: lng, altitude: 0 })
-    document.getElementById('status').innerText = `Koordinaten gesetzt: ${lat.toFixed(6)}, ${lng.toFixed(6)}. Drücke 'Erstellen'`;
+  ajna.onObjectsChanged(objects => {
+    mapUpdateMarkers(objects)
   })
 }
 
-init().catch(err => console.error(err))
+window.addEventListener('DOMContentLoaded', init)

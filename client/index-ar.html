@@ -5,19 +5,13 @@
 <title>Ajna AR Client</title>
 <style>
 body { margin:0; overflow:hidden; width: 100%; height: 100%; }
-#ui { position:absolute; top:10px; left:10px; background:rgba(0,0,0,0.6); color:white; padding:10px; z-index:10; }
+#ui { position:absolute; top:10px; left:10px; width:300px;background:rgba(0,0,0,0.6); color:white; padding:10px; z-index:10; }
 canvas { width: 100%; height: 100%; }
 input { display:block; margin:4px 0; }
 </style>
 </head>
 <body>
-<div id="ui">
-  <input id="email" placeholder="email">
-  <input id="password" type="password" placeholder="password">
-  <button id="loginBtn">Login</button>
-  <button id="logoutBtn">Logout</button>
-  <div style="margin-top:.5rem;"><a href="index-map.html" style="color:#aaf;">Zur 2D-Karte wechseln</a></div>
-</div>
+<div id="ui"></div>
 <canvas id="renderCanvas"></canvas>
 <script src="dist/ar.bundle.js"></script>
 </body>

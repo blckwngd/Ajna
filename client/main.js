@@ -16,6 +16,7 @@ import { GeoTransformer } from "./core/GeoTransformer.js"
 import { GPSProvider } from "./core/GPSProvider.js"
 import { NetworkSystem } from "./core/NetworkSystem.js"
 import { AjnaManager } from "./core/AjnaManager.js"
+import { EditorUI } from "./core/EditorUI.js"
 import { CameraComponent } from "./engine/components/CameraComponent.js"
 import { DebugCameraComponent } from "./engine/components/DebugCameraComponent.js"
 import { PlayerGPSComponent } from "./engine/components/PlayerGPSComponent.js"
@@ -25,35 +26,17 @@ import { buildDebugScene } from "./engine/debug/DebugSceneBuilder.js"
 import { DebugUIManager } from "./engine/debug/DebugUIManager.js"
 import { buildEnvironment } from "./engine/environment/EnvironmentBuilder.js"
 
-const pb = new PocketBase("http://localhost:8090")
 const ajnaManager = new AjnaManager("http://localhost:8090")
+const pb = ajnaManager.pb
 const DEBUG_WORLD = true
 window.GUI = GUI
 window.GridMaterial = GridMaterial
 
 // ==========================================================
-// AUTH
+// SHARED EDITOR UI
 // ==========================================================
 
-const status = document.getElementById("status")
-
-document.getElementById("loginBtn").onclick = async () => {
-  try {
-    await pb.collection("users").authWithPassword(
-      email.value,
-      password.value
-    )
-    status.innerText = "Logged in"
-  } catch {
-    status.innerText = "Login failed"
-  }
-}
-
-document.getElementById("logoutBtn").onclick = () => {
-  pb.authStore.clear()
-  status.innerText = "Logged out"
-}
-
+let editorUI = null
 
 // ==========================================================
 // PHASE 1: INITIALIZATION
@@ -109,23 +92,22 @@ async function init() {
     scene.render()
   })
   
-  if (ajnaManager.isLoggedIn()) {
-    document.getElementById("email").value = ajnaManager.getCurrentUser().email
-    document.getElementById("email").disabled = true
-    document.getElementById("password").style.display = "none"
-    document.getElementById("loginBtn").style.display = "none"
-    document.getElementById("logoutBtn").style.display = "block"
-    console.log('User is logged in:', pb.authStore.model);
+  // Shared Editor UI im AR-Modus
+  const uiContainer = document.getElementById('ui')
+  editorUI = new EditorUI({
+    ajna: ajnaManager,
+    container: uiContainer,
+    mode: 'ar',
+    onObjectsUpdated: async objects => {
+      // AR-spezifisch: neu laden und ggf. in Szene spiegeln
+      // (hier wird das Objekt-Set synchron gehalten)
+      if (objects.length > 0) {
+        await loadObjects(scene, world, geo)
+      }
+    }
+  })
 
-  } else {
-    console.log('User is not logged in');
-    document.getElementById("email").value = ""
-    document.getElementById("email").disabled = false
-    document.getElementById("password").style.display = "block"
-    document.getElementById("loginBtn").style.display = "block"
-    document.getElementById("logoutBtn").style.display = "none"
-    console.log('User is not logged in:', pb.authStore.model);
-  }
+  await editorUI.init()
 
   // GPS UPDATE FLOW
   gps.start()
