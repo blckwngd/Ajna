@@ -3,11 +3,14 @@ import PocketBase from "pocketbase"
 
 const app = express()
 app.use(express.json())
-app.use(express.static("client/dist"));
+
+app.use(express.static("client"))
+app.use("/dist", express.static("client/dist"))
+/*
 app.get("/", (req, res) => {
   res.sendFile(path.resolve(__dirname, "client/index.html"));
 });
-
+*/
 const pb = new PocketBase("http://127.0.0.1:8090")
 
 // Optional: User Token weiterreichen

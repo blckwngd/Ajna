@@ -8,7 +8,7 @@
     "start": "node server/index.js",
     "serve-client": "npx serve client",
     "start:all": "concurrently \"npm run start\" \"npm run serve-client\"",
-    "start:dev": "concurrently \"npm run start\" \"http-server -p 443 -S -C cert.pem -o client/index-map.html\"",
+    "start:dev": "concurrently \"npm run start\" \"http-server client -p 443 -S -C cert.pem -o index-map.html\"",
     "build": "webpack",
     "dev": "webpack --watch"
   },
