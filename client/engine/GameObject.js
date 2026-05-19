@@ -156,6 +156,11 @@ export class GameObject {
 
   update(delta) {
 
+    // Components zuerst und unabhängig vom Network-Sync-Pfad aktualisieren —
+    // sonst bekommen Objekte ohne NetworkSyncComponent (z. B. der Player)
+    // nie ein update() ihrer Components.
+    this.components.forEach(c => c.update(delta))
+
     const net = this.getComponent(NetworkSyncComponent)
     const transform = this.getComponent(TransformComponent)
 
@@ -185,8 +190,6 @@ export class GameObject {
       predictedRotation,
       0.1
     )
-    
-    this.components.forEach(c => c.update(deltaTime))
   }
 
   dispose() {

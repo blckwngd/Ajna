@@ -3,12 +3,19 @@ import PocketBase  from 'pocketbase'
 import { EventSource } from "eventsource";
 
 import * as GUI from 'babylonjs-gui'
-//import * as BABYLON from '@babylonjs/core/Legacy/legacy.js'
 
-import { Engine, Scene, ArcRotateCamera, Vector3, HemisphericLight, Mesh, MeshBuilder, Shaders } from "@babylonjs/core"
+import * as BABYLON from "@babylonjs/core"
 import "@babylonjs/loaders"
 import { ShowInspector } from "@babylonjs/inspector"
 import { GridMaterial } from "@babylonjs/materials"
+
+// BABYLON als globalen Namespace exponieren.
+// Hintergrund: der Client greift in Components, GameObject, GeoTransformer
+// usw. weiterhin per `BABYLON.X` zu. Bis das schrittweise auf named imports
+// umgestellt ist, machen wir den Namespace hier einmal explizit global.
+// Muss VOR `init()` passieren — die Komponenten-Klassen referenzieren
+// BABYLON erst in ihren Methoden, also reicht das Setzen im Modul-Body.
+window.BABYLON = BABYLON
 
 import { World } from "./engine/World.js"
 import { GameObject } from "./engine/GameObject.js"
@@ -92,19 +99,16 @@ async function init() {
     scene.render()
   })
   
-  // Shared Editor UI im AR-Modus
+  // Shared Editor UI im AR-Modus.
+  // Kein onObjectsUpdated-Callback — die Szene wird über einen eigenen
+  // ajnaManager-Listener weiter unten gepflegt, damit hier keine
+  // Re-Entry-Schleife über EditorUI -> loadObjects -> emitObjectsChanged
+  // entsteht.
   const uiContainer = document.getElementById('ui')
   editorUI = new EditorUI({
     ajna: ajnaManager,
     container: uiContainer,
-    mode: 'ar',
-    onObjectsUpdated: async objects => {
-      // AR-spezifisch: neu laden und ggf. in Szene spiegeln
-      // (hier wird das Objekt-Set synchron gehalten)
-      if (objects.length > 0) {
-        await loadObjects(scene, world, geo)
-      }
-    }
+    mode: 'ar'
   })
 
   await editorUI.init()
@@ -113,7 +117,14 @@ async function init() {
   gps.start()
 
   await waitForOrigin(geo, gps)
-  loadObjects(scene, world, geo)
+
+  // Szene-Reconcile erst aktivieren, wenn Origin steht — sonst würden
+  // alle GameObjects auf (0,0,0) landen.
+  ajnaManager.onObjectsChanged(objects => {
+    syncSceneObjects(scene, world, geo, objects)
+  })
+  syncSceneObjects(scene, world, geo, ajnaManager.getObjectList())
+
   buildDebugScene(scene)
 
   gps.onPosition(position => {
@@ -128,16 +139,31 @@ async function init() {
 
 const objectMap = new Map()
 
-async function loadObjects(scene, world, geo) {
+// Reconcile-Schritt: bringt die Szene mit einer Objekt-Liste vom AjnaManager
+// in Übereinstimmung, ohne selbst eine Backend-Abfrage auszulösen. Wird vom
+// onObjectsChanged-Listener gefeuert; ein erneuter Backend-Roundtrip würde
+// emitObjectsChanged und damit diesen Handler wieder triggern — Schleife.
+async function syncSceneObjects(scene, world, geo, objects) {
 
-  const objects = await ajnaManager.loadObjects()
+  if (!geo.origin) return
 
-  // Alle Objekte initial laden
+  const incomingIds = new Set(objects.map(o => o.id))
+
+  // Entfernen, was nicht mehr Teil der Welt ist
+  for (const [id, go] of objectMap) {
+    if (!incomingIds.has(id)) {
+      go.dispose()
+      objectMap.delete(id)
+    }
+  }
+
+  // Neue Objekte anlegen (Updates an bestehenden Objekten kommen über
+  // den Realtime-Pfad / NetworkSyncComponent, nicht hier)
   for (const obj of objects) {
+    if (objectMap.has(obj.id)) continue
     const go = await GameObject.createFromPBData(scene, obj, geo, true)
     objectMap.set(obj.id, go)
   }
-
 }
 
 async function setupPlayer(scene, world, geo, canvas) {
@@ -177,7 +203,7 @@ function handleRealtimeEvent(e) {
 
   if (!go) return
 
-  const net = go.getComponent("NetworkSyncComponent")
+  const net = go.getComponent(NetworkSyncComponent)
   if (!net) return
 
   net.applyNetworkState(e.record)

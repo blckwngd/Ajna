@@ -1,4 +1,4 @@
-import { mapPocketBaseRecord } from "../engine/components/NetworkSyncComponent.js"
+import { NetworkSyncComponent, mapPocketBaseRecord } from "../engine/components/NetworkSyncComponent.js"
 
 export class NetworkSystem {
 
@@ -23,7 +23,7 @@ export class NetworkSystem {
     const go = this.objectMap.get(e.record.id)
     if (!go) return
 
-    const net = go.getComponent("NetworkSyncComponent")
+    const net = go.getComponent(NetworkSyncComponent)
     if (!net) return
 
     const state = mapPocketBaseRecord(e.record, this.geo)
