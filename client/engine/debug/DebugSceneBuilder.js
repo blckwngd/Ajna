@@ -1,44 +1,78 @@
+import { GridMaterial } from "@babylonjs/materials"
+
 export function buildDebugScene(scene) {
 
-  const size = 200
+  // Großer Boden mit GridMaterial — wirkt "unendlich". Das Raster wird
+  // shader-seitig gezeichnet, daher reicht eine flache Plane mit
+  // subdivisions=1; Performance unabhängig von der Kantenlänge.
+  // 5000 × 5000 m passen unter die Default-Far-Plane (10000) und sind
+  // weit über dem, was der Anwender je sehen kann.
+  const size = 5000
 
-  if (typeof window.GridMaterial === 'undefined') {
-    console.warn('buildDebugScene: GridMaterial nicht verfügbar. Benutze Ersatzmaterial.')
-  }
+  const ground = BABYLON.MeshBuilder.CreateGround(
+    "debugGround",
+    { width: size, height: size, subdivisions: 1 },
+    scene
+  )
+  ground.isPickable = false
 
-  const ground = BABYLON.MeshBuilder.CreateGround('ground', { width: 30, height: 30, subdivisions: 30 }, scene)
-  const groundMat = new BABYLON.StandardMaterial('groundMat', scene)
-  groundMat.diffuseColor = new BABYLON.Color3(0.2, 0.3, 0.4)
-  groundMat.wireframe = true
-  ground.material = groundMat
+  // GeoTransformer.toLocal liefert lokale Koordinaten in Metern,
+  // d. h. 1 Babylon-Unit = 1 m. Damit ergibt:
+  //   gridRatio = 1            → feines 1-m-Sub-Raster
+  //   majorUnitFrequency = 10  → kräftige Linie alle 10 sub-units = 10 m
+  const gridMat = new GridMaterial("debugGridMat", scene)
+  gridMat.gridRatio = 1
+  gridMat.majorUnitFrequency = 10
+  gridMat.minorUnitVisibility = 0.3
+  gridMat.mainColor = new BABYLON.Color3(0.04, 0.05, 0.08)
+  gridMat.lineColor = new BABYLON.Color3(0.5, 0.7, 1.0)
+  gridMat.opacity = 0.98
+  gridMat.backFaceCulling = false
 
-  // Achsen
+  ground.material = gridMat
+
+  // Boden zieht der aktiven Kamera in X/Z hinterher — sonst läuft die
+  // Plane (zentriert am Welt-Origin) bei größeren Sprüngen aus dem
+  // Sichtfeld. Y bleibt fix, damit der Boden seine Höhe behält.
+  //
+  // GridMaterial zeichnet die Linien aus der LOKALEN Vertex-Position
+  // (vPosition im Shader). Würden wir nur das Mesh verschieben, wandert
+  // das gesamte Linien-Pattern visuell mit — Cam-Bewegung wirkt dann
+  // wie eingefroren. Indem wir die Mesh-Verschiebung gleichzeitig in
+  // gridOffset eintragen, hebt sich der Effekt auf: gridPos im Shader
+  // ist (vPosition + gridOffset) und entspricht damit wieder der
+  // Welt-Position des Vertex → Linien sitzen wieder fest in der Welt.
+  scene.onBeforeRenderObservable.add(() => {
+    const cam = scene.activeCamera
+    if (!cam) return
+    const pos = cam.globalPosition
+    ground.position.x = pos.x
+    ground.position.z = pos.z
+    gridMat.gridOffset.x = pos.x
+    gridMat.gridOffset.z = pos.z
+  })
+
+  // Achsen — verlängert auf 100 m, damit sie auf dem großen Ground
+  // sichtbar bleiben, aber das 10-m-Raster nicht überstrahlen.
+  const axisLength = 100
+
   const axisX = BABYLON.MeshBuilder.CreateLines("axisX", {
-    points: [
-      new BABYLON.Vector3(0, 0, 0),
-      new BABYLON.Vector3(10, 0, 0)
-    ]
+    points: [BABYLON.Vector3.Zero(), new BABYLON.Vector3(axisLength, 0, 0)]
   }, scene)
-
   axisX.color = new BABYLON.Color3(1, 0, 0)
+  axisX.isPickable = false
 
   const axisY = BABYLON.MeshBuilder.CreateLines("axisY", {
-    points: [
-      new BABYLON.Vector3(0, 0, 0),
-      new BABYLON.Vector3(0, 10, 0)
-    ]
+    points: [BABYLON.Vector3.Zero(), new BABYLON.Vector3(0, axisLength, 0)]
   }, scene)
-
   axisY.color = new BABYLON.Color3(0, 1, 0)
+  axisY.isPickable = false
 
   const axisZ = BABYLON.MeshBuilder.CreateLines("axisZ", {
-    points: [
-      new BABYLON.Vector3(0, 0, 0),
-      new BABYLON.Vector3(0, 0, 10)
-    ]
+    points: [BABYLON.Vector3.Zero(), new BABYLON.Vector3(0, 0, axisLength)]
   }, scene)
-
   axisZ.color = new BABYLON.Color3(0, 0, 1)
+  axisZ.isPickable = false
 }
 
 export { Tiles3DManager, TILESET_URLS, createCommonTilesets } from "./Tiles3DManager.js"

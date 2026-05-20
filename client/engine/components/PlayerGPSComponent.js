@@ -2,39 +2,39 @@ import { BaseComponent } from "../BaseComponent.js"
 
 export class PlayerGPSComponent extends BaseComponent {
 
-  constructor(geo) {
+  constructor(gps, geo) {
     super()
+    this.gps = gps
     this.geo = geo
-    this.watchId = null
+    this.unsubscribe = null
   }
 
   init(gameObject) {
     super.init(gameObject)
 
-    if ("geolocation" in navigator) {
-      this.watchId = navigator.geolocation.watchPosition(pos => {
+    this.unsubscribe = this.gps.onPosition(pos => this._applyPosition(pos))
 
-        const { latitude, longitude, altitude } = pos.coords
+    // Falls schon ein Fix vorliegt (z. B. persistierter Dummy beim Boot),
+    // ohne auf das nächste Event zu warten initial setzen.
+    const initial = this.gps.getWorldPosition()
+    if (initial) this._applyPosition(initial)
+  }
 
-        const local = this.geo.toLocal(
-          latitude,
-          longitude,
-          altitude ?? 0
-        )
+  _applyPosition(pos) {
+    // Solange kein Welt-Origin gesetzt ist, bringt toLocal nichts —
+    // der nächste Event nach Origin-Setup setzt den Player korrekt.
+    if (!this.geo.origin) return
 
-        this.gameObject.root.position.copyFrom(local)
+    const local = this.geo.toLocal(
+      pos.lat,
+      pos.lon,
+      pos.altitude ?? 0
+    )
 
-      }, err => {
-        console.warn("GPS error:", err)
-      }, {
-        enableHighAccuracy: true
-      })
-    }
+    this.gameObject.root.position.copyFrom(local)
   }
 
   dispose() {
-    if (this.watchId) {
-      navigator.geolocation.clearWatch(this.watchId)
-    }
+    if (this.unsubscribe) this.unsubscribe()
   }
 }

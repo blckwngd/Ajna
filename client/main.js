@@ -64,7 +64,12 @@ async function init() {
   const networkSystem = new NetworkSystem(pb, geo, objectMap)
   networkSystem.start()
 
-  const player = await setupPlayer(scene, world, geo, canvas)
+  const player = await setupPlayer(scene, world, geo, gps, canvas)
+
+  // GPS-Stream starten, sobald der Player als Subscriber registriert ist.
+  // Bei persistiertem Dummy broadcastet start() die Dummy-Position sofort
+  // — waitForOrigin weiter unten resolvt damit ohne Wartezeit.
+  gps.start()
 
   if (DEBUG_WORLD) { 
     window.engine= engine
@@ -80,12 +85,20 @@ async function init() {
   
   buildEnvironment(scene)
 
+  // Hover-System: Mesh-Tooltip beim Pointer-Move, Highlight + Off-Screen-
+  // Linie wenn aus den Listen heraus angefragt. Setzt DOM-Overlays an,
+  // also nach Babylon-Setup und vor den UI-Managern (die den highlight-
+  // Callback brauchen).
+  const setHighlight = setupHoverSystem(scene, engine, canvas)
+
   if (DEBUG_WORLD) {
     new DebugUIManager({
+      scene,
       geo,
       gps,
       player,
-      objectMap
+      objectMap,
+      onObjectHover: setHighlight
     })
   }
 
@@ -108,15 +121,28 @@ async function init() {
   editorUI = new EditorUI({
     ajna: ajnaManager,
     container: uiContainer,
-    mode: 'ar'
+    mode: 'ar',
+    onFocusPlayer: () => focusCameraOn(scene, player),
+    onObjectSelected: obj => {
+      // PB-Record → zugehöriges GameObject. Wenn die Szene das Objekt
+      // noch nicht angelegt hat (z. B. vor abgeschlossenem syncSceneObjects),
+      // ist focusCameraOn no-op — kein Crash, keine Fehlermeldung.
+      const go = objectMap.get(obj.id)
+      if (go) focusCameraOn(scene, go)
+    },
+    onObjectHover: (obj, hovering) => {
+      const go = objectMap.get(obj.id)
+      if (go) setHighlight(go, hovering)
+    }
   })
 
-  await editorUI.init()
-
-  // GPS UPDATE FLOW
-  gps.start()
-
-  await waitForOrigin(geo, gps)
+  // EditorUI-Backend-Load und GPS-Fix parallelisieren — bei realem GPS
+  // spart das mehrere Sekunden, weil PocketBase-Load und Geolocation-
+  // Wartezeit nicht hintereinander, sondern nebeneinander laufen.
+  await Promise.all([
+    editorUI.init(),
+    waitForOrigin(geo, gps)
+  ])
 
   // Szene-Reconcile erst aktivieren, wenn Origin steht — sonst würden
   // alle GameObjects auf (0,0,0) landen.
@@ -126,10 +152,6 @@ async function init() {
   syncSceneObjects(scene, world, geo, ajnaManager.getObjectList())
 
   buildDebugScene(scene)
-
-  gps.onPosition(position => {
-    // Player-Update hier
-  })
 }
 
 
@@ -166,7 +188,192 @@ async function syncSceneObjects(scene, world, geo, objects) {
   }
 }
 
-async function setupPlayer(scene, world, geo, canvas) {
+// Baut das Hover-/Highlight-System für den AR-Modus auf:
+//   - DOM-Tooltip am Mauszeiger, sobald die Maus über einem GameObject-Mesh hängt
+//   - HighlightLayer-Outline für das Objekt, das gerade aus einer Liste
+//     gehovert wird (EditorUI oder DebugUI rufen den zurückgegebenen
+//     Callback)
+//   - Gestrichelte SVG-Linie von der Bildschirmmitte zum (geclippten) Rand
+//     in Richtung des hervorgehobenen Objekts, wenn dieses außerhalb des
+//     Sichtfelds liegt
+//
+// Rückgabe: setHighlight(gameObject, hovering: boolean) — wird an
+// EditorUI/DebugUI als onObjectHover durchgereicht.
+function setupHoverSystem(scene, engine, canvas) {
+
+  // ---- DOM-Tooltip für Pointer-Hover über Meshes ----
+  const tooltip = document.createElement('div')
+  Object.assign(tooltip.style, {
+    position: 'absolute',
+    background: 'rgba(18,18,22,0.95)',
+    color: '#eaeaea',
+    border: '1px solid #3a3a44',
+    borderRadius: '4px',
+    padding: '4px 8px',
+    font: '12px ui-monospace, Menlo, Consolas, monospace',
+    pointerEvents: 'none',
+    whiteSpace: 'nowrap',
+    zIndex: '30',
+    display: 'none'
+  })
+  document.body.appendChild(tooltip)
+
+  // ---- SVG-Overlay mit Richtungs-Linie ----
+  const SVG_NS = 'http://www.w3.org/2000/svg'
+  const svg = document.createElementNS(SVG_NS, 'svg')
+  Object.assign(svg.style, {
+    position: 'absolute', top: '0', left: '0',
+    width: '100%', height: '100%',
+    pointerEvents: 'none', zIndex: '25', display: 'none'
+  })
+  const line = document.createElementNS(SVG_NS, 'line')
+  line.setAttribute('stroke', '#f1c40f')
+  line.setAttribute('stroke-width', '2')
+  line.setAttribute('stroke-dasharray', '6 6')
+  svg.appendChild(line)
+  document.body.appendChild(svg)
+
+  // ---- HighlightLayer für Listen-Hover ----
+  const highlightLayer = new BABYLON.HighlightLayer('hover-hl', scene)
+  highlightLayer.innerGlow = false
+  highlightLayer.outerGlow = true
+  const highlightColor = new BABYLON.Color3(1, 0.78, 0.1)
+
+  let highlightedGO = null
+
+  function applyHighlight(go, on) {
+    if (!go?.meshes) return
+    for (const mesh of go.meshes) {
+      // HighlightLayer braucht echte Meshes mit Geometrie
+      if (!(mesh instanceof BABYLON.Mesh)) continue
+      if (on) highlightLayer.addMesh(mesh, highlightColor)
+      else highlightLayer.removeMesh(mesh)
+    }
+  }
+
+  function setHighlight(go, hovering) {
+    // Vorigen Highlight ggf. abräumen (auch wenn ein anderes Objekt kommt)
+    if (highlightedGO && (!hovering || highlightedGO !== go)) {
+      applyHighlight(highlightedGO, false)
+      highlightedGO = null
+    }
+    if (hovering && go) {
+      applyHighlight(go, true)
+      highlightedGO = go
+    }
+  }
+
+  // ---- Off-Screen-Indicator: pro Frame Richtung aktualisieren ----
+  const PAD = 30
+
+  scene.onBeforeRenderObservable.add(() => {
+    if (!highlightedGO?.root) {
+      svg.style.display = 'none'
+      return
+    }
+    const cam = scene.activeCamera
+    if (!cam) return
+
+    const w = engine.getRenderWidth()
+    const h = engine.getRenderHeight()
+    const cx = w / 2
+    const cy = h / 2
+
+    const worldPos = highlightedGO.root.absolutePosition
+    const forward = cam.getForwardRay().direction
+    const camToObj = worldPos.subtract(cam.globalPosition)
+    const dot = BABYLON.Vector3.Dot(forward, camToObj)
+
+    const projected = BABYLON.Vector3.Project(
+      worldPos,
+      BABYLON.Matrix.IdentityReadOnly,
+      scene.getTransformMatrix(),
+      new BABYLON.Viewport(0, 0, w, h)
+    )
+
+    let projX = projected.x
+    let projY = projected.y
+
+    // Hinter der Kamera: Vector3.Project liefert irreführende Koord.
+    // Richtung manuell durch Spiegelung um das Bildschirmzentrum.
+    if (dot <= 0) {
+      projX = cx - (projected.x - cx)
+      projY = cy - (projected.y - cy)
+    }
+
+    const onScreen = dot > 0
+      && projX >= 0 && projX <= w
+      && projY >= 0 && projY <= h
+
+    if (onScreen) {
+      svg.style.display = 'none'
+      return
+    }
+
+    // Linie von Bildschirmmitte zum Rand clippen (mit PAD-Abstand)
+    const dx = projX - cx
+    const dy = projY - cy
+    let t = 1
+    if (dx > 0) t = Math.min(t, (w - PAD - cx) / dx)
+    if (dx < 0) t = Math.min(t, (PAD - cx) / dx)
+    if (dy > 0) t = Math.min(t, (h - PAD - cy) / dy)
+    if (dy < 0) t = Math.min(t, (PAD - cy) / dy)
+
+    line.setAttribute('x1', cx)
+    line.setAttribute('y1', cy)
+    line.setAttribute('x2', cx + dx * t)
+    line.setAttribute('y2', cy + dy * t)
+    svg.setAttribute('viewBox', `0 0 ${w} ${h}`)
+    svg.style.display = ''
+  })
+
+  // ---- Pointer-Hover über Mesh → Tooltip an Cursor-Position ----
+  scene.onPointerObservable.add(eventData => {
+    if (eventData.type !== BABYLON.PointerEventTypes.POINTERMOVE) return
+
+    const pickInfo = scene.pick(scene.pointerX, scene.pointerY)
+    const go = pickInfo?.hit ? pickInfo.pickedMesh?.metadata?.gameObject : null
+
+    // Nur "echte" Objekte mit Namen (Player-Mesh hat keinen .metadata.gameObject)
+    if (!go?.name) {
+      tooltip.style.display = 'none'
+      return
+    }
+
+    tooltip.textContent = go.name
+    const rect = canvas.getBoundingClientRect()
+    tooltip.style.left = `${rect.left + scene.pointerX + 12}px`
+    tooltip.style.top = `${rect.top + scene.pointerY + 12}px`
+    tooltip.style.display = 'block'
+  })
+
+  return setHighlight
+}
+
+// Bewegt die aktuell aktive Kamera so, dass sie auf das übergebene
+// GameObject blickt. Spiegelt die Logik in DebugUIManager._focusOn:
+// - Kamera ohne Parent (z. B. Debug-FreeCam) wird repositioniert.
+// - Kamera mit Parent (z. B. Player-Cam, die an player.root hängt)
+//   bekommt nur ein neues setTarget; bei Fokus auf den Player selbst
+//   wäre das ein No-Op, was semantisch passt.
+function focusCameraOn(scene, gameObject) {
+  const cam = scene?.activeCamera
+  if (!cam || !gameObject?.root) return
+
+  gameObject.root.computeWorldMatrix(true)
+  const target = gameObject.root.absolutePosition.clone()
+
+  if (cam.parent) {
+    cam.setTarget?.(target)
+    return
+  }
+
+  const offset = new BABYLON.Vector3(0, 3, -5)
+  cam.position.copyFrom(target.add(offset))
+  cam.setTarget?.(target)
+}
+
+async function setupPlayer(scene, world, geo, gps, canvas) {
 
   const player = new GameObject(scene, "player")
 
@@ -185,7 +392,7 @@ async function setupPlayer(scene, world, geo, canvas) {
   const cameraComponent = player.addComponent(
     new CameraComponent(canvas)
   )
-  player.addComponent(new PlayerGPSComponent(geo))
+  player.addComponent(new PlayerGPSComponent(gps, geo))
   player.addComponent(new TransformComponent())
 
   player.addComponent(

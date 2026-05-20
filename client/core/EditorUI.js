@@ -1,10 +1,18 @@
 export class EditorUI {
-  constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null }) {
+  constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null }) {
     this.ajna = ajna
     this.container = container
     this.mode = mode
     this.onObjectSelected = onObjectSelected
     this.onObjectsUpdated = onObjectsUpdated
+    // Optional: Callback aus der jeweiligen Host-Anwendung (z. B. AR-
+    // Client), der die aktive Kamera zur Spieler-Position bewegt.
+    // Wenn nicht gesetzt, wird die zugehörige Schaltfläche nicht gerendert.
+    this.onFocusPlayer = onFocusPlayer
+    // Optional: Hover-Callback (record, hovering: boolean) — wird vom AR-
+    // Client zum Hervorheben im 3D-Raum, vom Map-Client zum Markieren
+    // auf der Karte genutzt.
+    this.onObjectHover = onObjectHover
     this.objectLayer = new Map()
   }
 
@@ -20,38 +28,55 @@ export class EditorUI {
       throw new Error('EditorUI: container is required')
     }
 
-    // Für mobile/kleine Bildschirme: Toggle anzeigbar machen
+    this.container.classList.add('editor-panel')
+    this._injectStyles()
+
     this.container.innerHTML = `
-      <div id="editorAuth" style="margin-bottom:8px">
-        <h3>Login</h3>
-        <input id="editorEmail" type="email" placeholder="Email" style="width:100%" />
-        <input id="editorPassword" type="password" placeholder="Passwort" style="width:100%" />
-        <button id="editorLoginBtn">Login</button>
-        <button id="editorLogoutBtn" style="display:none">Logout</button>
-        <div id="editorStatus" style="margin-top:5px"></div>
-      </div>
+      <header class="ed-header">
+        <h3>Editor</h3>
+      </header>
 
-      <div id="sharedEditorSection">
-        <h3>Objekt-Editor</h3>
-        <style>
-          .editor-row { display: flex; align-items: center; margin-bottom: 8px; }
-          .editor-row label { width: 60px; font-weight: 600; }
-          .editor-row input { flex: 1; margin-left: 8px; }
-        </style>
+      ${this.onFocusPlayer ? `
+        <section class="ed-section" id="editorPlayerSection">
+          <button id="editorFocusPlayerBtn" type="button" class="ed-btn ed-btn-primary">Kamera auf Spieler</button>
+        </section>
+      ` : ''}
+
+      <section class="ed-section" id="editorAuth">
+        <h4>Login</h4>
+        <input id="editorEmail" type="email" placeholder="Email">
+        <input id="editorPassword" type="password" placeholder="Passwort">
+        <div class="ed-buttons">
+          <button id="editorLoginBtn" class="ed-btn ed-btn-primary">Login</button>
+          <button id="editorLogoutBtn" class="ed-btn" style="display:none">Logout</button>
+        </div>
+        <div id="editorStatus" class="ed-status"></div>
+      </section>
+
+      <section class="ed-section" id="sharedEditorSection">
+        <h4>Objekt-Editor</h4>
         <form id="sharedEditorForm">
-          <input type="hidden" name="objectId" />
-          <div class="editor-row"><label for="name">Name</label><input id="name" name="name" type="text" required /></div>
-          <div class="editor-row"><label for="lat">Lat</label><input id="lat" name="lat" type="number" step="0.000001" required /></div>
-          <div class="editor-row"><label for="lon">Lon</label><input id="lon" name="lon" type="number" step="0.000001" required /></div>
-          <div class="editor-row"><label for="altitude">Alt</label><input id="altitude" name="altitude" type="number" step="0.1" value="0" /></div>
-          <button type="submit">Speichern</button>
-          <button id="editorDeleteBtn" type="button">Löschen</button>
+          <input type="hidden" name="objectId">
+          <div class="ed-grid">
+            <label for="name">Name</label><input id="name" name="name" type="text" required>
+            <label for="lat">Lat</label><input id="lat" name="lat" type="number" step="0.000001" required>
+            <label for="lon">Lon</label><input id="lon" name="lon" type="number" step="0.000001" required>
+            <label for="altitude">Alt</label><input id="altitude" name="altitude" type="number" step="0.1" value="0">
+          </div>
+          <div class="ed-buttons">
+            <button type="submit" class="ed-btn ed-btn-primary">Speichern</button>
+            <button id="editorDeleteBtn" type="button" class="ed-btn">Löschen</button>
+          </div>
         </form>
+      </section>
 
-        <h3>Objekte</h3>
-        <button id="editorRefreshBtn">Aktualisieren</button>
-        <div id="editorObjectList" style="max-height:220px;overflow:auto; border:1px solid #ccc; background:#fff"></div>
-      </div>
+      <section class="ed-section">
+        <div class="ed-row ed-list-header">
+          <h4>Objekte</h4>
+          <button id="editorRefreshBtn" class="ed-btn ed-btn-icon" title="Aktualisieren">↻</button>
+        </div>
+        <div id="editorObjectList" class="ed-object-list"></div>
+      </section>
     `
 
     this.loginBtn = this.container.querySelector('#editorLoginBtn')
@@ -63,6 +88,123 @@ export class EditorUI {
     this.editorDeleteBtn = this.container.querySelector('#editorDeleteBtn')
     this.refreshBtn = this.container.querySelector('#editorRefreshBtn')
     this.objectListEl = this.container.querySelector('#editorObjectList')
+    this.focusPlayerBtn = this.container.querySelector('#editorFocusPlayerBtn')
+  }
+
+  _injectStyles() {
+    if (document.getElementById('editorPanelStyles')) return
+
+    const style = document.createElement('style')
+    style.id = 'editorPanelStyles'
+    // Selektoren mit ID + Klasse → Spezifität 0,1,1,0 = 110, schlägt
+    // damit das page-eigene "#ui { background:rgba(0,0,0,0.6); ... }"
+    // aus index-ar.html (Spezifität 100) ohne !important.
+    style.textContent = `
+      #ui.editor-panel, #editorSection.editor-panel {
+        background: rgba(18,18,22,0.92);
+        color: #eaeaea;
+        font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
+        padding: 10px 12px;
+        border-radius: 8px;
+        box-shadow: 0 6px 24px rgba(0,0,0,0.4);
+        max-height: calc(100vh - 20px);
+        overflow-y: auto;
+      }
+      .editor-panel .ed-header h3 {
+        margin: 0 0 8px;
+        font-size: 13px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #f1c40f;
+      }
+      .editor-panel h4 {
+        margin: 0 0 6px;
+        font-size: 11px;
+        color: #aab;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .editor-panel .ed-section {
+        padding: 8px 0;
+        border-top: 1px solid rgba(255,255,255,0.08);
+      }
+      .editor-panel .ed-section:first-of-type { border-top: none; }
+      .editor-panel .ed-row {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 8px;
+      }
+      .editor-panel .ed-list-header h4 { margin: 0; }
+      .editor-panel input[type=email],
+      .editor-panel input[type=password],
+      .editor-panel input[type=text],
+      .editor-panel input[type=number] {
+        display: block;
+        width: 100%; box-sizing: border-box;
+        background: #15151a; color: #eaeaea;
+        border: 1px solid #2a2a32; border-radius: 4px;
+        padding: 3px 6px; font: inherit;
+        margin: 2px 0;
+      }
+      .editor-panel .ed-grid {
+        display: grid; grid-template-columns: 40px 1fr;
+        gap: 4px 8px; align-items: center;
+        margin-bottom: 6px;
+      }
+      .editor-panel .ed-grid label { color: #aab; }
+      .editor-panel .ed-buttons {
+        display: flex; gap: 6px; margin-top: 4px;
+      }
+      .editor-panel .ed-btn {
+        flex: 1; padding: 5px 8px; cursor: pointer;
+        background: #2a2a32; color: #eaeaea;
+        border: 1px solid #3a3a44; border-radius: 4px;
+        font: inherit;
+      }
+      .editor-panel .ed-btn:hover { background: #34343d; }
+      .editor-panel .ed-btn:disabled { opacity: 0.5; cursor: default; }
+      .editor-panel .ed-btn-primary {
+        background: #2c5d8f; border-color: #3a78b6;
+      }
+      .editor-panel .ed-btn-primary:hover { background: #356da6; }
+      .editor-panel .ed-btn-icon {
+        flex: 0 0 auto; padding: 2px 8px;
+      }
+      .editor-panel .ed-btn-sm {
+        flex: 0 0 auto; padding: 2px 8px; font-size: 11px;
+      }
+      .editor-panel .ed-status {
+        margin-top: 5px; font-size: 11px; color: #aab;
+        min-height: 1em;
+      }
+      .editor-panel .ed-object-list {
+        max-height: 220px; overflow-y: auto;
+        margin-top: 4px;
+        background: #15151a; border-radius: 4px;
+      }
+      .editor-panel .ed-object-row {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 8px; padding: 4px 6px;
+        cursor: pointer;
+        border-bottom: 1px solid rgba(255,255,255,0.05);
+      }
+      .editor-panel .ed-object-row:last-child { border-bottom: none; }
+      .editor-panel .ed-object-row:hover { background: #2a2a32; }
+      .editor-panel .ed-object-info {
+        flex: 1; min-width: 0; line-height: 1.2;
+      }
+      .editor-panel .ed-object-info strong {
+        display: block;
+        color: #f1c40f;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .editor-panel .ed-object-meta {
+        font-size: 10px; color: #888;
+      }
+      .editor-panel .ed-object-empty {
+        padding: 6px; color: #777; font-style: italic; text-align: center;
+      }
+    `
+    document.head.appendChild(style)
   }
 
   bindEvents() {
@@ -120,6 +262,10 @@ export class EditorUI {
     this.ajna.onObjectsChanged(() => {
       this.renderObjectList()
     })
+
+    if (this.focusPlayerBtn && this.onFocusPlayer) {
+      this.focusPlayerBtn.addEventListener('click', () => this.onFocusPlayer())
+    }
   }
 
   updateAuthUI() {
@@ -147,18 +293,53 @@ export class EditorUI {
   renderObjectList() {
     const objects = this.ajna.getObjectList()
     this.objectListEl.innerHTML = ''
-    for (const obj of objects) {
-      const row = document.createElement('div')
-      row.className = 'object-row'
-      row.innerHTML = `<strong>${obj.name || 'unnamed'}</strong> <small>${obj.lat.toFixed(5)}, ${obj.lon.toFixed(5)}</small>`
-      row.onclick = () => {
-        this.fillEditor(obj)
-        if (typeof this.onObjectSelected === 'function') {
-          this.onObjectSelected(obj)
+
+    if (objects.length === 0) {
+      const empty = document.createElement('div')
+      empty.className = 'ed-object-empty'
+      empty.textContent = 'keine Objekte'
+      this.objectListEl.appendChild(empty)
+    } else {
+      for (const obj of objects) {
+        const row = document.createElement('div')
+        row.className = 'ed-object-row'
+        row.title = obj.id
+        row.innerHTML = `
+          <div class="ed-object-info">
+            <strong></strong>
+            <span class="ed-object-meta"></span>
+          </div>
+          <button type="button" class="ed-btn ed-btn-sm">Laden</button>
+        `
+        // textContent statt innerHTML — verhindert HTML-Injection aus Backend-Daten
+        row.querySelector('strong').textContent = obj.name || 'unnamed'
+        row.querySelector('.ed-object-meta').textContent =
+          `${(obj.lat ?? 0).toFixed(5)}, ${(obj.lon ?? 0).toFixed(5)}`
+
+        // Klick auf die Zeile → Kamera zum Objekt schwenken
+        // (im AR-Modus über main.js verdrahtet, im Map-Modus zentriert die Karte).
+        row.addEventListener('click', () => {
+          if (typeof this.onObjectSelected === 'function') {
+            this.onObjectSelected(obj)
+          }
+        })
+
+        if (typeof this.onObjectHover === 'function') {
+          row.addEventListener('mouseenter', () => this.onObjectHover(obj, true))
+          row.addEventListener('mouseleave', () => this.onObjectHover(obj, false))
         }
+
+        // "Laden" lädt den Objekt-Editor — bewusst getrennt vom Zeilen-Klick,
+        // damit Bearbeiten und Anspringen separate Aktionen sind.
+        row.querySelector('button').addEventListener('click', ev => {
+          ev.stopPropagation()
+          this.fillEditor(obj)
+        })
+
+        this.objectListEl.appendChild(row)
       }
-      this.objectListEl.appendChild(row)
     }
+
     if (typeof this.onObjectsUpdated === 'function') {
       this.onObjectsUpdated(this.ajna.getObjectList())
     }

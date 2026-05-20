@@ -19,6 +19,9 @@ export class GameObject {
   // Factory-Methode zum Erstellen eines GameObjects mit Standard-Komponenten
   static async createFromPBData(scene, data, geo, includeNetworkSync = false) {
     const go = new GameObject(scene, data.id)
+    // Anzeige-Name aus dem PB-Record übernehmen — wird nur in Debug-UI
+    // verwendet, gehört nicht zur Engine-Logik. Fallback auf id.
+    go.name = data.name || data.id
     await go.loadFromData(data, geo)
 
     // Geospatial Component
@@ -50,6 +53,13 @@ export class GameObject {
     // Network Sync Component (optional)
     if (includeNetworkSync) {
       go.addComponent(new NetworkSyncComponent())
+    }
+
+    // Reverse-Lookup für Pointer-Picking / Hover-Tooltips: das gepickte
+    // Mesh kommt aus Babylon ohne Bezug zum GameObject zurück.
+    for (const mesh of go.meshes) {
+      if (!mesh.metadata) mesh.metadata = {}
+      mesh.metadata.gameObject = go
     }
 
     return go

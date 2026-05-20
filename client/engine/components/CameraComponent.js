@@ -17,9 +17,9 @@ export class CameraComponent extends BaseComponent {
       this.scene
     )
 
-    this.camera.attachControl(this.canvas, true)
-
-    // Kamera folgt dem Player-Root
+    // Bewusst KEIN attachControl: im Non-Debug-Betrieb soll die Kamera
+    // fest am Player kleben. Der Debug-Modus aktiviert via Switch-Button
+    // bei Bedarf selbst attachControl auf der Player-Kamera.
     this.camera.parent = this.gameObject.root
   }
 }

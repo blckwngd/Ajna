@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx webpack *)"
+      "Bash(npx webpack *)",
+      "Bash(./pocketbase.exe serve *)",
+      "Bash(npm run *)",
+      "Bash(curl -s http://127.0.0.1:8090/api/health)",
+      "Bash(curl -sk -I https://127.0.0.1:443/dist/map.bundle.js)",
+      "Bash(curl -sk -I https://127.0.0.1:443/dist/ar.bundle.js)"
     ]
   }
 }
