@@ -24,6 +24,10 @@ import { GPSProvider } from "./core/GPSProvider.js"
 import { NetworkSystem } from "./core/NetworkSystem.js"
 import { AjnaManager } from "./core/AjnaManager.js"
 import { EditorUI } from "./core/EditorUI.js"
+import { ContextMenu } from "./core/ContextMenu.js"
+import { PermissionDialog } from "./core/PermissionDialog.js"
+import { ObjectActions } from "./core/ObjectActions.js"
+import { Toast } from "./core/Toast.js"
 import { CameraComponent } from "./engine/components/CameraComponent.js"
 import { DebugCameraComponent } from "./engine/components/DebugCameraComponent.js"
 import { PlayerGPSComponent } from "./engine/components/PlayerGPSComponent.js"
@@ -33,7 +37,7 @@ import { buildDebugScene } from "./engine/debug/DebugSceneBuilder.js"
 import { DebugUIManager } from "./engine/debug/DebugUIManager.js"
 import { buildEnvironment } from "./engine/environment/EnvironmentBuilder.js"
 
-const ajnaManager = new AjnaManager("http://localhost:8090")
+const ajnaManager = new AjnaManager("http://" + window.location.hostname + ":8090")
 const pb = ajnaManager.pb
 const DEBUG_WORLD = true
 window.GUI = GUI
@@ -61,8 +65,11 @@ async function init() {
   const geo = new GeoTransformer()
   const gps = new GPSProvider()
 
-  const networkSystem = new NetworkSystem(pb, geo, objectMap)
-  networkSystem.start()
+  // Realtime-Updates laufen jetzt zentral über AjnaManager (subscribt
+  // auf 'objects' und feuert emitObjectsChanged). Damit reagieren Liste,
+  // Map und 3D-Szene synchron — kein separater NetworkSystem-Pfad nötig.
+  // Die Klasse bleibt für zukünftige hochfrequente Engine-Sync-Use-Cases
+  // (NetworkSyncComponent mit Lerp/Velocity) bestehen.
 
   const player = await setupPlayer(scene, world, geo, gps, canvas)
 
@@ -90,6 +97,7 @@ async function init() {
   // also nach Babylon-Setup und vor den UI-Managern (die den highlight-
   // Callback brauchen).
   const setHighlight = setupHoverSystem(scene, engine, canvas)
+  _arHighlight = setHighlight  // damit interact-Events visuell pulsen können
 
   if (DEBUG_WORLD) {
     new DebugUIManager({
@@ -136,6 +144,38 @@ async function init() {
     }
   })
 
+  // Kontextmenü + Berechtigungs-Dialog. Beides UI-Singletons; die
+  // konkrete Action-Verdrahtung läuft über ObjectActions, damit AR und
+  // Map dasselbe Menü zeigen.
+  const contextMenu = new ContextMenu()
+  const permissionDialog = new PermissionDialog()
+  const objectActions = new ObjectActions({
+    ajna: ajnaManager,
+    editorUI,
+    contextMenu,
+    permissionDialog
+  })
+
+  // Klick auf ein 3D-Objekt → Kontextmenü an der Cursor-Position.
+  // POINTERTAP statt POINTERPICK, damit ein Drag (Kameradrehung) das
+  // Menü nicht versehentlich öffnet.
+  scene.onPointerObservable.add(eventData => {
+    if (eventData.type !== BABYLON.PointerEventTypes.POINTERTAP) return
+    const pickInfo = scene.pick(scene.pointerX, scene.pointerY)
+    const go = pickInfo?.hit ? pickInfo.pickedMesh?.metadata?.gameObject : null
+    if (!go?.name) return
+
+    const record = ajnaManager.objectMap.get(go.id)
+    if (!record) return
+
+    const rect = canvas.getBoundingClientRect()
+    objectActions.showFor(
+      record,
+      rect.left + scene.pointerX,
+      rect.top + scene.pointerY
+    )
+  })
+
   // EditorUI-Backend-Load und GPS-Fix parallelisieren — bei realem GPS
   // spart das mehrere Sekunden, weil PocketBase-Load und Geolocation-
   // Wartezeit nicht hintereinander, sondern nebeneinander laufen.
@@ -161,6 +201,38 @@ async function init() {
 
 const objectMap = new Map()
 
+// Pro Objekt eine PocketBase-Realtime-Subscription auf "interact:<id>".
+// Werden über _subscribeInteract / _unsubscribeInteract gepflegt; map
+// hält die Unsubscribe-Functions, die der PB-SDK-Aufruf zurückgibt.
+const interactSubs = new Map()
+let _toast = null
+
+function subscribeInteract(pb, objectId, onEvent) {
+  if (interactSubs.has(objectId)) return
+  // Slot reservieren, damit zwei parallel laufende syncSceneObjects-Aufrufe
+  // nicht doppelt subscriben.
+  interactSubs.set(objectId, null)
+  pb.realtime.subscribe(`interact:${objectId}`, msg => {
+    let data
+    try { data = typeof msg === "string" ? JSON.parse(msg) : msg }
+    catch { data = { action: "?" } }
+    onEvent(data)
+  }).then(unsub => {
+    interactSubs.set(objectId, unsub)
+  }).catch(err => {
+    interactSubs.delete(objectId)
+    console.warn("interact subscribe failed", objectId, err?.message || err)
+  })
+}
+
+function unsubscribeInteract(objectId) {
+  const unsub = interactSubs.get(objectId)
+  if (typeof unsub === "function") {
+    try { unsub() } catch {}
+  }
+  interactSubs.delete(objectId)
+}
+
 // Reconcile-Schritt: bringt die Szene mit einer Objekt-Liste vom AjnaManager
 // in Übereinstimmung, ohne selbst eine Backend-Abfrage auszulösen. Wird vom
 // onObjectsChanged-Listener gefeuert; ein erneuter Backend-Roundtrip würde
@@ -174,19 +246,39 @@ async function syncSceneObjects(scene, world, geo, objects) {
   // Entfernen, was nicht mehr Teil der Welt ist
   for (const [id, go] of objectMap) {
     if (!incomingIds.has(id)) {
+      unsubscribeInteract(id)
       go.dispose()
       objectMap.delete(id)
     }
   }
 
-  // Neue Objekte anlegen (Updates an bestehenden Objekten kommen über
-  // den Realtime-Pfad / NetworkSyncComponent, nicht hier)
+  // Neue Objekte anlegen, bestehende mit aktuellen Daten überschreiben.
+  // Realtime-Events (PocketBase) landen über AjnaManager → emitObjectsChanged
+  // hier mit der frischen Objekt-Liste; applyData zieht Name, Position,
+  // Rotation und Scale nach, ohne das GameObject neu zu erzeugen.
   for (const obj of objects) {
-    if (objectMap.has(obj.id)) continue
-    const go = await GameObject.createFromPBData(scene, obj, geo, true)
-    objectMap.set(obj.id, go)
+    const existing = objectMap.get(obj.id)
+    if (existing) {
+      existing.applyData(obj, geo)
+    } else {
+      const go = await GameObject.createFromPBData(scene, obj, geo, true)
+      objectMap.set(obj.id, go)
+      subscribeInteract(ajnaManager.pb, obj.id, data => _handleInteractAR(go, data))
+    }
   }
 }
+
+// Reagiert auf eingehende Broker-Events. Im AR-Modus zeigen wir einen
+// Toast plus einen kurzen Highlight-Pulse am betroffenen GameObject.
+function _handleInteractAR(go, data) {
+  if (!_toast) _toast = new Toast()
+  _toast.show(`${data.action} → ${go.name || go.id}`, { title: "INTERACT" })
+  if (_arHighlight) {
+    _arHighlight(go, true)
+    setTimeout(() => _arHighlight(go, false), 280)
+  }
+}
+let _arHighlight = null  // wird in init() befüllt — Closure-Bridge auf setHighlight
 
 // Baut das Hover-/Highlight-System für den AR-Modus auf:
 //   - DOM-Tooltip am Mauszeiger, sobald die Maus über einem GameObject-Mesh hängt
@@ -264,8 +356,6 @@ function setupHoverSystem(scene, engine, canvas) {
   }
 
   // ---- Off-Screen-Indicator: pro Frame Richtung aktualisieren ----
-  const PAD = 30
-
   scene.onBeforeRenderObservable.add(() => {
     if (!highlightedGO?.root) {
       svg.style.display = 'none'
@@ -310,19 +400,16 @@ function setupHoverSystem(scene, engine, canvas) {
       return
     }
 
-    // Linie von Bildschirmmitte zum Rand clippen (mit PAD-Abstand)
-    const dx = projX - cx
-    const dy = projY - cy
-    let t = 1
-    if (dx > 0) t = Math.min(t, (w - PAD - cx) / dx)
-    if (dx < 0) t = Math.min(t, (PAD - cx) / dx)
-    if (dy > 0) t = Math.min(t, (h - PAD - cy) / dy)
-    if (dy < 0) t = Math.min(t, (PAD - cy) / dy)
-
+    // Linie verläuft von der Bildschirmmitte bis exakt zur projizierten
+    // Objekt-Position. Liegt diese außerhalb der Canvas-Fläche, wird die
+    // Linie vom Browser am Rand geclippt — visuell sieht der Anwender
+    // einen Strich, der "hinter dem Rand verschwindet" Richtung Objekt.
+    // Vorher endete die Linie am Rand selbst, was fälschlich suggerierte,
+    // dass das Objekt dort sitzt.
     line.setAttribute('x1', cx)
     line.setAttribute('y1', cy)
-    line.setAttribute('x2', cx + dx * t)
-    line.setAttribute('y2', cy + dy * t)
+    line.setAttribute('x2', projX)
+    line.setAttribute('y2', projY)
     svg.setAttribute('viewBox', `0 0 ${w} ${h}`)
     svg.style.display = ''
   })

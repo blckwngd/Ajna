@@ -22,7 +22,31 @@ export class AjnaManager {
     this.objectMap.clear()
     objects.forEach(obj => this.objectMap.set(obj.id, obj))
     this.emitObjectsChanged()
+
+    // Realtime-Subscription beim ersten Load aufsetzen. Spätere
+    // loadObjects-Aufrufe (z. B. nach Login/Logout) holen den vollen
+    // Stand neu, die Subscription bleibt davon unberührt aktiv.
+    await this._ensureRealtime()
+
     return objects
+  }
+
+  async _ensureRealtime() {
+    if (this._realtimeReady) return
+    this._realtimeReady = true
+
+    this._realtimeUnsubscribe = await this.pb.collection('objects').subscribe('*', e => {
+      // Eine einzige Realtime-Quelle: Server-Events landen in der zentralen
+      // objectMap, dann läuft die normale Listener-Kette (EditorUI-Liste,
+      // syncSceneObjects, Map-Marker). Damit reagieren Liste UND Szene
+      // gleichermaßen auf Name-, Positions- und Parameter-Updates.
+      if (e.action === 'create' || e.action === 'update') {
+        this.objectMap.set(e.record.id, e.record)
+      } else if (e.action === 'delete') {
+        this.objectMap.delete(e.record.id)
+      }
+      this.emitObjectsChanged()
+    })
   }
 
   async createObject(data) {

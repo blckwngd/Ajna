@@ -4,7 +4,8 @@ module.exports = {
   mode: "development",
   entry: {
     ar: "./client/main.js",
-    map: "./client/map.js"
+    map: "./client/map.js",
+    agent: "./client/agent.js"
   },
   output: {
     filename: "[name].bundle.js",

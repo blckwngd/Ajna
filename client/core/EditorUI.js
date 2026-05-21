@@ -212,15 +212,20 @@ export class EditorUI {
       try {
         await this.ajna.login(this.emailInput.value, this.passwordInput.value)
         this.setStatus('Login erfolgreich')
+        // Auth-Stand hat sich geändert → neu sichtbare Objekte mit aufnehmen.
+        // emitObjectsChanged triggert Listenrefresh und (im AR) syncSceneObjects.
+        await this.ajna.loadObjects()
       } catch (err) {
         this.setStatus('Login fehlgeschlagen: ' + err.message)
       }
       this.updateAuthUI()
     })
 
-    this.logoutBtn.addEventListener('click', () => {
+    this.logoutBtn.addEventListener('click', async () => {
       this.ajna.logout()
       this.setStatus('Abgemeldet')
+      // Nach Logout: nicht-public Objekte fallen aus der Sichtbarkeit raus.
+      await this.ajna.loadObjects()
       this.updateAuthUI()
     })
 

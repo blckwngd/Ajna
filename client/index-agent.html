@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Ajna Agent</title>
+<style>
+  body {
+    margin: 0;
+    background: #0e0e12;
+    color: #eaeaea;
+    font: 13px/1.45 ui-monospace, Menlo, Consolas, monospace;
+  }
+  #app {
+    max-width: 900px;
+    margin: 24px auto;
+    padding: 0 16px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  header {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  header h1 {
+    margin: 0;
+    font-size: 16px;
+    color: #f1c40f;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  header #status { font-weight: bold; }
+  header #status.ok    { color: #5ec860; }
+  header #status.error { color: #d05050; }
+  section {
+    background: rgba(18,18,22,0.92);
+    border: 1px solid #2a2a32;
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  section h2 {
+    margin: 0 0 10px;
+    font-size: 11px;
+    color: #aab;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  section.wide { grid-column: 1 / -1; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .row label { color: #888; min-width: 80px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .row .value { color: #eaeaea; font-weight: bold; }
+  .row .value.dim { color: #cde; font-weight: normal; }
+  input[type=text],
+  input[type=email],
+  input[type=password] {
+    flex: 1; padding: 4px 6px;
+    background: #0d0d12; color: #eaeaea;
+    border: 1px solid #2a2a32; border-radius: 4px;
+    font: inherit;
+  }
+  select {
+    flex: 1; padding: 4px 6px;
+    background: #0d0d12; color: #eaeaea;
+    border: 1px solid #2a2a32; border-radius: 4px;
+    font: inherit;
+  }
+  button {
+    background: #2a2a32; color: #eaeaea;
+    border: 1px solid #3a3a44; border-radius: 4px;
+    padding: 4px 12px; cursor: pointer;
+    font: inherit;
+  }
+  button.primary {
+    background: #2c5d8f; border-color: #3a78b6;
+  }
+  button:hover { background: #34343d; }
+  button.primary:hover { background: #356da6; }
+  .move-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+    max-width: 200px;
+  }
+  .move-grid button { padding: 8px; }
+  .move-grid .spacer { visibility: hidden; }
+  .reactions ul {
+    list-style: none; padding: 0; margin: 0;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
+  }
+  .reactions code {
+    background: #0d0d12; padding: 1px 6px; border-radius: 3px;
+    font-size: 11px;
+  }
+  #log {
+    background: #08080c;
+    border: 1px solid #2a2a32;
+    border-radius: 4px;
+    padding: 8px;
+    height: 280px;
+    overflow-y: auto;
+    font-size: 11px;
+  }
+  .log-entry { padding: 1px 0; color: #cde; }
+  .log-entry.log-error { color: #d05050; }
+  .log-entry.log-warn  { color: #d0a050; }
+  #auth-status { font-size: 11px; margin-top: 4px; }
+  #auth-status.ok    { color: #5ec860; }
+  #auth-status.error { color: #d05050; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Ajna Agent · Vanguard</h1>
+    <span id="status" class="error">DISCONNECTED</span>
+  </header>
+
+  <section>
+    <h2>Objekt</h2>
+    <div class="row"><label>Name</label><span class="value" id="obj-name">–</span></div>
+    <div class="row"><label>ID</label><span class="value dim" id="obj-id">–</span></div>
+    <div class="row"><label>Animation</label><span class="value" id="obj-anim">–</span></div>
+    <div class="row"><label>Koord.</label><span class="value dim" id="obj-coords">–</span></div>
+  </section>
+
+  <section>
+    <h2>Auth</h2>
+    <div class="row"><input type="email" id="auth-email" placeholder="email"></div>
+    <div class="row"><input type="password" id="auth-password" placeholder="passwort"></div>
+    <div class="row"><button class="primary" id="login-btn">Login</button></div>
+    <div id="auth-status"></div>
+  </section>
+
+  <section>
+    <h2>Animation setzen</h2>
+    <div class="row">
+      <input type="text" id="anim-input" placeholder="z. B. idle, walk, die">
+      <button id="anim-set-btn" class="primary">Set</button>
+    </div>
+    <div class="row" style="margin-top:6px;">
+      <label>Quick</label>
+      <button onclick="document.getElementById('anim-input').value='idle';document.getElementById('anim-set-btn').click()">idle</button>
+      <button onclick="document.getElementById('anim-input').value='walk';document.getElementById('anim-set-btn').click()">walk</button>
+      <button onclick="document.getElementById('anim-input').value='die';document.getElementById('anim-set-btn').click()">die</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Bewegung</h2>
+    <div class="move-grid">
+      <span class="spacer"></span>
+      <button id="move-n">N</button>
+      <span class="spacer"></span>
+      <button id="move-w">W</button>
+      <span class="spacer"></span>
+      <button id="move-e">O</button>
+      <span class="spacer"></span>
+      <button id="move-s">S</button>
+      <span class="spacer"></span>
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <label><input type="checkbox" id="autopace-chk"> Auto-Pace N</label>
+    </div>
+  </section>
+
+  <section class="wide">
+    <h2>Interact triggern (als Spieler)</h2>
+    <div class="row">
+      <select id="interact-select">
+        <option value="attack">attack</option>
+        <option value="greet">greet</option>
+        <option value="examine">examine</option>
+        <option value="turn_on">turn_on</option>
+        <option value="turn_off">turn_off</option>
+      </select>
+      <button id="interact-btn" class="primary">Senden</button>
+    </div>
+    <div class="row reactions" style="margin-top:8px;">
+      <label>Reaktionen</label>
+      <ul id="reaction-list"></ul>
+    </div>
+  </section>
+
+  <section class="wide">
+    <h2>Event-Log</h2>
+    <div id="log"></div>
+  </section>
+</div>
+<script src="/dist/agent.bundle.js"></script>
+</body>
+</html>

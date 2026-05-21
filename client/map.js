@@ -1,12 +1,59 @@
 import { AjnaManager } from "./core/AjnaManager.js"
 import { EditorUI } from "./core/EditorUI.js"
 import { GPSProvider } from "./core/GPSProvider.js"
+import { ContextMenu } from "./core/ContextMenu.js"
+import { PermissionDialog } from "./core/PermissionDialog.js"
+import { ObjectActions } from "./core/ObjectActions.js"
+import { Toast } from "./core/Toast.js"
 import "leaflet-gps"
 import "leaflet/dist/leaflet.css"
 import "leaflet-gps/dist/leaflet-gps.min.css"
 
-const ajna = new AjnaManager("http://localhost:8090")
+const ajna = new AjnaManager("http://" + window.location.hostname + ":8090")
 const markerLayer = new Map()
+const interactSubs = new Map()
+const contextMenu = new ContextMenu()
+const permissionDialog = new PermissionDialog()
+const toast = new Toast()
+let objectActions = null  // wird in init() verdrahtet, sobald editorUI da ist
+
+function subscribeMarkerInteract(objectId) {
+  if (interactSubs.has(objectId)) return
+  interactSubs.set(objectId, null)
+  ajna.pb.realtime.subscribe(`interact:${objectId}`, msg => {
+    let data
+    try { data = typeof msg === "string" ? JSON.parse(msg) : msg }
+    catch { data = { action: "?" } }
+    handleMarkerInteract(objectId, data)
+  }).then(unsub => {
+    interactSubs.set(objectId, unsub)
+  }).catch(err => {
+    interactSubs.delete(objectId)
+    console.warn("interact subscribe failed", objectId, err?.message || err)
+  })
+}
+
+function unsubscribeMarkerInteract(objectId) {
+  const unsub = interactSubs.get(objectId)
+  if (typeof unsub === "function") { try { unsub() } catch {} }
+  interactSubs.delete(objectId)
+}
+
+function handleMarkerInteract(objectId, data) {
+  const marker = markerLayer.get(objectId)
+  const obj = ajna.getObjectById(objectId)
+  const label = obj?.name || objectId
+  toast.show(`${data.action} → ${label}`, { title: "INTERACT" })
+
+  // Kurzer optischer Pulse am Marker (CSS @keyframes via Klasse).
+  const el = marker?.getElement()
+  if (el) {
+    el.classList.remove("marker-pulse")
+    void el.offsetWidth  // Reflow erzwingen → Animation re-startet
+    el.classList.add("marker-pulse")
+    setTimeout(() => el.classList.remove("marker-pulse"), 700)
+  }
+}
 
 // Wird nur als Read-Quelle für die persistierte Dummy-Position verwendet.
 // Kein start() — Leaflet liefert die laufenden GPS-Updates über sein
@@ -46,7 +93,6 @@ function addMarker(obj) {
   })
 
   const marker = window.L.marker([obj.lat, obj.lon], { icon, draggable: true }).addTo(window.map)
-  marker.bindPopup(`<strong>${obj.name || 'unnamed'}</strong><br>id: ${obj.id}`)
   // Hover-Tooltip mit dem Objekt-Namen (Leaflet zeigt/blendet ihn automatisch
   // bei mouseover / mouseout)
   marker.bindTooltip(obj.name || 'unnamed', { direction: 'top', offset: [0, -8] })
@@ -60,13 +106,17 @@ function addMarker(obj) {
     mapUpdateMarkers(ajna.getObjectList())
   })
 
-  marker.on('click', () => {
-    if (editorUI && typeof editorUI.fillEditor === 'function') {
-      editorUI.fillEditor(obj)
-    }
+  marker.on('click', e => {
+    // Aktuelle Position des Records aus dem AjnaManager-Cache holen
+    // (kann sich durch Realtime-Updates seit addMarker geändert haben).
+    const fresh = ajna.getObjectById(obj.id) || obj
+    if (!objectActions) return
+    const origEvt = e.originalEvent
+    objectActions.showFor(fresh, origEvt.clientX, origEvt.clientY)
   })
 
   markerLayer.set(obj.id, marker)
+  subscribeMarkerInteract(obj.id)
 }
 
 function removeMarker(id) {
@@ -75,6 +125,7 @@ function removeMarker(id) {
     window.map.removeLayer(marker)
     markerLayer.delete(id)
   }
+  unsubscribeMarkerInteract(id)
 }
 
 // Hover-Highlight aus den Editor-Listen: setzt eine Markierungs-Klasse
@@ -137,6 +188,15 @@ function injectHighlightStyles() {
       outline: 2px solid #f1c40f;
       border-radius: 4px;
     }
+    @keyframes ajna-marker-pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(241, 196, 15, 0.7); }
+      70%  { box-shadow: 0 0 0 16px rgba(241, 196, 15, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(241, 196, 15, 0); }
+    }
+    .map-marker.marker-pulse {
+      animation: ajna-marker-pulse 700ms ease-out;
+      border-radius: 4px;
+    }
   `
   document.head.appendChild(style)
 }
@@ -189,6 +249,15 @@ async function init() {
     onObjectSelected: obj => map.setView([obj.lat, obj.lon], 16),
     onObjectsUpdated: objects => mapUpdateMarkers(objects),
     onObjectHover: (obj, hovering) => setMarkerHighlight(obj.id, hovering)
+  })
+
+  // Marker-Klick-Aktionen verdrahten, sobald die EditorUI als Sink für
+  // "Bearbeiten" zur Verfügung steht.
+  objectActions = new ObjectActions({
+    ajna,
+    editorUI,
+    contextMenu,
+    permissionDialog
   })
 
   await editorUI.init()
