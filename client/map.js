@@ -10,10 +10,11 @@ import "leaflet/dist/leaflet.css"
 import "leaflet-gps/dist/leaflet-gps.min.css"
 
 const ajna = new AjnaManager("http://" + window.location.hostname + ":8090")
+window.ajna = ajna
 const markerLayer = new Map()
 const interactSubs = new Map()
 const contextMenu = new ContextMenu()
-const permissionDialog = new PermissionDialog()
+const permissionDialog = new PermissionDialog({ ajna })
 const toast = new Toast()
 let objectActions = null  // wird in init() verdrahtet, sobald editorUI da ist
 

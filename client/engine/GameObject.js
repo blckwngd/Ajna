@@ -90,6 +90,11 @@ export class GameObject {
     this.root.rotation = rotation
     this.root.scaling = scaling
 
+    // Initial-Animation für den Fall, dass die GLB mehrere AnimationGroups
+    // mitbringt — wird im #loadModel-Callback gestartet. applyData(...)
+    // wechselt sie später live.
+    this._initialAnimationState = data.animation_state || null
+
     // Immer einen Platzhalter — das Modell-Loading ist ein nice-to-have,
     // das Verhalten der Szene darf davon nicht abhängen.
     this.#createPlaceholder()
@@ -139,19 +144,44 @@ export class GameObject {
     this.meshes = result.meshes
     this.animationGroups = result.animationGroups || []
     this.skeletons = result.skeletons || []
+    this._activeAnim = null
 
-    // Skinned Modelle ohne laufende Animation zeigen einen verzerrten
-    // "Identity-Bones"-Zustand: Vertex-Weights ziehen einzelne Body-Teile
-    // (häufig die Leaf-Bones — Hufe, Finger, Schwanzspitze) ins Nichts.
-    // Default-Pose herstellen, damit das Modell unmittelbar nach dem Load
-    // korrekt aussieht.
+    // Bevorzugt die im animation_state vermerkte AnimationGroup starten.
+    // Fallback: erste Group (Skinned Modelle ohne laufende Animation
+    // zeigen einen verzerrten "Identity-Bones"-Zustand — siehe Hufe-Bug).
+    // Ganz ohne Group: skeletons.returnToRest() als sauberer Default.
     if (this.animationGroups.length > 0) {
-      this.animationGroups[0].start(true)
+      this._applyAnimationState(this._initialAnimationState)
     } else if (this.skeletons.length > 0) {
       this.skeletons.forEach(sk => sk.returnToRest())
     }
 
     this.#tagMeshes()
+  }
+
+  // Wechselt zur AnimationGroup mit dem passenden Namen (case-insensitive).
+  // No-op wenn schon aktiv. Bei unbekanntem Namen: erste Group als Fallback.
+  _applyAnimationState(state) {
+    if (!this.animationGroups || this.animationGroups.length === 0) return
+
+    let target = null
+    if (state) {
+      const lower = String(state).toLowerCase()
+      target = this.animationGroups.find(g => (g.name || "").toLowerCase() === lower)
+      if (!target) {
+        console.warn(
+          `GameObject ${this.id}: animation "${state}" not found. ` +
+          `Available: ${this.animationGroups.map(g => g.name).join(", ")}`
+        )
+      }
+    }
+    const next = target || this.animationGroups[0]
+    if (this._activeAnim === next) return
+
+    // Vorherige stoppen — Babylon spielt sonst beide gleichzeitig.
+    this.animationGroups.forEach(g => g.stop())
+    next.start(true)
+    this._activeAnim = next
   }
 
   #createPlaceholder() {
@@ -232,6 +262,17 @@ export class GameObject {
       data.scale?.y ?? 1,
       data.scale?.z ?? 1
     )
+
+    // Animations-State live ziehen (Realtime-Update vom Agent landet hier).
+    // Wenn das Modell noch nicht geladen ist (animationGroups leer),
+    // wird der Wert in _initialAnimationState gemerkt und greift dann beim
+    // Load-Abschluss in #loadModel.
+    if (data.animation_state !== undefined) {
+      this._initialAnimationState = data.animation_state
+      if (this.animationGroups && this.animationGroups.length > 0) {
+        this._applyAnimationState(data.animation_state)
+      }
+    }
   }
 
   setPosition(vec3) {

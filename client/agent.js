@@ -1,38 +1,37 @@
 // =====================================================================
 // Ajna Agent (Demo)
 //
-// Kontrolliert ein konkretes Objekt im Ajna-Backend:
-//   - lädt den Datensatz beim Boot
-//   - subscribed auf Objekt-Updates (sieht jede Änderung sofort)
-//   - subscribed auf interact-Events (Aktionen anderer Spieler)
-//   - reagiert mit Animations-Wechsel über animation_state
+// Kontrolliert ein konkretes Objekt im Ajna-Backend über die
+// AjnaManager-Bibliothek:
+//   - lädt initial den Datensatz beim connect()
+//   - watchObject() für Live-Updates des Datensatzes
+//   - onInteract() für Aktions-Events anderer Spieler
+//   - reagiert mit setAnimation() — landet als animation_state im
+//     Realtime-Stream und damit synchron in allen Clients.
 //
 // Plus Debug-UI: Status, Log, manuelle Animation/Bewegung/Triggers.
 // =====================================================================
 
-import PocketBase from "pocketbase"
+import { AjnaManager } from "./core/AjnaManager.js"
 
 const TARGET_OBJECT_ID = "2kjikgp1pvkc4p5"     // Vanguard
-const PB_URL = "http://" + window.location.hostname + ":8090"
+const AJNA_URL = "http://" + window.location.hostname + ":8090"
 const MOVE_STEP_DEG = 0.00001                  // ~1.1 m je nach Breite
 const AUTO_PACE_INTERVAL_MS = 1500
 
 // Aktion → Animation, mit der der Agent reagiert
 const REACTION_MAP = {
-  attack:   "die",
-  greet:    "wave",
-  examine:  "pose",
-  turn_on:  "active",
-  turn_off: "idle"
+  attack:   "Run",
+  pet:    "Walk",
+  examine:  "Survey"
 }
 
-const pb = new PocketBase(PB_URL)
+const ajna = new AjnaManager(AJNA_URL)
 const state = {
   object: null,
   objSub: null,
   interactSub: null,
-  autoPaceTimer: null,
-  agentName: window.location.hash.slice(1) || "agent-vanguard"
+  autoPaceTimer: null
 }
 
 const els = {}
@@ -78,29 +77,36 @@ async function init() {
     .map(([a, r]) => `<li><code>${a}</code> → <code>${r}</code></li>`)
     .join("")
 
-  log(`agent "${state.agentName}" boot, target: ${TARGET_OBJECT_ID}`)
+  log(`agent boot, target: ${TARGET_OBJECT_ID}`)
   await connect()
 }
 
 async function connect() {
   try {
-    state.object = await pb.collection("objects").getOne(TARGET_OBJECT_ID)
+    await ajna.connect()
+
+    state.object = ajna.getObjectById(TARGET_OBJECT_ID)
+    if (!state.object) {
+      log(`object ${TARGET_OBJECT_ID} not in visible set — likely a permission issue`, "warn")
+      setConnected(false)
+      return
+    }
     log(`object loaded: ${state.object.name}`)
     updateObjectView()
 
-    state.objSub = await pb.collection("objects").subscribe(TARGET_OBJECT_ID, e => {
-      if (e.action === "update") {
-        state.object = e.record
-        log(`object update received → anim=${e.record.animation_state ?? "?"}`)
-        updateObjectView()
+    state.objSub = await ajna.watchObject(TARGET_OBJECT_ID, (rec, action) => {
+      if (action === "delete") {
+        log("object deleted on server", "warn")
+        setConnected(false)
+        return
       }
+      state.object = rec
+      log(`object update → anim=${rec.animation_state ?? "?"}`)
+      updateObjectView()
     })
     log("subscribed: object updates")
 
-    state.interactSub = await pb.realtime.subscribe(`interact:${TARGET_OBJECT_ID}`, raw => {
-      let data
-      try { data = typeof raw === "string" ? JSON.parse(raw) : raw }
-      catch { data = { action: "?" } }
+    state.interactSub = await ajna.onInteract(TARGET_OBJECT_ID, data => {
       handleInteract(data)
     })
     log("subscribed: interact events")
@@ -109,18 +115,8 @@ async function connect() {
   } catch (err) {
     const msg = err?.message || String(err)
     log(`connect error: ${msg}`, "error")
-    if (/superuser/i.test(msg)) {
-      log(
-        "Hinweis: die objects-Collection erlaubt aktuell nur Superuser. "
-        + "In PB-Admin (http://localhost:8090/_/) → Collection 'objects' "
-        + "→ API rules: viewRule/listRule auf '@request.auth.id != \"\"', "
-        + "updateRule/deleteRule auf 'owner = @request.auth.id' setzen. "
-        + "Außerdem prüfen, dass der Vanguard-Datensatz dich als 'owner' "
-        + "eingetragen hat.",
-        "warn"
-      )
-    } else if (/auth/i.test(msg) || /token/i.test(msg)) {
-      log("Hinweis: vor connect() einloggen (oder Token erneuern).", "warn")
+    if (/auth/i.test(msg) || /token/i.test(msg)) {
+      log("Hinweis: vor connect() einloggen.", "warn")
     }
     setConnected(false)
   }
@@ -143,9 +139,7 @@ function handleInteract(data) {
 async function setAnimation(animState) {
   if (!state.object) { log("no object loaded", "error"); return }
   try {
-    state.object = await pb.collection("objects").update(TARGET_OBJECT_ID, {
-      animation_state: animState
-    })
+    state.object = await ajna.setAnimation(TARGET_OBJECT_ID, animState)
     log(`✓ animation_state set to "${animState}"`)
     updateObjectView()
   } catch (err) {
@@ -167,7 +161,7 @@ async function stepMove(dir) {
   const lon = (state.object.lon ?? 0) + (dir === "e" ? MOVE_STEP_DEG
                                        : dir === "w" ? -MOVE_STEP_DEG : 0)
   try {
-    state.object = await pb.collection("objects").update(TARGET_OBJECT_ID, { lat, lon })
+    state.object = await ajna.moveObject(TARGET_OBJECT_ID, lat, lon)
     log(`✓ moved ${dir.toUpperCase()} → lat=${lat.toFixed(6)} lon=${lon.toFixed(6)}`)
     updateObjectView()
   } catch (err) {
@@ -192,10 +186,7 @@ async function triggerInteract(action) {
   if (!action) return
   log(`▶ trigger interact: ${action}`)
   try {
-    const res = await pb.send(`/api/objects/${TARGET_OBJECT_ID}/interact`, {
-      method: "POST",
-      body: { action }
-    })
+    const res = await ajna.interact(TARGET_OBJECT_ID, action)
     log(`✓ interact dispatched, delivered=${res?.delivered}`)
   } catch (err) {
     const detail = err?.response?.data?.error || err?.message || String(err)
@@ -208,13 +199,16 @@ async function doLogin() {
   const pwd   = els.password.value
   if (!email || !pwd) return
   try {
-    await pb.collection("users").authWithPassword(email, pwd)
+    await ajna.login(email, pwd)
     els.authStatus.textContent = `logged in as ${email}`
     els.authStatus.className = "ok"
     log(`✓ auth ok as ${email}`)
-    // Subscriptions ggf. neu aufsetzen, damit der neue Auth-Token greift
-    if (state.objSub) { try { state.objSub() } catch {} state.objSub = null }
-    if (state.interactSub) { try { state.interactSub() } catch {} state.interactSub = null }
+
+    // Alte Subscriptions schließen, damit beim erneuten connect() keine
+    // doppelten Watcher entstehen (PB-Subscriptions hängen am Auth-Token).
+    if (state.objSub)     { try { state.objSub()     } catch {} state.objSub = null }
+    if (state.interactSub){ try { state.interactSub()} catch {} state.interactSub = null }
+    await ajna.disconnect()
     await connect()
   } catch (err) {
     els.authStatus.textContent = "auth failed: " + (err?.message || err)

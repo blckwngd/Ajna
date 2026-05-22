@@ -1,0 +1,72 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Stack: PocketBase",
+      "type": "shell",
+      "command": "npm run pocketbase",
+      "isBackground": true,
+      "presentation": {
+        "panel": "dedicated",
+        "group": "ajna-stack",
+        "reveal": "always",
+        "echo": true,
+        "focus": false,
+        "clear": true,
+        "showReuseMessage": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Stack: Webpack Watch",
+      "type": "shell",
+      "command": "npm run dev",
+      "isBackground": true,
+      "presentation": {
+        "panel": "dedicated",
+        "group": "ajna-stack",
+        "reveal": "always",
+        "echo": true,
+        "focus": false,
+        "clear": true,
+        "showReuseMessage": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Stack: Dev Server",
+      "type": "shell",
+      "command": "npm run start:dev",
+      "isBackground": true,
+      "presentation": {
+        "panel": "dedicated",
+        "group": "ajna-stack",
+        "reveal": "always",
+        "echo": true,
+        "focus": false,
+        "clear": true,
+        "showReuseMessage": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Stack: Start All",
+      "dependsOn": [
+        "Stack: PocketBase",
+        "Stack: Webpack Watch",
+        "Stack: Dev Server"
+      ],
+      "dependsOrder": "parallel",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "group": "ajna-stack",
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

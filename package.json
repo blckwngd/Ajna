@@ -10,7 +10,9 @@
     "start:all": "concurrently \"npm run start\" \"npm run serve-client\"",
     "start:dev": "concurrently \"npm run start\" \"http-server client -p 443 -S -C cert.pem -o index-map.html\"",
     "build": "webpack",
-    "dev": "webpack --watch"
+    "dev": "webpack --watch",
+    "pocketbase": "pocketbase\\pocketbase.exe serve --http=0.0.0.0:8090",
+    "stack": "concurrently --kill-others --names pb,wp,web -c green,yellow,cyan \"npm:pocketbase\" \"npm:dev\" \"npm:start:dev\""
   },
   "dependencies": {
     "@babylonjs/core": "^8.54.3",

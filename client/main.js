@@ -42,6 +42,7 @@ const pb = ajnaManager.pb
 const DEBUG_WORLD = true
 window.GUI = GUI
 window.GridMaterial = GridMaterial
+window.ajna = ajnaManager
 
 // ==========================================================
 // SHARED EDITOR UI
@@ -148,7 +149,7 @@ async function init() {
   // konkrete Action-Verdrahtung läuft über ObjectActions, damit AR und
   // Map dasselbe Menü zeigen.
   const contextMenu = new ContextMenu()
-  const permissionDialog = new PermissionDialog()
+  const permissionDialog = new PermissionDialog({ ajna: ajnaManager })
   const objectActions = new ObjectActions({
     ajna: ajnaManager,
     editorUI,

@@ -1,25 +1,15 @@
 // Modal-Dialog für Objekt-Berechtigungen.
-// UI-Vorbau mit Platzhalter-Daten — schreibt nicht ans Backend.
-// Sobald der Resolver/Express-Endpunkte stehen, wird das Save/Add hier
-// gegen die echten Routen verdrahtet.
+// Liest und schreibt ACEs gegen das PocketBase-Backend über AjnaManager.
 
-// Platzhalter-Datenquellen (später durch echte Backend-Abfragen ersetzen)
-const PLACEHOLDER_USERS = [
-  { id: 'user_1', label: 'Du (Besitzer)',     meta: 'abarth@kloeschinski.de' },
-  { id: 'user_2', label: 'Anna Beispiel',     meta: 'anna@example.com' },
-  { id: 'user_3', label: 'Tim Beispiel',      meta: 'tim@example.com' },
-  { id: 'user_4', label: 'Lara Beispiel',     meta: 'lara@example.com' }
-]
-const PLACEHOLDER_GROUPS = [
-  { id: 'group_1', label: 'Familie Barth',    meta: '3 Mitglieder' },
-  { id: 'group_2', label: 'Nachbarschaft',    meta: '12 Mitglieder, 2 Untergruppen' },
-  { id: 'group_3', label: 'Spielrunde Mittwoch', meta: '5 Mitglieder' }
-]
 const ALL_RIGHTS = ['view', 'edit', 'move', 'owner']
 const IMPLICIT_AUDIENCES = new Set(['authenticated', 'anonymous', 'everyone'])
 
 export class PermissionDialog {
-  constructor() {
+  /**
+   * @param {{ajna: import('./AjnaManager.js').AjnaManager}} opts
+   */
+  constructor({ ajna } = {}) {
+    this.ajna = ajna
     this._injectStyles()
   }
 
@@ -62,6 +52,10 @@ export class PermissionDialog {
         font-size: 11px; color: #aab;
         text-transform: uppercase; letter-spacing: 0.05em;
       }
+      .ajna-perm-dialog .pd-status {
+        font-size: 11px; color: #888; padding: 8px;
+      }
+      .ajna-perm-dialog .pd-status.error { color: #d05050; }
       .ajna-perm-dialog .pd-ace {
         display: grid;
         grid-template-columns: 1fr auto;
@@ -76,7 +70,6 @@ export class PermissionDialog {
       .ajna-perm-dialog .pd-ace.implicit { border-left-color: #6e8db5; }
       .ajna-perm-dialog .pd-ace.group    { border-left-color: #c08a35; }
       .ajna-perm-dialog .pd-ace.user     { border-left-color: #4a8c4a; }
-      .ajna-perm-dialog .pd-ace.owner    { border-left-color: #f1c40f; }
       .ajna-perm-dialog .pd-ace-subject strong { color: #eaeaea; }
       .ajna-perm-dialog .pd-ace-subject .pd-meta {
         display: block; font-size: 10px; color: #888;
@@ -139,6 +132,7 @@ export class PermissionDialog {
         padding: 5px 12px; cursor: pointer; font: inherit;
       }
       .ajna-perm-dialog button:hover { background: #34343d; }
+      .ajna-perm-dialog button:disabled { opacity: 0.4; cursor: default; }
       .ajna-perm-dialog button.primary {
         background: #2c5d8f; border-color: #3a78b6;
       }
@@ -153,31 +147,15 @@ export class PermissionDialog {
         border-top: 1px solid rgba(255,255,255,0.08);
         padding-top: 12px;
       }
-      .ajna-perm-dialog .pd-placeholder-note {
-        margin-top: 10px;
-        font-size: 10px;
-        color: #6a6a72;
-        font-style: italic;
-        text-align: center;
-      }
     `
     document.head.appendChild(style)
   }
 
-  open(obj) {
-    // Platzhalter-ACE-Liste — wird ersetzt, sobald object_permissions
-    // im Backend liegt.
-    const aces = [
-      { kind: 'owner', subject_type: 'user', subject_id: 'user_1',
-        subject_label: 'Du', subject_meta: 'abarth@kloeschinski.de — Besitzer',
-        rights: ['owner', 'view', 'edit', 'move'], interact_actions: ['*'] },
-      { kind: 'group', subject_type: 'group', subject_id: 'group_1',
-        subject_label: 'Familie Barth', subject_meta: '3 Mitglieder',
-        rights: ['view', 'edit'], interact_actions: ['turn_on', 'turn_off'] },
-      { kind: 'implicit', subject_type: 'authenticated',
-        subject_label: 'Authentifizierte Spieler', subject_meta: 'implizite Audience',
-        rights: ['view'], interact_actions: [] }
-    ]
+  async open(obj) {
+    if (!this.ajna) {
+      console.warn('PermissionDialog: kein AjnaManager — Dialog wird nicht geöffnet')
+      return
+    }
 
     const backdrop = document.createElement('div')
     backdrop.className = 'ajna-perm-backdrop'
@@ -187,7 +165,9 @@ export class PermissionDialog {
         <div class="pd-sub">${this._escape(obj?.name || obj?.id || 'Unbenanntes Objekt')}</div>
 
         <h4>Aktuelle Einträge</h4>
-        <div class="pd-ace-list"></div>
+        <div class="pd-ace-list">
+          <div class="pd-status">lade …</div>
+        </div>
 
         <h4>Neue Berechtigung</h4>
         <div class="pd-add">
@@ -213,135 +193,231 @@ export class PermissionDialog {
           </div>
           <div class="pd-interact-row">
             <label>Erlaubte Interaktionen <span style="color:#666">(kommagetrennt, <code>*</code> für alle)</span></label>
-            <input type="text" class="pd-interact" placeholder="z. B. turn_on, turn_off">
+            <input type="text" class="pd-interact" placeholder="z. B. attack, pet">
           </div>
           <div class="pd-add-btn-row" style="text-align:right;">
             <button class="primary pd-add-btn">Hinzufügen</button>
           </div>
         </div>
 
-        <div class="pd-placeholder-note">
-          Platzhalter-Daten — Backend-Anbindung folgt mit dem Permission-Resolver.
-        </div>
-
         <div class="pd-footer">
           <button class="pd-close">Schließen</button>
-          <button class="primary pd-save">Speichern</button>
         </div>
       </div>
     `
 
     document.body.appendChild(backdrop)
+    this._backdrop = backdrop
+    this._obj = obj
 
-    const aceListEl = backdrop.querySelector('.pd-ace-list')
-    this._renderAces(aceListEl, aces)
-
-    // Subject-Dropdown an Subject-Typ koppeln
-    const subjectTypeEl = backdrop.querySelector('.pd-subject-type')
-    const subjectEl    = backdrop.querySelector('.pd-subject')
-    const updateSubjectOptions = () => {
-      const type = subjectTypeEl.value
-      if (IMPLICIT_AUDIENCES.has(type)) {
-        subjectEl.innerHTML = '<option value="">— (implizit, kein Subjekt nötig) —</option>'
-        subjectEl.disabled = true
-      } else {
-        const list = type === 'user' ? PLACEHOLDER_USERS : PLACEHOLDER_GROUPS
-        subjectEl.innerHTML = list.map(s =>
-          `<option value="${s.id}">${this._escape(s.label)} <span>(${this._escape(s.meta)})</span></option>`
-        ).join('')
-        subjectEl.disabled = false
-      }
-    }
-    subjectTypeEl.addEventListener('change', updateSubjectOptions)
-    updateSubjectOptions()
-
-    // Owner-Checkbox nur für user/group erlauben (Spec-Regel)
-    const ownerCheckbox = backdrop.querySelector('input[value="owner"]')
-    const enforceOwnerRule = () => {
-      const type = subjectTypeEl.value
-      if (IMPLICIT_AUDIENCES.has(type)) {
-        ownerCheckbox.checked = false
-        ownerCheckbox.disabled = true
-      } else {
-        ownerCheckbox.disabled = false
-      }
-    }
-    subjectTypeEl.addEventListener('change', enforceOwnerRule)
-    enforceOwnerRule()
-
-    // Buttons
-    backdrop.querySelector('.pd-close').addEventListener('click', () => backdrop.remove())
+    backdrop.querySelector('.pd-close').addEventListener('click', () => this.close())
     backdrop.addEventListener('click', e => {
-      if (e.target === backdrop) backdrop.remove()
+      if (e.target === backdrop) this.close()
     })
-    backdrop.querySelector('.pd-save').addEventListener('click', () => {
-      console.log('[perm] save (Platzhalter — Backend-Anbindung folgt)')
-      backdrop.remove()
-    })
-    backdrop.querySelector('.pd-add-btn').addEventListener('click', () => {
-      const rights = [...backdrop.querySelectorAll('.pd-rights-row input:checked')].map(i => i.value)
-      const interactRaw = backdrop.querySelector('.pd-interact').value.trim()
-      const interact = interactRaw
-        ? interactRaw.split(',').map(s => s.trim()).filter(Boolean)
-        : []
 
-      const newAce = {
-        kind: IMPLICIT_AUDIENCES.has(subjectTypeEl.value) ? 'implicit'
-            : subjectTypeEl.value === 'group' ? 'group' : 'user',
-        subject_type: subjectTypeEl.value,
-        subject_id: subjectEl.disabled ? null : subjectEl.value,
-        subject_label: subjectEl.disabled
-          ? this._implicitLabel(subjectTypeEl.value)
-          : (subjectEl.selectedOptions[0]?.textContent.replace(/\s*\(.*?\)\s*$/, '') ?? subjectEl.value),
-        subject_meta: subjectEl.disabled ? 'implizite Audience' : '',
-        rights, interact_actions: interact
+    // Subject-Type → Subject-Dropdown koppeln
+    const typeEl    = backdrop.querySelector('.pd-subject-type')
+    const subjectEl = backdrop.querySelector('.pd-subject')
+    const ownerCb   = backdrop.querySelector('input[value="owner"]')
+
+    typeEl.addEventListener('change', () => this._refreshSubjectOptions())
+    typeEl.addEventListener('change', () => {
+      const t = typeEl.value
+      if (IMPLICIT_AUDIENCES.has(t)) {
+        ownerCb.checked = false
+        ownerCb.disabled = true
+      } else {
+        ownerCb.disabled = false
       }
-
-      console.log('[perm] add ACE (Platzhalter — Backend-Anbindung folgt):', newAce)
-      aces.push(newAce)
-      this._renderAces(aceListEl, aces)
     })
+
+    backdrop.querySelector('.pd-add-btn').addEventListener('click', () => this._handleAdd())
+
+    // Daten laden
+    try {
+      const [aces, users, groups] = await Promise.all([
+        this.ajna.listPermissions(obj.id),
+        this.ajna.listUsers().catch(() => []),
+        this.ajna.listGroups().catch(() => [])
+      ])
+      this._users  = users
+      this._groups = groups
+      this._userById  = new Map(users.map(u => [u.id, u]))
+      this._groupById = new Map(groups.map(g => [g.id, g]))
+      this._refreshSubjectOptions()
+      this._renderAces(aces)
+    } catch (err) {
+      this._showError(`konnte Berechtigungen nicht laden: ${err?.message || err}`)
+    }
   }
 
-  _renderAces(container, aces) {
-    container.innerHTML = ''
-    if (aces.length === 0) {
-      container.innerHTML = '<div style="color:#666;padding:6px;font-style:italic;">Keine Einträge.</div>'
+  close() {
+    if (this._backdrop) {
+      this._backdrop.remove()
+      this._backdrop = null
+    }
+  }
+
+  // ---------------------------------------------------------------------
+
+  _refreshSubjectOptions() {
+    if (!this._backdrop) return
+    const typeEl    = this._backdrop.querySelector('.pd-subject-type')
+    const subjectEl = this._backdrop.querySelector('.pd-subject')
+    const t = typeEl.value
+
+    if (IMPLICIT_AUDIENCES.has(t)) {
+      subjectEl.innerHTML = '<option value="">— (implizit, kein Subjekt nötig) —</option>'
+      subjectEl.disabled = true
       return
     }
+    subjectEl.disabled = false
+
+    if (t === 'user') {
+      // users.listRule ist privacy-bedingt streng: jeder eingeloggte
+      // Spieler sieht nur sich selbst. Direkte Spieler-zu-Spieler-Zuweisung
+      // ist daher in der UI nicht möglich. Stattdessen läuft das später
+      // über ein Einladungs-/Friends-System bzw. aktuell über Gruppen.
+      const ownerId = this._obj?.owner
+      const list = (this._users || []).filter(u => u.id !== ownerId)
+      subjectEl.innerHTML = list.length
+        ? list.map(u =>
+            `<option value="${u.id}">${this._escape(u.email || u.name || u.id)}</option>`
+          ).join('')
+        : '<option value="">— direkte Spieler-Zuweisung nicht möglich (über Gruppen) —</option>'
+    } else if (t === 'group') {
+      subjectEl.innerHTML = (this._groups || []).length
+        ? this._groups.map(g =>
+            `<option value="${g.id}">${this._escape(g.name || g.id)}</option>`
+          ).join('')
+        : '<option value="">(keine Gruppen vorhanden)</option>'
+    }
+  }
+
+  _renderAces(aces) {
+    const container = this._backdrop?.querySelector('.pd-ace-list')
+    if (!container) return
+    container.innerHTML = ''
+
+    if (!aces || aces.length === 0) {
+      container.innerHTML = '<div class="pd-status">keine Einträge</div>'
+      return
+    }
+
     for (const ace of aces) {
-      const row = document.createElement('div')
-      row.className = `pd-ace ${ace.kind === 'owner' ? 'owner' : ace.kind}`
-      const rightsPills = ace.rights.map(r =>
+      const kind = IMPLICIT_AUDIENCES.has(ace.subject_type)
+        ? 'implicit'
+        : ace.subject_type   // 'user' | 'group'
+
+      const { label, meta } = this._describeSubject(ace)
+      const rightsPills = (ace.rights || []).map(r =>
         `<span class="pd-pill">${this._escape(r)}</span>`
       ).join('')
       const interactPills = (ace.interact_actions || []).map(a =>
         `<span class="pd-pill interact">${this._escape(a)}</span>`
       ).join('')
+
+      const row = document.createElement('div')
+      row.className = `pd-ace ${kind}`
       row.innerHTML = `
         <div class="pd-ace-subject">
-          <strong>${this._escape(ace.subject_label)}</strong>
-          <span class="pd-meta">${this._escape(ace.subject_meta || '')}</span>
+          <strong>${this._escape(label)}</strong>
+          <span class="pd-meta">${this._escape(meta)}</span>
           <div class="pd-ace-rights">${rightsPills}${interactPills}</div>
         </div>
         <button class="danger">Entfernen</button>
       `
-      row.querySelector('button').addEventListener('click', () => {
-        console.log('[perm] remove ACE (Platzhalter — Backend-Anbindung folgt):', ace)
-        const idx = aces.indexOf(ace)
-        if (idx >= 0) aces.splice(idx, 1)
-        this._renderAces(container, aces)
-      })
+      row.querySelector('button').addEventListener('click', () => this._handleRemove(ace.id))
       container.appendChild(row)
     }
   }
 
-  _implicitLabel(type) {
-    return ({
+  _describeSubject(ace) {
+    if (ace.subject_type === 'user') {
+      const u = this._userById?.get(ace.subject)
+      return {
+        label: u?.email || u?.username || ace.subject || '(unbekannter Spieler)',
+        meta: 'Spieler'
+      }
+    }
+    if (ace.subject_type === 'group') {
+      const g = this._groupById?.get(ace.subject)
+      return {
+        label: g?.name || ace.subject || '(unbekannte Gruppe)',
+        meta: g ? `Gruppe (${(g.members || []).length} Mitglieder)` : 'Gruppe'
+      }
+    }
+    const map = {
       authenticated: 'Authentifizierte Spieler',
       anonymous:     'Anonyme Spieler',
       everyone:      'Jeder'
-    })[type] ?? type
+    }
+    return { label: map[ace.subject_type] || ace.subject_type, meta: 'implizite Audience' }
+  }
+
+  async _handleAdd() {
+    const bd = this._backdrop
+    const typeEl    = bd.querySelector('.pd-subject-type')
+    const subjectEl = bd.querySelector('.pd-subject')
+    const addBtn    = bd.querySelector('.pd-add-btn')
+
+    const subject_type = typeEl.value
+    const subject      = IMPLICIT_AUDIENCES.has(subject_type) ? '' : subjectEl.value
+    const rights       = [...bd.querySelectorAll('.pd-rights-row input:checked')].map(i => i.value)
+    const interactRaw  = bd.querySelector('.pd-interact').value.trim()
+    const interact_actions = interactRaw
+      ? interactRaw.split(',').map(s => s.trim()).filter(Boolean)
+      : []
+
+    if (!IMPLICIT_AUDIENCES.has(subject_type) && !subject) {
+      this._showError(
+        subject_type === 'user'
+          ? 'Direkte Spieler-Zuweisung wird in einer späteren Version über ein Einladungs-System unterstützt. Aktuell bitte Gruppen verwenden.'
+          : 'Bitte ein Subjekt auswählen'
+      )
+      return
+    }
+
+    addBtn.disabled = true
+    try {
+      await this.ajna.addPermission(this._obj.id, {
+        subject_type, subject, rights, interact_actions
+      })
+      // Inputs zurücksetzen
+      bd.querySelector('.pd-interact').value = ''
+      await this._reloadAces()
+    } catch (err) {
+      this._showError(`Hinzufügen fehlgeschlagen: ${err?.message || err}`)
+    } finally {
+      addBtn.disabled = false
+    }
+  }
+
+  async _handleRemove(aceId) {
+    try {
+      await this.ajna.removePermission(aceId)
+      await this._reloadAces()
+    } catch (err) {
+      this._showError(`Entfernen fehlgeschlagen: ${err?.message || err}`)
+    }
+  }
+
+  async _reloadAces() {
+    try {
+      const aces = await this.ajna.listPermissions(this._obj.id)
+      this._renderAces(aces)
+    } catch (err) {
+      this._showError(`Neuladen fehlgeschlagen: ${err?.message || err}`)
+    }
+  }
+
+  _showError(text) {
+    console.warn('[PermissionDialog]', text)
+    // Wenn der Dialog noch offen ist, kurz oben anzeigen
+    const bd = this._backdrop
+    if (!bd) return
+    const list = bd.querySelector('.pd-ace-list')
+    if (list) list.innerHTML = `<div class="pd-status error">${this._escape(text)}</div>`
   }
 
   _escape(s) {
