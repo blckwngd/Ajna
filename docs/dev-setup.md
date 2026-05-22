@@ -109,6 +109,31 @@ Beispiel: [`pocketbase/pb_hooks/main.pb.js`](../pocketbase/pb_hooks/main.pb.js) 
 
 Wenn VS Code keine Stack-Tasks anzeigt: Workspace-Trust prüfen — VS Code zeigt Tasks aus `.vscode/tasks.json` nur in "trusted" Workspaces an. Statusleiste unten links: "Restricted Mode" → "Trust Workspace".
 
+## WebXR im AR-Client
+
+Der AR-Client setzt Babylon's `createDefaultXRExperienceAsync` mit `immersive-vr` als Default-Mode auf. Der "Enter XR"-Button wird automatisch ins DOM injiziert (sichtbar in der unteren Ecke), sobald der Browser WebXR unterstützt.
+
+**Aktivierte Features:**
+- **Pointer-Selection** auf allen Controllern: Trigger feuert einen `POINTERTAP` — unser Mesh-Klick-Handler reagiert genauso wie beim Desktop-Maus-Klick.
+- **Teleportation**: Pointing-Gesture auf den Debug-Boden + Trigger-Loslassen versetzt den Benutzer dorthin. Reference-Space ist `local-floor`.
+- **Controller-Profile**: WebXR-Input-Sources werden über die Standard-Profile geladen. Daydream-Controller, Quest-Controller, generische 3DOF-Geräte funktionieren mit Trigger=Select.
+
+**Was im immersive Mode anders ist:**
+- Das DOM-basierte Kontextmenü ("Bearbeiten/Berechtigungen/…") ist im immersiven Mode unsichtbar. Stattdessen erscheint ein **kompaktes Camera-HUD im unteren Bildschirmbereich** — pro Action eine kleine 3D-Plane (~20 cm × 7,5 cm), horizontal nebeneinander, ca. 70 cm vor der Kamera. Die Planes werden pro Frame in Welt-Koordinaten vor die aktive Kamera positioniert, mit `BillboardMode_ALL` ausgerichtet. Hintergrund: Anchoring am Modell führte zu unzuverlässigen Klicks, weil `scene.pick()` Ray-Distanz testet, nicht `renderingGroupId` — überlagernde Modell-Meshes "gewinnen" das Picking. Als HUD ist der Button immer das nächste Mesh entlang des Picks.
+- **Kein Titel-Header**: Der Bezug zum gemeinten Objekt entsteht über das `HighlightLayer`-Outline am 3D-Modell, das die Gaze-Loop bei Fokus setzt — das hält das HUD klein und lässt die Sicht aufs Modell frei.
+- **Gaze-Fokus**: Der Blick auf ein Objekt (Kamera-Forward-Ray, gegen GameObject-Meshes gepickt) markiert es als fokussiert — Highlight + Menü erscheinen automatisch. Schaut man weg, verschwindet beides. Die Loop drosselt sich auf ~10 Hz Pick-Frequenz.
+- **Klick** (Maus / Controller-Trigger / Touch) auf ein Objekt-Mesh öffnet ebenfalls das Menü — ein zweiter Weg, falls Gaze nicht greift.
+- **Klick auf einen Menü-Button** läuft über Mesh-Picking (nicht GUI-intern) und funktioniert deshalb gleichermaßen mit Maus (auch im WebXR-Browser-Emulator), Controller-Trigger und Touch. Hover-Feedback (Farbwechsel) kommt vom `ActionManager`. Aktion-Trigger: `ajna.interact(record.id, actionKey)` → läuft die ganze Berechtigungs-/Broker-Kette wie ein Spieler-Klick im Desktop-Modus.
+- **Auto-Hide nach Klick**: Jeder Tap schließt das HUD — egal ob er einen Button oder daneben getroffen hat. Erst beim nächsten Wechsel des Gaze-Fokus (oder bei einem expliziten Objekt-Klick) erscheint es wieder.
+- **ESC** verlässt die XR-Session ohne Seiten-Reload — wichtig im WebXR-Browser-Emulator, wo es keine Headset-Geste zum Verlassen gibt.
+- Hover-Tooltips am Cursor (DOM-basiert) erscheinen nicht — das `HighlightLayer`-Verhalten am gefokussierten Objekt ist der visuelle Indikator.
+
+**State-Logging:** in der Browser-Konsole erscheinen `[xr] state → ENTERING_XR / IN_XR / EXITING_XR / NOT_IN_XR`-Zeilen, sowie `[xr] trigger <action> on <name>` beim Controller-Klick. Hilfreich zum Debuggen ohne Headset.
+
+**AR statt VR**: Wenn der Browser `immersive-ar` unterstützt (Quest 3, einige Mobile-Browser), kann der Default-Mode auf `'immersive-ar'` umgestellt werden. Floor/Teleportation funktionieren dort eingeschränkter, weil der echte Boden über die Kamera kommt. Für Smart-Home-Demo mit realer Welt im Hintergrund ist das der Zielmodus.
+
+---
+
 ## Bauen für Produktion
 
 ```bash

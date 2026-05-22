@@ -3,6 +3,7 @@ import { EditorUI } from "./core/EditorUI.js"
 import { GPSProvider } from "./core/GPSProvider.js"
 import { ContextMenu } from "./core/ContextMenu.js"
 import { PermissionDialog } from "./core/PermissionDialog.js"
+import { GroupDialog } from "./core/GroupDialog.js"
 import { ObjectActions } from "./core/ObjectActions.js"
 import { Toast } from "./core/Toast.js"
 import "leaflet-gps"
@@ -15,6 +16,7 @@ const markerLayer = new Map()
 const interactSubs = new Map()
 const contextMenu = new ContextMenu()
 const permissionDialog = new PermissionDialog({ ajna })
+const groupDialog = new GroupDialog({ ajna })
 const toast = new Toast()
 let objectActions = null  // wird in init() verdrahtet, sobald editorUI da ist
 
@@ -249,7 +251,8 @@ async function init() {
     mode: 'map',
     onObjectSelected: obj => map.setView([obj.lat, obj.lon], 16),
     onObjectsUpdated: objects => mapUpdateMarkers(objects),
-    onObjectHover: (obj, hovering) => setMarkerHighlight(obj.id, hovering)
+    onObjectHover: (obj, hovering) => setMarkerHighlight(obj.id, hovering),
+    onManageGroups: () => groupDialog.open()
   })
 
   // Marker-Klick-Aktionen verdrahten, sobald die EditorUI als Sink für

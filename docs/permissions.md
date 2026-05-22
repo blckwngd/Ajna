@@ -164,7 +164,62 @@ Im AR-/Map-Client: Klick auf ein Objekt → "Berechtigungen" → Dialog:
 
 - **Direkte User-zu-User-ACEs sind in der UI nicht möglich** (Dropdown wäre leer). Der Dialog blockiert die Auswahl mit Hinweis.
 - Berechtigungen für andere Spieler laufen über **Gruppen** oder **implicit Audiences**.
-- Für direkte Sichtbarkeit zwischen zwei spezifischen Spielern: geplantes **Friends-/Invitation-System**.
+- Member werden via **Einladungs-System** (siehe unten) in Gruppen aufgenommen, nicht durch direktes Eintragen einer User-ID.
+
+## Einladungs-System
+
+Damit User andere Spieler in ihre Gruppen aufnehmen können, ohne dass die privacy-strenge `users.listRule` gelockert werden muss, gibt es einen Server-vermittelten Einladungs-Flow.
+
+### Datenmodell — `invitations` Collection
+
+| Feld | Typ | Zweck |
+|---|---|---|
+| `group` | Relation → groups | Welche Gruppe |
+| `group_name` | Text (Snapshot) | für Anzeige beim Empfänger |
+| `inviter` | Relation → users | Einladende:r |
+| `inviter_email` | Text (Snapshot) | für Anzeige beim Empfänger |
+| `invitee` | Relation → users | Eingeladene:r |
+| `invitee_email` | Text (Snapshot) | für Anzeige beim Inviter |
+| `status` | Select: pending / accepted / declined | |
+
+**Snapshot-Pattern**: `*_email` und `group_name` werden serverseitig beim Anlegen kopiert, damit beide Seiten den Eintrag verständlich angezeigt bekommen, ohne die jeweils andere Identität direkt aus der `users`-Collection lesen zu müssen.
+
+### Routen
+
+| Endpoint | Wer darf | Was passiert |
+|---|---|---|
+| `POST /api/groups/:id/invite` body `{ email }` oder `{ name }` | Group-Owner | Sucht User per E-Mail oder per Anzeige-Name (mit App-Privilege), legt Invitation mit `status=pending` an. 404 wenn nicht gefunden, 409 wenn schon Member, pending oder Name nicht eindeutig |
+| `POST /api/invitations/:id/accept` | nur Invitee | User wird zur `groups.members` hinzugefügt, Invitation → `accepted`. Cache-Refresh läuft automatisch über die `groups.afterUpdate`-Hook |
+| `POST /api/invitations/:id/decline` | nur Invitee | Invitation → `declined`, Gruppe unverändert |
+| `DELETE /api/collections/invitations/records/:id` | Inviter (via Collection-Rule) | Pending-Einladung zurückziehen |
+
+### API-Rules
+
+| Rule | Wert |
+|---|---|
+| List / View | `inviter = @request.auth.id \|\| invitee = @request.auth.id` |
+| Create | `false` (nur via Server-Route) |
+| Update | `false` (Status-Wechsel nur via Server-Route) |
+| Delete | `inviter = @request.auth.id` (Owner kann zurückziehen) |
+
+### Client-API
+
+Über `AjnaManager`:
+```js
+// E-Mail
+await ajna.inviteToGroup(groupId, { email: "user@example.com" })
+
+// Oder per Anzeige-Name (für Privacy in Spielrunden-Kontexten)
+await ajna.inviteToGroup(groupId, { name: "MaxMustermann" })
+
+const incoming = await ajna.listIncomingInvitations()
+const outgoing = await ajna.listOutgoingInvitations()
+await ajna.acceptInvitation(id)
+await ajna.declineInvitation(id)
+await ajna.cancelInvitation(id)
+```
+
+Der `GroupDialog` zeigt eingehende Einladungen oben (mit "Annehmen"/"Ablehnen") und pro eigener Gruppe die ausstehenden ausgehenden Einladungen + Cancel-Buttons.
 
 ## Aktueller Stand
 
@@ -174,20 +229,19 @@ Im AR-/Map-Client: Klick auf ein Objekt → "Berechtigungen" → Dialog:
 - ✅ Default-Permissions beim Object-Create
 - ✅ AjnaManager-API für ACE-Verwaltung
 - ✅ PermissionDialog ans Backend angebunden
-- 🚧 Group-Management-UI (Anlegen, Members verwalten)
+- ✅ Group-Management-UI (Anlegen, Members verwalten, Untergruppen)
+- ✅ Einladungs-System für Gruppen-Mitgliedschaften
+- 🚧 Self-Leave: Member verlässt eine Gruppe selbst
 - 🚧 Default-Permissions-Editor im User-Profil
-- 🚧 Friends-/Invitation-System
 - 🚧 `objects.viewRule` mit Implicit-Audience-Klauseln (siehe oben)
 - 🚧 Zyklus-Erkennung beim Hinzufügen von Sub-Groups
 
 ## Roadmap
 
-1. **Group-Management-UI**: Owner kann Gruppen anlegen, Members hinzufügen (per User-ID, später Friend-Lookup).
-2. **Default-Permissions-Editor**: UI-Tab im User-Profil.
-3. **Friends/Invitation-System**:
-   - User A schickt Einladung an `email@example.com` → Server-Hook prüft, ob ein User mit der E-Mail existiert, legt einen Invitation-Record an.
-   - User B akzeptiert → beide werden "friends", können einander in `users`-Lookups finden (mit `emailVisibility`-Bool).
-4. **Implicit-Audience-Klauseln** in `objects.viewRule` aktivieren.
+1. **Self-Leave**: Member kann sich selbst aus einer Gruppe entfernen (Server-Route, da Member-Update sonst nur dem Owner erlaubt ist).
+2. **Default-Permissions-Editor**: UI-Tab im User-Profil, damit Owner ihre Templates pflegen können.
+3. **Implicit-Audience-Klauseln** in `objects.viewRule` aktivieren — bisher prüft die Rule nur Owner + Cache, der `authenticated`/`everyone`-Pfad ist noch zu ergänzen.
+4. **Zyklus-Erkennung** für tiefere Sub-Group-Hierarchien (aktuell nur 1-Hop verhindert).
 5. **Object-Container** für hierarchische Inheritance (Räume → Wohnungen). Optional, falls Use-Case auftaucht.
 6. **Conditional Rules** ("Level ≥ 10", "Item X im Inventar") via Object-Scripting-Schicht.
 

@@ -304,6 +304,65 @@ export class AjnaManager {
   }
 
   // ===================================================================
+  //  Einladungen (Friend-/Group-Invitations)
+  // ===================================================================
+
+  /**
+   * Lädt einen User in eine eigene Gruppe ein — wahlweise per E-Mail
+   * oder per Anzeige-Name.
+   *
+   * Aus Privacy-Gründen sollte name bevorzugt werden, sobald die User
+   * sich nicht persönlich kennen — E-Mails sind PII.
+   *
+   * @param {string} groupId
+   * @param {{email?: string, name?: string} | string} target
+   *   Objekt mit einer der beiden Identitäts-Optionen, oder ein String
+   *   (wird als E-Mail interpretiert — Backward-Compat).
+   */
+  async inviteToGroup(groupId, target) {
+    const body = typeof target === 'string'
+      ? { email: target }
+      : { email: target?.email, name: target?.name }
+    return this.pb.send(`/api/groups/${groupId}/invite`, {
+      method: 'POST',
+      body
+    })
+  }
+
+  async acceptInvitation(invitationId) {
+    return this.pb.send(`/api/invitations/${invitationId}/accept`, { method: 'POST' })
+  }
+
+  async declineInvitation(invitationId) {
+    return this.pb.send(`/api/invitations/${invitationId}/decline`, { method: 'POST' })
+  }
+
+  /** Inviter kann eine noch nicht akzeptierte Einladung zurückziehen. */
+  async cancelInvitation(invitationId) {
+    return this.pb.collection('invitations').delete(invitationId)
+  }
+
+  /** Pending-Einladungen, in denen der aktuelle User Empfänger ist. */
+  async listIncomingInvitations() {
+    if (!this.isLoggedIn()) return []
+    const me = this.currentUser().id
+    return this.pb.collection('invitations').getFullList({
+      filter: `invitee = "${me}" && status = "pending"`,
+      sort: '-created'
+    })
+  }
+
+  /** Pending-Einladungen, die der aktuelle User ausgesprochen hat. */
+  async listOutgoingInvitations() {
+    if (!this.isLoggedIn()) return []
+    const me = this.currentUser().id
+    return this.pb.collection('invitations').getFullList({
+      filter: `inviter = "${me}" && status = "pending"`,
+      sort: '-created'
+    })
+  }
+
+  // ===================================================================
   //  User (für ACE-Selector)
   // ===================================================================
 

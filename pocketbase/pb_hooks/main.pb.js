@@ -191,6 +191,196 @@ routerAdd("POST", "/api/objects/{id}/interact", (e) => {
 
 
 // =====================================================================
+// Invitations — Friend-/Group-Einladungen
+//
+// Privacy-Modell: die users-Collection ist strikt (jeder sieht nur sich
+// selbst). Damit Einladungen UI-tauglich angezeigt werden können (z. B.
+// "Anna hat dich eingeladen"), schreibt der Server beim Anlegen ein
+// Email-Snapshot ins Invitation-Record. Empfänger sehen damit den
+// Inviter, ohne dass dessen User-Record direkt lesbar wäre.
+// =====================================================================
+
+// POST /api/groups/{id}/invite — Body: { email } ODER { name }
+//
+// Privacy: in vielen Szenarien wollen Spieler ihre Mailadresse NICHT
+// preisgeben (Spielrunden-Bekanntschaften etc.). Daher zweite Lookup-
+// Methode per `users.name`. Bei Mehrdeutigkeit (mehrere User mit
+// gleichem Anzeigenamen) gibt der Hook 409 zurück und verlangt eine
+// eindeutigere Angabe oder die E-Mail.
+routerAdd("POST", "/api/groups/{id}/invite", (e) => {
+  try {
+    const groupId = e.request.pathValue("id")
+    const info = e.requestInfo()
+    const body = info.body || {}
+    const email = (body.email || "").trim().toLowerCase()
+    const name  = (body.name  || "").trim()
+
+    if (!email && !name) {
+      return e.json(400, { error: "either 'email' or 'name' is required" })
+    }
+
+    const user = info.auth
+    if (!user) return e.json(401, { error: "auth required" })
+
+    let group
+    try { group = $app.findRecordById("groups", groupId) }
+    catch { return e.json(404, { error: "group not found" }) }
+
+    if (group.get("owner") !== user.id) {
+      return e.json(403, { error: "only the group owner may invite" })
+    }
+
+    // Invitee per E-Mail oder Name finden ($app läuft mit App-Privilege
+    // und umgeht die strenge users.viewRule).
+    let invitee
+    if (email) {
+      try {
+        invitee = $app.findFirstRecordByFilter(
+          "users",
+          "email = {:email}",
+          { email }
+        )
+      } catch {
+        return e.json(404, { error: "no user with this email" })
+      }
+    } else {
+      // Name ist nicht unique — Mehrdeutigkeit explizit melden, statt
+      // willkürlich einen User zu nehmen.
+      const matches = $app.findRecordsByFilter(
+        "users",
+        "name = {:name}",
+        "", 5, 0,
+        { name }
+      )
+      if (matches.length === 0) {
+        return e.json(404, { error: "no user with this name" })
+      }
+      if (matches.length > 1) {
+        return e.json(409, {
+          error: "multiple users share this name — please invite by email instead"
+        })
+      }
+      invitee = matches[0]
+    }
+
+    if (invitee.id === user.id) {
+      return e.json(400, { error: "cannot invite yourself" })
+    }
+
+    if ((group.get("members") || []).indexOf(invitee.id) !== -1) {
+      return e.json(409, { error: "user is already a member" })
+    }
+
+    // Duplikate verhindern
+    let existing = null
+    try {
+      existing = $app.findFirstRecordByFilter(
+        "invitations",
+        "group = {:g} && invitee = {:u} && status = 'pending'",
+        { g: groupId, u: invitee.id }
+      )
+    } catch { /* none */ }
+    if (existing) {
+      return e.json(409, { error: "invitation already pending" })
+    }
+
+    const col = $app.findCollectionByNameOrId("invitations")
+    const rec = new Record(col, {
+      group: groupId,
+      group_name: group.get("name"),
+      inviter: user.id,
+      inviter_email: user.get("email") || "",
+      invitee: invitee.id,
+      invitee_email: invitee.get("email") || email,
+      status: "pending"
+    })
+    $app.save(rec)
+
+    return e.json(200, { ok: true, invitationId: rec.id })
+  } catch (err) {
+    console.log("[invite] error: " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err) })
+  }
+})
+
+
+// POST /api/invitations/{id}/accept
+routerAdd("POST", "/api/invitations/{id}/accept", (e) => {
+  try {
+    const invId = e.request.pathValue("id")
+    const info = e.requestInfo()
+    const user = info.auth
+    if (!user) return e.json(401, { error: "auth required" })
+
+    let inv
+    try { inv = $app.findRecordById("invitations", invId) }
+    catch { return e.json(404, { error: "invitation not found" }) }
+
+    if (inv.get("invitee") !== user.id) {
+      return e.json(403, { error: "only the invitee may accept" })
+    }
+    if (inv.get("status") !== "pending") {
+      return e.json(400, { error: "invitation is no longer pending" })
+    }
+
+    let group
+    try { group = $app.findRecordById("groups", inv.get("group")) }
+    catch {
+      // Gruppe wurde zwischenzeitlich gelöscht — Invitation auf declined setzen.
+      inv.set("status", "declined")
+      $app.save(inv)
+      return e.json(410, { error: "group no longer exists" })
+    }
+
+    const members = (group.get("members") || []).slice()
+    if (members.indexOf(user.id) === -1) {
+      members.push(user.id)
+      group.set("members", members)
+      $app.save(group)
+    }
+
+    inv.set("status", "accepted")
+    $app.save(inv)
+
+    return e.json(200, { ok: true })
+  } catch (err) {
+    console.log("[invitations.accept] error: " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err) })
+  }
+})
+
+
+// POST /api/invitations/{id}/decline
+routerAdd("POST", "/api/invitations/{id}/decline", (e) => {
+  try {
+    const invId = e.request.pathValue("id")
+    const info = e.requestInfo()
+    const user = info.auth
+    if (!user) return e.json(401, { error: "auth required" })
+
+    let inv
+    try { inv = $app.findRecordById("invitations", invId) }
+    catch { return e.json(404, { error: "invitation not found" }) }
+
+    if (inv.get("invitee") !== user.id) {
+      return e.json(403, { error: "only the invitee may decline" })
+    }
+    if (inv.get("status") !== "pending") {
+      return e.json(400, { error: "invitation is no longer pending" })
+    }
+
+    inv.set("status", "declined")
+    $app.save(inv)
+
+    return e.json(200, { ok: true })
+  } catch (err) {
+    console.log("[invitations.decline] error: " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err) })
+  }
+})
+
+
+// =====================================================================
 // POST /api/objects/{id}/recompute-permissions
 //
 // Debug-Endpoint: trigger einen Cache-Refresh für ein Objekt von Hand.

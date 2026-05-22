@@ -1,5 +1,5 @@
 export class EditorUI {
-  constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null }) {
+  constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null, onManageGroups = null }) {
     this.ajna = ajna
     this.container = container
     this.mode = mode
@@ -13,6 +13,9 @@ export class EditorUI {
     // Client zum Hervorheben im 3D-Raum, vom Map-Client zum Markieren
     // auf der Karte genutzt.
     this.onObjectHover = onObjectHover
+    // Optional: öffnet den Gruppen-Verwaltungs-Dialog. Nur wenn gesetzt
+    // wird der entsprechende Button gerendert.
+    this.onManageGroups = onManageGroups
     this.objectLayer = new Map()
   }
 
@@ -53,6 +56,12 @@ export class EditorUI {
         <div id="editorStatus" class="ed-status"></div>
       </section>
 
+      ${this.onManageGroups ? `
+        <section class="ed-section" id="editorGroupsSection">
+          <button id="editorManageGroupsBtn" type="button" class="ed-btn">Gruppen verwalten</button>
+        </section>
+      ` : ''}
+
       <section class="ed-section" id="sharedEditorSection">
         <h4>Objekt-Editor</h4>
         <form id="sharedEditorForm">
@@ -89,6 +98,7 @@ export class EditorUI {
     this.refreshBtn = this.container.querySelector('#editorRefreshBtn')
     this.objectListEl = this.container.querySelector('#editorObjectList')
     this.focusPlayerBtn = this.container.querySelector('#editorFocusPlayerBtn')
+    this.manageGroupsBtn = this.container.querySelector('#editorManageGroupsBtn')
   }
 
   _injectStyles() {
@@ -267,6 +277,10 @@ export class EditorUI {
     this.ajna.onObjectsChanged(() => {
       this.renderObjectList()
     })
+
+    if (this.manageGroupsBtn && this.onManageGroups) {
+      this.manageGroupsBtn.addEventListener('click', () => this.onManageGroups())
+    }
 
     if (this.focusPlayerBtn && this.onFocusPlayer) {
       this.focusPlayerBtn.addEventListener('click', () => this.onFocusPlayer())

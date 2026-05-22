@@ -26,7 +26,9 @@ import { AjnaManager } from "./core/AjnaManager.js"
 import { EditorUI } from "./core/EditorUI.js"
 import { ContextMenu } from "./core/ContextMenu.js"
 import { PermissionDialog } from "./core/PermissionDialog.js"
+import { GroupDialog } from "./core/GroupDialog.js"
 import { ObjectActions } from "./core/ObjectActions.js"
+import { InWorldActionMenu } from "./core/InWorldActionMenu.js"
 import { Toast } from "./core/Toast.js"
 import { CameraComponent } from "./engine/components/CameraComponent.js"
 import { DebugCameraComponent } from "./engine/components/DebugCameraComponent.js"
@@ -49,6 +51,7 @@ window.ajna = ajnaManager
 // ==========================================================
 
 let editorUI = null
+let _xrExperience = null  // gesetzt nach erfolgreichem WebXR-Setup
 
 // ==========================================================
 // PHASE 1: INITIALIZATION
@@ -111,10 +114,6 @@ async function init() {
     })
   }
 
-  if (scene.createDefaultXRExperienceAsync) {
-    await scene.createDefaultXRExperienceAsync()
-  }
-
   engine.runRenderLoop(() => {
     const delta = engine.getDeltaTime() / 1000
     objectMap.forEach(go => go.update(delta))
@@ -127,11 +126,14 @@ async function init() {
   // Re-Entry-Schleife über EditorUI -> loadObjects -> emitObjectsChanged
   // entsteht.
   const uiContainer = document.getElementById('ui')
+  const groupDialog = new GroupDialog({ ajna: ajnaManager })
+
   editorUI = new EditorUI({
     ajna: ajnaManager,
     container: uiContainer,
     mode: 'ar',
     onFocusPlayer: () => focusCameraOn(scene, player),
+    onManageGroups: () => groupDialog.open(),
     onObjectSelected: obj => {
       // PB-Record → zugehöriges GameObject. Wenn die Szene das Objekt
       // noch nicht angelegt hat (z. B. vor abgeschlossenem syncSceneObjects),
@@ -157,17 +159,57 @@ async function init() {
     permissionDialog
   })
 
-  // Klick auf ein 3D-Objekt → Kontextmenü an der Cursor-Position.
-  // POINTERTAP statt POINTERPICK, damit ein Drag (Kameradrehung) das
-  // Menü nicht versehentlich öffnet.
+  // In-World-Menü für den XR-Modus. Sichtbar nur, wenn ein Objekt
+  // fokussiert ist (Gaze oder XR-Klick).
+  const inWorldMenu = new InWorldActionMenu(scene)
+
+  function _triggerInteract(record, actionKey) {
+    console.log(`[xr] trigger ${actionKey} on ${record.name || record.id}`)
+    ajnaManager.interact(record.id, actionKey).catch(err =>
+      console.warn("[xr] interact failed:", err?.message || err)
+    )
+  }
+
+  function _showInWorldMenuFor(go, record) {
+    const actions = Array.isArray(record.actions) && record.actions.length > 0
+      ? record.actions
+      : [{ key: "examine", label: "Untersuchen" }]
+    inWorldMenu.show(
+      go,
+      record.name || record.id,
+      actions,
+      key => _triggerInteract(record, key)
+    )
+  }
+
+  // Klick auf ein 3D-Objekt:
+  //   • Desktop → DOM-Kontextmenü an Cursor-Position (wie gehabt)
+  //   • XR     → In-World-Menü (DOM ist unsichtbar)
   scene.onPointerObservable.add(eventData => {
     if (eventData.type !== BABYLON.PointerEventTypes.POINTERTAP) return
-    const pickInfo = scene.pick(scene.pointerX, scene.pointerY)
+
+    // Wenn der Tap einen In-World-Button getroffen hat: hier nichts mehr
+    // tun. InWorldActionMenu setzt skipNextObservers, aber wir prüfen
+    // zusätzlich den raw-Pick, falls Observer-Reihenfolge mal wechselt.
+    const rawPick = scene.pick(scene.pointerX, scene.pointerY)
+    if (rawPick?.pickedMesh?.metadata?.isActionButton) return
+
+    // Nur GameObject-Meshes — GUI-Panel selbst aussortieren, sonst klickt
+    // ein Button im Menü auf "sein eigenes" Objekt-Mesh und öffnet erneut.
+    const pickInfo = scene.pick(scene.pointerX, scene.pointerY,
+      mesh => !!mesh.metadata?.gameObject
+    )
     const go = pickInfo?.hit ? pickInfo.pickedMesh?.metadata?.gameObject : null
     if (!go?.name) return
 
     const record = ajnaManager.objectMap.get(go.id)
     if (!record) return
+
+    const inXR = _xrExperience?.baseExperience?.state === BABYLON.WebXRState.IN_XR
+    if (inXR) {
+      _showInWorldMenuFor(go, record)
+      return
+    }
 
     const rect = canvas.getBoundingClientRect()
     objectActions.showFor(
@@ -175,6 +217,50 @@ async function init() {
       rect.left + scene.pointerX,
       rect.top + scene.pointerY
     )
+  })
+
+  // Gaze-Loop: pro Frame Ray vom Kamera-Forward, Pick-Test gegen
+  // GameObject-Meshes. Wechselt der Fokus, wird Highlight + Menü
+  // entsprechend nachgezogen. Drosselt sich selbst, weil pickWithRay
+  // O(meshes) ist — alle ~6 Frames reicht für UX.
+  //
+  // GUI-Panels werden über das Predicate ausgefiltert, damit das Menü
+  // nicht den Blick auf "sein eigenes" Objekt verdeckt.
+  let _gazedGO = null
+  let _gazeTick = 0
+  scene.onBeforeRenderObservable.add(() => {
+    if (!_xrExperience || _xrExperience.baseExperience.state !== BABYLON.WebXRState.IN_XR) {
+      if (_gazedGO) {
+        setHighlight(_gazedGO, false)
+        inWorldMenu.hide()
+        _gazedGO = null
+      }
+      return
+    }
+    if (++_gazeTick % 6 !== 0) return
+
+    const cam = scene.activeCamera
+    if (!cam) return
+    const ray = cam.getForwardRay(100)
+    const pickInfo = scene.pickWithRay(ray,
+      mesh => !!mesh.metadata?.gameObject
+    )
+    const next = (pickInfo?.hit && pickInfo.pickedMesh?.metadata?.gameObject?.name)
+      ? pickInfo.pickedMesh.metadata.gameObject
+      : null
+
+    if (next === _gazedGO) return
+
+    if (_gazedGO) setHighlight(_gazedGO, false)
+    _gazedGO = next
+
+    if (_gazedGO) {
+      setHighlight(_gazedGO, true)
+      const record = ajnaManager.objectMap.get(_gazedGO.id)
+      if (record) _showInWorldMenuFor(_gazedGO, record)
+    } else {
+      inWorldMenu.hide()
+    }
   })
 
   // EditorUI-Backend-Load und GPS-Fix parallelisieren — bei realem GPS
@@ -192,7 +278,62 @@ async function init() {
   })
   syncSceneObjects(scene, world, geo, ajnaManager.getObjectList())
 
-  buildDebugScene(scene)
+  const debugScene = buildDebugScene(scene)
+
+  // WebXR — nach buildDebugScene, damit die Ground-Mesh als Floor für
+  // die Teleportation verfügbar ist.
+  //
+  // Default Mode ist `immersive-vr`. Die Babylon-Default-Experience baut
+  // automatisch einen "Enter XR"-Button ins DOM und aktiviert
+  // Pointer-Selection (Controller-Trigger feuert pointer-events, die
+  // unser bestehender POINTERTAP-Handler oben aufgreift) sowie
+  // Teleportation (Pointing-Gesture auf den Boden + Loslassen).
+  //
+  // Daydream-Controller und andere generische 3DOF-Controller werden
+  // über das Standard-WebXR-Profil mitgenommen.
+  try {
+    _xrExperience = await scene.createDefaultXRExperienceAsync({
+      floorMeshes: [debugScene.ground],
+      uiOptions: {
+        sessionMode: "immersive-vr",
+        referenceSpaceType: "local-floor"
+      },
+      pointerSelectionOptions: {
+        enablePointerSelectionOnAllControllers: true
+      },
+      teleportationOptions: {
+        floorMeshes: [debugScene.ground]
+      }
+    })
+    console.log("[xr] ready — Enter-XR button is in the DOM")
+
+    _xrExperience.baseExperience?.onStateChangedObservable.add(state => {
+      const name = ({
+        0: "NOT_IN_XR",
+        1: "ENTERING_XR",
+        2: "IN_XR",
+        3: "EXITING_XR"
+      })[state] || state
+      console.log(`[xr] state → ${name}`)
+      if (state !== BABYLON.WebXRState.IN_XR) {
+        inWorldMenu.hide()
+      }
+    })
+
+    // ESC verlässt die XR-Session, ohne dass die Seite neu geladen werden
+    // muss. Hilft im WebXR-Browser-Emulator, wo es keine Headset-Geste
+    // zum Verlassen gibt.
+    window.addEventListener("keydown", ev => {
+      if (ev.key !== "Escape") return
+      if (_xrExperience?.baseExperience?.state === BABYLON.WebXRState.IN_XR) {
+        _xrExperience.baseExperience.exitXRAsync().catch(err =>
+          console.warn("[xr] exit failed:", err?.message || err)
+        )
+      }
+    })
+  } catch (err) {
+    console.warn("[xr] init failed (browser likely lacks WebXR):", err?.message || err)
+  }
 }
 
 

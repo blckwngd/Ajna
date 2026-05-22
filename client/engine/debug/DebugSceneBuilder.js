@@ -73,6 +73,10 @@ export function buildDebugScene(scene) {
   }, scene)
   axisZ.color = new BABYLON.Color3(0, 0, 1)
   axisZ.isPickable = false
+
+  // Ground-Mesh als Referenz zurückgeben — wird z. B. von der WebXR-
+  // Teleportation als Floor benötigt.
+  return { ground }
 }
 
 export { Tiles3DManager, TILESET_URLS, createCommonTilesets } from "./Tiles3DManager.js"
