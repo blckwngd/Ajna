@@ -23,17 +23,12 @@ let objectActions = null  // wird in init() verdrahtet, sobald editorUI da ist
 function subscribeMarkerInteract(objectId) {
   if (interactSubs.has(objectId)) return
   interactSubs.set(objectId, null)
-  ajna.pb.realtime.subscribe(`interact:${objectId}`, msg => {
-    let data
-    try { data = typeof msg === "string" ? JSON.parse(msg) : msg }
-    catch { data = { action: "?" } }
-    handleMarkerInteract(objectId, data)
-  }).then(unsub => {
-    interactSubs.set(objectId, unsub)
-  }).catch(err => {
-    interactSubs.delete(objectId)
-    console.warn("interact subscribe failed", objectId, err?.message || err)
-  })
+  ajna.subscribeInteract(objectId, data => handleMarkerInteract(objectId, data))
+    .then(unsub => { interactSubs.set(objectId, unsub) })
+    .catch(err => {
+      interactSubs.delete(objectId)
+      console.warn("interact subscribe failed", objectId, err?.message || err)
+    })
 }
 
 function unsubscribeMarkerInteract(objectId) {

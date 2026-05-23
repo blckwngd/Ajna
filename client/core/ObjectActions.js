@@ -57,10 +57,7 @@ export class ObjectActions {
   // interessierten Clients (inkl. dem zugewiesenen Agent) verteilt.
   async _triggerAction(record, actionKey) {
     try {
-      const res = await this.ajna.pb.send(
-        `/api/objects/${record.id}/interact`,
-        { method: 'POST', body: { action: actionKey } }
-      )
+      const res = await this.ajna.interact(record.id, actionKey)
       console.log('[interact]', actionKey, '→', res)
     } catch (err) {
       // PocketBase liefert bei 403/404 eine JSON-Antwort mit response.data

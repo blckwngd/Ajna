@@ -1,422 +1,299 @@
 import PocketBase from 'pocketbase'
+import { AjnaClient } from './AjnaClient.js'
+
+const DEFAULT_SERVER_ID = 'default'
 
 /**
- * AjnaManager — Client-Bibliothek für die Ajna-Plattform.
+ * AjnaManager — Federation über N {@link AjnaClient}-Instanzen.
  *
- * Bietet eine einheitliche API für Auth, Objekt-CRUD, Realtime-Updates
- * und Aktions-Interaktionen. Wird gleichermaßen von Game-Clients (AR /
- * Map) und Agenten (NPC-Logik) verwendet.
+ * In Phase 1 läuft die Manager-Instanz mit genau einem Default-Client,
+ * sodass alle Aufrufstellen unverändert weiterfunktionieren. Spätere
+ * Phasen erlauben weitere Clients via `addServer()` / `removeServer()`.
  *
- * Browser: läuft direkt — PocketBase nutzt das eingebaute `EventSource`.
- * Node:    in Node 22+ existiert `EventSource` global; in älteren
- *          Versionen muss er manuell polyfilled werden, bevor diese
- *          Datei importiert wird:
+ * **Composite-ID-Konvention:** Records, die der Manager nach außen
+ * gibt, haben `id = "<serverId>:<rohId>"` und `_origin = serverId`.
+ * Operationen mit composite ID werden anhand des Server-Präfix an den
+ * richtigen AjnaClient delegiert. Wer eine rohe ID übergibt, landet
+ * implizit beim Default-Client — das hält bestehende Skripte (z. B.
+ * agent.js mit hartkodierten PB-IDs) lauffähig.
  *
- *            import { EventSource } from 'eventsource'
- *            globalThis.EventSource = EventSource
- *            const { AjnaManager } = await import('./AjnaManager.js')
- *
- * @example  Minimal-Agent
- *   const ajna = new AjnaManager('http://localhost:8090')
- *   await ajna.login('agent@example.com', 'secret')
- *   await ajna.connect()
- *   const target = ajna.getObjectById('2kjikgp1pvkc4p5')
- *   await ajna.onInteract(target.id, ev => {
- *     if (ev.action === 'attack') ajna.setAnimation(target.id, 'die')
- *   })
+ * Backward-Compat:
+ *   • Constructor-Signatur (String-URL ODER `{url, pb}`) bleibt erhalten.
+ *   • `manager.pb` zeigt auf den Default-PB — für Code, der noch direkt
+ *     auf PB-Internals zugreift. Diesen Pfad sollte neuer Code meiden;
+ *     für ID-tragende Calls gibt es `subscribeInteract()` / `interact()`.
  */
 export class AjnaManager {
   /**
    * @param {string | {url?: string, pb?: PocketBase}} [urlOrOpts]
-   *   String → wird als PocketBase-URL benutzt.
-   *   Objekt → kann eine vorkonfigurierte `pb`-Instance mitbringen
-   *            (z. B. mit Custom-Headers oder bereits eingeloggt).
    */
   constructor(urlOrOpts = 'http://localhost:8090') {
     const opts = typeof urlOrOpts === 'string' ? { url: urlOrOpts } : urlOrOpts
-    this.pb = opts.pb ?? new PocketBase(opts.url ?? 'http://localhost:8090')
 
-    /** @type {Map<string, object>} */
-    this.objectMap = new Map()
+    /** @type {Map<string, AjnaClient>}  serverId → client */
+    this.clients = new Map()
+    this._defaultId = DEFAULT_SERVER_ID
 
+    const defaultClient = new AjnaClient({
+      id: this._defaultId,
+      url: opts.url,
+      pb: opts.pb,
+      label: 'default'
+    })
+    this.clients.set(this._defaultId, defaultClient)
+
+    /** @type {Set<(snapshot: object[]) => void>} */
     this._objectsChangedListeners = new Set()
-    this._realtimeReady = false
-    this._realtimeUnsubscribe = null
+
+    // Pro Client einen onObjectsChanged-Subscriber: bei jedem Event
+    // emittieren wir den vereinigten Snapshot aller Clients.
+    this._wireClientListeners(defaultClient)
   }
 
   // ===================================================================
-  //  Auth
+  //  Default / Direct-PB Backward-Compat
   // ===================================================================
 
-  /** Login als regulärer User. */
-  async login(email, password) {
-    return this.pb.collection('users').authWithPassword(email, password)
-  }
-
-  /** Wirft die Session weg. */
-  logout() {
-    this.pb.authStore.clear()
-  }
-
-  isLoggedIn() {
-    return this.pb.authStore.isValid
-  }
-
-  /** Aktuell eingeloggter User-Record (oder null). */
-  currentUser() {
-    return this.pb.authStore.record || this.pb.authStore.model || null
-  }
+  /** @returns {AjnaClient} */
+  get defaultClient() { return this.clients.get(this._defaultId) }
 
   /**
-   * Lauscht auf Auth-Änderungen (Login, Logout, Token-Refresh).
-   * Callback erhält den User-Record (oder null).
-   * @returns {() => void} unsubscribe
+   * Rohe PB-Instance des Default-Clients. Für ID-tragende Calls den
+   * Manager verwenden — `pb` löst die Routing-Frage nicht.
    */
-  onAuthChanged(callback) {
-    return this.pb.authStore.onChange((_token, record) => callback(record))
+  get pb() { return this.defaultClient.pb }
+
+  // ===================================================================
+  //  ID-Routing
+  // ===================================================================
+
+  /** Parst `"<serverId>:<rawId>"`; falls keine Server-Komponente, Default. */
+  _split(compositeId) {
+    if (typeof compositeId !== 'string') return { serverId: this._defaultId, rawId: compositeId }
+    const i = compositeId.indexOf(':')
+    if (i < 0) return { serverId: this._defaultId, rawId: compositeId }
+    return { serverId: compositeId.slice(0, i), rawId: compositeId.slice(i + 1) }
+  }
+
+  /** Findet den passenden Client für eine composite ID. */
+  _clientFor(compositeId) {
+    const { serverId } = this._split(compositeId)
+    const c = this.clients.get(serverId)
+    if (!c) throw new Error(`AjnaManager: unknown server "${serverId}" for id "${compositeId}"`)
+    return c
   }
 
   // ===================================================================
-  //  Connect / Disconnect — Lifecycle
+  //  Auth — bezieht sich auf den Default-Client (Multi-Server-Auth
+  //  kommt in Phase 3 mit getrennten Sessions pro Client)
   // ===================================================================
 
-  /**
-   * Holt die initiale Objekt-Liste und aktiviert die Realtime-Sub auf
-   * `objects`. Idempotent — mehrfacher Aufruf re-fetcht die Liste, ohne
-   * doppelt zu subscriben.
-   */
+  async login(email, password)   { return this.defaultClient.login(email, password) }
+  logout()                       { return this.defaultClient.logout() }
+  isLoggedIn()                   { return this.defaultClient.isLoggedIn() }
+  currentUser()                  { return this.defaultClient.currentUser() }
+  onAuthChanged(callback)        { return this.defaultClient.onAuthChanged(callback) }
+
+  // ===================================================================
+  //  Connect / Disconnect — alle Clients parallel
+  // ===================================================================
+
   async connect() {
-    await this.refreshObjects()
+    await Promise.all(Array.from(this.clients.values()).map(c => c.connect()))
   }
 
-  /** Räumt alle internen Subscriptions auf, leert den Objekt-Cache. */
   async disconnect() {
-    if (typeof this._realtimeUnsubscribe === 'function') {
-      try { this._realtimeUnsubscribe() } catch {}
-    }
-    this._realtimeUnsubscribe = null
-    this._realtimeReady = false
-    this.objectMap.clear()
-    // pb.realtime.unsubscribe() ohne Topic schließt sämtliche aktiven
-    // Realtime-Channels (auch User-eigene wie watchObject/onInteract).
-    try { await this.pb.realtime.unsubscribe() } catch {}
+    await Promise.all(Array.from(this.clients.values()).map(c => c.disconnect()))
   }
 
   // ===================================================================
-  //  Objects — Read
+  //  Objects — Read (über alle Clients gemerged)
   // ===================================================================
 
-  /** Liefert alle aktuell sichtbaren Objekte aus dem Cache (Snapshot). */
+  /**
+   * Liefert die vereinigte Objekt-Liste aller Clients. Reihenfolge:
+   * stabil nach Server-ID, innerhalb eines Servers Insertion-Order.
+   */
   getObjects() {
-    return Array.from(this.objectMap.values())
+    const all = []
+    for (const c of this.clients.values()) {
+      for (const o of c.objectMap.values()) all.push(o)
+    }
+    return all
   }
 
-  /** Liefert ein einzelnes Objekt aus dem Cache, oder undefined. */
-  getObjectById(id) {
-    return this.objectMap.get(id)
+  getObjectById(compositeId) {
+    try { return this._clientFor(compositeId).getObjectById(compositeId) }
+    catch { return undefined }
   }
 
   /**
-   * Holt die aktuelle Objekt-Liste vom Server, ersetzt den Cache,
-   * feuert onObjectsChanged. Stellt beim ersten Aufruf zusätzlich die
-   * Realtime-Sub auf `objects` her.
+   * Snapshot-Lookup als Map (composite-ID → record).
+   * Praktisch für Aufrufer, die `objectMap.get(id)` gewohnt sind.
    */
+  get objectMap() {
+    const merged = new Map()
+    for (const c of this.clients.values()) {
+      for (const [id, o] of c.objectMap) merged.set(id, o)
+    }
+    return merged
+  }
+
   async refreshObjects() {
-    const objects = await this.pb.collection('objects').getFullList()
-    this.objectMap.clear()
-    objects.forEach(o => this.objectMap.set(o.id, o))
-    this._emitObjectsChanged()
-    await this._ensureRealtime()
-    return objects
+    const results = await Promise.all(
+      Array.from(this.clients.values()).map(c => c.refreshObjects())
+    )
+    return results.flat()
   }
 
   // ===================================================================
   //  Objects — Write
   // ===================================================================
 
-  async createObject(data) {
-    const obj = await this.pb.collection('objects').create(data)
-    this.objectMap.set(obj.id, obj)
-    this._emitObjectsChanged()
-    return obj
+  /** createObject ohne explizite Server-Wahl → Default-Client. */
+  async createObject(data, { serverId } = {}) {
+    const c = serverId ? this.clients.get(serverId) : this.defaultClient
+    if (!c) throw new Error(`AjnaManager: unknown server "${serverId}"`)
+    return c.createObject(data)
   }
 
-  async updateObject(id, data) {
-    const obj = await this.pb.collection('objects').update(id, data)
-    this.objectMap.set(id, obj)
-    this._emitObjectsChanged()
-    return obj
+  async updateObject(compositeId, data) {
+    return this._clientFor(compositeId).updateObject(compositeId, data)
   }
 
-  async deleteObject(id) {
-    await this.pb.collection('objects').delete(id)
-    this.objectMap.delete(id)
-    this._emitObjectsChanged()
+  async deleteObject(compositeId) {
+    return this._clientFor(compositeId).deleteObject(compositeId)
   }
 
-  /** Shortcut: setzt nur `animation_state` (typischer Agent-Use-Case). */
-  async setAnimation(id, state) {
-    return this.updateObject(id, { animation_state: state })
+  async setAnimation(compositeId, state) {
+    return this._clientFor(compositeId).setAnimation(compositeId, state)
   }
 
-  /** Shortcut: setzt nur die Geo-Position. */
-  async moveObject(id, lat, lon, altitude = undefined) {
-    const patch = altitude === undefined ? { lat, lon } : { lat, lon, altitude }
-    return this.updateObject(id, patch)
+  async moveObject(compositeId, lat, lon, altitude) {
+    return this._clientFor(compositeId).moveObject(compositeId, lat, lon, altitude)
   }
 
   // ===================================================================
   //  Subscriptions
   // ===================================================================
 
-  /**
-   * Listener auf jede Änderung der Objekt-Liste. Callback erhält den
-   * gesamten Cache-Snapshot bei jedem Event (create/update/delete).
-   * @returns {() => void} unsubscribe
-   */
   onObjectsChanged(listener) {
     this._objectsChangedListeners.add(listener)
     return () => this._objectsChangedListeners.delete(listener)
   }
 
-  /**
-   * Subscribed auf Updates eines einzelnen Objekts.
-   * Callback erhält `(record, action)` mit action ∈ {create,update,delete}.
-   * @returns {Promise<() => void>} unsubscribe-Promise
-   */
-  async watchObject(id, callback) {
-    return this.pb.collection('objects').subscribe(id, e => {
-      if (e.action === 'delete') {
-        this.objectMap.delete(e.record.id)
-      } else {
-        this.objectMap.set(e.record.id, e.record)
-      }
-      this._emitObjectsChanged()
-      callback(e.record, e.action)
-    })
+  async watchObject(compositeId, callback) {
+    return this._clientFor(compositeId).watchObject(compositeId, callback)
   }
 
   // ===================================================================
   //  Interaktionen
   // ===================================================================
 
-  /**
-   * Triggert eine Aktion auf einem Objekt. Geht durch den serverseitigen
-   * Permission-Check und wird per Broker an alle Subscriber des Topics
-   * `interact:<objectId>` verteilt — KEIN DB-Write für den Trigger selbst.
-   *
-   * @param {string} objectId
-   * @param {string} action — z. B. "attack", "turn_on"
-   * @param {any}    [payload] — beliebige Zusatzdaten
-   * @returns {Promise<{ok: boolean, delivered: number}>}
-   */
-  async interact(objectId, action, payload) {
-    const body = payload === undefined ? { action } : { action, payload }
-    return this.pb.send(`/api/objects/${objectId}/interact`, {
-      method: 'POST',
-      body
-    })
+  async interact(compositeId, action, payload) {
+    return this._clientFor(compositeId).interact(compositeId, action, payload)
+  }
+
+  async onInteract(compositeId, callback) {
+    return this._clientFor(compositeId).onInteract(compositeId, callback)
   }
 
   /**
-   * Lauscht auf Aktions-Events für ein Objekt. Callback erhält das
-   * parsed Payload: `{ action, source, ts, payload? }`.
-   * @returns {Promise<() => void>} unsubscribe-Promise
+   * Subscribed auf `interact:*`-Events für ein einzelnes Objekt.
+   * Wird vom AR/Map-Client genutzt, um pro Welt-Objekt einen Listener
+   * für Broker-Events zu halten. Gibt den Unsubscribe-Callback zurück
+   * (genauer: einen Promise<unsubscribe>).
    */
-  async onInteract(objectId, callback) {
-    return this.pb.realtime.subscribe(`interact:${objectId}`, raw => {
-      let data
-      try { data = typeof raw === 'string' ? JSON.parse(raw) : raw }
-      catch { data = { action: '?', raw } }
-      callback(data)
-    })
+  async subscribeInteract(compositeId, callback) {
+    return this._clientFor(compositeId).onInteract(compositeId, callback)
   }
 
   // ===================================================================
-  //  Berechtigungen (ACEs)
+  //  Berechtigungen
   // ===================================================================
 
-  /**
-   * Listet alle ACE-Einträge für ein Objekt. Nur der Object-Owner darf
-   * das (collection-Rule auf `object_permissions`).
-   */
-  async listPermissions(objectId) {
-    return this.pb.collection('object_permissions').getFullList({
-      filter: `object = "${objectId}"`,
-      sort: '+created'
-    })
+  async listPermissions(compositeId) {
+    return this._clientFor(compositeId).listPermissions(compositeId)
   }
 
-  /**
-   * Fügt eine ACE hinzu. `ace.subject_type` ∈ {user,group,authenticated,anonymous,everyone}.
-   * `subject` bei impliziten Audiences leer lassen.
-   */
-  async addPermission(objectId, ace) {
-    return this.pb.collection('object_permissions').create({
-      object: objectId,
-      subject_type: ace.subject_type,
-      subject: ace.subject || '',
-      rights: ace.rights || [],
-      interact_actions: ace.interact_actions || []
-    })
+  async addPermission(compositeId, ace) {
+    return this._clientFor(compositeId).addPermission(compositeId, ace)
   }
 
   async updatePermission(aceId, patch) {
-    return this.pb.collection('object_permissions').update(aceId, patch)
+    // ACE-IDs sind ebenfalls composite (kommen aus listPermissions).
+    return this._clientFor(aceId).updatePermission(aceId, patch)
   }
 
   async removePermission(aceId) {
-    return this.pb.collection('object_permissions').delete(aceId)
+    return this._clientFor(aceId).removePermission(aceId)
   }
 
-  /**
-   * Effektive Rechte des aktuellen Users auf ein Objekt — inkl. impliziter
-   * Audiences. Spiegelt das, was der serverseitige Resolver gerade liefern
-   * würde; geeignet, um UI-Buttons zu enablen/disablen.
-   * @returns {Promise<{rights: string[], interact_actions: string[]}>}
-   */
-  async getEffectiveRights(objectId) {
-    return this.pb.send(`/api/objects/${objectId}/effective-rights`, { method: 'GET' })
+  async getEffectiveRights(compositeId) {
+    return this._clientFor(compositeId).getEffectiveRights(compositeId)
   }
 
   // ===================================================================
-  //  Gruppen
+  //  Gruppen — operieren am Default-Client (Phase 3 erweitert)
   // ===================================================================
 
-  async listGroups() {
-    return this.pb.collection('groups').getFullList({ sort: '+name' })
+  async listGroups({ serverId } = {}) {
+    if (serverId) return this.clients.get(serverId)?.listGroups() ?? []
+    // Aktuell: nur Default-Client. In Multi-Server-Phasen mergen wir.
+    return this.defaultClient.listGroups()
   }
 
-  async createGroup(name, { members = [], subgroups = [] } = {}) {
-    const data = { name, members, subgroups }
-    // owner wird im PB-Schema typischerweise vom Hook gesetzt oder
-    // expliziter Default — wenn weder noch, hier mitsetzen:
-    if (this.isLoggedIn()) data.owner = this.currentUser().id
-    return this.pb.collection('groups').create(data)
+  async createGroup(name, opts) { return this.defaultClient.createGroup(name, opts) }
+
+  async updateGroup(compositeId, patch) {
+    return this._clientFor(compositeId).updateGroup(compositeId, patch)
   }
 
-  async updateGroup(id, patch) {
-    return this.pb.collection('groups').update(id, patch)
-  }
-
-  async deleteGroup(id) {
-    return this.pb.collection('groups').delete(id)
+  async deleteGroup(compositeId) {
+    return this._clientFor(compositeId).deleteGroup(compositeId)
   }
 
   // ===================================================================
-  //  Einladungen (Friend-/Group-Invitations)
+  //  Einladungen
   // ===================================================================
 
-  /**
-   * Lädt einen User in eine eigene Gruppe ein — wahlweise per E-Mail
-   * oder per Anzeige-Name.
-   *
-   * Aus Privacy-Gründen sollte name bevorzugt werden, sobald die User
-   * sich nicht persönlich kennen — E-Mails sind PII.
-   *
-   * @param {string} groupId
-   * @param {{email?: string, name?: string} | string} target
-   *   Objekt mit einer der beiden Identitäts-Optionen, oder ein String
-   *   (wird als E-Mail interpretiert — Backward-Compat).
-   */
   async inviteToGroup(groupId, target) {
-    const body = typeof target === 'string'
-      ? { email: target }
-      : { email: target?.email, name: target?.name }
-    return this.pb.send(`/api/groups/${groupId}/invite`, {
-      method: 'POST',
-      body
-    })
+    return this._clientFor(groupId).inviteToGroup(groupId, target)
   }
 
-  async acceptInvitation(invitationId) {
-    return this.pb.send(`/api/invitations/${invitationId}/accept`, { method: 'POST' })
-  }
+  async acceptInvitation(invId) { return this._clientFor(invId).acceptInvitation(invId) }
+  async declineInvitation(invId) { return this._clientFor(invId).declineInvitation(invId) }
+  async cancelInvitation(invId) { return this._clientFor(invId).cancelInvitation(invId) }
 
-  async declineInvitation(invitationId) {
-    return this.pb.send(`/api/invitations/${invitationId}/decline`, { method: 'POST' })
-  }
-
-  /** Inviter kann eine noch nicht akzeptierte Einladung zurückziehen. */
-  async cancelInvitation(invitationId) {
-    return this.pb.collection('invitations').delete(invitationId)
-  }
-
-  /** Pending-Einladungen, in denen der aktuelle User Empfänger ist. */
-  async listIncomingInvitations() {
-    if (!this.isLoggedIn()) return []
-    const me = this.currentUser().id
-    return this.pb.collection('invitations').getFullList({
-      filter: `invitee = "${me}" && status = "pending"`,
-      sort: '-created'
-    })
-  }
-
-  /** Pending-Einladungen, die der aktuelle User ausgesprochen hat. */
-  async listOutgoingInvitations() {
-    if (!this.isLoggedIn()) return []
-    const me = this.currentUser().id
-    return this.pb.collection('invitations').getFullList({
-      filter: `inviter = "${me}" && status = "pending"`,
-      sort: '-created'
-    })
-  }
+  async listIncomingInvitations() { return this.defaultClient.listIncomingInvitations() }
+  async listOutgoingInvitations() { return this.defaultClient.listOutgoingInvitations() }
 
   // ===================================================================
-  //  User (für ACE-Selector)
+  //  Users / Defaults — Default-Client
   // ===================================================================
 
-  /**
-   * Liefert eine User-Liste — nur Felder, die auch ohne Spezialrechte
-   * sichtbar sein dürften (id, email, name, …). Im PB-Default können
-   * eingeloggte User andere User listen; das hängt aber an `users.listRule`.
-   */
-  async listUsers() {
-    return this.pb.collection('users').getFullList({ sort: '+email' })
-  }
-
-  /**
-   * Standard-Berechtigungen des aktuellen Users — werden beim Anlegen
-   * neuer Objekte automatisch übernommen.
-   */
-  getMyDefaultPermissions() {
-    const u = this.currentUser()
-    return u?.default_permissions || []
-  }
-
-  async setMyDefaultPermissions(aces) {
-    const u = this.currentUser()
-    if (!u) throw new Error('not logged in')
-    return this.pb.collection('users').update(u.id, { default_permissions: aces })
-  }
+  async listUsers() { return this.defaultClient.listUsers() }
+  getMyDefaultPermissions() { return this.defaultClient.getMyDefaultPermissions() }
+  async setMyDefaultPermissions(aces) { return this.defaultClient.setMyDefaultPermissions(aces) }
+  canCreateObjects() { return this.defaultClient.canCreateObjects() }
 
   // ===================================================================
   //  Internals
   // ===================================================================
 
-  _emitObjectsChanged() {
-    const snapshot = this.getObjects()
-    this._objectsChangedListeners.forEach(l => {
-      try { l(snapshot) } catch (e) { console.error('AjnaManager listener error', e) }
-    })
+  _wireClientListeners(client) {
+    client.onObjectsChanged(() => this._emitObjectsChanged())
   }
 
-  async _ensureRealtime() {
-    if (this._realtimeReady) return
-    this._realtimeReady = true
-
-    this._realtimeUnsubscribe = await this.pb.collection('objects').subscribe('*', e => {
-      if (e.action === 'create' || e.action === 'update') {
-        this.objectMap.set(e.record.id, e.record)
-      } else if (e.action === 'delete') {
-        this.objectMap.delete(e.record.id)
-      }
-      this._emitObjectsChanged()
-    })
+  _emitObjectsChanged() {
+    const snapshot = this.getObjects()
+    for (const l of this._objectsChangedListeners) {
+      try { l(snapshot) } catch (e) { console.error('AjnaManager listener error', e) }
+    }
   }
 
   // ===================================================================
-  //  Backwards-compat aliases
+  //  Backward-compat aliases
   // ===================================================================
 
   /** @deprecated benutze getObjects() */
@@ -428,8 +305,6 @@ export class AjnaManager {
   /** @deprecated benutze currentUser() */
   getCurrentUser() { return this.currentUser() }
 
-  /** @deprecated wird intern aufgerufen — nicht von außen brauchen */
+  /** @deprecated interner Helper */
   emitObjectsChanged() { this._emitObjectsChanged() }
-
-  canCreateObjects() { return this.pb.authStore.isValid }
 }

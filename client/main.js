@@ -40,7 +40,6 @@ import { DebugUIManager } from "./engine/debug/DebugUIManager.js"
 import { buildEnvironment } from "./engine/environment/EnvironmentBuilder.js"
 
 const ajnaManager = new AjnaManager("http://" + window.location.hostname + ":8090")
-const pb = ajnaManager.pb
 const DEBUG_WORLD = true
 window.GUI = GUI
 window.GridMaterial = GridMaterial
@@ -343,23 +342,18 @@ async function init() {
 
 const objectMap = new Map()
 
-// Pro Objekt eine PocketBase-Realtime-Subscription auf "interact:<id>".
-// Werden über _subscribeInteract / _unsubscribeInteract gepflegt; map
-// hält die Unsubscribe-Functions, die der PB-SDK-Aufruf zurückgibt.
+// Pro Objekt eine Realtime-Subscription auf "interact:<id>". Die Federation
+// (AjnaManager) routet die Subscription an den richtigen PB-Server anhand
+// der Composite-ID. Map hält die Unsubscribe-Functions.
 const interactSubs = new Map()
 let _toast = null
 
-function subscribeInteract(pb, objectId, onEvent) {
+function subscribeInteract(manager, objectId, onEvent) {
   if (interactSubs.has(objectId)) return
   // Slot reservieren, damit zwei parallel laufende syncSceneObjects-Aufrufe
   // nicht doppelt subscriben.
   interactSubs.set(objectId, null)
-  pb.realtime.subscribe(`interact:${objectId}`, msg => {
-    let data
-    try { data = typeof msg === "string" ? JSON.parse(msg) : msg }
-    catch { data = { action: "?" } }
-    onEvent(data)
-  }).then(unsub => {
+  manager.subscribeInteract(objectId, onEvent).then(unsub => {
     interactSubs.set(objectId, unsub)
   }).catch(err => {
     interactSubs.delete(objectId)
@@ -405,7 +399,7 @@ async function syncSceneObjects(scene, world, geo, objects) {
     } else {
       const go = await GameObject.createFromPBData(scene, obj, geo, true)
       objectMap.set(obj.id, go)
-      subscribeInteract(ajnaManager.pb, obj.id, data => _handleInteractAR(go, data))
+      subscribeInteract(ajnaManager, obj.id, data => _handleInteractAR(go, data))
     }
   }
 }
