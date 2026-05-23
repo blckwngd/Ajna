@@ -27,6 +27,7 @@ import { EditorUI } from "./core/EditorUI.js"
 import { ContextMenu } from "./core/ContextMenu.js"
 import { PermissionDialog } from "./core/PermissionDialog.js"
 import { GroupDialog } from "./core/GroupDialog.js"
+import { ServerDialog } from "./core/ServerDialog.js"
 import { ObjectActions } from "./core/ObjectActions.js"
 import { InWorldActionMenu } from "./core/InWorldActionMenu.js"
 import { Toast } from "./core/Toast.js"
@@ -126,6 +127,7 @@ async function init() {
   // entsteht.
   const uiContainer = document.getElementById('ui')
   const groupDialog = new GroupDialog({ ajna: ajnaManager })
+  const serverDialog = new ServerDialog({ ajna: ajnaManager })
 
   editorUI = new EditorUI({
     ajna: ajnaManager,
@@ -133,6 +135,7 @@ async function init() {
     mode: 'ar',
     onFocusPlayer: () => focusCameraOn(scene, player),
     onManageGroups: () => groupDialog.open(),
+    onManageServers: () => serverDialog.open(),
     onObjectSelected: obj => {
       // PB-Record → zugehöriges GameObject. Wenn die Szene das Objekt
       // noch nicht angelegt hat (z. B. vor abgeschlossenem syncSceneObjects),

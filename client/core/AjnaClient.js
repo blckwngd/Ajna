@@ -1,4 +1,4 @@
-import PocketBase from 'pocketbase'
+import PocketBase, { LocalAuthStore } from 'pocketbase'
 
 /**
  * AjnaClient — Eine PocketBase-Verbindung zu **einem** Ajna-Server.
@@ -36,17 +36,28 @@ import PocketBase from 'pocketbase'
 export class AjnaClient {
   /**
    * @param {object} opts
-   * @param {string} opts.id          — stabile Server-ID (UUID o. ä.)
-   * @param {string} [opts.url]       — PocketBase-URL
-   * @param {string} [opts.label]     — Anzeigename (UI)
-   * @param {PocketBase} [opts.pb]    — vorkonfigurierte PB-Instance
+   * @param {string} opts.id              — stabile Server-ID (UUID o. ä.)
+   * @param {string} [opts.url]           — PocketBase-URL
+   * @param {string} [opts.label]         — Anzeigename (UI)
+   * @param {string} [opts.authStorageKey] — LocalStorage-Key für den Auth-Token
+   *                                         (Default: `ajna_auth_<id>`).
+   * @param {PocketBase} [opts.pb]        — vorkonfigurierte PB-Instance
+   *                                         (überschreibt url + authStorageKey)
    */
   constructor(opts) {
     if (!opts?.id) throw new Error('AjnaClient: opts.id required')
     this.id = opts.id
     this.url = opts.url ?? opts.pb?.baseUrl ?? null
     this.label = opts.label ?? this.url ?? this.id
-    this.pb = opts.pb ?? new PocketBase(opts.url)
+
+    if (opts.pb) {
+      this.pb = opts.pb
+    } else {
+      // Pro Server eigener LocalAuthStore-Key, damit mehrere parallele
+      // PB-Instances nicht denselben "pocketbase_auth"-Slot überschreiben.
+      const storageKey = opts.authStorageKey ?? `ajna_auth_${this.id}`
+      this.pb = new PocketBase(opts.url, new LocalAuthStore(storageKey))
+    }
 
     /** @type {Map<string, object>}  composite-ID → record */
     this.objectMap = new Map()
@@ -141,6 +152,9 @@ export class AjnaClient {
     this._realtimeUnsubscribe = null
     this._realtimeReady = false
     this.objectMap.clear()
+    // World-View nachziehen — sonst bleiben die Objekte dieses Clients
+    // im merged Snapshot stehen, bis der nächste Realtime-Event kommt.
+    this._emitObjectsChanged()
     try { await this.pb.realtime.unsubscribe() } catch {}
   }
 

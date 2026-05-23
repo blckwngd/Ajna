@@ -1,7 +1,12 @@
 import PocketBase from 'pocketbase'
 import { AjnaClient } from './AjnaClient.js'
+import { ServerRegistry } from './ServerRegistry.js'
 
-const DEFAULT_SERVER_ID = 'default'
+const FALLBACK_SERVER_ID = 'default'
+
+function hasLocalStorage() {
+  try { return typeof localStorage !== 'undefined' && !!localStorage } catch { return false }
+}
 
 /**
  * AjnaManager — Federation über N {@link AjnaClient}-Instanzen.
@@ -32,22 +37,50 @@ export class AjnaManager {
 
     /** @type {Map<string, AjnaClient>}  serverId → client */
     this.clients = new Map()
-    this._defaultId = DEFAULT_SERVER_ID
-
-    const defaultClient = new AjnaClient({
-      id: this._defaultId,
-      url: opts.url,
-      pb: opts.pb,
-      label: 'default'
-    })
-    this.clients.set(this._defaultId, defaultClient)
 
     /** @type {Set<(snapshot: object[]) => void>} */
     this._objectsChangedListeners = new Set()
 
-    // Pro Client einen onObjectsChanged-Subscriber: bei jedem Event
-    // emittieren wir den vereinigten Snapshot aller Clients.
-    this._wireClientListeners(defaultClient)
+    /** @type {Set<() => void>}  Listener für Änderungen an der Server-Liste */
+    this._serversChangedListeners = new Set()
+
+    if (opts.pb || !hasLocalStorage()) {
+      // Node-/Agent-/Test-Pfad: vorkonfiguriertes PB oder kein LocalStorage.
+      // Keine Registry, single Client mit der konventionellen ID "default".
+      this.registry = null
+      this._defaultId = FALLBACK_SERVER_ID
+      const client = new AjnaClient({
+        id: FALLBACK_SERVER_ID,
+        url: opts.url,
+        pb: opts.pb,
+        label: 'default'
+      })
+      this.clients.set(client.id, client)
+      this._wireClientListeners(client)
+      return
+    }
+
+    // Browser-Pfad: Registry ist Source of Truth.
+    this.registry = new ServerRegistry()
+    const defaultEntry = this.registry.seedIfEmpty(opts.url || 'http://localhost:8090')
+    this._defaultId = this.registry.defaultId() || defaultEntry.id
+
+    for (const entry of this.registry.list()) {
+      this._instantiateClient(entry)
+    }
+  }
+
+  _instantiateClient(entry) {
+    if (this.clients.has(entry.id)) return this.clients.get(entry.id)
+    const client = new AjnaClient({
+      id: entry.id,
+      url: entry.url,
+      label: entry.label,
+      authStorageKey: this.registry?.tokenKey(entry.id)
+    })
+    this.clients.set(entry.id, client)
+    this._wireClientListeners(client)
+    return client
   }
 
   // ===================================================================
@@ -95,15 +128,165 @@ export class AjnaManager {
   onAuthChanged(callback)        { return this.defaultClient.onAuthChanged(callback) }
 
   // ===================================================================
-  //  Connect / Disconnect — alle Clients parallel
+  //  Connect / Disconnect
   // ===================================================================
 
+  /**
+   * Verbindet den Default-Client (Boot-kritisch — Fehler wird propagiert).
+   * Zusatz-Server, die noch einen gültigen Token besitzen, werden
+   * "lazy" mitverbunden — Fehler dort kippen den Boot nicht, sondern
+   * landen als Warnung in der Konsole. So bleibt das Multi-Server-
+   * Setup nach Reload selbsterhaltend, ohne dass der User pro Server
+   * manuell verbinden muss.
+   */
   async connect() {
-    await Promise.all(Array.from(this.clients.values()).map(c => c.connect()))
+    await this.defaultClient.connect()
+    for (const c of this.clients.values()) {
+      if (c.id === this._defaultId) continue
+      if (!c.isLoggedIn()) continue
+      c.connect().catch(err =>
+        console.warn(`[AjnaManager] connect "${c.label}" failed:`, err?.message || err)
+      )
+    }
   }
 
   async disconnect() {
-    await Promise.all(Array.from(this.clients.values()).map(c => c.disconnect()))
+    await Promise.allSettled(Array.from(this.clients.values()).map(c => c.disconnect()))
+  }
+
+  async connectServer(serverId) {
+    const c = this.clients.get(serverId)
+    if (!c) throw new Error(`AjnaManager: unknown server "${serverId}"`)
+    return c.connect()
+  }
+
+  async disconnectServer(serverId) {
+    const c = this.clients.get(serverId)
+    if (!c) return
+    return c.disconnect()
+  }
+
+  // ===================================================================
+  //  Server-Verwaltung
+  // ===================================================================
+
+  /**
+   * Liefert die bekannten Server inkl. Live-Status (Login + Verbindung).
+   * @returns {Array<{id, url, label, isDefault, isLoggedIn, currentUser, isConnected}>}
+   */
+  getServers() {
+    const entries = this.registry
+      ? this.registry.list()
+      : Array.from(this.clients.values()).map(c => ({ id: c.id, url: c.url, label: c.label }))
+
+    return entries.map(e => {
+      const c = this.clients.get(e.id)
+      return {
+        id: e.id,
+        url: e.url,
+        label: e.label,
+        isDefault: e.id === this._defaultId,
+        isLoggedIn: c?.isLoggedIn() ?? false,
+        currentUser: c?.currentUser() ?? null,
+        isConnected: c?._realtimeReady ?? false
+      }
+    })
+  }
+
+  /**
+   * Fügt einen Server hinzu und legt sofort den AjnaClient an.
+   * @returns {object} Server-Eintrag mit id, url, label.
+   * @throws wenn die Registry nicht verfügbar oder die URL doppelt ist.
+   */
+  addServer(url, label) {
+    if (!this.registry) throw new Error('addServer requires localStorage')
+    const entry = this.registry.addServer(url, label)
+    this._instantiateClient(entry)
+    this._emitServersChanged()
+    return entry
+  }
+
+  /**
+   * Entfernt einen Server: disconnect, logout, registry-cleanup. Der
+   * Default-Server kann nicht entfernt werden, solange er der Default
+   * ist — vorher per setDefaultServer() umstellen.
+   */
+  async removeServer(serverId) {
+    if (!this.registry) throw new Error('removeServer requires localStorage')
+    if (serverId === this._defaultId) {
+      throw new Error('default server cannot be removed — switch default first')
+    }
+    const c = this.clients.get(serverId)
+    if (c) {
+      try { c.logout() } catch {}
+      try { await c.disconnect() } catch {}
+      this.clients.delete(serverId)
+    }
+    this.registry.removeServer(serverId)
+    this._emitServersChanged()
+    // disconnect() hat den per-Client-Cache geleert und emit gefeuert, aber
+    // weil der Client jetzt aus dem federation-Map entfernt ist, sehen alle
+    // Listener nach diesem Punkt eine andere Topologie — ein expliziter
+    // Re-Emit hier garantiert, dass main.js' syncSceneObjects einen frischen
+    // Snapshot OHNE den entfernten Server bekommt.
+    this._emitObjectsChanged()
+  }
+
+  /**
+   * Markiert einen anderen Server als Default. Beeinflusst, an welchen
+   * Server ID-lose Calls (login, listGroups, createObject ohne explizite
+   * Server-Wahl) gehen. Wird in der Registry persistiert.
+   */
+  setDefaultServer(serverId) {
+    if (!this.clients.has(serverId)) {
+      throw new Error(`AjnaManager: unknown server "${serverId}"`)
+    }
+    this._defaultId = serverId
+    if (this.registry) {
+      this.registry._state.defaultId = serverId
+      this.registry._write()
+    }
+    this._emitServersChanged()
+  }
+
+  renameServer(serverId, label) {
+    if (!this.registry) return
+    if (this.registry.renameServer(serverId, label)) {
+      const c = this.clients.get(serverId)
+      if (c) c.label = label
+      this._emitServersChanged()
+    }
+  }
+
+  async loginToServer(serverId, email, password) {
+    const c = this.clients.get(serverId)
+    if (!c) throw new Error(`AjnaManager: unknown server "${serverId}"`)
+    const result = await c.login(email, password)
+    this._emitServersChanged()
+    return result
+  }
+
+  logoutFromServer(serverId) {
+    const c = this.clients.get(serverId)
+    if (!c) return
+    c.logout()
+    this._emitServersChanged()
+  }
+
+  /**
+   * Listener für Änderungen an der Server-Liste (add/remove/login/logout/
+   * default-switch). Callback erhält keine Argumente — der Caller liest
+   * den frischen Zustand via getServers().
+   */
+  onServersChanged(listener) {
+    this._serversChangedListeners.add(listener)
+    return () => this._serversChangedListeners.delete(listener)
+  }
+
+  _emitServersChanged() {
+    for (const l of this._serversChangedListeners) {
+      try { l() } catch (e) { console.error('AjnaManager servers listener error', e) }
+    }
   }
 
   // ===================================================================
@@ -283,6 +466,7 @@ export class AjnaManager {
 
   _wireClientListeners(client) {
     client.onObjectsChanged(() => this._emitObjectsChanged())
+    client.onAuthChanged(() => this._emitServersChanged())
   }
 
   _emitObjectsChanged() {

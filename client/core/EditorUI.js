@@ -1,5 +1,5 @@
 export class EditorUI {
-  constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null, onManageGroups = null }) {
+  constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null, onManageGroups = null, onManageServers = null }) {
     this.ajna = ajna
     this.container = container
     this.mode = mode
@@ -16,6 +16,8 @@ export class EditorUI {
     // Optional: öffnet den Gruppen-Verwaltungs-Dialog. Nur wenn gesetzt
     // wird der entsprechende Button gerendert.
     this.onManageGroups = onManageGroups
+    // Optional: öffnet den Server-Verwaltungs-Dialog (Multi-Server).
+    this.onManageServers = onManageServers
     this.objectLayer = new Map()
   }
 
@@ -56,9 +58,12 @@ export class EditorUI {
         <div id="editorStatus" class="ed-status"></div>
       </section>
 
-      ${this.onManageGroups ? `
-        <section class="ed-section" id="editorGroupsSection">
-          <button id="editorManageGroupsBtn" type="button" class="ed-btn">Gruppen verwalten</button>
+      ${(this.onManageGroups || this.onManageServers) ? `
+        <section class="ed-section" id="editorAdminSection">
+          <div class="ed-buttons">
+            ${this.onManageServers ? `<button id="editorManageServersBtn" type="button" class="ed-btn">Server</button>` : ''}
+            ${this.onManageGroups  ? `<button id="editorManageGroupsBtn"  type="button" class="ed-btn">Gruppen</button>` : ''}
+          </div>
         </section>
       ` : ''}
 
@@ -99,6 +104,7 @@ export class EditorUI {
     this.objectListEl = this.container.querySelector('#editorObjectList')
     this.focusPlayerBtn = this.container.querySelector('#editorFocusPlayerBtn')
     this.manageGroupsBtn = this.container.querySelector('#editorManageGroupsBtn')
+    this.manageServersBtn = this.container.querySelector('#editorManageServersBtn')
   }
 
   _injectStyles() {
@@ -277,6 +283,10 @@ export class EditorUI {
     this.ajna.onObjectsChanged(() => {
       this.renderObjectList()
     })
+
+    if (this.manageServersBtn && this.onManageServers) {
+      this.manageServersBtn.addEventListener('click', () => this.onManageServers())
+    }
 
     if (this.manageGroupsBtn && this.onManageGroups) {
       this.manageGroupsBtn.addEventListener('click', () => this.onManageGroups())
