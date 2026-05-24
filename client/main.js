@@ -40,7 +40,11 @@ import { buildDebugScene } from "./engine/debug/DebugSceneBuilder.js"
 import { DebugUIManager } from "./engine/debug/DebugUIManager.js"
 import { buildEnvironment } from "./engine/environment/EnvironmentBuilder.js"
 
-const ajnaManager = new AjnaManager("http://" + window.location.hostname + ":8090")
+// Same-Origin: Client und PocketBase laufen hinter Caddy auf demselben
+// Host/Port. Vermeidet Mixed-Content und Cross-Origin-Cookies. Falls du
+// Caddy nicht nutzt und PB direkt auf :8090 ansprichst, setze hier
+// stattdessen "http://" + window.location.hostname + ":8090".
+const ajnaManager = new AjnaManager(window.location.origin)
 const DEBUG_WORLD = true
 window.GUI = GUI
 window.GridMaterial = GridMaterial

@@ -30,8 +30,9 @@ Drei Web-Clients teilen sich die `AjnaManager`-Bibliothek und das PocketBase-Bac
 | `/index-agent.html` | Demo-Agent: kontrolliert ein konkretes Objekt, reagiert auf Aktions-Events mit Animations-Wechseln |
 
 Backend:
-- **PocketBase** (`pocketbase/`) — Collections, Auth, Realtime, JSVM-Hooks (`pb_hooks/`) für Resolver und Custom-Routen (`/api/objects/:id/interact`, `/api/objects/:id/effective-rights`).
-- **Express-Server** (`server/`) — Static-Server für die Client-Bundles über HTTPS.
+- **PocketBase** (`pocketbase/`) — Collections, Auth, Realtime, JSVM-Hooks (`pb_hooks/`) für Resolver und Custom-Routen unter `/api/*` (`/api/objects/:id/interact`, `/api/objects/:id/effective-rights`, `/api/groups/:id/invite`, …).
+- **Express-Server** (`server/`) — Server-Routen, die nicht als PB-Hook umsetzbar sind, unter `/ajnaapi/*` (separater Namespace, damit kein Konflikt mit PocketBase). Aktuell leichtgewichtig, primär als Erweiterungsschiene.
+- **Caddy** (Reverse-Proxy + HTTPS-Frontend) — bündelt Client, PB und Express unter einem Origin. Lokal via interne CA, public via Let's Encrypt. Config-Template: `Caddyfile`, lokale Anpassungen in `Caddyfile.prod` (gitignored).
 
 ---
 
@@ -50,52 +51,83 @@ Backend-Datenmodelle haben keinen direkten Zugriff auf Components — ein Mappin
 ### Stack im Überblick
 
 **Frontend:** BabylonJS · WebXR · Webpack · ES Modules · Leaflet · optional 3D-Tiles
-**Backend:** PocketBase · Express (Static-Serving)
-**Bibliothek:** [`AjnaManager`](client/core/AjnaManager.js) — eine API für Auth, Objekt-CRUD, Realtime, Interaktionen, Berechtigungen
+**Backend:** PocketBase · Express (`/ajnaapi/*`) · Caddy (HTTPS-Frontend + Reverse-Proxy)
+**Bibliothek:** [`AjnaManager`](client/core/AjnaManager.js) — eine API für Auth, Objekt-CRUD, Realtime, Interaktionen, Berechtigungen, Gruppen, Einladungen, **Multi-Server**
 
 ---
 
 ## Setup
 
 ### Voraussetzungen
-- Node.js (mit npm)
-- PocketBase-Binary unter `pocketbase/pocketbase.exe` (Windows) bzw. `pocketbase/pocketbase` (Linux/macOS)
-- HTTPS-Zertifikate `cert.pem` und `key.pem` im Repo-Root — Pflicht für WebXR und die Geolocation API
 
-Selbstsignierte Zertifikate erzeugen:
+| Tool | Installation |
+|---|---|
+| **Node.js 22+** (mit npm) | [nodejs.org](https://nodejs.org/) |
+| **PocketBase-Binary** unter `pocketbase/pocketbase.exe` (Windows) bzw. `pocketbase/pocketbase` (Linux/macOS) | [pocketbase.io/docs](https://pocketbase.io/docs/) |
+| **Caddy** auf `PATH` | Windows: `winget install CaddyServer.Caddy` · macOS: `brew install caddy` · Linux: [caddyserver.com/download](https://caddyserver.com/download) |
+
+> **Keine eigenen HTTPS-Zertifikate nötig.** Caddy stellt für `localhost` automatisch ein Cert über seine interne CA aus und installiert die einmal pro Maschine ins System-Keystore (Admin-Prompt beim ersten Start).
+
+### Erstes Mal einrichten
 
 ```bash
-openssl req -newkey rsa:2048 -new -nodes -x509 -days 3650 \
-  -keyout key.pem -out cert.pem
+# 1. Repo klonen, Dependencies holen
+git clone <repo-url> Ajna
+cd Ajna
+npm install
+
+# 2. Caddyfile.prod aus dem Template anlegen
+#    Windows:  copy Caddyfile Caddyfile.prod
+#    Linux/macOS: cp Caddyfile Caddyfile.prod
+#    Für rein lokales Setup reicht die unveränderte Kopie.
+#    Für Public-Demo: demo.example.com / admin@example.com / Pfade anpassen.
 ```
 
 ### Stack starten
 
 ```bash
-npm install
-npm run stack       # alle drei Prozesse parallel
+npm run stack
 ```
 
-Browser:
-- AR-Client: `https://localhost/index-ar.html`
-- Map-Client: `https://localhost/index-map.html`
-- Agent-Demo: `https://localhost/index-agent.html`
-- PocketBase Admin: `http://localhost:8090/_/`
+Vier Prozesse parallel — PB, Webpack-Watch, Express-API, Caddy. Strg+C beendet alles. Alternativ in **VS Code**: `F1` → "Tasks: Run Task" → "Stack: Start All".
 
-Alternativ in **VS Code** über die Tasks (`F1` → "Tasks: Run Task" → "Stack: Start All").
-Oder drei Terminals — siehe [docs/dev-setup.md](docs/dev-setup.md).
+### URLs
+
+Alle Endpunkte laufen unter demselben Origin durch Caddy (Same-Origin → kein Mixed-Content).
+
+| URL | Zweck |
+|---|---|
+| `https://localhost/index-ar.html`     | AR-Client (BabylonJS + WebXR) |
+| `https://localhost/index-map.html`    | Map-Client (Leaflet) |
+| `https://localhost/index-agent.html`  | Demo-Agent (Fox-NPC) |
+| `https://localhost/_/`                | PocketBase Admin-UI |
+| `https://localhost/api/*`             | PocketBase REST + Realtime + Hooks |
+| `https://localhost/ajnaapi/*`         | Ajna-Express-Backend |
+
+LAN-Geräte erreichen den Stack unter `https://<lan-ip>/...`. Caddys interne CA gilt dort nicht — das Test-Gerät muss entweder das Caddy-Root-Cert ins eigene Keystore übernehmen, oder ein Public-Hostname mit Let's-Encrypt-Cert wird vorgeschaltet (siehe [docs/dev-setup.md](docs/dev-setup.md)).
+
+### Multi-Server
+
+Der Client kann sich parallel zu mehreren Ajna-Servern verbinden (z. B. "Heim" + "Büro"). Über den **Server**-Button im Editor-Panel:
+
+- bekannte Server listen mit Login-/Verbindungs-Status
+- neue Server per URL hinzufügen
+- pro Server eigene Credentials, eigener Token (in `localStorage` unter `ajna_auth_<id>`)
+- Objekte aller verbundenen Server erscheinen gemerged in der Welt; Aktionen routen automatisch zum Origin-Server
 
 ### npm-Scripts
 
 | Script | Zweck |
 |---|---|
-| `npm run stack` | Alle drei Prozesse parallel (PocketBase + Webpack-Watch + Dev-Server) |
-| `npm run pocketbase` | Nur PocketBase auf `0.0.0.0:8090` (LAN-erreichbar) |
-| `npm run dev` | Webpack im Watch-Modus |
-| `npm run start:dev` | Express + HTTPS-Static-Server auf Port 443 |
-| `npm run build` | Einmaliger Webpack-Build |
+| `npm run stack`       | Vollständiger Stack: PB + Webpack-Watch + Express + Caddy |
+| `npm run pocketbase`  | Nur PocketBase auf `0.0.0.0:8090` |
+| `npm run dev`         | Webpack im Watch-Modus |
+| `npm run start`       | Nur Express-Backend auf Port 3000 |
+| `npm run caddy`       | Nur Caddy mit `Caddyfile.prod` |
+| `npm run build`       | Einmaliger Webpack-Production-Build |
+| `npm run start:dev`   | **Legacy** — Express + altes HTTPS-Static-Server-Setup ohne Caddy (mit `cert.pem`) |
 
-> **PocketBase macht KEIN Auto-Reload von `pb_hooks/`** — nach jeder Hook-Änderung manuell den PocketBase-Task neu starten.
+> **PocketBase macht KEIN Auto-Reload von `pb_hooks/`** — nach jeder Hook-Änderung manuell den PocketBase-Task neu starten. Caddy hingegen reloadest du im laufenden Betrieb mit `caddy reload --config Caddyfile.prod`.
 
 ---
 
@@ -118,9 +150,14 @@ Oder drei Terminals — siehe [docs/dev-setup.md](docs/dev-setup.md).
 - ✅ Demo-Agent (`/index-agent.html`) mit Action→Animation-Mapping, manuellen Triggern, schrittweisem Movement
 - ✅ Berechtigungs-Resolver (Owner, Gruppen mit transitiven Sub-Gruppen, implizite Audiences)
 - ✅ `effective_permissions`-Cache mit automatischer Invalidation via Hooks
-- 🚧 Group-Management-UI (folgt unmittelbar)
+- ✅ Group-Management-UI (GroupDialog mit Owned/Memberships, Subgroup-Verschachtelung)
+- ✅ Friends-/Invitation-System per E-Mail ODER Anzeigename (privacy-strikt; users.listRule bleibt `id = @request.auth.id`)
+- ✅ WebXR Immersive-Mode mit In-World-HUD, Gaze-Fokus, ESC-Exit, Multi-Input (Maus / Controller / Touch)
+- ✅ Multi-Server (Phase 1+2): Federation über N PocketBase-Clients, Composite-Object-IDs, ServerDialog, per-Server-Auth
+- ✅ Caddy als HTTPS-Frontend + Reverse-Proxy (Same-Origin für Client/API/Express, lokale interne CA, optional Let's Encrypt)
 - 🚧 Default-Permissions-Editor im User-Profil
-- 🚧 Friends-/Invitation-System für direkte User-zu-User-Sichtbarkeit
+- 🚧 Inventarsystem (portable Objekte, Items als Schlüssel/Waffe)
+- 🚧 Rule-Engine (Predicate-Trees → Effekte; später: physische Sensoren als Bedingungen)
 
 ### Mittelfristig
 

@@ -15,7 +15,10 @@
 import { AjnaManager } from "./core/AjnaManager.js"
 
 const TARGET_OBJECT_ID = "2kjikgp1pvkc4p5"     // Vanguard
-const AJNA_URL = "http://" + window.location.hostname + ":8090"
+// Same-Origin via Caddy. Falls der Agent gegen einen anderen Server laufen
+// soll (z. B. cross-origin auf demo.example.com), hier einen Absolute-URL
+// eintragen und im PB-Schema die Origin in `cors.allowed_origins` ergänzen.
+const AJNA_URL = window.location.origin
 const MOVE_STEP_DEG = 0.00001                  // ~1.1 m je nach Breite
 const AUTO_PACE_INTERVAL_MS = 1500
 

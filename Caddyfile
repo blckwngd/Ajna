@@ -1,0 +1,135 @@
+# Caddyfile — Ajna-Stack via Caddy als HTTPS-Frontend (TEMPLATE)
+#
+# **Dies ist die committed Vorlage. Lokale Anpassungen (Domain, Mail,
+# Pfade) gehen in `Caddyfile.prod`, die gitignored ist:**
+#
+#     cp Caddyfile Caddyfile.prod
+#     # → demo.example.com, admin@example.com, /opt/ajna/client etc. anpassen
+#
+# Die npm-Scripts (`npm run caddy`, `npm run stack`) und die VS-Code-Task
+# "Stack: Caddy" verwenden ausschließlich `Caddyfile.prod`. Wer ohne
+# eigene Anpassung lokal testen will, kann auch `cp Caddyfile
+# Caddyfile.prod` ohne Edits machen — die `localhost`-Site funktioniert
+# direkt mit Caddys interner CA.
+#
+# Liefert statische Client-Files (HTML + Webpack-Bundles) und reverse-proxyt
+# PocketBase-API/Admin/Realtime auf demselben Origin. Browser sehen alles
+# als HTTPS → kein Mixed-Content, ein Cookie-/Storage-Origin.
+#
+# Voraussetzung:
+#   • Webpack-Bundles existieren unter client/dist/ (npm run build
+#     oder dauerhaft npm run dev → Webpack-Watch schreibt fortlaufend).
+#   • PocketBase läuft lokal auf 127.0.0.1:8090 (in Produktion BEWUSST
+#     nur loopback — Caddy ist die einzige öffentliche Schnittstelle).
+#   • Der Client verwendet `window.location.origin` als Ajna-URL.
+#
+# Start (manuell, ohne npm):
+#   caddy validate --config Caddyfile.prod      # syntax check
+#   caddy run      --config Caddyfile.prod      # foreground (dev)
+#   caddy start    --config Caddyfile.prod      # background (prod)
+#   caddy reload   --config Caddyfile.prod      # nach Änderungen
+#   caddy stop                                  # background-Instanz beenden
+#
+# Erstes Mal lokal: Caddy installiert seine interne Root-CA ins
+# System-Keystore (fragt nach Admin-Rechten). Danach vertraut der Browser
+# `https://localhost` / `https://ajna.localhost` ohne Warnung.
+
+{
+    # Account-Mail für Let's-Encrypt-Recovery (nur Public-Block relevant)
+    email admin@example.com
+
+    # Auto-HTTPS: Caddy holt Certs für alle Hostnames, leitet :80 → :443.
+    # Lokale Hostnames (localhost, *.localhost, 127.0.0.1) bekommen
+    # automatisch Caddys interne CA, also keine externen Roundtrips.
+}
+
+# Wiederverwendbarer Snippet — gleiche Proxy-Logik für beide Sites.
+#
+# Pfad-Aufteilung:
+#   /_/*       → PocketBase Admin-UI
+#   /api/*     → PocketBase REST + Hooks + Realtime/SSE
+#   /ajnaapi/* → Ajna-Express-Backend (server/index.js, Port 3000)
+#   alles andere → statischer Client (HTML + Webpack-Bundles)
+#
+# `/ajnaapi/*` ist die Konvention für Server-Logik, die nicht als PB-Hook
+# umsetzbar ist. Wenn `npm run start:dev` (Express) gerade nicht läuft,
+# liefert Caddy für diese Pfade 502 — Frontend muss damit umgehen.
+#
+# Headers an die Upstreams — alles per Caddy-Default, KEIN expliziter
+# `header_up` nötig (eine Override würde die Appending-Semantik bei
+# X-Forwarded-For brechen, falls vor Caddy ein CDN sitzt):
+#   • Host              — unverändert vom Client (PB sieht "demo.example.com",
+#                          nicht "127.0.0.1") → relevant für absolute URLs
+#                          in PB-Mails und OAuth-Redirects.
+#   • X-Forwarded-For   — Client-IP, an Chain angehängt.
+#   • X-Forwarded-Proto — http oder https.
+#   • X-Forwarded-Host  — originaler Host-Header.
+# Volle Client-URL rekonstruierbar als
+#   `${X-Forwarded-Proto}://${X-Forwarded-Host}${req.path}`
+(ajna_app) {
+    # PocketBase Admin-UI
+    handle /_/* {
+        reverse_proxy 127.0.0.1:8090 {
+            header_up X-Original-URL {scheme}://{host}{uri}
+        }
+    }
+
+    # PocketBase API (REST + Realtime/SSE).
+    # `flush_interval -1` schaltet Buffering aus — Pflicht für SSE auf
+    # /api/realtime, sonst kommen Realtime-Events nur in Blöcken durch.
+    # Read-Timeout 24h, damit Long-lived Subscriptions nicht reaped werden.
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8090 {
+            flush_interval -1
+            header_up X-Original-URL {scheme}://{host}{uri}
+            transport http {
+                read_timeout 24h
+            }
+        }
+    }
+
+    # Ajna-Express-Backend für eigene Server-Routen (separater Namespace,
+    # damit kein Konflikt mit /api/* von PocketBase).
+    handle /ajnaapi/* {
+        reverse_proxy 127.0.0.1:3000 {
+            header_up X-Original-URL {scheme}://{host}{uri}
+        }
+    }
+
+    # Statischer Client (HTML, /dist/*.bundle.js, Modelle).
+    handle {
+        root * {args[0]}
+        file_server
+        encode gzip
+    }
+}
+
+# ── Lokale Entwicklung ────────────────────────────────────────────────
+# Caddy stellt Zertifikate selbst aus (interne CA). Erreichbar als
+# https://localhost und https://ajna.localhost (Browser löst .localhost
+# automatisch auf 127.0.0.1 auf, ohne hosts-File-Eintrag).
+
+localhost, ajna.localhost {
+    tls internal
+    import ajna_app ./client
+}
+
+# ── Public Demo-Server ────────────────────────────────────────────────
+# Domain unten anpassen — DNS muss auf die Box zeigen, Port 80 + 443
+# vom Internet erreichbar sein. Caddy holt das Cert beim ersten Request
+# via HTTP-01-Challenge automatisch.
+#
+# Wenn du diesen Block lokal noch nicht brauchst, kommentier ihn aus —
+# sonst versucht Caddy bei jedem Start, ein Public-Cert zu ziehen, was
+# ohne öffentliche Erreichbarkeit zu Retry-Loops in den Logs führt.
+
+demo.example.com {
+    import ajna_app /opt/ajna/client
+
+    # Sicherheits-Header für Public-Deployment
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options    "nosniff"
+        Referrer-Policy           "strict-origin-when-cross-origin"
+    }
+}

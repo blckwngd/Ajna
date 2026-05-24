@@ -11,7 +11,8 @@ import "leaflet-gps"
 import "leaflet/dist/leaflet.css"
 import "leaflet-gps/dist/leaflet-gps.min.css"
 
-const ajna = new AjnaManager("http://" + window.location.hostname + ":8090")
+// Same-Origin via Caddy — siehe main.js für Erklärung.
+const ajna = new AjnaManager(window.location.origin)
 window.ajna = ajna
 const markerLayer = new Map()
 const interactSubs = new Map()

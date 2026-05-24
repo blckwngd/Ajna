@@ -1,16 +1,22 @@
 import express from "express"
 import PocketBase from "pocketbase"
 
+// Ajna-Express-Backend für Server-Logik, die nicht als PocketBase-Hook
+// abgebildet werden kann oder soll (z. B. Aggregations-Queries, Upload-
+// Preprocessing, Notification-Fan-out).
+//
+// **Namespace-Konvention**: Alle Routen dieses Backends liegen unter
+// `/ajnaapi/*`. Damit kollidieren sie nicht mit dem `/api/*`-Namespace
+// von PocketBase (eingebaute REST-Calls + PB-Hooks unter pb_hooks/),
+// wenn beides hinter demselben Caddy-Reverse-Proxy auf einem Origin
+// erreichbar gemacht wird.
+//
+// Aktuell sind die beiden definierten Routen vom Client nicht in Gebrauch
+// — sie dienen als Vorlagen, bis Bedarf entsteht.
+
 const app = express()
 app.use(express.json())
 
-app.use(express.static("client"))
-app.use("/dist", express.static("client/dist"))
-/*
-app.get("/", (req, res) => {
-  res.sendFile(path.resolve(__dirname, "client/index.html"));
-});
-*/
 const pb = new PocketBase("http://127.0.0.1:8090")
 
 // Optional: User Token weiterreichen
@@ -24,7 +30,7 @@ async function authMiddleware(req, res, next) {
   next()
 }
 
-app.post("/api/interact", authMiddleware, async (req, res) => {
+app.post("/ajnaapi/interact", authMiddleware, async (req, res) => {
   const { objectId, action } = req.body
 
   if (!pb.authStore.isValid) {
@@ -43,7 +49,7 @@ app.post("/api/interact", authMiddleware, async (req, res) => {
   res.status(400).json({ error: "invalid action" })
 })
 
-app.post("/api/update-position", authMiddleware, async (req, res) => {
+app.post("/ajnaapi/update-position", authMiddleware, async (req, res) => {
   if (!pb.authStore.isValid) {
     return res.status(401).json({ error: "login required" })
   }

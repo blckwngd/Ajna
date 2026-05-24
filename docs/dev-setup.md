@@ -2,20 +2,29 @@
 
 ## Voraussetzungen
 
-- Node.js (Tests laufen mit Node 22+)
-- PocketBase-Binary unter `pocketbase/pocketbase.exe` (Windows) bzw. `pocketbase/pocketbase` (Linux/macOS) — Download von [pocketbase.io](https://pocketbase.io/docs/)
-- HTTPS-Zertifikate `cert.pem` und `key.pem` im Repo-Root — Pflicht für WebXR und Geolocation
-- Optional: VS Code (für die vorbereiteten Tasks)
+| Tool | Hinweis |
+|---|---|
+| **Node.js 22+** (mit npm) | [nodejs.org](https://nodejs.org/) |
+| **PocketBase-Binary** unter `pocketbase/pocketbase.exe` (Windows) bzw. `pocketbase/pocketbase` (Linux/macOS) | [pocketbase.io/docs](https://pocketbase.io/docs/) |
+| **Caddy** auf `PATH` | Windows: `winget install CaddyServer.Caddy` oder `scoop install caddy` · macOS: `brew install caddy` · Linux: [caddyserver.com/download](https://caddyserver.com/download) |
+| Optional: VS Code | für die vorbereiteten Tasks (siehe Variante B) |
 
-Zertifikate selbst signieren:
-```bash
-openssl req -newkey rsa:2048 -new -nodes -x509 -days 3650 \
-  -keyout key.pem -out cert.pem
-```
+> **Keine eigenen HTTPS-Zertifikate nötig.** Caddy stellt für `localhost` / `*.localhost` automatisch Certs über seine interne CA aus und installiert die einmal pro Maschine ins System-Keystore (Admin-Prompt beim ersten Start). Der frühere `openssl`-Schritt mit `cert.pem`/`key.pem` ist nur noch nötig, wenn du den Legacy-Pfad `npm run start:dev` ohne Caddy nutzen willst.
+
+## Erstes Mal einrichten
 
 ```bash
 npm install
+
+# Caddyfile.prod aus dem Template anlegen — ist gitignored, also
+# umgebungsspezifische Anpassungen bleiben lokal.
+# Windows:
+copy Caddyfile Caddyfile.prod
+# Linux/macOS:
+cp Caddyfile Caddyfile.prod
 ```
+
+Für rein lokales Testen reicht die unveränderte Kopie. Für ein Public-Demo-Deployment den `demo.example.com`-Block in `Caddyfile.prod` auf deine echte Domain umstellen, ebenso die `email`-Direktive (Let's-Encrypt-Recovery).
 
 ## Drei Wege, den Stack zu starten
 
@@ -25,24 +34,26 @@ npm install
 npm run stack
 ```
 
-Startet alle drei Prozesse mit `concurrently`, farbig gelabelt (`pb`, `wp`, `web`). Strg+C in dem Terminal beendet alles. **Auf Windows** kann `concurrently` Children manchmal nicht zuverlässig killen — wenn Ports nach Ctrl+C noch belegt sind, siehe [Troubleshooting](#troubleshooting-ports-h%C3%A4ngen).
+Startet vier Prozesse mit `concurrently`, farbig gelabelt (`pb`, `wp`, `api`, `caddy`): PocketBase, Webpack-Watch, Express-Backend, Caddy. Strg+C beendet alles. **Auf Windows** kann `concurrently` Children manchmal nicht zuverlässig killen — wenn Ports nach Ctrl+C noch belegt sind, siehe [Troubleshooting](#troubleshooting-ports-h%C3%A4ngen).
 
 ### B — VS Code Tasks
 
-In VS Code: `F1` → `Tasks: Run Task` → eine der vier Tasks:
+In VS Code: `F1` → `Tasks: Run Task` → eine der Tasks aus `.vscode/tasks.json`:
 
 | Task | Effekt |
 |---|---|
-| Stack: PocketBase | nur PB |
+| Stack: PocketBase   | nur PB auf `:8090` |
 | Stack: Webpack Watch | nur Webpack |
-| Stack: Dev Server | nur Express + HTTPS-http-server |
-| Stack: Start All | alle drei parallel |
+| Stack: Express API   | nur das Ajna-Backend auf `:3000` (`/ajnaapi/*`) |
+| Stack: Caddy         | nur Caddy mit `Caddyfile.prod` |
+| Stack: Start All     | alle vier parallel |
+| Stack: Dev Server    | **Legacy** — Express + alter `http-server` ohne Caddy (mit `cert.pem`) |
 
-`Strg+Shift+B` startet die Default-Build-Task (= "Stack: Start All").
+`Strg+Shift+B` startet die Default-Build-Task (= "Stack: Start All"). Beenden: `F1` → `Tasks: Terminate Task`.
 
-Beenden: `F1` → `Tasks: Terminate Task`.
+> Hinweis: `.vscode/tasks.json` ist nicht im Repo (gitignored), damit jede Entwickler-Maschine eigene Anpassungen behalten kann. Wer keine eigene `tasks.json` anlegen will, nimmt Variante A.
 
-### C — Drei Terminals (volle Kontrolle)
+### C — Vier Terminals (volle Kontrolle)
 
 ```bash
 # Terminal 1
@@ -52,22 +63,38 @@ npm run pocketbase
 npm run dev
 
 # Terminal 3
-npm run start:dev
+npm run start          # Express-Backend auf :3000
+
+# Terminal 4
+npm run caddy          # Caddy mit Caddyfile.prod
 ```
 
-Beenden einzeln mit Ctrl+C. Hat den Vorteil, dass du einen Prozess neu starten kannst, ohne die anderen mitzureißen.
+Beenden einzeln mit Ctrl+C. Vorteil: einen Prozess neu starten, ohne die anderen mitzureißen.
 
 ## URLs
 
+Alle Endpunkte laufen unter **demselben Origin** über Caddy. Same-Origin → kein Mixed-Content, eine Cookie-/Storage-Domäne, simpler Browser-State.
+
 | URL | Zweck |
 |---|---|
-| https://localhost/index-ar.html | AR-Client (BabylonJS) |
-| https://localhost/index-map.html | Map-Client (Leaflet) |
+| https://localhost/index-ar.html    | AR-Client (BabylonJS + WebXR) |
+| https://localhost/index-map.html   | Map-Client (Leaflet) |
 | https://localhost/index-agent.html | Demo-Agent (Fox-NPC) |
-| http://localhost:8090/_/ | PocketBase Admin-UI |
-| http://localhost:8090/api/ | PocketBase REST-API |
+| https://localhost/_/               | PocketBase Admin-UI |
+| https://localhost/api/             | PocketBase REST + Realtime + Hooks |
+| https://localhost/ajnaapi/         | Ajna-Express-Backend |
 
-Mobile / LAN-Geräte: PB läuft per Default auf `0.0.0.0:8090` (siehe `npm run pocketbase`). HTTPS-Dev-Server hört ebenfalls auf allen Interfaces. Auf dem Test-Gerät die LAN-IP des Dev-Hosts ansprechen. Beim ersten Mal akzeptiert man das self-signed cert.
+`https://ajna.localhost/...` funktioniert genauso — der Browser löst `*.localhost` automatisch auf 127.0.0.1 auf, ohne `hosts`-Datei-Eintrag.
+
+### Mobile / LAN-Geräte
+
+Caddys interne CA gilt nur auf der Maschine, auf der Caddy läuft. Auf einem zweiten Gerät hast du drei Optionen:
+
+1. **Caddy-Root-Cert kopieren**: `caddy storage list-certificates` → das Root-Cert auf das Test-Gerät übertragen und dort als vertrauenswürdig markieren.
+2. **Public Hostname mit echtem Cert**: über DNS einen Namen auf den Dev-Host zeigen lassen, im `Caddyfile.prod` als zweite Site eintragen, Caddy holt das Let's-Encrypt-Cert (braucht öffentliche Erreichbarkeit auf 80/443).
+3. **Cert-Warnung akzeptieren**: für Quick-and-Dirty-Tests einmalig im Browser bestätigen.
+
+PB selbst läuft nur auf `127.0.0.1:8090` und ist von außen nicht direkt erreichbar — alles geht über Caddy.
 
 ## Restart-Regeln
 
@@ -75,7 +102,8 @@ Mobile / LAN-Geräte: PB läuft per Default auf `0.0.0.0:8090` (siehe `npm run p
 |---|---|
 | `client/**/*.js`, `*.html` | Webpack-Watch baut automatisch — nur Browser-Reload |
 | `webpack.config.cjs` | "Stack: Webpack Watch" neu starten |
-| `server/index.js` (Express) | "Stack: Dev Server" neu starten |
+| `server/index.js` (Express) | "Stack: Express API" neu starten |
+| `Caddyfile.prod` | `caddy reload --config Caddyfile.prod` (Caddy bleibt up) |
 | **`pocketbase/pb_hooks/*.js`, `*.pb.js`** | **"Stack: PocketBase" neu starten** — PB macht KEIN Auto-Reload |
 | PocketBase-Schema (Collections, Rules, Fields) | Live, kein Restart |
 
@@ -83,17 +111,22 @@ PB loggt bei Hook-Datei-Änderungen ausdrücklich `File … changed, please rest
 
 ## Troubleshooting: Ports hängen
 
-Wenn `concurrently` (auf Windows) seine Child-Prozesse nicht sauber killt, bleiben Ports 3000/443/8090 belegt und der nächste Start failt mit `EADDRINUSE`. Aufräumen:
+Wenn `concurrently` (auf Windows) seine Child-Prozesse nicht sauber killt, bleiben Ports 443/3000/8090 belegt und der nächste Start failt mit `EADDRINUSE`. Aufräumen:
 
-```bash
+```powershell
 # PIDs finden
-netstat -ano | findstr ":3000 :443 :8090"
+netstat -ano | findstr ":443 :3000 :8090"
 
 # Mit den PIDs aus der Spalte ganz rechts:
 taskkill /F /PID <pid>
 ```
 
-Auf Linux/macOS: `lsof -i :3000` plus `kill -9 <pid>`.
+Auf Linux/macOS: `lsof -i :3000` plus `kill -9 <pid>`. Bei Caddy hilft alternativ `caddy stop`.
+
+## Troubleshooting: Caddy-Cert-Probleme
+
+- **Browser warnt trotz Caddys interner CA**: Caddys Root-Cert wurde nicht installiert oder zwischendurch gelöscht. `caddy run` neu starten, Admin-Prompt akzeptieren. Auf Windows manuell prüfen: `certmgr.msc` → "Vertrauenswürdige Stammzertifizierungsstellen" → Eintrag "Caddy Local Authority".
+- **Public-Block schlägt fehl, weil DNS nicht passt**: Caddy versucht beim Start, Let's-Encrypt-Certs für alle Hostnames zu holen. Wenn `demo.example.com` (oder dein Custom-Name) nicht öffentlich auflöst, gibt es Retry-Loops im Log. Lösung: den `demo.example.com`-Block in `Caddyfile.prod` auskommentieren, solange du nicht öffentlich deployst.
 
 ## Troubleshooting: PB-Hook-Fehler
 

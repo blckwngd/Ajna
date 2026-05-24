@@ -23,6 +23,11 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # Certificates
 *.pem
 
+# Caddy: umgebungsspezifische Reverse-Proxy-Config (Domain, E-Mail, Pfade).
+# Caddyfile (Template) bleibt im Repo; `cp Caddyfile Caddyfile.prod` und
+# dann editieren.
+Caddyfile.prod
+
 # Runtime data
 pids
 *.pid
@@ -151,4 +156,6 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
-.claude/settings.local.json
+# Lokale Tooling-Konfigurationen (per-Entwickler, nicht ins Repo)
+.claude/
+.vscode/
