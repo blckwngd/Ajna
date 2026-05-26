@@ -1,21 +1,22 @@
 import express from "express"
 import PocketBase from "pocketbase"
+import { mountGeoRoutes } from "./geo.js"
 
 // Ajna-Express-Backend für Server-Logik, die nicht als PocketBase-Hook
 // abgebildet werden kann oder soll (z. B. Aggregations-Queries, Upload-
-// Preprocessing, Notification-Fan-out).
+// Preprocessing, Notification-Fan-out, externe API-Aufbereitung).
 //
 // **Namespace-Konvention**: Alle Routen dieses Backends liegen unter
 // `/ajnaapi/*`. Damit kollidieren sie nicht mit dem `/api/*`-Namespace
 // von PocketBase (eingebaute REST-Calls + PB-Hooks unter pb_hooks/),
 // wenn beides hinter demselben Caddy-Reverse-Proxy auf einem Origin
 // erreichbar gemacht wird.
-//
-// Aktuell sind die beiden definierten Routen vom Client nicht in Gebrauch
-// — sie dienen als Vorlagen, bis Bedarf entsteht.
 
 const app = express()
 app.use(express.json())
+
+// Geo-Kontext-Endpoints (OSM via Overpass).
+mountGeoRoutes(app)
 
 const pb = new PocketBase("http://127.0.0.1:8090")
 

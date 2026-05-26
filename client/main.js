@@ -28,6 +28,7 @@ import { ContextMenu } from "./core/ContextMenu.js"
 import { PermissionDialog } from "./core/PermissionDialog.js"
 import { GroupDialog } from "./core/GroupDialog.js"
 import { ServerDialog } from "./core/ServerDialog.js"
+import { AjnaGeo } from "./core/AjnaGeo.js"
 import { ObjectActions } from "./core/ObjectActions.js"
 import { InWorldActionMenu } from "./core/InWorldActionMenu.js"
 import { Toast } from "./core/Toast.js"
@@ -39,6 +40,8 @@ import { NetworkSyncComponent } from "./engine/components/NetworkSyncComponent.j
 import { buildDebugScene } from "./engine/debug/DebugSceneBuilder.js"
 import { DebugUIManager } from "./engine/debug/DebugUIManager.js"
 import { buildEnvironment } from "./engine/environment/EnvironmentBuilder.js"
+import { OSMContext } from "./engine/environment/OSMContext.js"
+import { PathOverlay } from "./engine/debug/PathOverlay.js"
 
 // Same-Origin: Client und PocketBase laufen hinter Caddy auf demselben
 // Host/Port. Vermeidet Mixed-Content und Cross-Origin-Cookies. Falls du
@@ -49,6 +52,11 @@ const DEBUG_WORLD = true
 window.GUI = GUI
 window.GridMaterial = GridMaterial
 window.ajna = ajnaManager
+// `window.ajnaGeo` (nicht `window.geo`) — innerhalb von init() heißt der
+// GeoTransformer lokal `geo`, und der DEBUG-Block exponiert ihn als
+// `window.geo`. Wir vermeiden den Namens-Clash, indem die OSM/Geo-Helper-
+// Instanz unter einem eigenen Namen lebt.
+window.ajnaGeo = new AjnaGeo(ajnaManager)
 
 // ==========================================================
 // SHARED EDITOR UI
@@ -70,7 +78,12 @@ async function init() {
   scene.useRightHandedSystem = true
   
   const world = new World(scene)
-  const geo = new GeoTransformer()
+  // Nord/Süd geflippt: gleicht die Default-Blickrichtung der Babylon-Kamera
+  // (-Z = "in den Bildschirm hinein") gegen das Ajna-Daten-Convention
+  // (+Z = Nord) aus. Ohne den Flip empfindet der Anwender beim Abgleich
+  // mit der Karte die AR-Welt als nord-süd gespiegelt.
+  // Bei Bedarf später analog `invertEastWest: true`.
+  const geo = new GeoTransformer({ invertNorthSouth: true })
   const gps = new GPSProvider()
 
   // Realtime-Updates laufen jetzt zentral über AjnaManager (subscribt
@@ -283,6 +296,30 @@ async function init() {
     syncSceneObjects(scene, world, geo, objects)
   })
   syncSceneObjects(scene, world, geo, ajnaManager.getObjectList())
+
+  // OSM-Kontext (Straßen + Gebäude) als Wireframe um den Origin zeichnen.
+  // Die Geo-API ist standardmäßig authenticated-only — wenn beim Boot
+  // noch nicht eingeloggt: stiller 401, erneuter Versuch beim Login.
+  const osmContext = new OSMContext(scene, geo, window.ajnaGeo)
+  window.osm = osmContext
+
+  // Debug-Overlay: zeichnet `state.walk_path` aus jedem Objekt-Record
+  // als leuchtend grüne Linie über die OSM-Wireframes. Der Walk-Agent
+  // setzt das Feld beim Start eines Pfads und löscht es beim Stoppen.
+  const pathOverlay = new PathOverlay(scene, geo)
+  window.pathOverlay = pathOverlay
+  ajnaManager.onObjectsChanged(objects => pathOverlay.update(objects))
+  pathOverlay.update(ajnaManager.getObjectList())
+  const _loadOSM = () => {
+    if (!geo.origin) return
+    osmContext.load(geo.origin.lat, geo.origin.lon).catch(err =>
+      console.warn('[osm] load failed:', err?.message || err)
+    )
+  }
+  _loadOSM()
+  ajnaManager.onAuthChanged(user => {
+    if (user && !osmContext.isLoaded) _loadOSM()
+  })
 
   const debugScene = buildDebugScene(scene)
 

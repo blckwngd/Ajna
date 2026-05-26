@@ -1,6 +1,7 @@
 import { GeospatialComponent } from "./components/GeospatialComponent.js"
 import { TransformComponent } from "./components/TransformComponent.js"
 import { NetworkSyncComponent } from "./components/NetworkSyncComponent.js"
+import { PositionSmoother } from "../core/PositionSmoother.js"
 
 export class GameObject {
 
@@ -14,6 +15,13 @@ export class GameObject {
     this.meshes = []
     this.animationGroups = []
     this.components = []
+
+    // Frameweise Glättung von eingehenden Realtime-Updates. Bewegt sich
+    // ein Objekt mit niedriger Update-Rate (z. B. der 5-Hz-Fox-Walk-
+    // Agent), würde es sonst ruckartig springen. Der Smoother lerpt
+    // jeden Frame zwischen prev und curr — bei einer Lücke > 500 ms
+    // wird gesnappt (siehe PositionSmoother).
+    this._smoother = new PositionSmoother()
   }
 
   // Factory-Methode zum Erstellen eines GameObjects mit Standard-Komponenten.
@@ -231,32 +239,14 @@ export class GameObject {
   applyData(data, geo) {
     this.name = data.name || data.id
 
-    // GeospatialComponent ist Single Source of Truth für die Welt-Position:
-    // ihr update() schreibt jede Frame in root.position. Würden wir nur
-    // root.position direkt setzen, läge der nächste Frame die alte Position
-    // (aus den internen lat/lon-Feldern der Component) wieder ein —
-    // Effekt: Objekt springt nach jedem Realtime-Update sofort zurück.
-    const geoComp = this.getComponent(GeospatialComponent)
-    if (geoComp) {
-      geoComp.setCoordinates(data.lat, data.lon, data.altitude ?? 0)
-    } else {
-      // Fallback, falls das GameObject ohne GeospatialComponent gebaut wurde
-      this.root.position = geo.toLocal(
-        data.lat,
-        data.lon,
-        data.altitude ?? 0
-      )
-    }
+    // Position und Rotation gehen via PositionSmoother — das tatsächliche
+    // Schreiben auf root.position / root.rotation passiert pro Frame in
+    // update() aus dem gesampelten Snap. Damit ist die Bewegung zwischen
+    // Realtime-Updates flüssig statt sprunghaft.
+    this._smoother.feed(data)
 
-    // Rotation/Scaling werden nur einmalig per TransformComponent.init()
-    // gesetzt, danach gibt es keinen kontinuierlichen Override — direkter
-    // Setter auf root reicht.
-    this.root.rotation = new BABYLON.Vector3(
-      data.rotation?.x ?? 0,
-      data.rotation?.y ?? 0,
-      data.rotation?.z ?? 0
-    )
-
+    // Scaling ist (noch) nicht Teil des Smoothers — selten geändert,
+    // direkter Setter reicht.
     this.root.scaling = new BABYLON.Vector3(
       data.scale?.x ?? 1,
       data.scale?.y ?? 1,
@@ -303,6 +293,10 @@ export class GameObject {
 
   update(delta) {
 
+    // Smoother VOR den Components abtasten, damit GeospatialComponent.update
+    // im selben Frame mit den frisch interpolierten lat/lon arbeitet.
+    this._applySmoothedTransform()
+
     // Components zuerst und unabhängig vom Network-Sync-Pfad aktualisieren —
     // sonst bekommen Objekte ohne NetworkSyncComponent (z. B. der Player)
     // nie ein update() ihrer Components.
@@ -337,6 +331,23 @@ export class GameObject {
       predictedRotation,
       0.1
     )
+  }
+
+  // Liest den aktuellen Smoother-Snap und schreibt ihn auf GeospatialComponent
+  // (lat/lon → root.position via Component.update) sowie root.rotation direkt.
+  _applySmoothedTransform() {
+    const snap = this._smoother.sample()
+    if (!snap) return
+    const geoComp = this.getComponent(GeospatialComponent)
+    if (geoComp) {
+      geoComp.lat      = snap.lat
+      geoComp.lon      = snap.lon
+      geoComp.altitude = snap.altitude
+    }
+    // Rotation direkt — kein Component übernimmt das pro Frame.
+    this.root.rotation.x = snap.rotation.x
+    this.root.rotation.y = snap.rotation.y
+    this.root.rotation.z = snap.rotation.z
   }
 
   dispose() {

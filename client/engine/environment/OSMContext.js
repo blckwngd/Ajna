@@ -1,0 +1,165 @@
+// OSMContext — minimale Geo-Kontext-Darstellung in der AR-Szene.
+//
+// Holt sich Straßen-Polylines und Gebäude-Footprints aus der Ajna-Geo-API
+// (`/ajnaapi/geo/{ways,buildings}`) und zeichnet sie als Wireframe in
+// die Babylon-Szene:
+//
+//   • Straßen   → CreateLineSystem (eine Mesh-Instanz, viele Polylines)
+//   • Gebäude   → CreateLineSystem mit Footprint + Dach + Vertikalen-Kanten;
+//                 Höhe aus OSM-Tag `height` oder `building:levels` (×3.2 m),
+//                 sonst Default 8 m.
+//
+// "Simpelstmögliche Darstellung": kein Material-Setup, keine Polygon-
+// Extrusion (das braucht earcut als Dependency), keine Tile-Pyramide.
+// Funktioniert direkt mit @babylonjs/core ohne Zusatzpaket.
+//
+// Aufruf: `new OSMContext(...).load(lat, lon)` nach Geo-Origin-Fix.
+// Bei Fehlern (Auth-401 etc.) wird einmal still ge-warned, kein Reload-
+// Loop. `dispose()` räumt die Meshes auf.
+
+const DEFAULT_RADIUS_M = 300
+const DEFAULT_BUILDING_HEIGHT_M = 8
+const LEVEL_HEIGHT_M = 3.2
+const STREET_Y = 0.05          // leicht über Ground, gegen Z-Fighting
+const BUILDING_Y_OFFSET = 0.0
+
+const STREET_COLOR   = new BABYLON.Color4(1.0, 0.85, 0.3, 0.9)
+const BUILDING_COLOR = new BABYLON.Color4(0.55, 0.7, 1.0, 0.85)
+
+export class OSMContext {
+  /**
+   * @param {BABYLON.Scene} scene
+   * @param {object} geo       GeoTransformer mit `toLocal(lat, lon, alt)`
+   * @param {object} ajnaGeo   AjnaGeo-Instanz
+   * @param {{radius?: number}} [opts]
+   */
+  constructor(scene, geo, ajnaGeo, opts = {}) {
+    this.scene   = scene
+    this.geo     = geo
+    this.ajnaGeo = ajnaGeo
+    this.radius  = opts.radius ?? DEFAULT_RADIUS_M
+    /** @type {BABYLON.Mesh[]} */
+    this.meshes  = []
+    this._loaded = false
+  }
+
+  /** True, wenn der letzte load() ohne Fehler durchgelaufen ist. */
+  get isLoaded() { return this._loaded }
+
+  /**
+   * Lädt + zeichnet Straßen und Gebäude im Radius um (lat, lon).
+   * Bereits gerenderte Geometrie wird vorher entsorgt.
+   */
+  async load(lat, lon) {
+    this.dispose()
+
+    const [waysRes, buildingsRes] = await Promise.allSettled([
+      this.ajnaGeo.waysNear(lat, lon, this.radius, 'all'),
+      this.ajnaGeo.buildingsNear(lat, lon, this.radius)
+    ])
+
+    let wayCount = 0
+    let bldgCount = 0
+
+    if (waysRes.status === 'fulfilled') {
+      wayCount = this._drawWays(waysRes.value.features || [])
+    } else {
+      console.warn('[osm] ways fetch failed:', waysRes.reason?.message || waysRes.reason)
+    }
+
+    if (buildingsRes.status === 'fulfilled') {
+      bldgCount = this._drawBuildings(buildingsRes.value.features || [])
+    } else {
+      console.warn('[osm] buildings fetch failed:', buildingsRes.reason?.message || buildingsRes.reason)
+    }
+
+    this._loaded = wayCount > 0 || bldgCount > 0
+    console.log(`[osm] drawn: ${wayCount} ways, ${bldgCount} buildings, radius ${this.radius} m`)
+  }
+
+  // ───────────────────────────────────────────────────────────────────
+
+  _drawWays(features) {
+    const lines = []
+    for (const f of features) {
+      if (!Array.isArray(f.coordinates) || f.coordinates.length < 2) continue
+      lines.push(this._toLocalPoints(f.coordinates, STREET_Y))
+    }
+    if (lines.length === 0) return 0
+
+    const mesh = BABYLON.MeshBuilder.CreateLineSystem(
+      'osm_ways', { lines, useVertexAlpha: false }, this.scene
+    )
+    mesh.color = STREET_COLOR
+    mesh.isPickable = false
+    this.meshes.push(mesh)
+    return lines.length
+  }
+
+  _drawBuildings(features) {
+    const lines = []
+    for (const f of features) {
+      if (!Array.isArray(f.coordinates) || f.coordinates.length < 3) continue
+
+      // Footprint immer geschlossen — Overpass liefert das normalerweise,
+      // aber wir machen sicher.
+      let coords = f.coordinates
+      const first = coords[0], last = coords[coords.length - 1]
+      if (first[0] !== last[0] || first[1] !== last[1]) {
+        coords = [...coords, first]
+      }
+
+      const height = parseHeight(f.tags) ?? DEFAULT_BUILDING_HEIGHT_M
+      const ground = this._toLocalPoints(coords, BUILDING_Y_OFFSET)
+      const roof   = ground.map(p => new BABYLON.Vector3(p.x, height, p.z))
+
+      lines.push(ground)
+      lines.push(roof)
+      // Vertikale Kanten: letzten Punkt überspringen (ist Duplikat von [0])
+      for (let i = 0; i < ground.length - 1; i++) {
+        lines.push([ground[i], roof[i]])
+      }
+    }
+    if (lines.length === 0) return 0
+
+    const mesh = BABYLON.MeshBuilder.CreateLineSystem(
+      'osm_buildings', { lines, useVertexAlpha: false }, this.scene
+    )
+    mesh.color = BUILDING_COLOR
+    mesh.isPickable = false
+    this.meshes.push(mesh)
+
+    // Die Anzahl der Gebäude approximieren wir aus der Anzahl an
+    // "Footprint+Dach"-Paaren — die Vertikalen-Kanten gehören dazu.
+    return features.filter(f => Array.isArray(f.coordinates) && f.coordinates.length >= 3).length
+  }
+
+  _toLocalPoints(coords, y) {
+    return coords.map(([lat, lon]) => {
+      const v = this.geo.toLocal(lat, lon, 0)
+      return new BABYLON.Vector3(v.x, y, v.z)
+    })
+  }
+
+  dispose() {
+    for (const m of this.meshes) {
+      try { m.dispose() } catch {}
+    }
+    this.meshes = []
+    this._loaded = false
+  }
+}
+
+function parseHeight(tags = {}) {
+  if (tags.height) {
+    // Tags können "12 m", "12.5" oder "12;15" enthalten — wir nehmen
+    // den ersten Float.
+    const h = parseFloat(tags.height)
+    if (Number.isFinite(h) && h > 0) return h
+  }
+  if (tags['building:levels']) {
+    const n = parseFloat(tags['building:levels'])
+    if (Number.isFinite(n) && n > 0) return n * LEVEL_HEIGHT_M
+  }
+  return null
+}

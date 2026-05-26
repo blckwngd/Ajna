@@ -7,6 +7,7 @@ import { GroupDialog } from "./core/GroupDialog.js"
 import { ServerDialog } from "./core/ServerDialog.js"
 import { ObjectActions } from "./core/ObjectActions.js"
 import { Toast } from "./core/Toast.js"
+import { PositionSmoother } from "./core/PositionSmoother.js"
 import "leaflet-gps"
 import "leaflet/dist/leaflet.css"
 import "leaflet-gps/dist/leaflet-gps.min.css"
@@ -15,6 +16,11 @@ import "leaflet-gps/dist/leaflet-gps.min.css"
 const ajna = new AjnaManager(window.location.origin)
 window.ajna = ajna
 const markerLayer = new Map()
+// Pro Marker ein PositionSmoother — füttert sich aus mapUpdateMarkers,
+// wird in tickMarkerSmoothers() pro Frame ausgelesen und auf den Marker
+// angewendet. Damit wirken die 5-Hz-Updates eines Agents (Fox-Walk) auf
+// der Karte flüssig, statt zwischen Stützpunkten zu springen.
+const markerSmoothers = new Map()
 const interactSubs = new Map()
 const contextMenu = new ContextMenu()
 const permissionDialog = new PermissionDialog({ ajna })
@@ -69,19 +75,45 @@ function mapUpdateMarkers(objects) {
 
   for (const obj of objects) {
     if (markerLayer.has(obj.id)) {
+      // setLatLng übernimmt tickMarkerSmoothers; hier nur Popup aktualisieren.
+      feedSmoother(obj)
       const marker = markerLayer.get(obj.id)
-      marker.setLatLng([obj.lat, obj.lon])
       marker.bindPopup(`<strong>${obj.name || 'unnamed'}</strong><br>${obj.lat.toFixed(5)}, ${obj.lon.toFixed(5)}`)
     } else {
       addMarker(obj)
+      feedSmoother(obj)
     }
   }
 
   for (const id of Array.from(markerLayer.keys())) {
     if (!objects.find(o => o.id === id)) {
       removeMarker(id)
+      markerSmoothers.delete(id)
     }
   }
+}
+
+function feedSmoother(obj) {
+  let sm = markerSmoothers.get(obj.id)
+  if (!sm) {
+    sm = new PositionSmoother()
+    markerSmoothers.set(obj.id, sm)
+  }
+  sm.feed(obj)
+}
+
+// Pro-Frame-Loop: gesampelten Position auf die Marker schreiben. Leaflet
+// rerendet bei setLatLng den Marker effizient; CPU-Kosten bei < 100
+// Markern vernachlässigbar.
+function tickMarkerSmoothers() {
+  for (const [id, marker] of markerLayer) {
+    const sm = markerSmoothers.get(id)
+    if (!sm) continue
+    const snap = sm.sample()
+    if (!snap) continue
+    marker.setLatLng([snap.lat, snap.lon])
+  }
+  requestAnimationFrame(tickMarkerSmoothers)
 }
 
 function addMarker(obj) {
@@ -100,6 +132,9 @@ function addMarker(obj) {
 
   marker.on('dragend', async event => {
     const { lat, lng } = event.target.getLatLng()
+    // Smoother zurücksetzen, sonst lerpt er vom Pre-Drag-Punkt zur neuen
+    // Position zurück und der Marker rutscht sichtbar zurück+nach vorn.
+    markerSmoothers.get(obj.id)?.reset()
     const updated = await ajna.updateObject(obj.id, { lat, lon: lng })
     marker.setLatLng([lat, lng])
     marker.bindPopup(`<strong>${updated.name || 'unnamed'}</strong><br>${lat.toFixed(5)}, ${lng.toFixed(5)}`)
@@ -269,6 +304,9 @@ async function init() {
   ajna.onObjectsChanged(objects => {
     mapUpdateMarkers(objects)
   })
+
+  // Marker-Smoothing-Loop starten (rAF — pausiert wenn Tab im Hintergrund).
+  requestAnimationFrame(tickMarkerSmoothers)
 }
 
 window.addEventListener('DOMContentLoaded', init)
