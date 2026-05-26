@@ -23,17 +23,21 @@ const AJNA_URL = window.location.origin
 const MOVE_STEP_DEG = 0.00001                  // ~1.1 m je nach Breite
 const AUTO_PACE_INTERVAL_MS = 1500
 
-// Walk-Parameter — Geschwindigkeiten in m/s, Tick-Frequenz 5 Hz.
+// Walk-Parameter — Geschwindigkeiten in m/s, Tick-Frequenz 2 Hz.
+// Die Client-Smoother (AR + Karte) interpolieren in der Lücke; höhere
+// Raten würden PB + Realtime-Broker unnötig belasten, ohne sichtbaren
+// Gewinn. Wenn du wieder feiner sampeln willst: TICK_INTERVAL_MS senken
+// UND `MAX_INTERP_MS` im PositionSmoother an die neue Lücke anpassen.
 const WALK_SPEED_MS = 1.4    // ~5 km/h
 const RUN_SPEED_MS  = 3.5    // ~12 km/h
-const TICK_INTERVAL_MS = 200
+const TICK_INTERVAL_MS = 500
 const WAY_SEARCH_RADIUS_M = 200
 
 // Y-Rotation des Modells vs. Bewegungsrichtung. Bei der Fuchs-GLB
 // stimmt `yaw = -bearing` (Modell zeigt nativ in +Z). Wenn ein anderes
 // Modell rückwärts läuft: hier auf `bearing` oder `bearing + Math.PI`
 // stellen.
-const HEADING_TO_YAW = bearing => bearing + Math.PI/2
+const HEADING_TO_YAW = bearing => bearing + Math.PI/1.7
 
 // Aktion → Animation, mit der der Agent reagiert (für einfache Reaktionen
 // ohne Pfad-Verfolgung). gehen/laufen/anhalten haben eigene Behandlung.
@@ -68,7 +72,12 @@ async function init() {
   els.log           = document.getElementById("log")
   els.email         = document.getElementById("auth-email")
   els.password      = document.getElementById("auth-password")
+  els.emailRow      = document.getElementById("email-row")
+  els.passwordRow   = document.getElementById("password-row")
+  els.userDisplay   = document.getElementById("user-display")
+  els.userDisplayRow = document.getElementById("user-display-row")
   els.loginBtn      = document.getElementById("login-btn")
+  els.logoutBtn     = document.getElementById("logout-btn")
   els.authStatus    = document.getElementById("auth-status")
   els.animInput     = document.getElementById("anim-input")
   els.animSetBtn    = document.getElementById("anim-set-btn")
@@ -82,6 +91,7 @@ async function init() {
       .addEventListener("click", () => stepMove(dir))
   }
   els.loginBtn   .addEventListener("click", doLogin)
+  els.logoutBtn  .addEventListener("click", doLogout)
   els.animSetBtn .addEventListener("click", () => {
     const v = els.animInput.value.trim()
     if (v) setAnimation(v)
@@ -97,6 +107,12 @@ async function init() {
   els.reactionList.innerHTML = Object.entries(REACTION_MAP)
     .map(([a, r]) => `<li><code>${a}</code> → <code>${r}</code></li>`)
     .join("")
+
+  // Auth-UI direkt am Anfang spiegeln (persistiertes PB-Token → eingeloggt).
+  // onAuthChanged hält die Anzeige danach synchron, auch wenn andere
+  // Komponenten (z. B. ServerDialog) Auth-Wechsel triggern.
+  updateAuthUI()
+  ajna.onAuthChanged(() => updateAuthUI())
 
   log(`agent boot, target: ${TARGET_OBJECT_ID}`)
   await connect()
@@ -411,9 +427,10 @@ async function doLogin() {
   if (!email || !pwd) return
   try {
     await ajna.login(email, pwd)
-    els.authStatus.textContent = `logged in as ${email}`
+    els.authStatus.textContent = "Login erfolgreich"
     els.authStatus.className = "ok"
     log(`✓ auth ok as ${email}`)
+    updateAuthUI()
 
     // Alte Subscriptions schließen, damit beim erneuten connect() keine
     // doppelten Watcher entstehen (PB-Subscriptions hängen am Auth-Token).
@@ -425,6 +442,44 @@ async function doLogin() {
     els.authStatus.textContent = "auth failed: " + (err?.message || err)
     els.authStatus.className = "error"
     log(`✗ auth failed: ${err?.message || err}`, "error")
+  }
+}
+
+async function doLogout() {
+  try {
+    if (state.objSub)      { try { state.objSub()      } catch {} state.objSub = null }
+    if (state.interactSub) { try { state.interactSub() } catch {} state.interactSub = null }
+    await ajna.disconnect()
+  } catch {}
+  ajna.logout()
+  els.authStatus.textContent = "Abgemeldet"
+  els.authStatus.className = ""
+  log("◼ logout")
+  updateAuthUI()
+  setConnected(false)
+}
+
+// Synchronisiert die Auth-UI mit dem aktuellen ajna.authStore-Stand:
+// eingeloggt → Benutzername sichtbar, Login-Felder versteckt, Logout-Btn da.
+function updateAuthUI() {
+  const loggedIn = ajna.isLoggedIn()
+  const me = loggedIn ? ajna.currentUser() : null
+
+  if (loggedIn) {
+    els.emailRow.style.display = "none"
+    els.passwordRow.style.display = "none"
+    els.userDisplayRow.style.display = ""
+    els.userDisplay.textContent =
+      me?.name || me?.username || me?.email || "(eingeloggt)"
+    els.loginBtn.style.display = "none"
+    els.logoutBtn.style.display = "inline-block"
+  } else {
+    els.emailRow.style.display = ""
+    els.passwordRow.style.display = ""
+    els.userDisplayRow.style.display = "none"
+    els.password.value = ""
+    els.loginBtn.style.display = "inline-block"
+    els.logoutBtn.style.display = "none"
   }
 }
 

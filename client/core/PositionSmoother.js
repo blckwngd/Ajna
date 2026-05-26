@@ -27,7 +27,10 @@
 //
 // Rotationen werden auf dem kürzesten Winkelweg lerped (±π-Wraparound).
 
-const MAX_INTERP_MS = 500
+// Snap-Cap: bei einer Lücke > MAX_INTERP_MS wird gesnappt statt
+// interpoliert. Dimensioniert so, dass die regulären Agent-Tick-Raten
+// (aktuell 500 ms) plus etwas Jitter-Spielraum unterhalb des Caps bleiben.
+const MAX_INTERP_MS = 1500
 
 export class PositionSmoother {
   constructor() {

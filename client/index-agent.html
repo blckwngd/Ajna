@@ -129,9 +129,15 @@
 
   <section>
     <h2>Auth</h2>
-    <div class="row"><input type="email" id="auth-email" placeholder="email"></div>
-    <div class="row"><input type="password" id="auth-password" placeholder="passwort"></div>
-    <div class="row"><button class="primary" id="login-btn">Login</button></div>
+    <div class="row" id="user-display-row" style="display:none">
+      <span id="user-display"></span>
+    </div>
+    <div class="row" id="email-row"><input type="email" id="auth-email" placeholder="email"></div>
+    <div class="row" id="password-row"><input type="password" id="auth-password" placeholder="passwort"></div>
+    <div class="row">
+      <button class="primary" id="login-btn">Login</button>
+      <button id="logout-btn" style="display:none">Logout</button>
+    </div>
     <div id="auth-status"></div>
   </section>
 

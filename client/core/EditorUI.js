@@ -49,6 +49,7 @@ export class EditorUI {
 
       <section class="ed-section" id="editorAuth">
         <h4>Login</h4>
+        <div id="editorUserDisplay" class="ed-user-display" style="display:none"></div>
         <input id="editorEmail" type="email" placeholder="Email">
         <input id="editorPassword" type="password" placeholder="Passwort">
         <div class="ed-buttons">
@@ -97,6 +98,7 @@ export class EditorUI {
     this.logoutBtn = this.container.querySelector('#editorLogoutBtn')
     this.emailInput = this.container.querySelector('#editorEmail')
     this.passwordInput = this.container.querySelector('#editorPassword')
+    this.userDisplay = this.container.querySelector('#editorUserDisplay')
     this.statusEl = this.container.querySelector('#editorStatus')
     this.editorForm = this.container.querySelector('#sharedEditorForm')
     this.editorDeleteBtn = this.container.querySelector('#editorDeleteBtn')
@@ -192,6 +194,12 @@ export class EditorUI {
         margin-top: 5px; font-size: 11px; color: #aab;
         min-height: 1em;
       }
+      .editor-panel .ed-user-display {
+        background: #15151a;
+        border: 1px solid #2a2a32; border-radius: 4px;
+        padding: 4px 8px; margin: 2px 0;
+        color: #f1c40f;
+      }
       .editor-panel .ed-object-list {
         max-height: 220px; overflow-y: auto;
         margin-top: 4px;
@@ -284,6 +292,10 @@ export class EditorUI {
       this.renderObjectList()
     })
 
+    // Auth-State auch dann nachziehen, wenn der Wechsel nicht via diese
+    // Buttons passierte (z. B. ServerDialog → loginToServer).
+    this.ajna.onAuthChanged(() => this.updateAuthUI())
+
     if (this.manageServersBtn && this.onManageServers) {
       this.manageServersBtn.addEventListener('click', () => this.onManageServers())
     }
@@ -299,18 +311,30 @@ export class EditorUI {
 
   updateAuthUI() {
     const loggedIn = this.ajna.isLoggedIn()
+    const me = loggedIn ? this.ajna.currentUser() : null
 
     if (loggedIn) {
       this.loginBtn.style.display = 'none'
       this.logoutBtn.style.display = 'inline-block'
-      this.emailInput.disabled = true
+      // Email-Eingabe ausblenden, Benutzername anzeigen.
+      this.emailInput.style.display = 'none'
       this.passwordInput.style.display = 'none'
+      if (this.userDisplay) {
+        this.userDisplay.style.display = ''
+        this.userDisplay.textContent = me?.name || me?.username || me?.email || '(eingeloggt)'
+      }
       this.container.querySelector('#sharedEditorSection').style.display = ''
     } else {
       this.loginBtn.style.display = 'inline-block'
       this.logoutBtn.style.display = 'none'
+      this.emailInput.style.display = ''
       this.emailInput.disabled = false
       this.passwordInput.style.display = ''
+      this.passwordInput.value = ''
+      if (this.userDisplay) {
+        this.userDisplay.style.display = 'none'
+        this.userDisplay.textContent = ''
+      }
       this.container.querySelector('#sharedEditorSection').style.display = 'none'
     }
   }

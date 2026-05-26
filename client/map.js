@@ -105,8 +105,13 @@ function feedSmoother(obj) {
 // Pro-Frame-Loop: gesampelten Position auf die Marker schreiben. Leaflet
 // rerendet bei setLatLng den Marker effizient; CPU-Kosten bei < 100
 // Markern vernachlässigbar.
+//
+// WICHTIG: während eines User-Drags wird der Marker übersprungen — sonst
+// kämpft der Smoother-Sample (alte Position) jeden Frame gegen Leaflets
+// Maus-getriebene Position, und der Marker bleibt visuell "festgenagelt".
 function tickMarkerSmoothers() {
   for (const [id, marker] of markerLayer) {
+    if (marker._ajnaDragging) continue
     const sm = markerSmoothers.get(id)
     if (!sm) continue
     const snap = sm.sample()
@@ -130,7 +135,13 @@ function addMarker(obj) {
   // bei mouseover / mouseout)
   marker.bindTooltip(obj.name || 'unnamed', { direction: 'top', offset: [0, -8] })
 
+  marker.on('dragstart', () => {
+    // Während des Drags: Smoother-Sample-Loop überspringt diesen Marker.
+    marker._ajnaDragging = true
+  })
+
   marker.on('dragend', async event => {
+    marker._ajnaDragging = false
     const { lat, lng } = event.target.getLatLng()
     // Smoother zurücksetzen, sonst lerpt er vom Pre-Drag-Punkt zur neuen
     // Position zurück und der Marker rutscht sichtbar zurück+nach vorn.
