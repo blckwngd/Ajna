@@ -238,6 +238,40 @@ async function init() {
     )
   })
 
+  // Rechtsklick auf den Boden → "Neues Objekt…" an den dort getroffenen
+  // GPS-Koordinaten. Wir schneiden den Picking-Ray mit der Boden-Ebene
+  // (y=0) statt gegen die Ground-Mesh zu picken — die ist isPickable=false
+  // und folgt der Kamera. geo.toWorld() liefert lat/lon/altitude des Punkts.
+  canvas.addEventListener('contextmenu', ev => {
+    ev.preventDefault()
+    if (!geo.origin) return
+    // Im immersiven XR-Modus gibt es keinen DOM-Cursor — Handler ist
+    // damit ohnehin nur im Desktop-Modus aktiv.
+    const ray = scene.createPickingRay(
+      scene.pointerX, scene.pointerY, BABYLON.Matrix.Identity(), scene.activeCamera
+    )
+    const groundPlane = BABYLON.Plane.FromPositionAndNormal(
+      BABYLON.Vector3.Zero(), new BABYLON.Vector3(0, 1, 0)
+    )
+    const dist = ray.intersectsPlane(groundPlane)
+    if (dist === null || dist < 0) return
+    const point = ray.origin.add(ray.direction.scale(dist))
+    const geoPos = geo.toWorld(point.x, point.y, point.z)
+
+    contextMenu.show({
+      x: ev.clientX,
+      y: ev.clientY,
+      title: `${geoPos.lat.toFixed(5)}, ${geoPos.lon.toFixed(5)}`,
+      items: [
+        {
+          label: 'Neues Objekt…',
+          disabled: !ajnaManager.isLoggedIn(),
+          onClick: () => editorUI.startNewObjectAt(geoPos.lat, geoPos.lon, geoPos.altitude)
+        }
+      ]
+    })
+  })
+
   // Gaze-Loop: pro Frame Ray vom Kamera-Forward, Pick-Test gegen
   // GameObject-Meshes. Wechselt der Fokus, wird Highlight + Menü
   // entsprechend nachgezogen. Drosselt sich selbst, weil pickWithRay

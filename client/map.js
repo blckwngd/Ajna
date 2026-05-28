@@ -316,6 +316,27 @@ async function init() {
     mapUpdateMarkers(objects)
   })
 
+  // Rechtsklick auf die Karte → "Neues Objekt…" an den geklickten
+  // GPS-Koordinaten. Leaflet liefert e.latlng direkt; der Browser-eigene
+  // Kontextmenü wird unterdrückt.
+  map.on('contextmenu', e => {
+    if (e.originalEvent) e.originalEvent.preventDefault()
+    const { lat, lng } = e.latlng
+    const loggedIn = ajna.isLoggedIn()
+    contextMenu.show({
+      x: e.originalEvent?.clientX ?? 0,
+      y: e.originalEvent?.clientY ?? 0,
+      title: `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+      items: [
+        {
+          label: 'Neues Objekt…',
+          disabled: !loggedIn,
+          onClick: () => editorUI.startNewObjectAt(lat, lng, 0)
+        }
+      ]
+    })
+  })
+
   // Marker-Smoothing-Loop starten (rAF — pausiert wenn Tab im Hintergrund).
   requestAnimationFrame(tickMarkerSmoothers)
 }

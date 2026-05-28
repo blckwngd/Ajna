@@ -1,3 +1,5 @@
+import { injectServerBadgeStyles, renderServerBadge } from './ServerBadge.js'
+
 export class EditorUI {
   constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null, onManageGroups = null, onManageServers = null }) {
     this.ajna = ajna
@@ -35,6 +37,7 @@ export class EditorUI {
 
     this.container.classList.add('editor-panel')
     this._injectStyles()
+    injectServerBadgeStyles()
 
     this.container.innerHTML = `
       <header class="ed-header">
@@ -296,6 +299,12 @@ export class EditorUI {
     // Buttons passierte (z. B. ServerDialog → loginToServer).
     this.ajna.onAuthChanged(() => this.updateAuthUI())
 
+    // Server-Liste-Änderungen (Add/Remove über ServerDialog) → Badges in
+    // der Objekt-Liste auffrischen, damit Mehr-Server-Status sichtbar ist.
+    if (typeof this.ajna.onServersChanged === 'function') {
+      this.ajna.onServersChanged(() => this.renderObjectList())
+    }
+
     if (this.manageServersBtn && this.onManageServers) {
       this.manageServersBtn.addEventListener('click', () => this.onManageServers())
     }
@@ -357,14 +366,16 @@ export class EditorUI {
         const row = document.createElement('div')
         row.className = 'ed-object-row'
         row.title = obj.id
+        // Badge-HTML wird selbst escaped (siehe ServerBadge.renderServerBadge);
+        // der Name landet weiterhin via textContent, um Backend-Injection zu
+        // vermeiden.
         row.innerHTML = `
           <div class="ed-object-info">
-            <strong></strong>
+            <strong></strong>${renderServerBadge(this.ajna, obj._origin)}
             <span class="ed-object-meta"></span>
           </div>
           <button type="button" class="ed-btn ed-btn-sm">Laden</button>
         `
-        // textContent statt innerHTML — verhindert HTML-Injection aus Backend-Daten
         row.querySelector('strong').textContent = obj.name || 'unnamed'
         row.querySelector('.ed-object-meta').textContent =
           `${(obj.lat ?? 0).toFixed(5)}, ${(obj.lon ?? 0).toFixed(5)}`
@@ -404,5 +415,28 @@ export class EditorUI {
     this.editorForm.lat.value = (obj.lat ?? 0).toFixed(6)
     this.editorForm.lon.value = (obj.lon ?? 0).toFixed(6)
     this.editorForm.altitude.value = (obj.altitude ?? 0).toFixed(2)
+  }
+
+  /**
+   * Bereitet den Editor für ein NEUES Objekt an gegebenen Koordinaten vor:
+   * objectId leer (Submit → createObject), Name leer und fokussiert, Lat/Lon
+   * vorbefüllt. Wird vom "Neues Objekt…"-Kontextmenü in AR/Map aufgerufen.
+   * Owner wird serverseitig beim Create gesetzt — kein Client-Zutun nötig.
+   */
+  startNewObjectAt(lat, lon, altitude = 0) {
+    if (!this.ajna.isLoggedIn()) {
+      this.setStatus('Zum Anlegen bitte einloggen.')
+      return
+    }
+    this.editorForm.objectId.value = ''
+    this.editorForm.name.value = ''
+    this.editorForm.lat.value = lat.toFixed(6)
+    this.editorForm.lon.value = lon.toFixed(6)
+    this.editorForm.altitude.value = (altitude ?? 0).toFixed(2)
+
+    const section = this.container.querySelector('#sharedEditorSection')
+    if (section) section.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    this.editorForm.name.focus()
+    this.setStatus(`Neues Objekt @ ${lat.toFixed(5)}, ${lon.toFixed(5)} — Details ausfüllen & Speichern`)
   }
 }

@@ -37,7 +37,7 @@ const WAY_SEARCH_RADIUS_M = 200
 // stimmt `yaw = -bearing` (Modell zeigt nativ in +Z). Wenn ein anderes
 // Modell rückwärts läuft: hier auf `bearing` oder `bearing + Math.PI`
 // stellen.
-const HEADING_TO_YAW = bearing => bearing + Math.PI/1.7
+const HEADING_TO_YAW = bearing => bearing - Math.PI/2
 
 // Aktion → Animation, mit der der Agent reagiert (für einfache Reaktionen
 // ohne Pfad-Verfolgung). gehen/laufen/anhalten haben eigene Behandlung.

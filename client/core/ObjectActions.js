@@ -11,6 +11,8 @@
 // im Backend-Record steht, fallen wir auf einen kleinen Platzhalter zurück,
 // damit das Menü demonstrierbar bleibt.
 
+import { renderServerBadgeText } from './ServerBadge.js'
+
 const PLACEHOLDER_ACTIONS = [
   { key: 'turn_on',  label: 'Einschalten' },
   { key: 'turn_off', label: 'Ausschalten' },
@@ -45,9 +47,15 @@ export class ObjectActions {
       }))
     ]
 
+    // Server-Hinweis im Titel — Plain-Text-Suffix, da der ContextMenu
+    // den Header per textContent rendert (kein HTML-Badge möglich).
+    // Suffix ist leer, wenn nur ein Server registriert ist.
+    const originSuffix = renderServerBadgeText(this.ajna, record._origin)
+    const title = (record.name || record.id) + (originSuffix ? `  ${originSuffix}` : '')
+
     this.contextMenu.show({
       x, y,
-      title: record.name || record.id,
+      title,
       items
     })
   }

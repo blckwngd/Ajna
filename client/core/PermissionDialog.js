@@ -1,6 +1,8 @@
 // Modal-Dialog für Objekt-Berechtigungen.
 // Liest und schreibt ACEs gegen das PocketBase-Backend über AjnaManager.
 
+import { injectServerBadgeStyles, renderServerBadge } from './ServerBadge.js'
+
 const ALL_RIGHTS = ['view', 'edit', 'move', 'owner']
 const IMPLICIT_AUDIENCES = new Set(['authenticated', 'anonymous', 'everyone'])
 
@@ -11,6 +13,7 @@ export class PermissionDialog {
   constructor({ ajna } = {}) {
     this.ajna = ajna
     this._injectStyles()
+    injectServerBadgeStyles()
   }
 
   _injectStyles() {
@@ -162,7 +165,7 @@ export class PermissionDialog {
     backdrop.innerHTML = `
       <div class="ajna-perm-dialog">
         <h3>Berechtigungen</h3>
-        <div class="pd-sub">${this._escape(obj?.name || obj?.id || 'Unbenanntes Objekt')}</div>
+        <div class="pd-sub">${this._escape(obj?.name || obj?.id || 'Unbenanntes Objekt')}${renderServerBadge(this.ajna, obj?._origin)}</div>
 
         <h4>Aktuelle Einträge</h4>
         <div class="pd-ace-list">
