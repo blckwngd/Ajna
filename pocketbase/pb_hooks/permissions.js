@@ -334,14 +334,43 @@ function recomputeForGroup(groupId) {
  * defensiv validiert — fehlerhafte Templates blockieren das Create nicht.
  */
 function applyOwnerDefaults(ownerId, objectId) {
-  if (!ownerId) return
+  if (!ownerId) {
+    console.log(`[applyOwnerDefaults] skip object=${objectId}: no owner`)
+    return
+  }
 
   let user
   try { user = $app.findRecordById("users", ownerId) }
-  catch { return }
+  catch (err) {
+    console.log(`[applyOwnerDefaults] skip object=${objectId}: owner=${ownerId} not found (${err && err.message})`)
+    return
+  }
 
-  const defaults = user.get("default_permissions")
-  if (!Array.isArray(defaults) || defaults.length === 0) return
+  let defaults = user.get("default_permissions")
+
+  // Goja-Bridge-Fallstrick: PB liefert JSON-Felder unter bestimmten Bedingungen
+  // als Array von Bytes (Go-[]byte) oder Einzel-Char-Strings statt als
+  // geparsten JS-Wert. Erkennbar daran, dass die Elemente Primitives statt
+  // Objekte sind. In dem Fall den String rekonstruieren und neu parsen.
+  if (Array.isArray(defaults) && defaults.length > 0 && typeof defaults[0] !== "object") {
+    let raw
+    try {
+      raw = typeof defaults[0] === "number"
+        ? String.fromCharCode.apply(null, defaults)
+        : defaults.join("")
+      defaults = JSON.parse(raw)
+      console.log(`[applyOwnerDefaults] re-parsed JSON-field from byte-array (${raw.length} chars)`)
+    } catch (err) {
+      console.log(`[applyOwnerDefaults] reparse failed object=${objectId}: ${err && err.message}`)
+      return
+    }
+  }
+
+  if (!Array.isArray(defaults) || defaults.length === 0) {
+    console.log(`[applyOwnerDefaults] skip object=${objectId}: defaults empty or not array`)
+    return
+  }
+  console.log(`[applyOwnerDefaults] object=${objectId} owner=${ownerId} templates=${defaults.length}`)
 
   const col = $app.findCollectionByNameOrId("object_permissions")
   for (const tpl of defaults) {
@@ -371,8 +400,9 @@ function applyOwnerDefaults(ownerId, objectId) {
         interact_actions: interact
       })
       $app.save(rec)
+      console.log(`[applyOwnerDefaults] + ACE object=${objectId} subject_type=${type} rights=${JSON.stringify(rights)}`)
     } catch (err) {
-      console.log(`applyOwnerDefaults: skip invalid template (${err && err.message})`)
+      console.log(`[applyOwnerDefaults] save ACE failed object=${objectId}: ${err && err.message}`)
     }
   }
 }

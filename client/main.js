@@ -470,14 +470,27 @@ async function syncSceneObjects(scene, world, geo, objects) {
   // Realtime-Events (PocketBase) landen über AjnaManager → emitObjectsChanged
   // hier mit der frischen Objekt-Liste; applyData zieht Name, Position,
   // Rotation und Scale nach, ohne das GameObject neu zu erzeugen.
+  //
+  // Defensive: ein einzelner Record mit fehlerhaften Daten darf nicht den
+  // gesamten Reconcile-Loop killen, sonst tauchen nachfolgende Objekte nie
+  // in der Szene auf (analog zum Map-Issue).
   for (const obj of objects) {
-    const existing = objectMap.get(obj.id)
-    if (existing) {
-      existing.applyData(obj, geo)
-    } else {
-      const go = await GameObject.createFromPBData(scene, obj, geo, true)
-      objectMap.set(obj.id, go)
-      subscribeInteract(ajnaManager, obj.id, data => _handleInteractAR(go, data))
+    try {
+      if (!Number.isFinite(obj.lat) || !Number.isFinite(obj.lon)) {
+        console.warn(`syncSceneObjects: skip ${obj.id} (${obj.name || 'unnamed'}) — invalid lat/lon`,
+          { lat: obj.lat, lon: obj.lon })
+        continue
+      }
+      const existing = objectMap.get(obj.id)
+      if (existing) {
+        existing.applyData(obj, geo)
+      } else {
+        const go = await GameObject.createFromPBData(scene, obj, geo, true)
+        objectMap.set(obj.id, go)
+        subscribeInteract(ajnaManager, obj.id, data => _handleInteractAR(go, data))
+      }
+    } catch (err) {
+      console.warn(`syncSceneObjects: GameObject für ${obj.id} fehlgeschlagen`, err)
     }
   }
 }

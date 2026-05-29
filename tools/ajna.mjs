@@ -16,6 +16,7 @@
 //   update-object <id> <json>        Objekt patchen
 //   delete-object <id>               Objekt löschen
 //   add-permission <objectId> <ace>  ACE auf Objekt setzen
+//   debug-view <id>                  View-Rule klauselweise auswerten
 //
 // Beispiele:
 //   node tools/ajna.mjs login
@@ -24,6 +25,7 @@
 //   node tools/ajna.mjs update-object abc123def456ghi '{"lat":52.51}'
 //   node tools/ajna.mjs delete-object abc123def456ghi
 //   node tools/ajna.mjs add-permission abc123 '{"subject_type":"authenticated","rights":["read"]}'
+//   node tools/ajna.mjs debug-view abc123def456ghi
 //
 // Env (oder `.env` im CWD):
 //   AJNA_URL    Default: http://127.0.0.1:8090
@@ -100,6 +102,11 @@ Commands:
   create-object <json>             Objekt aus JSON-Body anlegen.
   update-object <id> <json>        Objekt patchen.
   delete-object <id>               Objekt löschen.
+  debug-view <id>                  PB-View-Rule für ein Objekt klauselweise
+                                   auswerten (Owner / Cache / implicit audiences).
+                                   Listet außerdem alle ACEs des Objekts roh auf —
+                                   ideal um Whitespace/Case-Probleme in
+                                   subject_type oder rights zu erkennen.
   add-permission <objectId> <ace>  ACE auf Objekt setzen. ACE-JSON:
                                      subject_type: user|group|authenticated|anonymous|everyone
                                      subject:      ID des Users/der Gruppe (bei implizit leer)
@@ -217,6 +224,28 @@ async function cmdDeleteObject(pb, [id]) {
   console.error(`✓ gelöscht: ${id}`)
 }
 
+async function cmdDebugView(pb, [id]) {
+  if (!id) die('Args: debug-view <id>')
+  await login(pb)
+  let res
+  try {
+    res = await pb.send(`/api/objects/${id}/debug-view`, { method: 'GET' })
+  } catch (err) {
+    die(`debug-view fehlgeschlagen: ${describePbError(err)}`)
+  }
+  console.log(JSON.stringify(res, null, 2))
+  if (res.shouldSee) {
+    console.error('✓ shouldSee=true (Owner / Cache / Implicit-Audience-Treffer)')
+  } else {
+    console.error('✗ shouldSee=false — keine Klausel matcht')
+    if (res.objectAces?.length === 0) {
+      console.error('  Hinweis: keine ACEs auf dem Objekt — applyOwnerDefaults hat nichts angelegt')
+    } else {
+      console.error('  Inspiziere `objectAces` oben: subject_type-Werte vergleichen, rights_isArray, rights_contains_view')
+    }
+  }
+}
+
 const VALID_SUBJECT_TYPES = new Set([
   'user', 'group', 'authenticated', 'anonymous', 'everyone'
 ])
@@ -273,6 +302,7 @@ async function main() {
     case 'update-object':  await cmdUpdateObject(pb, rest);   break
     case 'delete-object':  await cmdDeleteObject(pb, rest);   break
     case 'add-permission': await cmdAddPermission(pb, rest);  break
+    case 'debug-view':     await cmdDebugView(pb, rest);      break
     default:
       console.error(`Unbekanntes Subcommand: ${cmd}\n`)
       usage()

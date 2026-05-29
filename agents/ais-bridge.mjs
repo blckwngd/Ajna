@@ -40,6 +40,7 @@
 // Beenden: Ctrl+C.
 
 import PocketBase from 'pocketbase'
+import WebSocket from 'ws'
 import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'

@@ -74,14 +74,30 @@ function mapUpdateMarkers(objects) {
   if (!window.map) return
 
   for (const obj of objects) {
-    if (markerLayer.has(obj.id)) {
-      // setLatLng übernimmt tickMarkerSmoothers; hier nur Popup aktualisieren.
-      feedSmoother(obj)
-      const marker = markerLayer.get(obj.id)
-      marker.bindPopup(`<strong>${obj.name || 'unnamed'}</strong><br>${obj.lat.toFixed(5)}, ${obj.lon.toFixed(5)}`)
-    } else {
-      addMarker(obj)
-      feedSmoother(obj)
+    // Defensive: ein einzelner Record mit kaputten Koordinaten würde sonst
+    // via `obj.lat.toFixed(...)` werfen und den gesamten Loop abreißen —
+    // alle nachfolgenden Objekte blieben unsichtbar (siehe Issue: nur
+    // erster Marker, keine Realtime-Updates mehr).
+    if (!Number.isFinite(obj.lat) || !Number.isFinite(obj.lon)) {
+      console.warn(`mapUpdateMarkers: skip ${obj.id} (${obj.name || 'unnamed'}) — invalid lat/lon`,
+        { lat: obj.lat, lon: obj.lon })
+      continue
+    }
+    try {
+      if (markerLayer.has(obj.id)) {
+        // setLatLng übernimmt tickMarkerSmoothers; hier nur Popup aktualisieren.
+        feedSmoother(obj)
+        const marker = markerLayer.get(obj.id)
+        marker.bindPopup(`<strong>${obj.name || 'unnamed'}</strong><br>${obj.lat.toFixed(5)}, ${obj.lon.toFixed(5)}`)
+      } else {
+        addMarker(obj)
+        feedSmoother(obj)
+      }
+    } catch (err) {
+      // Belt-and-Suspenders: addMarker / bindPopup können auch aus anderen
+      // Gründen werfen (Leaflet-Internals, fehlerhafte Icon-HTML, …).
+      // Wir loggen und machen mit dem nächsten Record weiter.
+      console.warn(`mapUpdateMarkers: marker für ${obj.id} fehlgeschlagen`, err)
     }
   }
 

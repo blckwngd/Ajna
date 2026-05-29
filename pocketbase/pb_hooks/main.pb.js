@@ -191,6 +191,118 @@ routerAdd("POST", "/api/objects/{id}/interact", (e) => {
 
 
 // =====================================================================
+// Debug-Endpoint: View-Rule Klausel-für-Klausel auswerten
+//
+// Spiegelt die in objects.viewRule kodierte Logik in JS nach und sagt
+// pro Klausel, ob sie für den ANFRAGENDEN User matchen würde. Plus
+// listet alle ACEs des Objekts auf, damit man sieht, wie die Daten
+// wirklich gespeichert sind (Case/Whitespace-Issues bei subject_type
+// fallen so direkt auf).
+//
+//   GET /api/objects/{id}/debug-view
+// =====================================================================
+routerAdd("GET", "/api/objects/{id}/debug-view", (e) => {
+  try {
+    const objectId = e.request.pathValue("id")
+    const info = e.requestInfo()
+    const user = info.auth
+
+    let object
+    try { object = $app.findRecordById("objects", objectId) }
+    catch { return e.json(404, { error: "object not found" }) }
+
+    const result = {
+      objectId,
+      objectOwner: object.get("owner"),
+      requestAuth: user ? { id: user.id, email: user.get("email") } : null,
+    }
+
+    // --- 1) Owner-Check
+    result.ownerMatch = !!user && object.get("owner") === user.id
+
+    // --- 2) effective_permissions-Cache
+    let cacheRows = []
+    if (user) {
+      try {
+        cacheRows = $app.findRecordsByFilter(
+          "effective_permissions",
+          "object = {:oid} && user = {:uid}",
+          "", 100, 0,
+          { oid: objectId, uid: user.id }
+        )
+      } catch {}
+    }
+    result.cache = {
+      rows: cacheRows.map(r => ({
+        id: r.id, user: r.get("user"), rights: r.get("rights")
+      })),
+      hasViewRight: cacheRows.some(r => {
+        const rights = r.get("rights") || []
+        return Array.isArray(rights) ? rights.indexOf("view") >= 0 : false
+      })
+    }
+
+    // --- 3-5) Implicit-Audience-Checks auf object_permissions
+    let aceRows = []
+    try {
+      aceRows = $app.findRecordsByFilter(
+        "object_permissions",
+        "object = {:oid}",
+        "", 200, 0,
+        { oid: objectId }
+      )
+    } catch (err) {
+      result.aceQueryError = err && err.message
+    }
+
+    // ACEs raw aufzeigen — Whitespace/Case-Probleme werden hier sichtbar,
+    // weil JSON.stringify die Werte verbatim druckt.
+    result.objectAces = aceRows.map(r => {
+      const rights = r.get("rights")
+      return {
+        id: r.id,
+        subject_type: r.get("subject_type"),
+        subject_type_len: (r.get("subject_type") || "").length,
+        subject: r.get("subject"),
+        rights: rights,
+        rights_isArray: Array.isArray(rights),
+        rights_contains_view: Array.isArray(rights)
+          ? rights.indexOf("view") >= 0
+          : (typeof rights === "string" ? rights.indexOf("view") >= 0 : false)
+      }
+    })
+
+    const hasView = a => {
+      const r = a.get("rights") || []
+      if (Array.isArray(r)) return r.indexOf("view") >= 0
+      if (typeof r === "string") return r.indexOf("view") >= 0
+      return false
+    }
+
+    const everyoneAce       = aceRows.find(a => a.get("subject_type") === "everyone"        && hasView(a))
+    const authenticatedAce  = aceRows.find(a => a.get("subject_type") === "authenticated"   && hasView(a))
+    const anonymousAce      = aceRows.find(a => a.get("subject_type") === "anonymous"       && hasView(a))
+
+    result.implicit = {
+      everyoneMatch:      !!everyoneAce,
+      authenticatedMatch: !!authenticatedAce && !!user,
+      anonymousMatch:     !!anonymousAce     && !user
+    }
+
+    result.shouldSee = result.ownerMatch
+      || result.cache.hasViewRight
+      || result.implicit.everyoneMatch
+      || result.implicit.authenticatedMatch
+      || result.implicit.anonymousMatch
+
+    return e.json(200, result)
+  } catch (err) {
+    return e.json(500, { error: "" + (err && err.message ? err.message : err) })
+  }
+})
+
+
+// =====================================================================
 // Invitations — Friend-/Group-Einladungen
 //
 // Privacy-Modell: die users-Collection ist strikt (jeder sieht nur sich

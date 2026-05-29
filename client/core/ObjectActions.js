@@ -35,17 +35,24 @@ export class ObjectActions {
       ? record.actions
       : PLACEHOLDER_ACTIONS
 
+    // Owner-Check: nur Besitzer dürfen Berechtigungen verwalten. Bei
+    // Multi-Server den passenden AjnaClient für record._origin nehmen,
+    // weil der eingeloggte User pro Server unterschiedlich sein kann.
+    const client = this.ajna.clients?.get(record._origin) || this.ajna.defaultClient
+    const me = client?.currentUser?.()
+    const isOwner = !!me && !!record.owner && me.id === record.owner
+
     const items = [
       { label: 'Bearbeiten',     onClick: () => this.editorUI?.fillEditor?.(record) },
-      { label: 'Berechtigungen', onClick: () => this.permissionDialog?.open(record) },
-      { label: 'Löschen',        danger: true, onClick: () => this._confirmDelete(record) },
+      isOwner && { label: 'Berechtigungen', onClick: () => this.permissionDialog?.open(record) },
+      isOwner && { label: 'Löschen', danger: true, onClick: () => this._confirmDelete(record) },
       { separator: true },
       { sectionLabel: 'Interaktionen' },
       ...actions.map(a => ({
         label: a.label || a.key,
         onClick: () => this._triggerAction(record, a.key)
       }))
-    ]
+    ].filter(Boolean)
 
     // Server-Hinweis im Titel — Plain-Text-Suffix, da der ContextMenu
     // den Header per textContent rendert (kein HTML-Badge möglich).
