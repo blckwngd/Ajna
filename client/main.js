@@ -28,6 +28,7 @@ import { ContextMenu } from "./core/ContextMenu.js"
 import { PermissionDialog } from "./core/PermissionDialog.js"
 import { GroupDialog } from "./core/GroupDialog.js"
 import { ServerDialog } from "./core/ServerDialog.js"
+import { ProfileDialog } from "./core/ProfileDialog.js"
 import { AjnaGeo } from "./core/AjnaGeo.js"
 import { ObjectActions } from "./core/ObjectActions.js"
 import { InWorldActionMenu } from "./core/InWorldActionMenu.js"
@@ -145,6 +146,7 @@ async function init() {
   const uiContainer = document.getElementById('ui')
   const groupDialog = new GroupDialog({ ajna: ajnaManager })
   const serverDialog = new ServerDialog({ ajna: ajnaManager })
+  const profileDialog = new ProfileDialog({ ajna: ajnaManager })
 
   editorUI = new EditorUI({
     ajna: ajnaManager,
@@ -153,6 +155,7 @@ async function init() {
     onFocusPlayer: () => focusCameraOn(scene, player),
     onManageGroups: () => groupDialog.open(),
     onManageServers: () => serverDialog.open(),
+    onManageProfile: () => profileDialog.open(),
     onObjectSelected: obj => {
       // PB-Record → zugehöriges GameObject. Wenn die Szene das Objekt
       // noch nicht angelegt hat (z. B. vor abgeschlossenem syncSceneObjects),

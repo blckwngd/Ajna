@@ -1,7 +1,7 @@
 import { injectServerBadgeStyles, renderServerBadge } from './ServerBadge.js'
 
 export class EditorUI {
-  constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null, onManageGroups = null, onManageServers = null }) {
+  constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null, onManageGroups = null, onManageServers = null, onManageProfile = null }) {
     this.ajna = ajna
     this.container = container
     this.mode = mode
@@ -20,6 +20,8 @@ export class EditorUI {
     this.onManageGroups = onManageGroups
     // Optional: öffnet den Server-Verwaltungs-Dialog (Multi-Server).
     this.onManageServers = onManageServers
+    // Optional: öffnet den User-Profil-Dialog (u. a. Default-Permissions).
+    this.onManageProfile = onManageProfile
     this.objectLayer = new Map()
   }
 
@@ -62,11 +64,12 @@ export class EditorUI {
         <div id="editorStatus" class="ed-status"></div>
       </section>
 
-      ${(this.onManageGroups || this.onManageServers) ? `
+      ${(this.onManageGroups || this.onManageServers || this.onManageProfile) ? `
         <section class="ed-section" id="editorAdminSection">
           <div class="ed-buttons">
             ${this.onManageServers ? `<button id="editorManageServersBtn" type="button" class="ed-btn">Server</button>` : ''}
             ${this.onManageGroups  ? `<button id="editorManageGroupsBtn"  type="button" class="ed-btn">Gruppen</button>` : ''}
+            ${this.onManageProfile ? `<button id="editorManageProfileBtn" type="button" class="ed-btn">Profil</button>` : ''}
           </div>
         </section>
       ` : ''}
@@ -110,6 +113,7 @@ export class EditorUI {
     this.focusPlayerBtn = this.container.querySelector('#editorFocusPlayerBtn')
     this.manageGroupsBtn = this.container.querySelector('#editorManageGroupsBtn')
     this.manageServersBtn = this.container.querySelector('#editorManageServersBtn')
+    this.manageProfileBtn = this.container.querySelector('#editorManageProfileBtn')
   }
 
   _injectStyles() {
@@ -311,6 +315,10 @@ export class EditorUI {
 
     if (this.manageGroupsBtn && this.onManageGroups) {
       this.manageGroupsBtn.addEventListener('click', () => this.onManageGroups())
+    }
+
+    if (this.manageProfileBtn && this.onManageProfile) {
+      this.manageProfileBtn.addEventListener('click', () => this.onManageProfile())
     }
 
     if (this.focusPlayerBtn && this.onFocusPlayer) {

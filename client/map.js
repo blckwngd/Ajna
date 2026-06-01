@@ -5,6 +5,7 @@ import { ContextMenu } from "./core/ContextMenu.js"
 import { PermissionDialog } from "./core/PermissionDialog.js"
 import { GroupDialog } from "./core/GroupDialog.js"
 import { ServerDialog } from "./core/ServerDialog.js"
+import { ProfileDialog } from "./core/ProfileDialog.js"
 import { ObjectActions } from "./core/ObjectActions.js"
 import { Toast } from "./core/Toast.js"
 import { PositionSmoother } from "./core/PositionSmoother.js"
@@ -26,6 +27,7 @@ const contextMenu = new ContextMenu()
 const permissionDialog = new PermissionDialog({ ajna })
 const groupDialog = new GroupDialog({ ajna })
 const serverDialog = new ServerDialog({ ajna })
+const profileDialog = new ProfileDialog({ ajna })
 const toast = new Toast()
 let objectActions = null  // wird in init() verdrahtet, sobald editorUI da ist
 
@@ -332,7 +334,8 @@ async function init() {
     onObjectsUpdated: objects => mapUpdateMarkers(objects),
     onObjectHover: (obj, hovering) => setMarkerHighlight(obj.id, hovering),
     onManageGroups: () => groupDialog.open(),
-    onManageServers: () => serverDialog.open()
+    onManageServers: () => serverDialog.open(),
+    onManageProfile: () => profileDialog.open()
   })
 
   // Marker-Klick-Aktionen verdrahten, sobald die EditorUI als Sink für
