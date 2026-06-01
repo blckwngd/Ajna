@@ -116,6 +116,46 @@ try {
 }
 console.log(`[ajna] eingeloggt als ${ajna.currentUser()?.email || AJNA_USER}`)
 
+// ───────────────────────────────────────────────────────────────────────
+//  Agent-Manifest publishen — der Client zeigt die Layer im FilterDialog
+//  als Checkboxen. Die Layer-Auswahl entspricht den Untergruppen, die
+//  der serverseitige `common`-Filter in server/geo.js enthält. Für andere
+//  POI_FILTER-Modes kommen Layer-Schemas später dazu.
+// ───────────────────────────────────────────────────────────────────────
+
+const POI_LAYERS_COMMON = [
+  { key: 'all',         label: 'Alle POIs',  predicate: null },
+  { key: 'cafe',        label: 'Cafés',          predicate: { field: 'state.osm_tags.amenity', equals: 'cafe' } },
+  { key: 'restaurant',  label: 'Restaurants',    predicate: { field: 'state.osm_tags.amenity', equals: 'restaurant' } },
+  { key: 'bar',         label: 'Bars',           predicate: { field: 'state.osm_tags.amenity', equals: 'bar' } },
+  { key: 'pub',         label: 'Pubs',           predicate: { field: 'state.osm_tags.amenity', equals: 'pub' } },
+  { key: 'fast_food',   label: 'Fast Food',      predicate: { field: 'state.osm_tags.amenity', equals: 'fast_food' } },
+  { key: 'bench',       label: 'Bänke',          predicate: { field: 'state.osm_tags.amenity', equals: 'bench' } },
+  { key: 'fountain',    label: 'Brunnen',        predicate: { field: 'state.osm_tags.amenity', equals: 'fountain' } },
+  { key: 'toilets',     label: 'Toiletten',      predicate: { field: 'state.osm_tags.amenity', equals: 'toilets' } },
+  { key: 'drinking_water', label: 'Trinkwasser', predicate: { field: 'state.osm_tags.amenity', equals: 'drinking_water' } }
+]
+
+// Für andere FILTER-Modi (amenity / shops / tourism) bieten wir vorerst
+// nur den "all"-Layer an — feinere Aufschlüsselung kann pro Filter-Set
+// nach Bedarf dazukommen.
+const POI_LAYERS_GENERIC = [
+  { key: 'all', label: 'Alle POIs', predicate: null }
+]
+
+try {
+  const layers = FILTER === 'common' ? POI_LAYERS_COMMON : POI_LAYERS_GENERIC
+  await ajna.upsertAgentManifest({
+    source: 'overpass',
+    agent_name: 'POI-Bridge',
+    description: `OSM-POIs (Filter: ${FILTER}) im Radius ${RADIUS_KM} km um ${CENTER_LAT.toFixed(3)}, ${CENTER_LON.toFixed(3)}`,
+    layers
+  })
+  console.log(`[ajna] manifest aktualisiert (${layers.length} Layer)`)
+} catch (err) {
+  console.warn('[ajna] manifest-upsert fehlgeschlagen:', err?.message || err)
+}
+
 /**
  * In-Memory-Map: osm_id (z. B. "node/123") → { objectId, name }.
  * Wird beim Boot aus PB gefüllt — Idempotenz garantiert beim Re-Run.

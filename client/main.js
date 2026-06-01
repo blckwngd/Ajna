@@ -29,6 +29,8 @@ import { PermissionDialog } from "./core/PermissionDialog.js"
 import { GroupDialog } from "./core/GroupDialog.js"
 import { ServerDialog } from "./core/ServerDialog.js"
 import { ProfileDialog } from "./core/ProfileDialog.js"
+import { FilterDialog } from "./core/FilterDialog.js"
+import { AgentFilters } from "./core/AgentFilters.js"
 import { AjnaGeo } from "./core/AjnaGeo.js"
 import { ObjectActions } from "./core/ObjectActions.js"
 import { InWorldActionMenu } from "./core/InWorldActionMenu.js"
@@ -147,6 +149,20 @@ async function init() {
   const groupDialog = new GroupDialog({ ajna: ajnaManager })
   const serverDialog = new ServerDialog({ ajna: ajnaManager })
   const profileDialog = new ProfileDialog({ ajna: ajnaManager })
+  const agentFilters = new AgentFilters(ajnaManager)
+  const filterDialog = new FilterDialog({ ajna: ajnaManager, filters: agentFilters })
+  _agentFilters = agentFilters       // sichtbar für syncSceneObjects
+  window.agentFilters = agentFilters  // für Console-Debugging
+
+  // Manifests beim Login + bei Auth-Wechsel neu laden.
+  ajnaManager.onAuthChanged(user => {
+    if (user) agentFilters.refreshManifests().catch(() => {})
+  })
+
+  // Filter-Änderungen → bestehende Szene neu reconcilen.
+  agentFilters.onChange(() => {
+    syncSceneObjects(scene, world, geo, ajnaManager.getObjectList())
+  })
 
   editorUI = new EditorUI({
     ajna: ajnaManager,
@@ -156,6 +172,7 @@ async function init() {
     onManageGroups: () => groupDialog.open(),
     onManageServers: () => serverDialog.open(),
     onManageProfile: () => profileDialog.open(),
+    onManageFilters: () => filterDialog.open(),
     onObjectSelected: obj => {
       // PB-Record → zugehöriges GameObject. Wenn die Szene das Objekt
       // noch nicht angelegt hat (z. B. vor abgeschlossenem syncSceneObjects),
@@ -615,9 +632,16 @@ async function syncSceneObjects(scene, world, geo, objects) {
 
   if (!geo.origin) return
 
-  const incomingIds = new Set(objects.map(o => o.id))
+  // Agent-Filter: aus der vollen Objekt-Liste nur das behalten, was
+  // gemäß User-Setting sichtbar sein soll. Default = alles sichtbar.
+  const visibleObjects = _agentFilters
+    ? objects.filter(o => _agentFilters.matches(o))
+    : objects
 
-  // Entfernen, was nicht mehr Teil der Welt ist
+  const incomingIds = new Set(visibleObjects.map(o => o.id))
+
+  // Entfernen, was nicht mehr Teil der sichtbaren Welt ist (Filter
+  // oder echtes Verschwinden aus der Liste).
   for (const [id, go] of objectMap) {
     if (!incomingIds.has(id)) {
       unsubscribeInteract(id)
@@ -625,6 +649,10 @@ async function syncSceneObjects(scene, world, geo, objects) {
       objectMap.delete(id)
     }
   }
+
+  // Ab hier nur noch sichtbare Objekte verarbeiten — durch das gefilterte
+  // `visibleObjects` ersetzt der Loop unten den ursprünglichen `objects`.
+  const objectsToProcess = visibleObjects
 
   // Neue Objekte anlegen, bestehende mit aktuellen Daten überschreiben.
   // Realtime-Events (PocketBase) landen über AjnaManager → emitObjectsChanged
@@ -634,7 +662,7 @@ async function syncSceneObjects(scene, world, geo, objects) {
   // Defensive: ein einzelner Record mit fehlerhaften Daten darf nicht den
   // gesamten Reconcile-Loop killen, sonst tauchen nachfolgende Objekte nie
   // in der Szene auf (analog zum Map-Issue).
-  for (const obj of objects) {
+  for (const obj of objectsToProcess) {
     try {
       if (!Number.isFinite(obj.lat) || !Number.isFinite(obj.lon)) {
         console.warn(`syncSceneObjects: skip ${obj.id} (${obj.name || 'unnamed'}) — invalid lat/lon`,
@@ -666,6 +694,7 @@ function _handleInteractAR(go, data) {
   }
 }
 let _arHighlight = null  // wird in init() befüllt — Closure-Bridge auf setHighlight
+let _agentFilters = null // wird in init() gesetzt — Closure-Bridge für syncSceneObjects
 
 // Baut das Hover-/Highlight-System für den AR-Modus auf:
 //   - DOM-Tooltip am Mauszeiger, sobald die Maus über einem GameObject-Mesh hängt

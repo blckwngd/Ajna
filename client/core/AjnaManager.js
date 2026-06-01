@@ -468,6 +468,27 @@ export class AjnaManager {
   canCreateObjects() { return this.defaultClient.canCreateObjects() }
 
   // ===================================================================
+  //  Agent-Manifests (Filter-Dialog-Vorbau)
+  // ===================================================================
+
+  /**
+   * Liefert die Manifests aller Server gemerged. Aus jedem Manifest geht
+   * `_origin` als Tag mit, damit Multi-Server-aware der Filter-Dialog
+   * z. B. "POI-Bridge (Heim)" vs "POI-Bridge (Büro)" unterscheiden kann.
+   */
+  async listAgentManifests() {
+    const results = await Promise.allSettled(
+      Array.from(this.clients.values()).map(c => c.listAgentManifests())
+    )
+    return results.filter(r => r.status === 'fulfilled').flatMap(r => r.value)
+  }
+
+  /** Upsert am Default-Client (Agent läuft typischerweise gegen einen Server). */
+  async upsertAgentManifest(manifest) {
+    return this.defaultClient.upsertAgentManifest(manifest)
+  }
+
+  // ===================================================================
   //  Internals
   // ===================================================================
 

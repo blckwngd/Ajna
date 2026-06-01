@@ -381,6 +381,52 @@ export class AjnaClient {
     return this._tagOriginList(list)
   }
 
+  // ===================================================================
+  //  Agent-Manifests
+  // ===================================================================
+
+  /** Liest alle Manifests (was auf diesem Server an Agents aktiv ist). */
+  async listAgentManifests() {
+    const list = await this.pb.collection('agent_manifests').getFullList({ sort: '+agent_name' })
+    return this._tagOriginList(list)
+  }
+
+  /**
+   * Upsert: findet das eigene Manifest für eine source (owner = me) und
+   * aktualisiert es, oder legt ein neues an. Wird von Bridge-Agents beim
+   * Boot aufgerufen.
+   *
+   * @param {{source: string, agent_name: string, description?: string, layers?: any[]}} manifest
+   */
+  async upsertAgentManifest(manifest) {
+    if (!manifest?.source) throw new Error('upsertAgentManifest: source missing')
+    const me = this.currentUserRaw()
+    if (!me) throw new Error('upsertAgentManifest: not logged in')
+
+    let existing = null
+    try {
+      existing = await this.pb.collection('agent_manifests').getFirstListItem(
+        `source = {:source} && owner = {:owner}`,
+        { filter: `source = "${manifest.source.replace(/"/g, '\\"')}" && owner = "${me.id}"` }
+      )
+    } catch (err) {
+      if (err?.status !== 404) throw err
+    }
+
+    const payload = {
+      source: manifest.source,
+      agent_name: manifest.agent_name || manifest.source,
+      description: manifest.description || '',
+      layers: manifest.layers || [],
+      owner: me.id
+    }
+
+    if (existing) {
+      return this._tagOrigin(await this.pb.collection('agent_manifests').update(existing.id, payload))
+    }
+    return this._tagOrigin(await this.pb.collection('agent_manifests').create(payload))
+  }
+
   getMyDefaultPermissions() {
     return this.currentUserRaw()?.default_permissions || []
   }

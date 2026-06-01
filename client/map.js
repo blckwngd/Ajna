@@ -6,6 +6,8 @@ import { PermissionDialog } from "./core/PermissionDialog.js"
 import { GroupDialog } from "./core/GroupDialog.js"
 import { ServerDialog } from "./core/ServerDialog.js"
 import { ProfileDialog } from "./core/ProfileDialog.js"
+import { FilterDialog } from "./core/FilterDialog.js"
+import { AgentFilters } from "./core/AgentFilters.js"
 import { ObjectActions } from "./core/ObjectActions.js"
 import { Toast } from "./core/Toast.js"
 import { PositionSmoother } from "./core/PositionSmoother.js"
@@ -28,6 +30,9 @@ const permissionDialog = new PermissionDialog({ ajna })
 const groupDialog = new GroupDialog({ ajna })
 const serverDialog = new ServerDialog({ ajna })
 const profileDialog = new ProfileDialog({ ajna })
+const agentFilters = new AgentFilters(ajna)
+const filterDialog = new FilterDialog({ ajna, filters: agentFilters })
+window.agentFilters = agentFilters   // Console-Debugging
 const toast = new Toast()
 let objectActions = null  // wird in init() verdrahtet, sobald editorUI da ist
 
@@ -75,7 +80,13 @@ let editorUI = null
 function mapUpdateMarkers(objects) {
   if (!window.map) return
 
-  for (const obj of objects) {
+  // Agent-Filter: nur Objekte zeichnen, die der Spieler sehen will.
+  // Default (kein Filter gesetzt) = alle sichtbar.
+  const visibleObjects = agentFilters
+    ? objects.filter(o => agentFilters.matches(o))
+    : objects
+
+  for (const obj of visibleObjects) {
     // Defensive: ein einzelner Record mit kaputten Koordinaten würde sonst
     // via `obj.lat.toFixed(...)` werfen und den gesamten Loop abreißen —
     // alle nachfolgenden Objekte blieben unsichtbar (siehe Issue: nur
@@ -103,8 +114,11 @@ function mapUpdateMarkers(objects) {
     }
   }
 
+  // Cleanup: alles entfernen, was nicht (mehr) in der sichtbaren Liste ist —
+  // sowohl real verschwundene Records als auch Filter-Opfer.
+  const visibleIds = new Set(visibleObjects.map(o => o.id))
   for (const id of Array.from(markerLayer.keys())) {
-    if (!objects.find(o => o.id === id)) {
+    if (!visibleIds.has(id)) {
       removeMarker(id)
       markerSmoothers.delete(id)
     }
@@ -335,7 +349,8 @@ async function init() {
     onObjectHover: (obj, hovering) => setMarkerHighlight(obj.id, hovering),
     onManageGroups: () => groupDialog.open(),
     onManageServers: () => serverDialog.open(),
-    onManageProfile: () => profileDialog.open()
+    onManageProfile: () => profileDialog.open(),
+    onManageFilters: () => filterDialog.open()
   })
 
   // Marker-Klick-Aktionen verdrahten, sobald die EditorUI als Sink für
@@ -353,6 +368,14 @@ async function init() {
   ajna.onObjectsChanged(objects => {
     mapUpdateMarkers(objects)
   })
+
+  // Manifeste der Agents laden, sobald wir eingeloggt sind, und Filter-Änderungen
+  // sofort in die Karte schreiben.
+  ajna.onAuthChanged(user => {
+    if (user) agentFilters.refreshManifests().catch(err =>
+      console.warn('[map] agent-manifests refresh:', err?.message || err))
+  })
+  agentFilters.onChange(() => mapUpdateMarkers(ajna.getObjectList()))
 
   // Rechtsklick auf die Karte → "Neues Objekt…" an den geklickten
   // GPS-Koordinaten. Leaflet liefert e.latlng direkt; der Browser-eigene

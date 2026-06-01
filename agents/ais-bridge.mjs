@@ -137,6 +137,26 @@ try {
 }
 console.log(`[ajna] eingeloggt als ${ajna.currentUser()?.email || AJNA_USER}`)
 
+// ───────────────────────────────────────────────────────────────────────
+//  Agent-Manifest publishen — damit der Client im FilterDialog weiß,
+//  was dieser Agent anbietet. AIS hat (V1) nur einen "all"-Layer; eine
+//  feinere Aufschlüsselung nach Schiffstyp könnte später aus
+//  ShipStaticData.Type abgeleitet werden.
+// ───────────────────────────────────────────────────────────────────────
+try {
+  await ajna.upsertAgentManifest({
+    source: 'aisstream',
+    agent_name: 'AIS-Bridge',
+    description: `Schiffe via aisstream.io im Radius ${RADIUS_KM} km um ${CENTER_LAT.toFixed(3)}, ${CENTER_LON.toFixed(3)}`,
+    layers: [
+      { key: 'all', label: 'Alle Schiffe', predicate: null }
+    ]
+  })
+  console.log('[ajna] manifest aktualisiert')
+} catch (err) {
+  console.warn('[ajna] manifest-upsert fehlgeschlagen:', err?.message || err)
+}
+
 /**
  * In-Memory-Map: MMSI → Schiffs-State
  *  - objectId:     Ajna-Record-ID
