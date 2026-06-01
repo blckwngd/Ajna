@@ -5,7 +5,14 @@ import { ServerRegistry } from './ServerRegistry.js'
 const FALLBACK_SERVER_ID = 'default'
 
 function hasLocalStorage() {
-  try { return typeof localStorage !== 'undefined' && !!localStorage } catch { return false }
+  // Existenz ALLEIN reicht nicht — Node 22+/25 stellt `localStorage` als
+  // unfertigen Global bereit, dessen Methoden bei Aufruf werfen. Wir
+  // probieren einen No-Op-Read, um die echte Funktionalität zu testen.
+  try {
+    if (typeof localStorage === 'undefined' || !localStorage) return false
+    localStorage.getItem('__ajna_storage_probe__')
+    return true
+  } catch { return false }
 }
 
 /**

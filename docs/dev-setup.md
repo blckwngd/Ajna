@@ -163,6 +163,19 @@ Der AR-Client setzt Babylon's `createDefaultXRExperienceAsync` mit `immersive-vr
 
 **State-Logging:** in der Browser-Konsole erscheinen `[xr] state → ENTERING_XR / IN_XR / EXITING_XR / NOT_IN_XR`-Zeilen, sowie `[xr] trigger <action> on <name>` beim Controller-Klick. Hilfreich zum Debuggen ohne Headset.
 
+### Controller-State-Machine (3DOF-/6DOF-Controller)
+
+Sobald ein WebXR-Controller verbunden ist (Daydream-Touchpad-Variante, Quest etc.), übernimmt eine explizite State-Machine den Fokus-Cycle und pausiert die Gaze-Loop. Hintergrund: Daydream-typische Pads haben nur Touchpad + Trigger und keinen System-Back, der durch WebXR durchgereicht wird.
+
+| Zustand | Touchpad-Achse links / rechts | Confirm (Touchpad-Press oder Trigger) |
+|---|---|---|
+| **BROWSE** | Cycle durch alle sichtbaren GameObjects (Highlight) | Öffnet das In-World-HUD am fokussierten Objekt |
+| **MENU** | Cycle durch die Buttons des Menüs | Triggert die Aktion; `Zurück` bricht ohne Action ab |
+
+Implementierung: `setupXrControllerInteraction()` in [client/main.js](../client/main.js), das auf `xrExperience.input.onControllerAddedObservable` lauscht und je Controller die Components `xr-standard-touchpad` und `xr-standard-trigger` verkabelt. Edge-Detect auf der Touchpad-Achse (`x > 0.5` / `x < -0.5`) → ein Schritt pro Wischrichtungs-Wechsel. Sobald der letzte Controller wieder disconnected, übernimmt die Gaze-Loop. Die InWorldActionMenu-Methoden `focusButton`/`cycleFocus`/`triggerFocused` bilden die Programmatic-Equivalents der Maus-Hover-/Click-Logik.
+
+**Zurück-Button**: bei `mode='MENU'` wird automatisch am Ende der Action-Liste ein `{key: '__back', label: 'Zurück'}` angehängt. Trigger darauf = Menü zu, zurück nach BROWSE. Notwendig, weil der System-Home-Button des Controllers vom Browser/OS reserviert ist und nicht via WebXR-Input-Source angeliefert wird.
+
 **AR statt VR**: Wenn der Browser `immersive-ar` unterstützt (Quest 3, einige Mobile-Browser), kann der Default-Mode auf `'immersive-ar'` umgestellt werden. Floor/Teleportation funktionieren dort eingeschränkter, weil der echte Boden über die Kamera kommt. Für Smart-Home-Demo mit realer Welt im Hintergrund ist das der Zielmodus.
 
 ---

@@ -39,11 +39,17 @@
 //
 // Beenden: Ctrl+C.
 
-import PocketBase from 'pocketbase'
 import WebSocket from 'ws'
 import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { EventSource } from 'eventsource'
+// PB-SDK öffnet beim ersten refreshObjects()/connect() eine Realtime-SSE
+// und greift dabei auf globalThis.EventSource zu. In Node ist das je nach
+// Version nicht (zuverlässig) verfügbar → wir polyfillen aus npm.
+if (typeof globalThis.EventSource !== 'function') globalThis.EventSource = EventSource
+
+import { AjnaManager } from '../client/core/AjnaManager.js'
 
 // ───────────────────────────────────────────────────────────────────────
 //  .env laden (identisches Schema wie tools/ajna.mjs)
@@ -118,16 +124,18 @@ console.log(`[ais] throttle: ${(UPDATE_INTERVAL_MS / 1000).toFixed(1)} s pro Sch
 console.log(`[ais] stale timeout: ${(STALE_TIMEOUT_MS / 1000).toFixed(0)} s`)
 
 // ───────────────────────────────────────────────────────────────────────
-//  PB-Login + initiales Laden bekannter Schiffe
+//  Ajna-Login + initiales Laden bekannter Schiffe (via AjnaManager —
+//  keine direkten PB-Aufrufe, damit Federation-Routing + Composite-IDs
+//  transparent greifen).
 // ───────────────────────────────────────────────────────────────────────
 
-const pb = new PocketBase(AJNA_URL)
+const ajna = new AjnaManager(AJNA_URL)
 try {
-  await pb.collection('users').authWithPassword(AJNA_USER, AJNA_PASS)
+  await ajna.login(AJNA_USER, AJNA_PASS)
 } catch (err) {
-  die(`PB-Login fehlgeschlagen: ${err?.response?.data?.message || err?.message || err}`)
+  die(`Ajna-Login fehlgeschlagen: ${err?.response?.data?.message || err?.message || err}`)
 }
-console.log(`[pb] eingeloggt als ${pb.authStore.record?.email || AJNA_USER}`)
+console.log(`[ajna] eingeloggt als ${ajna.currentUser()?.email || AJNA_USER}`)
 
 /**
  * In-Memory-Map: MMSI → Schiffs-State
@@ -146,15 +154,13 @@ const ships = new Map()
 // halten die Records dann am Leben.
 const bootMs = Date.now()
 try {
-  const existing = await pb.collection('objects').getFullList({
-    filter: 'type = "ship"',
-    sort: '-updated'
-  })
-  for (const obj of existing) {
+  await ajna.refreshObjects()
+  for (const obj of ajna.getObjects()) {
+    if (obj.type !== 'ship') continue
     const mmsi = obj.state?.mmsi
     if (!mmsi) continue
     ships.set(String(mmsi), {
-      objectId: obj.id,
+      objectId: obj.id,                // composite ID, vom Manager geroutet
       lastUpdateMs: 0,
       lastSeenMs: bootMs,
       name: obj.name || `MMSI ${mmsi}`,
@@ -163,9 +169,9 @@ try {
       inflight: false
     })
   }
-  console.log(`[pb] ${ships.size} vorhandene Schiffe geladen`)
+  console.log(`[ajna] ${ships.size} vorhandene Schiffe geladen`)
 } catch (err) {
-  console.warn(`[pb] initiales Schiffs-Listing fehlgeschlagen: ${err?.message || err}`)
+  console.warn(`[ajna] initiales Schiffs-Listing fehlgeschlagen: ${err?.message || err}`)
 }
 
 // ───────────────────────────────────────────────────────────────────────
@@ -269,7 +275,7 @@ async function handlePosition(msg, meta, mmsi) {
     }
     ships.set(mmsi, slot)
     try {
-      const obj = await pb.collection('objects').create({
+      const obj = await ajna.createObject({
         name,
         type: 'ship',
         lat, lon, altitude: 0,
@@ -278,10 +284,10 @@ async function handlePosition(msg, meta, mmsi) {
       })
       slot.objectId = obj.id
       slot.lastUpdateMs = now
-      console.log(`[pb] + ${name} (MMSI ${mmsi}) → ${obj.id}`)
+      console.log(`[ajna] + ${name} (MMSI ${mmsi}) → ${obj.id}`)
     } catch (err) {
       ships.delete(mmsi)  // damit der nächste Report einen Retry triggert
-      console.warn(`[pb] create MMSI ${mmsi} fehlgeschlagen: ${err?.response?.data?.message || err?.message || err}`)
+      console.warn(`[ajna] create MMSI ${mmsi} fehlgeschlagen: ${err?.response?.data?.message || err?.message || err}`)
     } finally {
       if (ships.has(mmsi)) ships.get(mmsi).inflight = false
     }
@@ -305,16 +311,16 @@ async function handlePosition(msg, meta, mmsi) {
 
   ship.inflight = true
   try {
-    await pb.collection('objects').update(ship.objectId, patch)
+    await ajna.updateObject(ship.objectId, patch)
     ship.lastUpdateMs = now
     ship.lat = lat
     ship.lon = lon
     if (patch.name) {
-      console.log(`[pb] ~ MMSI ${mmsi}: ${ship.name} → ${patch.name}`)
+      console.log(`[ajna] ~ MMSI ${mmsi}: ${ship.name} → ${patch.name}`)
       ship.name = patch.name
     }
   } catch (err) {
-    console.warn(`[pb] update MMSI ${mmsi} fehlgeschlagen: ${err?.response?.data?.message || err?.message || err}`)
+    console.warn(`[ajna] update MMSI ${mmsi} fehlgeschlagen: ${err?.response?.data?.message || err?.message || err}`)
   } finally {
     ship.inflight = false
   }
@@ -330,11 +336,11 @@ async function handleStatic(msg, meta, mmsi) {
   if (!newName || newName === ship.name) return
 
   try {
-    await pb.collection('objects').update(ship.objectId, { name: newName })
-    console.log(`[pb] ~ MMSI ${mmsi}: ${ship.name} → ${newName}`)
+    await ajna.updateObject(ship.objectId, { name: newName })
+    console.log(`[ajna] ~ MMSI ${mmsi}: ${ship.name} → ${newName}`)
     ship.name = newName
   } catch (err) {
-    console.warn(`[pb] rename MMSI ${mmsi} fehlgeschlagen: ${err?.message || err}`)
+    console.warn(`[ajna] rename MMSI ${mmsi} fehlgeschlagen: ${err?.message || err}`)
   }
 }
 
@@ -354,14 +360,14 @@ async function cleanupStaleShips() {
 
     ship.inflight = true
     try {
-      await pb.collection('objects').delete(ship.objectId)
+      await ajna.deleteObject(ship.objectId)
       ships.delete(mmsi)
       const ageS = Math.round((now - ship.lastSeenMs) / 1000)
-      console.log(`[pb] − ${ship.name} (MMSI ${mmsi}) stale ${ageS}s — entfernt`)
+      console.log(`[ajna] − ${ship.name} (MMSI ${mmsi}) stale ${ageS}s — entfernt`)
     } catch (err) {
       // Map-Eintrag stehen lassen; nächster Cleanup-Tick retried.
       ship.inflight = false
-      console.warn(`[pb] cleanup MMSI ${mmsi} fehlgeschlagen: ${err?.message || err}`)
+      console.warn(`[ajna] cleanup MMSI ${mmsi} fehlgeschlagen: ${err?.message || err}`)
     }
   }
 }

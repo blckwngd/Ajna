@@ -125,6 +125,8 @@ Der Client kann sich parallel zu mehreren Ajna-Servern verbinden (z. B. "Heim" +
 | `npm run start`       | Nur Express-Backend auf Port 3000 |
 | `npm run caddy`       | Nur Caddy mit `Caddyfile.prod` |
 | `npm run build`       | Einmaliger Webpack-Production-Build |
+| `npm run ais`         | Node-Agent: spiegelt AIS-Schiffspositionen (aisstream.io) in Ajna |
+| `npm run poi`         | Node-Agent: legt OSM-POIs aus dem Bbox-Bereich als Ajna-Objekte an |
 | `npm run start:dev`   | **Legacy** — Express + altes HTTPS-Static-Server-Setup ohne Caddy (mit `cert.pem`) |
 
 > **PocketBase macht KEIN Auto-Reload von `pb_hooks/`** — nach jeder Hook-Änderung manuell den PocketBase-Task neu starten. Caddy hingegen reloadest du im laufenden Betrieb mit `caddy reload --config Caddyfile.prod`.
@@ -153,11 +155,17 @@ Der Client kann sich parallel zu mehreren Ajna-Servern verbinden (z. B. "Heim" +
 - ✅ Group-Management-UI (GroupDialog mit Owned/Memberships, Subgroup-Verschachtelung)
 - ✅ Friends-/Invitation-System per E-Mail ODER Anzeigename (privacy-strikt; users.listRule bleibt `id = @request.auth.id`)
 - ✅ WebXR Immersive-Mode mit In-World-HUD, Gaze-Fokus, ESC-Exit, Multi-Input (Maus / Controller / Touch)
-- ✅ Multi-Server (Phase 1+2): Federation über N PocketBase-Clients, Composite-Object-IDs, ServerDialog, per-Server-Auth
+- ✅ XR-Controller-State-Machine (Daydream u. a. 3DOF) — Touchpad-Cycle durch Objekte, Touchpad-Press/Trigger = Confirm, "Zurück"-Eintrag im Menü ersetzt den nicht durchgereichten System-Back
+- ✅ Multi-Server (Phase 1+2+4): Federation über N PocketBase-Clients, Composite-Object-IDs, ServerDialog, per-Server-Auth, Server-Badges in EditorUI / PermissionDialog / ObjectActions
 - ✅ Caddy als HTTPS-Frontend + Reverse-Proxy (Same-Origin für Client/API/Express, lokale interne CA, optional Let's Encrypt)
+- ✅ AIS-Bridge (Node-Agent): aisstream.io → Ajna-Objekte (`type="ship"`), Position + Heading + Schiffsname, Stale-Cleanup wenn Schiff die Bbox verlässt
+- ✅ POI-Bridge (Node-Agent): Overpass-POIs → Ajna-Objekte (`type="poi"`, grüner Stab-Marker im AR, grünes 📍 auf der Karte), idempotenter Sync mit Cleanup
+- ✅ Rechtsklick auf Boden in AR / Karte → "Neues Objekt…" an exakten GPS-Koords, Editor vorbefüllt
+- ✅ POI-/Schiffs-Sichtbarkeit für authentifizierte User via implicit-audience-ACEs + `default_permissions` am Agent-User
 - 🚧 Default-Permissions-Editor im User-Profil
 - 🚧 Inventarsystem (portable Objekte, Items als Schlüssel/Waffe)
 - 🚧 Rule-Engine (Predicate-Trees → Effekte; später: physische Sensoren als Bedingungen)
+- 🚧 Multi-Server Phase 5: Token-Refresh, Reconnect-Strategie, 2-Instanzen-Smoketest
 
 ### Mittelfristig
 

@@ -125,6 +125,44 @@ Da `AjnaManager.js` `import PocketBase from 'pocketbase'` verwendet, brauchst du
 
 ---
 
+## Vorgefertigte Bridges (Referenz-Implementierungen)
+
+Im Verzeichnis [`agents/`](../agents/) liegen zwei produktionsreife Node-Agents, die als Vorlage für eigene Bridges dienen können:
+
+### AIS-Bridge — [agents/ais-bridge.mjs](../agents/ais-bridge.mjs)
+
+Spiegelt Schiffspositionen aus [aisstream.io](https://aisstream.io/) als Ajna-Objekte. WebSocket-Verbindung mit BoundingBox-Filter, Position/Heading-Updates pro Schiff drosselt-throttled, Stale-Cleanup wenn ein Schiff die Bbox verlässt. Ausschnitte aus der `.env`:
+
+```ini
+AISSTREAM_API_KEY=...
+AIS_CENTER_LAT=53.5511   # Hamburger Hafen
+AIS_CENTER_LON=9.9937
+AIS_RADIUS_KM=10
+AIS_UPDATE_INTERVAL_S=5
+AIS_STALE_TIMEOUT_S=600
+```
+
+Start: `npm run ais`.
+
+### POI-Bridge — [agents/poi-bridge.mjs](../agents/poi-bridge.mjs)
+
+Holt POIs (Bänke, Cafés, Brunnen etc.) via [`AjnaGeo.poisNear()`](../client/core/AjnaGeo.js) aus dem `/ajnaapi/geo/pois`-Endpoint (intern Overpass-gestützt, Server-Cache) und legt sie als Ajna-Objekte mit `type="poi"` an. Idempotent über `state.osm_id`, Cleanup für POIs, die aus dem aktuellen Overpass-Result rausfallen. Default-Lauf macht einen Sync und beendet; `POI_REFRESH_S>0` schaltet einen periodischen Refresh ein. Start: `npm run poi`.
+
+### Gemeinsame Muster
+
+Beide Bridges teilen sich:
+
+- **`.env`-Loader** inline am Anfang (kein `dotenv`-package — kleiner JS-Parser, identisches Schema wie [`tools/ajna.mjs`](../tools/ajna.mjs)).
+- **Re-exec mit `--use-system-ca`**: wenn `AJNA_URL` HTTPS ist (Caddy mit interner CA), spawnen sich die Agents selbst neu mit dem Flag, damit Node die Cert-Chain anerkennt.
+- **`EventSource`-Polyfill aus npm** bei `import 'eventsource'` — PB-SDK öffnet beim ersten `refreshObjects()` automatisch eine Realtime-SSE.
+- **`type`-Feld** im PB-Record markiert Objekte für den AR-Renderer (siehe [`GameObject.#createPlaceholder`](../client/engine/GameObject.js)) und für die Bridge-internen Filter (`type="ship"` / `"poi"`).
+- **`state.source`-Feld** als Marker für "von dieser Bridge angelegt" — schützt User-eigene Objekte vor dem Cleanup.
+- **`default_permissions` am Agent-User** (manuell in PB-Admin gesetzt, z. B. `[{subject_type: "authenticated", rights: ["view"]}]`) — sonst sehen andere Spieler die Objekte nicht.
+
+Wenn du eine neue Bridge schreibst, kopier die `poi-bridge.mjs` als Ausgangspunkt — sie ist die kompaktere von beiden und zeigt den vollen `AjnaManager` + `AjnaGeo`-Pfad inklusive idempotent-create + Cleanup.
+
+---
+
 ## AjnaManager — API-Referenz
 
 Vollständige API der Bibliothek. Alle Methoden sind asynchron, wo nicht anders angegeben.

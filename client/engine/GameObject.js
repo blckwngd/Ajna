@@ -103,6 +103,10 @@ export class GameObject {
     // wechselt sie später live.
     this._initialAnimationState = data.animation_state || null
 
+    // Object-Type bestimmt die Platzhalter-Optik (siehe #createPlaceholder).
+    // Wird vom Agent über das `type`-Feld gesetzt — z. B. "poi" oder "ship".
+    this._objectType = (data.type || '').toLowerCase()
+
     // Immer einen Platzhalter — das Modell-Loading ist ein nice-to-have,
     // das Verhalten der Szene darf davon nicht abhängen.
     this.#createPlaceholder()
@@ -193,22 +197,39 @@ export class GameObject {
   }
 
   #createPlaceholder() {
-    const box = BABYLON.MeshBuilder.CreateBox(
-      `placeholder_${this.id}`,
-      { size: 1 },
-      this.scene
-    )
+    // Type-abhängiger Default-Look. Modell-URL überschreibt das später
+    // ohnehin — der Placeholder ist nur sichtbar, bis (oder falls) ein
+    // GLB für dieses Objekt geladen wird. Neue Types hier ergänzen:
+    //
+    //   default → roter Würfel (1 m³, Standard-Marker)
+    //   poi     → dünner grüner Zylinder, Boden auf Y=0
+    //             (markiert Overpass-Points-of-Interest, sichtbar
+    //              distinkt von Schiffs-/Spieler-Markern)
+    let mesh
+    const mat = new BABYLON.StandardMaterial(`mat_${this.id}`, this.scene)
 
-    const mat = new BABYLON.StandardMaterial(
-      `mat_${this.id}`,
-      this.scene
-    )
-    mat.diffuseColor = new BABYLON.Color3(0.8, 0.2, 0.2)
+    if (this._objectType === 'poi') {
+      mesh = BABYLON.MeshBuilder.CreateCylinder(
+        `placeholder_${this.id}`,
+        { height: 1.5, diameter: 0.4, tessellation: 12 },
+        this.scene
+      )
+      mat.diffuseColor  = new BABYLON.Color3(0.35, 0.85, 0.45)
+      mat.emissiveColor = new BABYLON.Color3(0.10, 0.30, 0.15)  // leuchtet leicht
+      // Standfuß auf Ground-Höhe stellen (Cylinder ist zentriert).
+      mesh.position.y = 0.75
+    } else {
+      mesh = BABYLON.MeshBuilder.CreateBox(
+        `placeholder_${this.id}`,
+        { size: 1 },
+        this.scene
+      )
+      mat.diffuseColor = new BABYLON.Color3(0.8, 0.2, 0.2)
+    }
 
-    box.material = mat
-    box.parent = this.root
-
-    this.meshes = [box]
+    mesh.material = mat
+    mesh.parent = this.root
+    this.meshes = [mesh]
   }
 
   #disposePlaceholder() {

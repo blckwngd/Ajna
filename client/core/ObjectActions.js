@@ -4,19 +4,17 @@
 //   - Bearbeiten      → editorUI.fillEditor(record)
 //   - Berechtigungen  → permissionDialog.open(record)
 //   - Löschen         → ajna.deleteObject(id) nach Bestätigung
-//   - Interaktionen   → record.actions (Platzhalter solange nicht im PB-Schema)
+//   - Interaktionen   → record.actions
 //
-// Die Liste der verfügbaren Aktionen ist absichtlich dynamisch: jedes
-// Objekt kann seine eigenen Aktionen mitbringen. Solange `actions` nicht
-// im Backend-Record steht, fallen wir auf einen kleinen Platzhalter zurück,
-// damit das Menü demonstrierbar bleibt.
+// Die Liste der verfügbaren Aktionen kommt aus dem PB-Record. Hat das
+// Objekt keine eigenen actions hinterlegt, bieten wir nur "Untersuchen"
+// als generischen Fallback — primär für Debugging/Inspect, kein echtes
+// Verhalten. Alle anderen Optionen sollen das Objekt selbst beisteuern.
 
 import { renderServerBadgeText } from './ServerBadge.js'
 
-const PLACEHOLDER_ACTIONS = [
-  { key: 'turn_on',  label: 'Einschalten' },
-  { key: 'turn_off', label: 'Ausschalten' },
-  { key: 'inspect',  label: 'Untersuchen' }
+const FALLBACK_ACTIONS = [
+  { key: 'examine', label: 'Untersuchen' }
 ]
 
 export class ObjectActions {
@@ -33,7 +31,7 @@ export class ObjectActions {
 
     const actions = Array.isArray(record.actions) && record.actions.length > 0
       ? record.actions
-      : PLACEHOLDER_ACTIONS
+      : FALLBACK_ACTIONS
 
     // Owner-Check: nur Besitzer dürfen Berechtigungen verwalten. Bei
     // Multi-Server den passenden AjnaClient für record._origin nehmen,

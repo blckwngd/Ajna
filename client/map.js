@@ -137,15 +137,29 @@ function tickMarkerSmoothers() {
   requestAnimationFrame(tickMarkerSmoothers)
 }
 
-function addMarker(obj) {
-  if (!window.L || markerLayer.has(obj.id)) return
-
-  const icon = window.L.divIcon({
+// Type-spezifische Darstellung — neue Types hier ergänzen, damit der
+// Renderer im 3D-Client (GameObject.#createPlaceholder) und auf der
+// Karte konsistent unterschieden werden.
+function markerIconFor(obj) {
+  const type = (obj.type || '').toLowerCase()
+  if (type === 'poi') {
+    return window.L.divIcon({
+      className: 'map-marker map-marker-poi',
+      iconSize: [28, 28],
+      html: `📍 ${obj.name}`
+    })
+  }
+  return window.L.divIcon({
     className: 'map-marker',
     iconSize: [28, 28],
     html: `❌ ${obj.name}`
   })
+}
 
+function addMarker(obj) {
+  if (!window.L || markerLayer.has(obj.id)) return
+
+  const icon = markerIconFor(obj)
   const marker = window.L.marker([obj.lat, obj.lon], { icon, draggable: true }).addTo(window.map)
   // Hover-Tooltip mit dem Objekt-Namen (Leaflet zeigt/blendet ihn automatisch
   // bei mouseover / mouseout)
@@ -258,6 +272,11 @@ function injectHighlightStyles() {
     }
     .map-marker.marker-pulse {
       animation: ajna-marker-pulse 700ms ease-out;
+      border-radius: 4px;
+    }
+    .map-marker.map-marker-poi {
+      background: rgba(60, 200, 90, 0.18);
+      outline: 1px solid #2ec866;
       border-radius: 4px;
     }
   `

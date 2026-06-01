@@ -279,8 +279,13 @@ async function init() {
   //
   // GUI-Panels werden über das Predicate ausgefiltert, damit das Menü
   // nicht den Blick auf "sein eigenes" Objekt verdeckt.
+  //
+  // Bei aktiv verbundenem 3DOF-/6DOF-Controller (Daydream etc.) übernimmt
+  // die explizite Touchpad-/Trigger-Logik unten den Fokus-Cycle —
+  // dann pausiert der Gaze-Pfad, sonst kämpfen beide um _gazedGO.
   let _gazedGO = null
   let _gazeTick = 0
+  let _xrControllerMode = false
   scene.onBeforeRenderObservable.add(() => {
     if (!_xrExperience || _xrExperience.baseExperience.state !== BABYLON.WebXRState.IN_XR) {
       if (_gazedGO) {
@@ -290,6 +295,7 @@ async function init() {
       }
       return
     }
+    if (_xrControllerMode) return     // Controller treibt Fokus + Menü
     if (++_gazeTick % 6 !== 0) return
 
     const cam = scene.activeCamera
@@ -408,8 +414,159 @@ async function init() {
         )
       }
     })
+
+    // ─────────────────────────────────────────────────────────────────
+    //  Controller-getriebene Interaktion (Daydream + andere 3DOF/6DOF)
+    //
+    //  Zustands-Modell:
+    //    BROWSE: Touchpad-Achse cyclt fokussiertes GameObject; Confirm
+    //            (Touchpad-Press oder Trigger) öffnet das InWorldMenu.
+    //    MENU:   Touchpad-Achse cyclt Button-Fokus; Confirm triggert die
+    //            Aktion. Der letzte Eintrag ist immer "Zurück" (System-
+    //            Back-Button ist OS-reserviert und nicht in WebXR
+    //            durchgereicht).
+    //
+    //  Gaze-Loop pausiert solange Controller verbunden ist (_xrControllerMode).
+    // ─────────────────────────────────────────────────────────────────
+    setupXrControllerInteraction()
   } catch (err) {
     console.warn("[xr] init failed (browser likely lacks WebXR):", err?.message || err)
+  }
+
+  // Closure-zugriff auf alle lokalen init()-Variablen (ajnaManager, scene,
+  // _xrExperience, inWorldMenu, setHighlight, objectMap, _gazedGO via
+  // closure-Read). Kapselt die State-Machine.
+  function setupXrControllerInteraction() {
+    if (!_xrExperience?.input) return
+
+    let mode = 'BROWSE'              // 'BROWSE' | 'MENU'
+    let focusedGo = null
+
+    const visibleObjects = () => Array.from(objectMap.values()).filter(go => go?.name)
+
+    function clearFocus() {
+      if (focusedGo) setHighlight(focusedGo, false)
+      focusedGo = null
+    }
+
+    function setFocusByIdx(idx) {
+      const list = visibleObjects()
+      if (list.length === 0) { clearFocus(); return }
+      const i = ((idx % list.length) + list.length) % list.length
+      const next = list[i]
+      if (next === focusedGo) return
+      if (focusedGo) setHighlight(focusedGo, false)
+      focusedGo = next
+      setHighlight(focusedGo, true)
+    }
+
+    function cycleObjects(delta) {
+      const list = visibleObjects()
+      if (list.length === 0) return
+      const idx = focusedGo ? list.indexOf(focusedGo) : -1
+      setFocusByIdx(idx < 0 ? 0 : idx + delta)
+    }
+
+    function enterMenu() {
+      if (!focusedGo) return
+      const record = ajnaManager.objectMap.get(focusedGo.id)
+      if (!record) return
+      const base = Array.isArray(record.actions) && record.actions.length > 0
+        ? record.actions
+        : [{ key: 'examine', label: 'Untersuchen' }]
+      // "Zurück" als letzter Eintrag — System-Back ist in WebXR nicht
+      // durchgereicht, deshalb hier explizit.
+      const actions = [...base, { key: '__back', label: 'Zurück' }]
+      inWorldMenu.show(focusedGo, record.name || record.id, actions, key => {
+        if (key === '__back') return  // Menü ist beim trigger schon hidden
+        ajnaManager.interact(record.id, key).catch(err =>
+          console.warn('[xr] interact failed:', err?.message || err))
+      })
+      inWorldMenu.focusButton(0)
+      mode = 'MENU'
+    }
+
+    function exitMenu() {
+      if (mode !== 'MENU') return
+      inWorldMenu.hide()
+      mode = 'BROWSE'
+    }
+
+    function onConfirm() {
+      if (mode === 'BROWSE') enterMenu()
+      else                   inWorldMenu.triggerFocused()  // hide() läuft drin
+      if (mode === 'MENU') mode = 'BROWSE'  // nach triggerFocused
+    }
+
+    function attachController(controller) {
+      controller.onMotionControllerInitObservable.add(mc => {
+        _xrControllerMode = true
+        // Beim Wechsel in den Controller-Modus den evtl. Gaze-Stand
+        // zurücksetzen, damit der erste Touchpad-Tick definiert startet.
+        if (_gazedGO) { setHighlight(_gazedGO, false); _gazedGO = null }
+        inWorldMenu.hide()
+        setFocusByIdx(0)
+
+        const touchpad = mc.getComponent('xr-standard-touchpad')
+                      || mc.getComponent('xr-standard-thumbstick')
+        const trigger  = mc.getComponent('xr-standard-trigger')
+
+        // Touchpad-Achse: Edge-Detect — erst beim Crossen der Schwelle
+        // wird ein Step gefeuert; Touchpad zurück in die Mitte → reset.
+        if (touchpad) {
+          let lastDir = null
+          touchpad.onAxisValueChangedObservable.add(v => {
+            const TH = 0.5
+            let dir = null
+            if (v.x > TH) dir = 'right'
+            else if (v.x < -TH) dir = 'left'
+            if (dir === lastDir) return
+            lastDir = dir
+            if (!dir) return
+            const step = dir === 'right' ? +1 : -1
+            if (mode === 'BROWSE') cycleObjects(step)
+            else                   inWorldMenu.cycleFocus(step)
+          })
+
+          // Touchpad-Klick zählt als Confirm.
+          let lastPressed = false
+          touchpad.onButtonStateChangedObservable.add(() => {
+            if (touchpad.pressed && !lastPressed) onConfirm()
+            lastPressed = touchpad.pressed
+          })
+        }
+
+        // Manche Daydream-Profile mappen den Hauptbutton als Trigger —
+        // dann läuft Confirm darüber.
+        if (trigger) {
+          let lastPressed = false
+          trigger.onButtonStateChangedObservable.add(() => {
+            if (trigger.pressed && !lastPressed) onConfirm()
+            lastPressed = trigger.pressed
+          })
+        }
+      })
+    }
+
+    _xrExperience.input.onControllerAddedObservable.add(attachController)
+    for (const c of _xrExperience.input.controllers) attachController(c)
+
+    _xrExperience.input.onControllerRemovedObservable.add(() => {
+      // Letzter Controller raus → Gaze übernimmt wieder, State zurücksetzen.
+      if (_xrExperience.input.controllers.length === 0) {
+        _xrControllerMode = false
+        clearFocus()
+        inWorldMenu.hide()
+        mode = 'BROWSE'
+      }
+    })
+
+    _xrExperience.baseExperience?.onStateChangedObservable.add(state => {
+      if (state !== BABYLON.WebXRState.IN_XR) {
+        clearFocus()
+        mode = 'BROWSE'
+      }
+    })
   }
 }
 

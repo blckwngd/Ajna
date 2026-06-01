@@ -53,6 +53,7 @@ export class InWorldActionMenu {
     this._onSelect = null
     this._buttons = []
     this._visible = false
+    this._focusedIdx = -1   // Controller-Fokus; -1 = kein Button fokussiert
     this._pointerObserver = this._installClickHandler()
     this._renderObserver = this._installPositionUpdater()
   }
@@ -135,6 +136,7 @@ export class InWorldActionMenu {
     if (!go || !go.root) return
     this._currentGo = go
     this._onSelect = onSelect
+    this._focusedIdx = -1
 
     this._clearButtons()
     for (const action of actions) {
@@ -145,6 +147,46 @@ export class InWorldActionMenu {
     // Erste Position sofort setzen, damit das Menü nicht für einen Frame
     // bei (0,0,0) aufblitzt, bevor der onBeforeRender-Observer feuert.
     this._updatePositions()
+  }
+
+  // ───────────────────────────────────────────────────────────────────
+  //  Programmatic Focus — vom XR-Controller getrieben (Touchpad-Cycle).
+  //  Setzt visuell den Hover-Farbton auf den fokussierten Button und
+  //  bietet `triggerFocused()` als Equivalent eines Maus-/Pick-Klicks.
+  // ───────────────────────────────────────────────────────────────────
+
+  /** Anzahl Buttons im aktuell sichtbaren Menü. */
+  get buttonCount() { return this._buttons.length }
+
+  /** Setzt programmatisch den Fokus auf Button[idx]. -1 hebt Fokus auf. */
+  focusButton(idx) {
+    this._focusedIdx = idx
+    for (let i = 0; i < this._buttons.length; i++) {
+      const b = this._buttons[i]
+      b.texture.background = (i === idx) ? COLOR_BG_HOVER : COLOR_BG_NORMAL
+    }
+  }
+
+  /** Cyclt den Fokus um delta (±1) mit Wraparound. */
+  cycleFocus(delta) {
+    if (!this._visible || this._buttons.length === 0) return
+    const n = this._buttons.length
+    let next = this._focusedIdx < 0
+      ? (delta > 0 ? 0 : n - 1)
+      : ((this._focusedIdx + delta) % n + n) % n
+    this.focusButton(next)
+  }
+
+  /** Triggert die Aktion des fokussierten Buttons (analog Maus-Klick). */
+  triggerFocused() {
+    if (!this._visible) return
+    const idx = this._focusedIdx >= 0 ? this._focusedIdx : 0
+    const b = this._buttons[idx]
+    if (!b) return
+    const key = b.plane.metadata?.actionKey
+    const onSelect = this._onSelect
+    this.hide()
+    if (key && onSelect) onSelect(key)
   }
 
   _createButton(action) {
