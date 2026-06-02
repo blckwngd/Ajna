@@ -29,8 +29,13 @@ export class EditorUI {
 
   async init() {
     this.initUI()
+    // Wichtig: connect() statt loadObjects() — connect() macht intern
+    // refreshObjects(), startet aber zusätzlich den Boot-authRefresh,
+    // den 1h-Token-Heartbeat, den PB_CONNECT-Listener und den 30s-
+    // Catch-up-Poll. loadObjects() würde nur die Liste laden, die
+    // Resilience-Layer (Phase 5) bliebe schlafend.
     this.bindEvents()
-    await this.ajna.loadObjects()
+    await this.ajna.connect()
     this.updateAuthUI()
   }
 
