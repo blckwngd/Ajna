@@ -1,5 +1,16 @@
 import PocketBase, { LocalAuthStore } from 'pocketbase'
 
+// Resilience: proaktiver Token-Refresh und Catch-up nach Realtime-Reconnect.
+// PB-Default-Token-Exp ist 7 Tage; 1h-Heartbeat lässt sehr viel Puffer und
+// merkt serverseitig revoked Tokens zeitnah. Catch-up-Poll ist Safety-Net,
+// falls PB_CONNECT mal nicht feuert oder ein SSE-Event verloren geht.
+const TOKEN_REFRESH_INTERVAL_MS = 60 * 60 * 1000  // 1h
+const CATCHUP_POLL_INTERVAL_MS  = 30 * 1000       // 30s
+// Dedup-Fenster: ein PB_CONNECT-Trigger ignoriert refreshes, die innerhalb
+// dieser Zeit nach dem letzten Refresh feuern — verhindert Doppel-Calls
+// beim initialen Boot, wo connect() ohnehin direkt refreshObjects() macht.
+const REFRESH_DEDUP_WINDOW_MS   = 5 * 1000        // 5s
+
 /**
  * AjnaClient — Eine PocketBase-Verbindung zu **einem** Ajna-Server.
  *
@@ -65,6 +76,12 @@ export class AjnaClient {
     this._objectsChangedListeners = new Set()
     this._realtimeReady = false
     this._realtimeUnsubscribe = null
+
+    // Resilience-State (Phase 5):
+    this._tokenHeartbeatTimer = null
+    this._catchupPollTimer = null
+    this._connectUnsubscribe = null
+    this._lastRefreshAt = 0
   }
 
   // ===================================================================
@@ -142,10 +159,37 @@ export class AjnaClient {
   // ===================================================================
 
   async connect() {
+    // Boot-Refresh: prüft, ob das gespeicherte Token serverseitig noch
+    // akzeptiert wird. `authStore.isValid` macht nur eine lokale JWT-Exp-
+    // Prüfung — ein revoked Token oder ein PB-Restart mit gesäuberter
+    // Session bleibt sonst unbemerkt, bis der erste Request 401 wirft.
+    // SDK leert den AuthStore bei 401 NICHT von selbst, das machen wir hier.
+    if (this.pb.authStore.isValid) {
+      try {
+        await this.pb.collection('users').authRefresh()
+      } catch (err) {
+        if (err?.status === 401) {
+          console.warn(`[ajna:${this.id}] gespeichertes Token revoked → authStore geleert`)
+          this.pb.authStore.clear()
+        } else {
+          // Netz-Fehler etc.: Token bleibt, Heartbeat probiert später erneut.
+          console.warn(`[ajna:${this.id}] boot authRefresh fehlgeschlagen:`, err?.message || err)
+        }
+      }
+    }
+
+    this._startTokenHeartbeat()
+    this._wireRealtimeReconnect()
+    this._startCatchupPoll()
+
     await this.refreshObjects()
   }
 
   async disconnect() {
+    this._stopTokenHeartbeat()
+    this._stopCatchupPoll()
+    this._unwireRealtimeReconnect()
+
     if (typeof this._realtimeUnsubscribe === 'function') {
       try { this._realtimeUnsubscribe() } catch {}
     }
@@ -173,6 +217,9 @@ export class AjnaClient {
   }
 
   async refreshObjects() {
+    // Timestamp VOR dem Request stempeln — der Catch-up-Trigger aus
+    // PB_CONNECT prüft das Fenster, um Doppel-Calls beim Boot zu sparen.
+    this._lastRefreshAt = Date.now()
     const objects = await this.pb.collection('objects').getFullList()
     this.objectMap.clear()
     for (const o of objects) {
@@ -440,6 +487,87 @@ export class AjnaClient {
   }
 
   canCreateObjects() { return this.pb.authStore.isValid }
+
+  // ===================================================================
+  //  Resilience — Token-Refresh + Realtime-Catch-up (Phase 5)
+  // ===================================================================
+
+  // 1h-Heartbeat, der `authRefresh()` proaktiv triggert. PB-Default-Exp ist
+  // 7 Tage; mit 1h Intervall haben wir massiv Puffer und merken auch ein
+  // serverseitig revoked Token zeitnah (→ authStore.clear → onAuthChanged
+  // feuert → UI zeigt Re-Login).
+  _startTokenHeartbeat() {
+    if (this._tokenHeartbeatTimer) return
+    this._tokenHeartbeatTimer = setInterval(() => {
+      if (!this.pb.authStore.isValid) return
+      this.pb.collection('users').authRefresh().catch(err => {
+        if (err?.status === 401) {
+          console.warn(`[ajna:${this.id}] token revoked → authStore geleert`)
+          this.pb.authStore.clear()
+        }
+        // Andere Fehler (Netz etc.): nächstes Intervall versucht es wieder.
+      })
+    }, TOKEN_REFRESH_INTERVAL_MS)
+  }
+
+  _stopTokenHeartbeat() {
+    if (this._tokenHeartbeatTimer) {
+      clearInterval(this._tokenHeartbeatTimer)
+      this._tokenHeartbeatTimer = null
+    }
+  }
+
+  // PB_CONNECT feuert jedes Mal, wenn das SDK eine (neue) EventSource-
+  // Verbindung etabliert — initial UND nach Re-Connects (Backoff macht das
+  // SDK intern, ab Version 0.20.1). Wir nutzen das als Trigger, um die
+  // Objekt-Liste neu zu laden: PB hat keinen Replay-Mechanismus für SSE,
+  // also würden Events, die während des Disconnects geschahen, sonst nie
+  // beim Client ankommen.
+  _wireRealtimeReconnect() {
+    if (this._connectUnsubscribe) return
+    this.pb.realtime.subscribe('PB_CONNECT', () => {
+      // Dedup: refreshObjects() (aus connect() oder dem Catch-up-Poll) ist
+      // gerade erst durchgelaufen — kein Doppel-Call.
+      if (Date.now() - this._lastRefreshAt < REFRESH_DEDUP_WINDOW_MS) return
+      console.log(`[ajna:${this.id}] PB realtime re-connected → catch-up refresh`)
+      this.refreshObjects().catch(err =>
+        console.warn(`[ajna:${this.id}] catch-up refresh on reconnect failed:`, err?.message || err)
+      )
+    })
+      .then(unsub => { this._connectUnsubscribe = unsub })
+      .catch(err =>
+        console.warn(`[ajna:${this.id}] PB_CONNECT subscribe failed:`, err?.message || err)
+      )
+  }
+
+  _unwireRealtimeReconnect() {
+    if (typeof this._connectUnsubscribe === 'function') {
+      try { this._connectUnsubscribe() } catch {}
+    }
+    this._connectUnsubscribe = null
+  }
+
+  // Catch-up-Poll als Safety-Net: alle 30s die Objekt-Liste neu laden, falls
+  // PB_CONNECT mal nicht feuert (z. B. Browser-Tab-Sleep / Capacitor-Background
+  // mit eingeschränkter EventSource) oder ein einzelner Realtime-Event auf
+  // der Leitung verloren ging. getFullList ist bei unserer Größenordnung
+  // billig genug, um das laufen zu lassen.
+  _startCatchupPoll() {
+    if (this._catchupPollTimer) return
+    this._catchupPollTimer = setInterval(() => {
+      if (!this.pb.authStore.isValid) return
+      this.refreshObjects().catch(err =>
+        console.warn(`[ajna:${this.id}] catch-up poll failed:`, err?.message || err)
+      )
+    }, CATCHUP_POLL_INTERVAL_MS)
+  }
+
+  _stopCatchupPoll() {
+    if (this._catchupPollTimer) {
+      clearInterval(this._catchupPollTimer)
+      this._catchupPollTimer = null
+    }
+  }
 
   // ===================================================================
   //  Internals
