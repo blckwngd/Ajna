@@ -15,11 +15,16 @@
     "caddy": "caddy run --config Caddyfile.prod",
     "stack": "concurrently --kill-others --names pb,wp,api,caddy -c green,yellow,cyan,magenta \"npm:pocketbase\" \"npm:dev\" \"npm:start\" \"npm:caddy\"",
     "ais": "node agents/ais-bridge.mjs",
-    "poi": "node agents/poi-bridge.mjs"
+    "poi": "node agents/poi-bridge.mjs",
+    "mobile:sync": "webpack && cap sync android",
+    "mobile:run": "webpack && cap run android",
+    "mobile:open": "cap open android"
   },
   "dependencies": {
     "@babylonjs/core": "^8.54.3",
     "@babylonjs/inspector": "^8.55.3",
+    "@capacitor/android": "^8.4.0",
+    "@capacitor/core": "^8.4.0",
     "3d-tiles-renderer": "^0.3.46",
     "babylonjs-gui": "^8.54.1",
     "eventsource": "^4.1.0",
@@ -30,6 +35,7 @@
   },
   "devDependencies": {
     "@babylonjs/materials": "^8.55.3",
+    "@capacitor/cli": "^8.4.0",
     "concurrently": "^8.2.2",
     "css-loader": "^7.1.4",
     "nodemon": "^3.1.0",

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Ajna</string>
+    <string name="title_activity_main">Ajna</string>
+    <string name="package_name">de.kloeschinski.ajna</string>
+    <string name="custom_url_scheme">de.kloeschinski.ajna</string>
+</resources>

@@ -1,0 +1,11 @@
+{
+  "appId": "de.kloeschinski.ajna",
+  "appName": "Ajna",
+  "webDir": "client",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}
