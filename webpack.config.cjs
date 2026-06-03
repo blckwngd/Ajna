@@ -5,7 +5,8 @@ module.exports = {
   entry: {
     ar: "./client/main.js",
     map: "./client/map.js",
-    agent: "./client/agent.js"
+    agent: "./client/agent.js",
+    mobile: "./client/mobile.js"
   },
   output: {
     filename: "[name].bundle.js",

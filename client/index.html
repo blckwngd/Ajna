@@ -2,29 +2,187 @@
 <html>
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <title>Ajna</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
 <style>
-html, body { margin:0; height:100%; overscroll-behavior:none; }
-body { display:flex; flex-direction:column; }
-#map { flex:1; }
-#editorSection {
-  position:absolute; top:10px; right:10px; width:300px;
-  background:rgba(0,0,0,0.6); color:white; padding:10px; z-index:1000;
-  max-height:60vh; overflow:auto;
+:root {
+  --tabbar-height: 56px;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --bg: #0f1115;
+  --fg: #eaeaea;
+  --fg-muted: #8a8f99;
+  --accent: #2c5d8f;
+  --accent-hi: #356da6;
+  --card: #1a1d24;
+  --border: #2a2f37;
 }
-@media (max-width: 850px) {
-  #editorSection { top:auto; right:0; bottom:0; left:0; width:auto; border-radius:0; }
+
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--bg); color: var(--fg);
+  font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
+
+/* ─── Shell-Layout ─────────────────────────────────────────────── */
+.shell {
+  display: flex; flex-direction: column;
+  height: 100vh; height: 100dvh;
+}
+.shell-views {
+  flex: 1; position: relative; min-height: 0;
+}
+.shell-view {
+  position: absolute; inset: 0; display: none;
+}
+.shell-view.active { display: block; }
+
+.shell-tabbar {
+  display: flex;
+  height: calc(var(--tabbar-height) + var(--safe-bottom));
+  padding-bottom: var(--safe-bottom);
+  background: #16191f;
+  border-top: 1px solid var(--border);
+}
+.shell-tabbar button {
+  flex: 1; background: transparent;
+  color: var(--fg-muted);
+  border: none; padding: 0; cursor: pointer;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 2px;
+  font: inherit; font-size: 11px;
+  -webkit-tap-highlight-color: transparent;
+}
+.shell-tabbar button .tab-icon { font-size: 22px; line-height: 1; }
+.shell-tabbar button.active { color: var(--fg); }
+.shell-tabbar button.active .tab-icon { transform: scale(1.05); }
+.shell-tabbar button:active { background: rgba(255,255,255,0.04); }
+
+/* ─── Map-View ─────────────────────────────────────────────────── */
+#map { width: 100%; height: 100%; background: #1a1d24; }
+
+/* ─── AR-Stub ──────────────────────────────────────────────────── */
+.ar-stub {
+  display: flex; height: 100%;
+  align-items: center; justify-content: center;
+  text-align: center; color: var(--fg-muted);
+  padding: 24px;
+}
+.ar-stub .icon { font-size: 64px; opacity: 0.4; line-height: 1; }
+.ar-stub p { margin: 12px 0 0; }
+
+/* ─── Settings-View ────────────────────────────────────────────── */
+.settings-view {
+  height: 100%; overflow: auto;
+  padding: 16px;
+  display: flex; flex-direction: column; gap: 12px;
+  -webkit-overflow-scrolling: touch;
+}
+.settings-section {
+  background: var(--card);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.settings-section h3 {
+  margin: 0 0 10px;
+  font-size: 11px; color: #f1c40f;
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.settings-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.settings-row:last-child { border-bottom: none; padding-bottom: 0; }
+.settings-row .label { flex: 1; }
+.settings-row .meta { color: var(--fg-muted); font-size: 12px; }
+.settings-row > .meta { white-space: nowrap; }
+
+.settings-input {
+  display: block; width: 100%;
+  background: #0f1115; color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px 12px; font: inherit; font-size: 15px;
+  margin: 6px 0;
+  box-sizing: border-box;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.settings-input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+
+.settings-btn {
+  display: block; width: 100%;
+  background: var(--accent); color: #fff;
+  border: none; border-radius: 6px;
+  padding: 12px; font: inherit; font-size: 15px;
+  cursor: pointer; margin-top: 6px;
+  -webkit-tap-highlight-color: transparent;
+}
+.settings-btn:active { background: var(--accent-hi); }
+.settings-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.settings-btn.secondary { background: #232831; }
+.settings-btn.secondary:active { background: #2e3540; }
+
+.settings-btn-inline {
+  background: #232831; color: var(--fg);
+  border: none; border-radius: 6px;
+  padding: 6px 12px; font: inherit; font-size: 13px;
+  cursor: pointer;
+}
+.settings-btn-inline:active { background: #2e3540; }
+
+/* ─── EditorSection (Legacy) ───────────────────────────────────────
+   map.js erwartet dieses Element zur Initialisierung von EditorUI.
+   Auf der Mobile-Shell uebernimmt der Settings-Tab dessen Funktionen,
+   die DOM-Instanz bleibt nur fuer die Konstruktor-Kompat im DOM. */
+#editorSection { display: none !important; }
 </style>
 </head>
 <body>
-<div id="map"></div>
+
+<div class="shell">
+  <div class="shell-views">
+    <section class="shell-view active" data-view="map">
+      <div id="map"></div>
+    </section>
+    <section class="shell-view" data-view="ar">
+      <div class="ar-stub">
+        <div>
+          <div class="icon">🥽</div>
+          <p>AR-Ansicht</p>
+          <p class="meta">Kommt in Phase B des Capacitor-Spike.<br>WebXR-Session bleibt persistent, sobald aktiviert.</p>
+        </div>
+      </div>
+    </section>
+    <section class="shell-view" data-view="settings">
+      <div id="mobileSettings" class="settings-view"></div>
+    </section>
+  </div>
+  <nav class="shell-tabbar" role="tablist">
+    <button data-tab="map" class="active" role="tab" aria-label="Karte">
+      <span class="tab-icon">🗺️</span><span>Karte</span>
+    </button>
+    <button data-tab="ar" role="tab" aria-label="AR">
+      <span class="tab-icon">🥽</span><span>AR</span>
+    </button>
+    <button data-tab="settings" role="tab" aria-label="Einstellungen">
+      <span class="tab-icon">⚙️</span><span>Einstellungen</span>
+    </button>
+  </nav>
+</div>
+
+<!-- Legacy: von map.js' EditorUI als Container gefordert. Auf Mobile unsichtbar. -->
 <div id="editorSection"></div>
+
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-     crossorigin=""></script>
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
 <script src="/dist/map.bundle.js"></script>
+<script src="/dist/mobile.bundle.js"></script>
 </body>
 </html>

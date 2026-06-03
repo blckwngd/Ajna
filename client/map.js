@@ -34,6 +34,14 @@ const agentFilters = new AgentFilters(ajna)
 const filterDialog = new FilterDialog({ ajna, filters: agentFilters })
 window.agentFilters = agentFilters   // Console-Debugging
 const toast = new Toast()
+
+// Mobile-Shell (mobile.bundle.js) braucht Zugriff auf die hier konstruierten
+// Dialog-Instanzen, ohne sie selbst nochmal anzulegen. Wir exponieren sie
+// gebuendelt unter window.ajnaUI — read-only Konvention, kein Auto-Wiring.
+window.ajnaUI = {
+  serverDialog, profileDialog, filterDialog, groupDialog,
+  permissionDialog, contextMenu, toast, agentFilters
+}
 let objectActions = null  // wird in init() verdrahtet, sobald editorUI da ist
 
 function subscribeMarkerInteract(objectId) {
