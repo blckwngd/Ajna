@@ -1,4 +1,4 @@
-package de.kloeschinski.ajna;
+package de.blckwngd.ajna;
 
 import com.getcapacitor.BridgeActivity;
 

@@ -159,3 +159,7 @@ vite.config.ts.timestamp-*
 # Lokale Tooling-Konfigurationen (per-Entwickler, nicht ins Repo)
 .claude/
 .vscode/
+
+# Android Studio Workspace-State — wir entwickeln VSCode-first, Studio
+# nur als SDK-/Emulator-Lieferant. Kein gemeinsamer IntelliJ-State.
+.idea/
