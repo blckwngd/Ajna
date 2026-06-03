@@ -39,4 +39,10 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Standort: Foreground-GPS fuer die Karten- und AR-Ansicht. Background-
+         Permission (ACCESS_BACKGROUND_LOCATION) folgt in Phase B mit dem
+         Background-Geolocation-Plugin und einem Foreground-Service. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 </manifest>
