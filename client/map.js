@@ -11,9 +11,9 @@ import { AgentFilters } from "./core/AgentFilters.js"
 import { ObjectActions } from "./core/ObjectActions.js"
 import { Toast } from "./core/Toast.js"
 import { PositionSmoother } from "./core/PositionSmoother.js"
-import "leaflet-gps"
-import "leaflet/dist/leaflet.css"
-import "leaflet-gps/dist/leaflet-gps.min.css"
+import { setupMapGps } from "./core/MapGpsControl.js"
+// Hinweis: Leaflet selbst (JS + CSS) wird via CDN-Tag in index*.html
+// geladen — kein npm-Bundle-Import noetig.
 
 // Same-Origin via Caddy — siehe main.js für Erklärung.
 const ajna = new AjnaManager(window.location.origin)
@@ -328,13 +328,15 @@ async function init() {
   const zoom = dummy ? 16 : 14
 
   const map = window.L.map('map').setView(center, zoom)
-  map.addControl(new L.Control.Gps({
-    autoActive: !dummyMode,
-    position: 'topleft',
-    setView: !dummyMode,
-    autoCenter: !dummyMode
-  }))
+  // Eigenes GPS-Control: erster Klick aktiviert Watch + Follow + Marker,
+  // weitere Klicks toggeln nur Follow. Auf Capacitor-Native triggern wir
+  // das per Event-Listener (s. mobile.js) sofort beim App-Start.
+  const gpsControl = setupMapGps(map)
+  window.ajnaGpsControl = gpsControl
   window.map = map
+  window.dispatchEvent(new CustomEvent('ajna:map-ready', {
+    detail: { map, gpsControl, dummyMode }
+  }))
 
   // Karte verschiebt sich → Off-Screen-Linie zum hervorgehobenen Marker neu zeichnen
   map.on('move', updateHighlightLine)

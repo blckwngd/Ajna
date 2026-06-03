@@ -23,7 +23,14 @@ window.addEventListener('DOMContentLoaded', () => {
     // Fall einen verspaeteten Permission-Prompt zeigen. Auf Desktop-Browser
     // ist das ein No-Op (Capacitor.isNativePlatform() === false), dort
     // managt der Browser den Permission-Flow selbst beim ersten Aufruf.
-    await ensureLocationPermissionIfNative()
+    const isNative = await ensureLocationPermissionIfNative()
+
+    // Auf Capacitor: GPS-Watch der Map automatisch beim Start aktivieren,
+    // damit der User die Position sofort sieht ohne den GPS-Button suchen
+    // zu muessen. Wenn die Map zum Zeitpunkt schon ready ist (sehr
+    // wahrscheinlich nicht, weil mobile.js vor map.js' init() laeuft),
+    // direkt aktivieren — sonst auf ajna:map-ready warten.
+    if (isNative) wireMobileGpsAutoActivate()
 
     const shell = new MobileShell({
       ajna,
@@ -34,21 +41,48 @@ window.addEventListener('DOMContentLoaded', () => {
   })
 })
 
+function wireMobileGpsAutoActivate() {
+  const tryActivate = (gpsControl, dummyMode) => {
+    if (dummyMode) {
+      console.log('[mobile] Dummy-Modus aktiv → Auto-GPS uebersprungen')
+      return
+    }
+    if (!gpsControl) return
+    console.log('[mobile] Auto-Activate Map-GPS auf Capacitor')
+    gpsControl.activate()
+  }
+
+  if (window.ajnaGpsControl) {
+    // Map war schon ready — direkt aktivieren
+    tryActivate(window.ajnaGpsControl, false)
+    return
+  }
+  window.addEventListener('ajna:map-ready', e => {
+    tryActivate(e.detail?.gpsControl, e.detail?.dummyMode)
+  }, { once: true })
+}
+
+/**
+ * @returns {Promise<boolean>}  true, wenn wir auf einer Capacitor-Native-
+ *   Plattform laufen (Android-WebView aktuell). Auf Browser false.
+ */
 async function ensureLocationPermissionIfNative() {
   try {
     const { Capacitor } = await import('@capacitor/core')
-    if (!Capacitor?.isNativePlatform?.()) return
+    if (!Capacitor?.isNativePlatform?.()) return false
 
     const { Geolocation } = await import('@capacitor/geolocation')
     const status = await Geolocation.checkPermissions()
     if (status.location === 'granted' || status.coarseLocation === 'granted') {
       console.log('[mobile] Standort-Permission bereits erteilt:', status)
-      return
+      return true
     }
 
     const result = await Geolocation.requestPermissions({ permissions: ['location'] })
     console.log('[mobile] Standort-Permission angefragt:', result)
+    return true
   } catch (err) {
     console.warn('[mobile] Permission-Flow fehlgeschlagen:', err?.message || err)
+    return false
   }
 }
