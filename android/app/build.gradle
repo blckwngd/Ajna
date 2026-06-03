@@ -40,6 +40,21 @@ dependencies {
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
+
+    // Kotlin-Stdlib-Duplikate fixen: aeltere Cordova-Plugins ziehen
+    // kotlin-stdlib-jdk7 / -jdk8 in 1.6.21 mit. Seit Kotlin 1.8 sind diese
+    // Module in kotlin-stdlib aufgegangen; werden sie als alte Jars
+    // gleichzeitig mit dem neuen kotlin-stdlib eingezogen, knallt D8 wegen
+    // Duplicate-Class-Eintraegen. Constraint zwingt jdk7/jdk8 auf 1.9.24,
+    // ab da sind es leere Stub-Jars, die auf kotlin-stdlib delegieren.
+    constraints {
+        implementation('org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.24') {
+            because 'kotlin-stdlib-jdk7 seit 1.8 in kotlin-stdlib gemergt'
+        }
+        implementation('org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.24') {
+            because 'kotlin-stdlib-jdk8 seit 1.8 in kotlin-stdlib gemergt'
+        }
+    }
 }
 
 apply from: 'capacitor.build.gradle'
