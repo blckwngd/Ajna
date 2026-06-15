@@ -48,6 +48,9 @@ export class AjnaManager {
     /** @type {Set<(snapshot: object[]) => void>} */
     this._objectsChangedListeners = new Set()
 
+    /** @type {Set<(record: object, action: string) => void>} */
+    this._objectEventListeners = new Set()
+
     /** @type {Set<() => void>}  Listener für Änderungen an der Server-Liste */
     this._serversChangedListeners = new Set()
 
@@ -372,6 +375,16 @@ export class AjnaManager {
     return () => this._objectsChangedListeners.delete(listener)
   }
 
+  /**
+   * Collection-weiter Realtime-Hook MIT Action `(record, action)`, gemerged
+   * über alle Clients. Siehe AjnaClient.onObjectEvent(). Für Agents/Bridges,
+   * die action-abhängig auf neue/geänderte Objekte reagieren.
+   */
+  onObjectEvent(listener) {
+    this._objectEventListeners.add(listener)
+    return () => this._objectEventListeners.delete(listener)
+  }
+
   async watchObject(compositeId, callback) {
     return this._clientFor(compositeId).watchObject(compositeId, callback)
   }
@@ -494,6 +507,7 @@ export class AjnaManager {
 
   _wireClientListeners(client) {
     client.onObjectsChanged(() => this._emitObjectsChanged())
+    client.onObjectEvent((rec, action) => this._emitObjectEvent(rec, action))
     client.onAuthChanged(() => this._emitServersChanged())
   }
 
@@ -501,6 +515,12 @@ export class AjnaManager {
     const snapshot = this.getObjects()
     for (const l of this._objectsChangedListeners) {
       try { l(snapshot) } catch (e) { console.error('AjnaManager listener error', e) }
+    }
+  }
+
+  _emitObjectEvent(record, action) {
+    for (const l of this._objectEventListeners) {
+      try { l(record, action) } catch (e) { console.error('AjnaManager object-event listener error', e) }
     }
   }
 

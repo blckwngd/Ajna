@@ -74,6 +74,7 @@ export class AjnaClient {
     this.objectMap = new Map()
 
     this._objectsChangedListeners = new Set()
+    this._objectEventListeners = new Set()
     this._realtimeReady = false
     this._realtimeUnsubscribe = null
 
@@ -273,6 +274,20 @@ export class AjnaClient {
   onObjectsChanged(listener) {
     this._objectsChangedListeners.add(listener)
     return () => this._objectsChangedListeners.delete(listener)
+  }
+
+  /**
+   * Collection-weiter Realtime-Hook MIT Action. Liefert pro Event
+   * `(record, action)` mit action ∈ {create, update, delete} aus dem
+   * `objects`-`*`-Abo — anders als onObjectsChanged (nur Snapshot) und
+   * watchObject (nur für eine bekannte ID). Für Agents/Bridges, die auf
+   * neue/geänderte Objekte action-abhängig reagieren. Feuert NICHT für den
+   * initialen Load (der läuft über refreshObjects/getFullList, nicht über
+   * das Abo). Gibt unsubscribe zurück.
+   */
+  onObjectEvent(listener) {
+    this._objectEventListeners.add(listener)
+    return () => this._objectEventListeners.delete(listener)
   }
 
   async watchObject(id, callback) {
@@ -580,6 +595,12 @@ export class AjnaClient {
     }
   }
 
+  _emitObjectEvent(record, action) {
+    for (const l of this._objectEventListeners) {
+      try { l(record, action) } catch (e) { console.error('AjnaClient object-event listener error', e) }
+    }
+  }
+
   async _ensureRealtime() {
     if (this._realtimeReady) return
     this._realtimeReady = true
@@ -588,6 +609,7 @@ export class AjnaClient {
       if (e.action === 'delete') this.objectMap.delete(rec.id)
       else this.objectMap.set(rec.id, rec)
       this._emitObjectsChanged()
+      this._emitObjectEvent(rec, e.action)
     })
   }
 }
