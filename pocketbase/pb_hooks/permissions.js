@@ -98,6 +98,27 @@ function transitiveMembersOf(groupId) {
 // ACE-Auflösung
 // ----------------------------------------------------------------------
 
+// Goja-Bridge-Fallstrick: JSON-Felder (hier interact_actions) kommen je nach
+// Lesepfad als Byte-Array (Go-[]byte) oder als Einzel-Char-Strings zurück statt
+// als geparstes JS-Array. Echte Aktions-Arrays bestehen aus Mehrzeichen-Strings
+// ("talk"), die serialisierte Form aus Zahlen bzw. Einzelzeichen → erkennbar und
+// rekonstruierbar. (Gleiche Falle wie in applyOwnerDefaults.)
+function coerceStringArray(value) {
+  if (typeof value === "string") {
+    try { const p = JSON.parse(value); return Array.isArray(p) ? p : [] } catch { return [] }
+  }
+  if (!Array.isArray(value) || value.length === 0) return Array.isArray(value) ? value : []
+  const first = value[0]
+  if (typeof first === "number") {
+    try { const p = JSON.parse(String.fromCharCode.apply(null, value)); return Array.isArray(p) ? p : [] }
+    catch { return [] }
+  }
+  if (typeof first === "string" && value.every(c => typeof c === "string" && c.length === 1) && value.join("").charAt(0) === "[") {
+    try { const p = JSON.parse(value.join("")); return Array.isArray(p) ? p : [] } catch { return [] }
+  }
+  return value   // bereits ein echtes String-Array
+}
+
 /** Aggregiert alle ACEs eines Objekts, deren subject-Key in subjectKeys liegt. */
 function aggregateAces(objectId, subjectKeys) {
   const aces = $app.findRecordsByFilter(
@@ -115,8 +136,8 @@ function aggregateAces(objectId, subjectKeys) {
     const key  = IMPLICIT_AUDIENCES.has(type) ? `${type}:` : `${type}:${subj}`
     if (!subjectKeys.has(key)) continue
 
-    for (const r of (ace.get("rights") || []))           rights.add(r)
-    for (const a of (ace.get("interact_actions") || [])) interact.add(a)
+    for (const r of (ace.get("rights") || []))                    rights.add(r)
+    for (const a of coerceStringArray(ace.get("interact_actions"))) interact.add(a)
   }
 
   return {
