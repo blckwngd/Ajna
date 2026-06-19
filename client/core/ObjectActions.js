@@ -29,9 +29,15 @@ export class ObjectActions {
   showFor(record, x, y) {
     if (!record) return
 
-    const actions = Array.isArray(record.actions) && record.actions.length > 0
+    // Aktions-Quelle: bevorzugt ein Top-Level-`actions`-Feld, sonst die vom
+    // Objekt in `state.actions` hinterlegte Liste (so liefern World-Director-
+    // Figuren z. B. "Sprechen"/"Füttern"). Fallback: nur "Untersuchen".
+    const stateActions = Array.isArray(record.state?.actions) ? record.state.actions : null
+    const actions = (Array.isArray(record.actions) && record.actions.length > 0)
       ? record.actions
-      : FALLBACK_ACTIONS
+      : (stateActions && stateActions.length > 0)
+        ? stateActions
+        : FALLBACK_ACTIONS
 
     // Owner-Check: nur Besitzer dürfen Berechtigungen verwalten. Bei
     // Multi-Server den passenden AjnaClient für record._origin nehmen,
@@ -73,8 +79,13 @@ export class ObjectActions {
       const res = await this.ajna.interact(record.id, actionKey)
       console.log('[interact]', actionKey, '→', res)
     } catch (err) {
-      // PocketBase liefert bei 403/404 eine JSON-Antwort mit response.data
-      const detail = err?.response?.data?.error || err?.message || String(err)
+      // Der interact-Hook antwortet mit { error: "…" } (nicht PB-Standard
+      // { message }), deshalb response.error zuerst prüfen — sonst zeigt das
+      // SDK seine generische Default-Message ("Something went wrong …").
+      const detail = err?.response?.error
+                  || err?.response?.message
+                  || err?.response?.data?.error
+                  || err?.message || String(err)
       console.warn('[interact] failed:', detail)
       alert(`Interaktion "${actionKey}" nicht möglich: ${detail}`)
     }

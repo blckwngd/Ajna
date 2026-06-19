@@ -199,32 +199,65 @@ export class GameObject {
   #createPlaceholder() {
     // Type-abhängiger Default-Look. Modell-URL überschreibt das später
     // ohnehin — der Placeholder ist nur sichtbar, bis (oder falls) ein
-    // GLB für dieses Objekt geladen wird. Neue Types hier ergänzen:
+    // GLB für dieses Objekt geladen wird. Neue Types hier ergänzen UND
+    // parallel in client/map.js (markerIconFor) + docs/world-objects.md.
     //
     //   default → roter Würfel (1 m³, Standard-Marker)
-    //   poi     → dünner grüner Zylinder, Boden auf Y=0
-    //             (markiert Overpass-Points-of-Interest, sichtbar
-    //              distinkt von Schiffs-/Spieler-Markern)
-    let mesh
+    //   poi     → dünner grüner Zylinder (Overpass-Points-of-Interest)
+    //   npc     → cyan Kapsel, menschenhoch
+    //   enemy   → dunkelrote Kapsel, etwas massiger
+    //   animal  → flacher brauner Block, bodennah
+    //   dragon  → violetter gestreckter Körper (fliegt via altitude im Record)
+    //   item    → goldenes leuchtendes Oktaeder, schwebend
+    //   hint    → gelbes leuchtendes Oktaeder, höher schwebend
     const mat = new BABYLON.StandardMaterial(`mat_${this.id}`, this.scene)
+    const phName = `placeholder_${this.id}`
+    let mesh
 
-    if (this._objectType === 'poi') {
-      mesh = BABYLON.MeshBuilder.CreateCylinder(
-        `placeholder_${this.id}`,
-        { height: 1.5, diameter: 0.4, tessellation: 12 },
-        this.scene
-      )
-      mat.diffuseColor  = new BABYLON.Color3(0.35, 0.85, 0.45)
-      mat.emissiveColor = new BABYLON.Color3(0.10, 0.30, 0.15)  // leuchtet leicht
-      // Standfuß auf Ground-Höhe stellen (Cylinder ist zentriert).
-      mesh.position.y = 0.75
-    } else {
-      mesh = BABYLON.MeshBuilder.CreateBox(
-        `placeholder_${this.id}`,
-        { size: 1 },
-        this.scene
-      )
-      mat.diffuseColor = new BABYLON.Color3(0.8, 0.2, 0.2)
+    switch (this._objectType) {
+      case 'poi':
+        mesh = BABYLON.MeshBuilder.CreateCylinder(phName, { height: 1.5, diameter: 0.4, tessellation: 12 }, this.scene)
+        mat.diffuseColor  = new BABYLON.Color3(0.35, 0.85, 0.45)
+        mat.emissiveColor = new BABYLON.Color3(0.10, 0.30, 0.15)
+        mesh.position.y = 0.75   // Cylinder ist zentriert → Standfuß auf Y=0
+        break
+      case 'npc':
+        mesh = BABYLON.MeshBuilder.CreateCapsule(phName, { height: 1.7, radius: 0.3 }, this.scene)
+        mat.diffuseColor  = new BABYLON.Color3(0.20, 0.75, 0.85)
+        mat.emissiveColor = new BABYLON.Color3(0.04, 0.18, 0.22)
+        mesh.position.y = 0.85
+        break
+      case 'enemy':
+        mesh = BABYLON.MeshBuilder.CreateCapsule(phName, { height: 1.9, radius: 0.38 }, this.scene)
+        mat.diffuseColor  = new BABYLON.Color3(0.75, 0.12, 0.12)
+        mat.emissiveColor = new BABYLON.Color3(0.30, 0.02, 0.02)
+        mesh.position.y = 0.95
+        break
+      case 'animal':
+        mesh = BABYLON.MeshBuilder.CreateBox(phName, { width: 0.9, height: 0.5, depth: 0.5 }, this.scene)
+        mat.diffuseColor  = new BABYLON.Color3(0.55, 0.40, 0.22)
+        mesh.position.y = 0.25
+        break
+      case 'dragon':
+        mesh = BABYLON.MeshBuilder.CreateBox(phName, { width: 1.8, height: 0.4, depth: 0.7 }, this.scene)
+        mat.diffuseColor  = new BABYLON.Color3(0.45, 0.20, 0.65)
+        mat.emissiveColor = new BABYLON.Color3(0.18, 0.06, 0.28)
+        break
+      case 'item':
+        mesh = BABYLON.MeshBuilder.CreatePolyhedron(phName, { type: 1, size: 0.28 }, this.scene)
+        mat.diffuseColor  = new BABYLON.Color3(0.95, 0.80, 0.25)
+        mat.emissiveColor = new BABYLON.Color3(0.45, 0.35, 0.05)
+        mesh.position.y = 0.5
+        break
+      case 'hint':
+        mesh = BABYLON.MeshBuilder.CreatePolyhedron(phName, { type: 1, size: 0.32 }, this.scene)
+        mat.diffuseColor  = new BABYLON.Color3(0.98, 0.85, 0.20)
+        mat.emissiveColor = new BABYLON.Color3(0.55, 0.45, 0.05)
+        mesh.position.y = 1.4
+        break
+      default:
+        mesh = BABYLON.MeshBuilder.CreateBox(phName, { size: 1 }, this.scene)
+        mat.diffuseColor = new BABYLON.Color3(0.8, 0.2, 0.2)
     }
 
     mesh.material = mat

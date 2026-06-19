@@ -67,7 +67,16 @@ function handleMarkerInteract(objectId, data) {
   const marker = markerLayer.get(objectId)
   const obj = ajna.getObjectById(objectId)
   const label = obj?.name || objectId
-  toast.show(`${data.action} → ${label}`, { title: "INTERACT" })
+
+  // Antwort des Objekts (simpler Dialog): spricht/zeigt seine im state
+  // hinterlegte Zeile. Kommt über denselben Realtime-Broadcast wie die
+  // Aktion → alle Zuschauer sehen die NPC-Antwort, nicht nur der Auslöser.
+  const reply =
+    (data.action === "talk"    && obj?.state?.dialog) ||
+    (data.action === "examine" && (obj?.state?.hint || obj?.state?.dialog)) ||
+    null
+  if (reply) toast.show(reply, { title: label })
+  else toast.show(`${data.action} → ${label}`, { title: "INTERACT" })
 
   // Kurzer optischer Pulse am Marker (CSS @keyframes via Klasse).
   const el = marker?.getElement()
@@ -165,20 +174,25 @@ function tickMarkerSmoothers() {
 
 // Type-spezifische Darstellung — neue Types hier ergänzen, damit der
 // Renderer im 3D-Client (GameObject.#createPlaceholder) und auf der
-// Karte konsistent unterschieden werden.
+// Karte konsistent unterschieden werden. Emoji + CSS-Klasse pro Typ;
+// die Klasse wird in injectHighlightStyles() eingefärbt.
+const MARKER_TYPES = {
+  poi:    { emoji: '📍', cls: 'map-marker-poi' },
+  npc:    { emoji: '🧑', cls: 'map-marker-npc' },
+  enemy:  { emoji: '👹', cls: 'map-marker-enemy' },
+  animal: { emoji: '🐾', cls: 'map-marker-animal' },
+  dragon: { emoji: '🐉', cls: 'map-marker-dragon' },
+  item:   { emoji: '💎', cls: 'map-marker-item' },
+  hint:   { emoji: '💡', cls: 'map-marker-hint' }
+}
+
 function markerIconFor(obj) {
   const type = (obj.type || '').toLowerCase()
-  if (type === 'poi') {
-    return window.L.divIcon({
-      className: 'map-marker map-marker-poi',
-      iconSize: [28, 28],
-      html: `📍 ${obj.name}`
-    })
-  }
+  const def = MARKER_TYPES[type]
   return window.L.divIcon({
-    className: 'map-marker',
+    className: def ? `map-marker ${def.cls}` : 'map-marker',
     iconSize: [28, 28],
-    html: `❌ ${obj.name}`
+    html: `${def ? def.emoji : '❌'} ${obj.name}`
   })
 }
 
@@ -300,10 +314,13 @@ function injectHighlightStyles() {
       animation: ajna-marker-pulse 700ms ease-out;
       border-radius: 4px;
     }
-    .map-marker.map-marker-poi {
-      background: rgba(60, 200, 90, 0.18);
-      outline: 1px solid #2ec866;
-      border-radius: 4px;
+    /* Marker tragen nur Symbol + Name — keine Box. Lesbarkeit über einen
+       weißen Text-Schatten statt Hintergrund/Outline (gilt für alle Typen,
+       inkl. POI und Archetypen). Hover-Highlight (marker-highlighted) und
+       Interaktions-Pulse bleiben als bewusstes Feedback erhalten. */
+    .map-marker {
+      white-space: nowrap;
+      text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 2px #fff;
     }
   `
   document.head.appendChild(style)

@@ -17,6 +17,7 @@
     "ais": "node agents/ais-bridge.mjs",
     "poi": "node agents/poi-bridge.mjs",
     "wand-agent": "node agents/wand-agent.mjs",
+    "director": "node agents/world-director.mjs",
     "uwb-anchors": "node agents/uwb-anchors.mjs",
     "mobile:sync": "webpack && cap sync android",
     "mobile:run": "webpack && node scripts/mobile-run.mjs",
