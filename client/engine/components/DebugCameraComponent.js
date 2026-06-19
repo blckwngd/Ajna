@@ -2,11 +2,12 @@ import { BaseComponent } from "../BaseComponent.js"
 
 export class DebugCameraComponent extends BaseComponent {
 
-  constructor(canvas, playerCameraComponent, debug = false) {
+  constructor(canvas, playerCameraComponent, debug = false, container = document.body) {
     super()
     this.canvas = canvas
     this.playerCameraComponent = playerCameraComponent
     this.debug = debug
+    this.container = container   // mount the button in the AR view when embedded
 
     this.freeCamera = null
     this.activeMode = "player"
@@ -64,7 +65,7 @@ export class DebugCameraComponent extends BaseComponent {
 
     this.button.onclick = () => this.toggle()
 
-    document.body.appendChild(this.button)
+    this.container.appendChild(this.button)
   }
 
   toggle() {

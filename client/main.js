@@ -20,7 +20,11 @@ window.BABYLON = BABYLON
 import { World } from "./engine/World.js"
 import { GameObject } from "./engine/GameObject.js"
 import { GeoTransformer } from "./core/GeoTransformer.js"
-import { GPSProvider } from "./core/GPSProvider.js"
+import { UwbManager } from "./core/UwbManager.js"
+import { WandManager } from "./core/WandManager.js"
+import { WandAudioFeedback } from "./core/WandAudioFeedback.js"
+import { getAccessoryHub } from "./core/AccessoryHub.js"
+import { rayEndpointWgs84 } from "./core/PointingResolver.js"
 import { NetworkSystem } from "./core/NetworkSystem.js"
 import { AjnaManager } from "./core/AjnaManager.js"
 import { EditorUI } from "./core/EditorUI.js"
@@ -50,7 +54,17 @@ import { PathOverlay } from "./engine/debug/PathOverlay.js"
 // Host/Port. Vermeidet Mixed-Content und Cross-Origin-Cookies. Falls du
 // Caddy nicht nutzt und PB direkt auf :8090 ansprichst, setze hier
 // stattdessen "http://" + window.location.hostname + ":8090".
-const ajnaManager = new AjnaManager(window.location.origin)
+// Seamless handoff from the Capacitor app: when opened in Chrome for immersive
+// XR, the deep link carries the full server registry + every server's auth blob
+// + filter config in the URL fragment. Ingest it BEFORE AjnaManager/AgentFilters
+// are created so ALL connected servers + logins + filters apply transparently.
+const _handoff = ingestHandoffFragment()
+
+// Reuse the shell's shared AjnaManager when embedded in the Capacitor shell
+// (map.js sets window.ajna first); only create one when running standalone
+// (index-ar.html). With a handoff, the (now-populated) ServerRegistry is the
+// source of truth, so all carried servers are instantiated with their tokens.
+const ajnaManager = window.ajna || new AjnaManager(_handoff?.base || window.location.origin)
 const DEBUG_WORLD = true
 window.GUI = GUI
 window.GridMaterial = GridMaterial
@@ -59,7 +73,43 @@ window.ajna = ajnaManager
 // GeoTransformer lokal `geo`, und der DEBUG-Block exponiert ihn als
 // `window.geo`. Wir vermeiden den Namens-Clash, indem die OSM/Geo-Helper-
 // Instanz unter einem eigenen Namen lebt.
-window.ajnaGeo = new AjnaGeo(ajnaManager)
+window.ajnaGeo = window.ajnaGeo || new AjnaGeo(ajnaManager)
+
+// Parse the `#ajna=<base64url(JSON)>` handoff fragment written by the Capacitor
+// shell when opening this page in Chrome, and restore the carried state into
+// localStorage BEFORE AjnaManager/AgentFilters read it: the full server registry
+// (`ajna.servers.v1`), every per-server auth blob (`ajna_auth_<id>`), and the
+// filter/alignment config. Returns the parsed payload or null.
+function ingestHandoffFragment() {
+  try {
+    const m = (location.hash || '').match(/[#&]ajna=([^&]+)/)
+    if (!m) return null
+    let b64 = m[1].replace(/-/g, '+').replace(/_/g, '/')
+    while (b64.length % 4) b64 += '='
+    const data = JSON.parse(decodeURIComponent(escape(atob(b64))))
+
+    // All servers + their logins (verbatim blobs).
+    if (data.registry) localStorage.setItem('ajna.servers.v1', data.registry)
+    if (data.auth && typeof data.auth === 'object') {
+      for (const [k, v] of Object.entries(data.auth)) {
+        if (typeof k === 'string' && k.startsWith('ajna_auth_') && typeof v === 'string') {
+          localStorage.setItem(k, v)
+        }
+      }
+    }
+    if (data.filters) localStorage.setItem('ajna.layer_filters', data.filters)
+    if (data.align) localStorage.setItem('ajna_wand_alignment', data.align)
+
+    // Strip the token-bearing fragment from the URL + history immediately.
+    history.replaceState(null, '', location.pathname + location.search)
+    const n = data.auth ? Object.keys(data.auth).length : 0
+    console.log(`[handoff] restored ${n} server login(s) + filters from deep link`)
+    return data
+  } catch (err) {
+    console.warn('[handoff] parse failed:', err?.message || err)
+    return null
+  }
+}
 
 // ==========================================================
 // SHARED EDITOR UI
@@ -76,7 +126,15 @@ async function init() {
 
   // Babylon Setup
   const canvas = document.getElementById("renderCanvas")
+  // All AR overlays mount into the canvas's parent (the AR view when embedded
+  // in the shell, or <body> standalone) so they stay scoped to the AR view and
+  // vanish with it on tab switch.
+  const arRoot = canvas.parentElement || document.body
   const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true })
+  // The AR view may have just become visible (display toggled) when this runs;
+  // the canvas can briefly report 0×0. Resize once layout settles so the scene
+  // actually renders (otherwise the image looks static/empty).
+  requestAnimationFrame(() => engine.resize())
   const scene = new BABYLON.Scene(engine)
   scene.useRightHandedSystem = true
   
@@ -87,7 +145,14 @@ async function init() {
   // mit der Karte die AR-Welt als nord-süd gespiegelt.
   // Bei Bedarf später analog `invertEastWest: true`.
   const geo = new GeoTransformer({ invertNorthSouth: true })
-  const gps = new GPSProvider()
+
+  // Shared client-session layer (one GPS + UWB + wand + audio + position source
+  // per page, bundle-safe). UWB ('viewer' role) overrides GPS when fresh; with
+  // no UWB node it is a pure GPS passthrough. UWB/wand are not auto-connected.
+  const accessories = getAccessoryHub({ ajna: ajnaManager })
+  const gps = accessories.gps
+  const uwb = accessories.uwb
+  const positionSource = accessories.positionSource
 
   // Realtime-Updates laufen jetzt zentral über AjnaManager (subscribt
   // auf 'objects' und feuert emitObjectsChanged). Damit reagieren Liste,
@@ -95,19 +160,31 @@ async function init() {
   // Die Klasse bleibt für zukünftige hochfrequente Engine-Sync-Use-Cases
   // (NetworkSyncComponent mit Lerp/Velocity) bestehen.
 
-  const player = await setupPlayer(scene, world, geo, gps, canvas)
+  const player = await setupPlayer(scene, world, geo, positionSource, canvas)
 
   // GPS-Stream starten, sobald der Player als Subscriber registriert ist.
   // Bei persistiertem Dummy broadcastet start() die Dummy-Position sofort
   // — waitForOrigin weiter unten resolvt damit ohne Wartezeit.
   gps.start()
 
-  if (DEBUG_WORLD) { 
+  // Bind/unbind a UWB node for cm-precise positioning (native app only).
+  // Anchors must exist in Ajna (npm run uwb-anchors). Safe no-op on the web.
+  window.ajnaUwbConnect = async (opts = {}) => {
+    if (!(await UwbManager.isAvailable())) { console.warn('[uwb] only available in the native app'); return }
+    return uwb.connect({ role: 'viewer', name: 'DW', ...opts })
+  }
+  window.ajnaUwbDisconnect = (role = 'viewer') => uwb.disconnect(role)
+
+  setupPositionSourceHud(positionSource, arRoot)
+
+  if (DEBUG_WORLD) {
     window.engine= engine
     window.scene = scene
     window.world = world
     window.geo = geo
     window.gps = gps
+    window.uwb = uwb
+    window.positionSource = positionSource
     window.player = player
     window.objectMap = objectMap
   }
@@ -123,22 +200,29 @@ async function init() {
   const setHighlight = setupHoverSystem(scene, engine, canvas)
   _arHighlight = setHighlight  // damit interact-Events visuell pulsen können
 
+  let debugManager = null
   if (DEBUG_WORLD) {
-    new DebugUIManager({
+    debugManager = new DebugUIManager({
       scene,
       geo,
       gps,
       player,
       objectMap,
-      onObjectHover: setHighlight
+      onObjectHover: setHighlight,
+      container: arRoot
     })
   }
 
-  engine.runRenderLoop(() => {
+  const renderLoop = () => {
     const delta = engine.getDeltaTime() / 1000
     objectMap.forEach(go => go.update(delta))
     scene.render()
-  })
+  }
+  engine.runRenderLoop(renderLoop)
+  // Embedded in the shell, the AR view is hidden behind other tabs; let the
+  // shell pause/resume the render loop to save battery (no-op standalone).
+  window.arPause = () => engine.stopRenderLoop()
+  window.arResume = () => { engine.runRenderLoop(renderLoop); engine.resize() }
   
   // Shared Editor UI im AR-Modus.
   // Kein onObjectsUpdated-Callback — die Szene wird über einen eigenen
@@ -149,7 +233,9 @@ async function init() {
   const groupDialog = new GroupDialog({ ajna: ajnaManager })
   const serverDialog = new ServerDialog({ ajna: ajnaManager })
   const profileDialog = new ProfileDialog({ ajna: ajnaManager })
-  const agentFilters = new AgentFilters(ajnaManager)
+  // Reuse the shell's shared AgentFilters when embedded (consistent layer
+  // selection across map + AR); create one only when standalone.
+  const agentFilters = window.agentFilters || new AgentFilters(ajnaManager)
   const filterDialog = new FilterDialog({ ajna: ajnaManager, filters: agentFilters })
   _agentFilters = agentFilters       // sichtbar für syncSceneObjects
   window.agentFilters = agentFilters  // für Console-Debugging
@@ -164,6 +250,10 @@ async function init() {
     syncSceneObjects(scene, world, geo, ajnaManager.getObjectList())
   })
 
+  // Set after setupArOverlayControls below; called when the editor is engaged
+  // (edit/create) so a minimized editor panel pops open.
+  let _openArEditor = () => {}
+
   editorUI = new EditorUI({
     ajna: ajnaManager,
     container: uiContainer,
@@ -173,6 +263,8 @@ async function init() {
     onManageServers: () => serverDialog.open(),
     onManageProfile: () => profileDialog.open(),
     onManageFilters: () => filterDialog.open(),
+    // Open the editor panel when editing or creating an object (if minimized).
+    onEditorActivate: () => _openArEditor(),
     onObjectSelected: obj => {
       // PB-Record → zugehöriges GameObject. Wenn die Szene das Objekt
       // noch nicht angelegt hat (z. B. vor abgeschlossenem syncSceneObjects),
@@ -185,6 +277,57 @@ async function init() {
       if (go) setHighlight(go, hovering)
     }
   })
+
+  // Editor + Debug start hidden (editor open by default on wide screens),
+  // opened on demand from a small AR toolbar; each panel has its own close
+  // button. Keeps the AR view unobstructed.
+  const _arOverlay = setupArOverlayControls(arRoot, uiContainer, debugManager)
+  _openArEditor = _arOverlay.openEditor
+
+  // ── Wand pointing → AR highlight (audio cues handled by the hub) ──────
+  // The wand lives in the shared hub; here we attach AR-specific context:
+  // visibility (only filter-visible objects), name lookup, and scene highlight.
+  // Ray origin + audio are wired by the hub. Not auto-connected.
+  const wand = accessories.wand
+  wand.isVisible = (o) => agentFilters.matches(o)
+  wand.getName = (id) => objectMap.get(id)?.name || ajnaManager.getObjectById?.(id)?.name || null
+  let _wandHiId = null
+  wand.onTarget((target) => {
+    if (_wandHiId && _wandHiId !== target?.id) {
+      const prev = objectMap.get(_wandHiId); if (prev) setHighlight(prev, false)
+    }
+    if (target?.id) { const go = objectMap.get(target.id); if (go) setHighlight(go, true) }
+    _wandHiId = target?.id || null
+  })
+
+  // Visual pointing ray (origin → direction). Updated each orientation frame;
+  // removed when no orientation/origin (e.g. pointing mode 'disabled').
+  let _wandRay = null
+  wand.onOrientation(() => {
+    const dir = wand.getPointingDirection()
+    const origin = wand.getOrigin?.()
+    if (!dir || !origin || !Number.isFinite(origin.lat) || !geo.origin) {
+      if (_wandRay) { _wandRay.dispose(); _wandRay = null }
+      return
+    }
+    const end = rayEndpointWgs84(origin, dir, wand.maxRangeM)
+    const pts = [
+      geo.toLocal(origin.lat, origin.lon, origin.altitude || 0),
+      geo.toLocal(end.lat, end.lon, end.altitude)
+    ]
+    _wandRay = BABYLON.MeshBuilder.CreateLines('wandRay',
+      { points: pts, updatable: true, instance: _wandRay || undefined }, scene)
+    _wandRay.color = new BABYLON.Color3(0.3, 0.8, 1)
+    _wandRay.isPickable = false
+  })
+
+  window.ajnaWandConnect = async (opts = {}) => {
+    if (!(await WandManager.isAvailable())) { console.warn('[wand] only in the native app'); return }
+    return wand.start({ name: 'WizardStaff', ...opts })
+  }
+  window.ajnaWandDisconnect = () => wand.stop()
+  window.ajnaWandAudio = (on) => WandAudioFeedback.setEnabled(on)
+  if (DEBUG_WORLD) window.wand = wand
 
   // Kontextmenü + Berechtigungs-Dialog. Beides UI-Singletons; die
   // konkrete Action-Verdrahtung läuft über ObjectActions, damit AR und
@@ -307,7 +450,10 @@ async function init() {
   let _gazeTick = 0
   let _xrControllerMode = false
   scene.onBeforeRenderObservable.add(() => {
-    if (!_xrExperience || _xrExperience.baseExperience.state !== BABYLON.WebXRState.IN_XR) {
+    // WebXR may be unavailable (e.g. Android WebView): createDefaultXRExperience
+    // can resolve with baseExperience === undefined. Guard with optional chaining
+    // so this per-frame observer never throws (which would freeze the render loop).
+    if (_xrExperience?.baseExperience?.state !== BABYLON.WebXRState.IN_XR) {
       if (_gazedGO) {
         setHighlight(_gazedGO, false)
         inWorldMenu.hide()
@@ -347,7 +493,7 @@ async function init() {
   // Wartezeit nicht hintereinander, sondern nebeneinander laufen.
   await Promise.all([
     editorUI.init(),
-    waitForOrigin(geo, gps)
+    waitForOrigin(geo, positionSource)
   ])
 
   // Szene-Reconcile erst aktivieren, wenn Origin steht — sonst würden
@@ -709,6 +855,8 @@ let _agentFilters = null // wird in init() gesetzt — Closure-Bridge für syncS
 // EditorUI/DebugUI als onObjectHover durchgereicht.
 function setupHoverSystem(scene, engine, canvas) {
 
+  const arRoot = canvas.parentElement || document.body
+
   // ---- DOM-Tooltip für Pointer-Hover über Meshes ----
   const tooltip = document.createElement('div')
   Object.assign(tooltip.style, {
@@ -724,7 +872,7 @@ function setupHoverSystem(scene, engine, canvas) {
     zIndex: '30',
     display: 'none'
   })
-  document.body.appendChild(tooltip)
+  arRoot.appendChild(tooltip)
 
   // ---- SVG-Overlay mit Richtungs-Linie ----
   const SVG_NS = 'http://www.w3.org/2000/svg'
@@ -739,7 +887,7 @@ function setupHoverSystem(scene, engine, canvas) {
   line.setAttribute('stroke-width', '2')
   line.setAttribute('stroke-dasharray', '6 6')
   svg.appendChild(line)
-  document.body.appendChild(svg)
+  arRoot.appendChild(svg)
 
   // ---- HighlightLayer für Listen-Hover ----
   const highlightLayer = new BABYLON.HighlightLayer('hover-hl', scene)
@@ -859,6 +1007,97 @@ function setupHoverSystem(scene, engine, canvas) {
 // - Kamera mit Parent (z. B. Player-Cam, die an player.root hängt)
 //   bekommt nur ein neues setTarget; bei Fokus auf den Player selbst
 //   wäre das ein No-Op, was semantisch passt.
+// Small on-screen badge showing the active position source (UWB / GPS) and the
+// UWB quality factor, so it is obvious which source the AR camera is following.
+function setupPositionSourceHud(positionSource, arRoot = document.body) {
+  const el = document.createElement('div')
+  el.id = 'posSourceHud'
+  Object.assign(el.style, {
+    // Below the Android status bar (safe-area inset) so the clock doesn't cover it.
+    position: 'absolute', top: 'calc(env(safe-area-inset-top, 0px) + 10px)', left: '10px', zIndex: 1000,
+    font: '12px/1.4 system-ui, sans-serif', padding: '3px 8px',
+    borderRadius: '6px', color: '#fff', background: 'rgba(0,0,0,0.55)',
+    pointerEvents: 'none', userSelect: 'none'
+  })
+  arRoot.appendChild(el)
+
+  const render = () => {
+    const src = positionSource.activeSource
+    if (src === 'uwb') {
+      const q = positionSource.quality
+      el.style.background = 'rgba(20,120,40,0.75)'
+      el.textContent = `UWB${Number.isFinite(q) ? ` · q${q}` : ''}`
+    } else if (src === 'gps') {
+      el.style.background = 'rgba(0,0,0,0.55)'
+      el.textContent = 'GPS'
+    } else {
+      el.style.background = 'rgba(120,80,0,0.7)'
+      el.textContent = '… kein Fix'
+    }
+  }
+  render()
+  setInterval(render, 400)
+}
+
+// Hide the Editor (#ui) and Debug panels by default and provide a small AR
+// toolbar to open them on demand; each panel gets its own close button. Keeps
+// the AR view unobstructed. Works embedded (arRoot = AR view) and standalone.
+function setupArOverlayControls(arRoot, uiEl, debugManager) {
+  if (!document.getElementById('arOverlayStyles')) {
+    const s = document.createElement('style')
+    s.id = 'arOverlayStyles'
+    s.textContent = `
+      .ar-toolbar { position:absolute; bottom:10px; left:10px; z-index:1000; display:flex; gap:6px; }
+      .ar-toolbar button { background:rgba(20,24,30,0.85); color:#eaeaea; border:1px solid #2a2f37;
+        border-radius:6px; padding:6px 10px; font:12px ui-sans-serif,system-ui,sans-serif; cursor:pointer; }
+      .ar-toolbar button.active { background:#2c5d8f; border-color:#3a78b6; color:#fff; }
+      .ar-panel-close { position:absolute; top:4px; right:6px; z-index:5;
+        background:transparent; border:none; color:#aab; font-size:20px; line-height:1; cursor:pointer; }
+      .ar-panel-close:hover { color:#fff; }
+    `
+    document.head.appendChild(s)
+  }
+
+  // Editor open by default on wide screens (>= 1024px), minimized otherwise.
+  const wideScreen = window.innerWidth >= 1024
+  if (uiEl) uiEl.style.display = wideScreen ? 'block' : 'none'
+  debugManager?.hide?.()
+
+  let syncActive = () => {}
+
+  if (uiEl) {
+    // EditorUI sets #ui's innerHTML once at construction, so this close button
+    // (appended afterwards) survives later partial updates.
+    const x = document.createElement('button')
+    x.className = 'ar-panel-close'
+    x.textContent = '×'
+    x.title = 'Schließen'
+    x.onclick = () => { uiEl.style.display = 'none'; syncActive() }
+    uiEl.appendChild(x)
+    if (getComputedStyle(uiEl).position === 'static') uiEl.style.position = 'absolute'
+  }
+
+  const bar = document.createElement('div')
+  bar.className = 'ar-toolbar'
+  const mkBtn = (label) => { const b = document.createElement('button'); b.textContent = label; bar.appendChild(b); return b }
+  const editorBtn = uiEl ? mkBtn('Editor') : null
+  const debugBtn = debugManager ? mkBtn('Debug') : null
+  arRoot.appendChild(bar)
+
+  syncActive = () => {
+    if (editorBtn) editorBtn.classList.toggle('active', uiEl.style.display !== 'none')
+    if (debugBtn) debugBtn.classList.toggle('active', !!debugManager.isOpen?.())
+  }
+  if (editorBtn) editorBtn.onclick = () => { uiEl.style.display = (uiEl.style.display === 'none') ? 'block' : 'none'; syncActive() }
+  if (debugBtn) debugBtn.onclick = () => { debugManager.toggle(); syncActive() }
+  syncActive()
+
+  // Expose a way to force the editor open (e.g. when editing / creating an
+  // object while it is minimized).
+  const openEditor = () => { if (uiEl) { uiEl.style.display = 'block'; syncActive() } }
+  return { openEditor }
+}
+
 function focusCameraOn(scene, gameObject) {
   const cam = scene?.activeCamera
   if (!cam || !gameObject?.root) return
@@ -899,7 +1138,7 @@ async function setupPlayer(scene, world, geo, gps, canvas) {
   player.addComponent(new TransformComponent())
 
   player.addComponent(
-    new DebugCameraComponent(canvas, cameraComponent, DEBUG_WORLD)
+    new DebugCameraComponent(canvas, cameraComponent, DEBUG_WORLD, canvas.parentElement || document.body)
   )
 
   world.add(player)

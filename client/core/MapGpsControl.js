@@ -19,7 +19,11 @@ const STATE = {
   NOT_FOLLOWING:'not-following'  // Watch an, Marker da, Karte bleibt stehen
 }
 
-export function setupMapGps(map, { onError } = {}) {
+// opts.positionSource: optional shared FusedPositionSource (GPS+UWB). When given,
+// the marker follows that single source (so map and AR agree, UWB-corrected)
+// instead of Leaflet's own geolocation. opts.onActivate: called on first
+// activation (e.g. to start the shared GPS provider).
+export function setupMapGps(map, { onError, positionSource, onActivate } = {}) {
   injectStyles()
 
   let state = STATE.IDLE
@@ -27,6 +31,7 @@ export function setupMapGps(map, { onError } = {}) {
   let positionMarker = null
   let accuracyCircle = null
   let firstFix = true
+  let posUnsub = null
 
   const control = createControl(handleClick)
   map.addControl(control)
@@ -59,34 +64,48 @@ export function setupMapGps(map, { onError } = {}) {
       }
       return
     }
-    map.locate({
-      watch: true,
-      enableHighAccuracy: true,
-      maximumAge: 1000,
-      timeout: 15000
-    })
-    map.on('locationfound', onLocationFound)
-    map.on('locationerror', onLocationError)
+    if (positionSource) {
+      // Drive the marker from the shared GPS/UWB source.
+      onActivate?.()
+      const seed = positionSource.getWorldPosition?.()
+      if (seed && Number.isFinite(seed.lat)) applyFix(window.L.latLng(seed.lat, seed.lon), seed.accuracy ?? 5)
+      posUnsub = positionSource.onPosition(p => {
+        if (p && Number.isFinite(p.lat)) applyFix(window.L.latLng(p.lat, p.lon), p.accuracy ?? 5)
+      })
+    } else {
+      map.locate({
+        watch: true,
+        enableHighAccuracy: true,
+        maximumAge: 1000,
+        timeout: 15000
+      })
+      map.on('locationfound', onLocationFound)
+      map.on('locationerror', onLocationError)
+    }
     watchActive = true
     state = STATE.FOLLOWING
     updateButton()
   }
 
-  function onLocationFound(e) {
+  function onLocationFound(e) { applyFix(e.latlng, e.accuracy) }
+
+  // Shared marker/accuracy/center/follow logic for both the Leaflet-locate and
+  // the positionSource paths.
+  function applyFix(latlng, accuracy) {
     if (!positionMarker) {
-      positionMarker = window.L.marker(e.latlng, {
+      positionMarker = window.L.marker(latlng, {
         icon: makeIcon(),
         keyboard: false,
         interactive: false
       }).addTo(map)
     } else {
-      positionMarker.setLatLng(e.latlng)
+      positionMarker.setLatLng(latlng)
     }
     if (accuracyCircle) {
-      accuracyCircle.setLatLng(e.latlng).setRadius(e.accuracy)
+      accuracyCircle.setLatLng(latlng).setRadius(accuracy)
     } else {
-      accuracyCircle = window.L.circle(e.latlng, {
-        radius: e.accuracy,
+      accuracyCircle = window.L.circle(latlng, {
+        radius: accuracy,
         color: '#2c5d8f', fillColor: '#2c5d8f',
         fillOpacity: 0.12, weight: 1, interactive: false
       }).addTo(map)
@@ -96,10 +115,10 @@ export function setupMapGps(map, { onError } = {}) {
       // Beim allerersten Fix zentrieren und etwas zoomen, falls die Karte
       // weltweit aussieht. Auf hohem Zoom (User hat schon manuell gezoomt)
       // nicht ungewollt rauszoomen — max() hält das hoehere Level.
-      map.setView(e.latlng, Math.max(map.getZoom(), 16))
+      map.setView(latlng, Math.max(map.getZoom(), 16))
       firstFix = false
     } else if (state === STATE.FOLLOWING) {
-      map.panTo(e.latlng)
+      map.panTo(latlng)
     }
   }
 
@@ -115,9 +134,12 @@ export function setupMapGps(map, { onError } = {}) {
 
   function deactivate() {
     if (watchActive) {
-      map.stopLocate()
-      map.off('locationfound', onLocationFound)
-      map.off('locationerror', onLocationError)
+      if (posUnsub) { posUnsub(); posUnsub = null }
+      else {
+        map.stopLocate()
+        map.off('locationfound', onLocationFound)
+        map.off('locationerror', onLocationError)
+      }
       watchActive = false
     }
     if (positionMarker) { positionMarker.remove(); positionMarker = null }

@@ -17,6 +17,7 @@
     "ais": "node agents/ais-bridge.mjs",
     "poi": "node agents/poi-bridge.mjs",
     "wand-agent": "node agents/wand-agent.mjs",
+    "uwb-anchors": "node agents/uwb-anchors.mjs",
     "mobile:sync": "webpack && cap sync android",
     "mobile:run": "webpack && node scripts/mobile-run.mjs",
     "mobile:open": "cap open android"
@@ -24,6 +25,7 @@
   "dependencies": {
     "@babylonjs/core": "^8.54.3",
     "@babylonjs/inspector": "^8.55.3",
+    "@capacitor-community/text-to-speech": "^8.0.2",
     "@capacitor/android": "^8.4.0",
     "@capacitor/core": "^8.4.0",
     "@capacitor/geolocation": "^8.2.0",

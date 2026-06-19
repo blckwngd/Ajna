@@ -30,7 +30,10 @@ window.addEventListener('DOMContentLoaded', () => {
     // zu muessen. Wenn die Map zum Zeitpunkt schon ready ist (sehr
     // wahrscheinlich nicht, weil mobile.js vor map.js' init() laeuft),
     // direkt aktivieren — sonst auf ajna:map-ready warten.
-    if (isNative) wireMobileGpsAutoActivate()
+    if (isNative) {
+      wireMobileGpsAutoActivate()
+      startNativeGps(ajna)   // WebView navigator.geolocation often never fires on Android
+    }
 
     const shell = new MobileShell({
       ajna,
@@ -40,6 +43,30 @@ window.addEventListener('DOMContentLoaded', () => {
     window.ajnaMobile = shell   // Console-Debug-Hook
   })
 })
+
+// On Android the WebView's navigator.geolocation frequently never delivers a
+// fix (geolocation prompt not wired in the WebChromeClient). Use the native
+// Capacitor Geolocation plugin and feed the shared GPSProvider, which drives
+// the map marker, the AR world origin and auto-declination.
+async function startNativeGps(ajna) {
+  try {
+    const { Geolocation } = await import('@capacitor/geolocation')
+    const { getAccessoryHub } = await import('./core/AccessoryHub.js')
+    const hub = getAccessoryHub({ ajna })
+    await Geolocation.watchPosition(
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 1000 },
+      (pos, err) => {
+        if (err) { console.warn('[mobile] native GPS error:', err?.message || err); return }
+        const c = pos?.coords
+        if (!c) return
+        hub.gps.ingest(c.latitude, c.longitude, c.altitude ?? 0, c.accuracy)
+      }
+    )
+    console.log('[mobile] native Capacitor GPS watch started')
+  } catch (err) {
+    console.warn('[mobile] native GPS watch failed:', err?.message || err)
+  }
+}
 
 function wireMobileGpsAutoActivate() {
   const tryActivate = (gpsControl, dummyMode) => {

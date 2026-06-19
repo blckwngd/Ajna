@@ -1,0 +1,5 @@
+[
+  { "name": "UWB-Anker A", "nodeId": 1, "lat": 50.35690, "lon": 7.58900, "altitude": 0, "local": { "x": 0,    "y": 0,    "z": 0 } },
+  { "name": "UWB-Anker B", "nodeId": 2, "lat": 50.35695, "lon": 7.58900, "altitude": 0, "local": { "x": 5000, "y": 0,    "z": 0 } },
+  { "name": "UWB-Anker C", "nodeId": 3, "lat": 50.35690, "lon": 7.58908, "altitude": 0, "local": { "x": 0,    "y": 5000, "z": 0 } }
+]

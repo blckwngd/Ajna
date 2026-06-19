@@ -2,7 +2,7 @@ import { TransformComponent } from "../components/TransformComponent.js"
 
 export class DebugUIManager {
 
-  constructor({ scene, geo, gps, player, objectMap, tiles3DManager, onObjectHover = null }) {
+  constructor({ scene, geo, gps, player, objectMap, tiles3DManager, onObjectHover = null, container = document.body }) {
 
     this.scene = scene
     this.geo = geo
@@ -10,6 +10,7 @@ export class DebugUIManager {
     this.player = player
     this.objectMap = objectMap
     this.tiles3DManager = tiles3DManager
+    this.host = container   // where the panel mounts (AR view when embedded)
     // Hover-Callback (gameObject, hovering) — Highlight im 3D-Raum
     // wird vom Host (main.js) bereitgestellt, nicht hier.
     this.onObjectHover = onObjectHover
@@ -26,8 +27,9 @@ export class DebugUIManager {
 
     this.container = document.createElement("div")
     this.container.id = "debugPanel"
+    this.container.style.display = "none"   // hidden until toggled open
     this.container.innerHTML = this._html()
-    document.body.appendChild(this.container)
+    this.host.appendChild(this.container)
 
     this._injectStyles()
     this._restoreInputs()
@@ -44,6 +46,7 @@ export class DebugUIManager {
     return `
       <header class="dbg-header">
         <h3>Debug Panel</h3>
+        <button id="dbgCloseBtn" class="dbg-close" title="Schließen">×</button>
       </header>
 
       <section class="dbg-section">
@@ -128,6 +131,9 @@ export class DebugUIManager {
         box-shadow: 0 6px 24px rgba(0,0,0,0.4);
         z-index: 2000;
       }
+      #debugPanel .dbg-header {
+        display: flex; align-items: center; justify-content: space-between;
+      }
       #debugPanel .dbg-header h3 {
         margin: 0 0 8px;
         font-size: 13px;
@@ -135,6 +141,11 @@ export class DebugUIManager {
         text-transform: uppercase;
         color: #f1c40f;
       }
+      #debugPanel .dbg-close {
+        background: transparent; color: #aab; border: none;
+        font-size: 20px; line-height: 1; cursor: pointer; padding: 0 4px;
+      }
+      #debugPanel .dbg-close:hover { color: #fff; }
       #debugPanel h4 {
         margin: 0 0 6px;
         font-size: 11px;
@@ -258,7 +269,14 @@ export class DebugUIManager {
     }
   }
 
+  show() { this.container.style.display = "" }
+  hide() { this.container.style.display = "none" }
+  toggle() { this.container.style.display = (this.container.style.display === "none") ? "" : "none" }
+  isOpen() { return this.container.style.display !== "none" }
+
   attachEvents() {
+
+    this.container.querySelector("#dbgCloseBtn").addEventListener("click", () => this.hide())
 
     this.container.querySelector("#dummyToggle").addEventListener("change", e => {
       this.gps.enableDummyMode(e.target.checked)

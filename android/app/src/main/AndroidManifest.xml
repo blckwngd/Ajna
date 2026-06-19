@@ -34,6 +34,13 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!-- Foreground service for BLE accessories (wand, later UWB). Keeps the
+             connection alive with the screen off; the WebView alone cannot. -->
+        <service
+            android:name=".accessory.AccessoryBleService"
+            android:foregroundServiceType="connectedDevice"
+            android:exported="false" />
     </application>
 
     <!-- Permissions -->
@@ -45,4 +52,20 @@
          Background-Geolocation-Plugin und einem Foreground-Service. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- BLE accessories (wand, later UWB). -->
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <!-- Android 12+ (API 31) runtime BLE permissions. neverForLocation: we do not
+         derive the user's location from BLE scans (privacy-first). -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Legacy BLE for API <= 30. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+
+    <!-- Foreground service so the wand stays connected with the screen off. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 </manifest>

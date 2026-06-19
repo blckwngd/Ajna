@@ -187,6 +187,15 @@ export class GPSProvider {
     return this.data
   }
 
+  // Inject an external real fix (e.g. native Capacitor Geolocation on Android,
+  // where the WebView's navigator.geolocation often never fires). Ignored in
+  // dummy mode, like real WebView updates.
+  ingest(lat, lon, altitude = 0, accuracy = 0) {
+    if (this.dummyMode) return
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
+    this._applyData({ lat, lon, altitude: altitude ?? 0, accuracy, source: "real" })
+  }
+
   // ---- Dummy-Steuerung ----
 
   setDummyPosition(lat, lon, altitude = 0) {

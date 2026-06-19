@@ -1,12 +1,15 @@
 import { injectServerBadgeStyles, renderServerBadge } from './ServerBadge.js'
 
 export class EditorUI {
-  constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null, onManageGroups = null, onManageServers = null, onManageProfile = null, onManageFilters = null }) {
+  constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null, onManageGroups = null, onManageServers = null, onManageProfile = null, onManageFilters = null, onEditorActivate = null }) {
     this.ajna = ajna
     this.container = container
     this.mode = mode
     this.onObjectSelected = onObjectSelected
     this.onObjectsUpdated = onObjectsUpdated
+    // Optional: fired when the editor form is engaged (edit existing or start a
+    // new object). The AR host uses it to pop the (possibly minimized) panel.
+    this.onEditorActivate = onEditorActivate
     // Optional: Callback aus der jeweiligen Host-Anwendung (z. B. AR-
     // Client), der die aktive Kamera zur Spieler-Position bewegt.
     // Wenn nicht gesetzt, wird die zugehörige Schaltfläche nicht gerendert.
@@ -35,7 +38,17 @@ export class EditorUI {
     // Catch-up-Poll. loadObjects() würde nur die Liste laden, die
     // Resilience-Layer (Phase 5) bliebe schlafend.
     this.bindEvents()
-    await this.ajna.connect()
+    // Eine bereits vorhandene Session (z. B. per URL-Fragment-Handoff oder aus
+    // localStorage) sofort im Formular spiegeln — nicht erst auf ein
+    // Auth-Change-Event warten, das beim Vorab-Laden nicht feuert.
+    this.updateAuthUI()
+    // connect()-Fehler (z. B. Realtime/PB_CONNECT) dürfen die Auth-UI nicht in
+    // den Logout-Zustand zwingen und auch den restlichen Init nicht abbrechen.
+    try {
+      await this.ajna.connect()
+    } catch (err) {
+      console.warn('[editor] connect failed:', err?.message || err)
+    }
     this.updateAuthUI()
   }
 
@@ -431,6 +444,7 @@ export class EditorUI {
   }
 
   fillEditor(obj) {
+    this.onEditorActivate?.()   // pop the editor panel open if minimized
     this.editorForm.objectId.value = obj.id
     this.editorForm.name.value = obj.name || ''
     this.editorForm.lat.value = (obj.lat ?? 0).toFixed(6)
@@ -445,6 +459,7 @@ export class EditorUI {
    * Owner wird serverseitig beim Create gesetzt — kein Client-Zutun nötig.
    */
   startNewObjectAt(lat, lon, altitude = 0) {
+    this.onEditorActivate?.()   // pop the editor panel open if minimized
     if (!this.ajna.isLoggedIn()) {
       this.setStatus('Zum Anlegen bitte einloggen.')
       return

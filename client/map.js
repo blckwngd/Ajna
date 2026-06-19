@@ -12,6 +12,8 @@ import { ObjectActions } from "./core/ObjectActions.js"
 import { Toast } from "./core/Toast.js"
 import { PositionSmoother } from "./core/PositionSmoother.js"
 import { setupMapGps } from "./core/MapGpsControl.js"
+import { getAccessoryHub } from "./core/AccessoryHub.js"
+import { rayEndpointWgs84 } from "./core/PointingResolver.js"
 // Hinweis: Leaflet selbst (JS + CSS) wird via CDN-Tag in index*.html
 // geladen — kein npm-Bundle-Import noetig.
 
@@ -331,8 +333,30 @@ async function init() {
   // Eigenes GPS-Control: erster Klick aktiviert Watch + Follow + Marker,
   // weitere Klicks toggeln nur Follow. Auf Capacitor-Native triggern wir
   // das per Event-Listener (s. mobile.js) sofort beim App-Start.
-  const gpsControl = setupMapGps(map)
+  // Shared GPS/UWB position source so the map marker matches the AR camera
+  // (UWB-corrected when available). onActivate starts the shared GPS provider.
+  const _hub = getAccessoryHub({ ajna })
+  const gpsControl = setupMapGps(map, {
+    positionSource: _hub.positionSource,
+    onActivate: () => _hub.gps.start()
+  })
   window.ajnaGpsControl = gpsControl
+
+  // Visual pointing ray on the map (origin → direction), shared wand.
+  let _rayPoly = null
+  _hub.wand.onOrientation(() => {
+    const dir = _hub.wand.getPointingDirection()
+    const origin = _hub.wand.getOrigin?.()
+    if (!dir || !origin || !Number.isFinite(origin.lat) || !window.map) {
+      if (_rayPoly) { _rayPoly.remove(); _rayPoly = null }
+      return
+    }
+    const end = rayEndpointWgs84(origin, dir, _hub.wand.maxRangeM)
+    const latlngs = [[origin.lat, origin.lon], [end.lat, end.lon]]
+    if (_rayPoly) _rayPoly.setLatLngs(latlngs)
+    else _rayPoly = window.L.polyline(latlngs,
+      { color: '#4ea1ff', weight: 3, opacity: 0.85, interactive: false }).addTo(window.map)
+  })
   window.map = map
   window.dispatchEvent(new CustomEvent('ajna:map-ready', {
     detail: { map, gpsControl, dummyMode }

@@ -66,15 +66,33 @@ html, body {
 /* ─── Map-View ─────────────────────────────────────────────────── */
 #map { width: 100%; height: 100%; background: #1a1d24; }
 
-/* ─── AR-Stub ──────────────────────────────────────────────────── */
-.ar-stub {
-  display: flex; height: 100%;
-  align-items: center; justify-content: center;
-  text-align: center; color: var(--fg-muted);
-  padding: 24px;
+/* ─── AR-View (Babylon, lazy via mobile.js) ────────────────────── */
+.shell-view[data-view="ar"] { background: #000; }
+#renderCanvas { width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+/* AR-Overlay (EditorUI im 'ar'-Modus) — kompakt über dem Canvas. */
+.shell-view[data-view="ar"] #ui {
+  position: absolute; top: 10px; left: 10px;
+  max-width: 300px; max-height: 55%; overflow: auto;
+  background: rgba(0,0,0,0.6); color: #fff; padding: 10px;
+  border-radius: 8px; z-index: 10; font-size: 13px;
 }
-.ar-stub .icon { font-size: 64px; opacity: 0.4; line-height: 1; }
-.ar-stub p { margin: 12px 0 0; }
+.ar-loading {
+  position: absolute; inset: 0; display: flex;
+  align-items: center; justify-content: center;
+  color: var(--fg-muted); text-align: center; padding: 24px;
+  pointer-events: none;  /* never block canvas touch, even if it lingers */
+}
+.ar-loading[hidden], .ar-hint[hidden] { display: none; }
+.ar-hint {
+  position: absolute; inset: 0; z-index: 20;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  text-align: center; padding: 24px; gap: 6px;
+  background: var(--bg); color: var(--fg);
+}
+.ar-hint .icon { font-size: 64px; opacity: 0.5; line-height: 1; margin-bottom: 8px; }
+.ar-hint p { margin: 4px 0; max-width: 320px; }
+.ar-hint .settings-btn { max-width: 320px; }
 
 /* ─── Settings-View ────────────────────────────────────────────── */
 .settings-view {
@@ -151,12 +169,20 @@ html, body {
       <div id="map"></div>
     </section>
     <section class="shell-view" data-view="ar">
-      <div class="ar-stub">
-        <div>
-          <div class="icon">🥽</div>
-          <p>AR-Ansicht</p>
-          <p class="meta">Kommt in Phase B des Capacitor-Spike.<br>WebXR-Session bleibt persistent, sobald aktiviert.</p>
-        </div>
+      <!-- The AR (Babylon) bundle is lazy-loaded by mobile.js on first open and
+           renders into this canvas; #ui hosts the AR overlay (EditorUI). -->
+      <canvas id="renderCanvas"></canvas>
+      <div id="ui"></div>
+      <div class="ar-loading" data-role="ar-loading" hidden>AR wird geladen …</div>
+      <!-- Shown when immersive WebXR is NOT supported in this WebView (Android):
+           the user opens the AR page in Chrome, where WebXR + ARCore work. -->
+      <div class="ar-hint" data-role="ar-hint" hidden>
+        <div class="icon">🥽</div>
+        <p>Immersives XR wird in dieser App nicht direkt unterstützt.</p>
+        <p class="meta">Für volles AR/VR in Chrome öffnen — Login und Filter werden
+          automatisch übernommen.</p>
+        <button class="settings-btn" data-action="ar-open-chrome">In Chrome öffnen</button>
+        <button class="settings-btn secondary" data-action="ar-preview">3D-Vorschau in der App</button>
       </div>
     </section>
     <section class="shell-view" data-view="settings">
