@@ -371,6 +371,10 @@ function enabledSources() {
 
 // Datenschutz-Schalter unten links: Standort-Übermittlung an/aus (Opt-in).
 function mountShareLocationToggle(interestArea) {
+  // In der Mobile-Shell (Bottom-Tab-Bar vorhanden) NICHT anzeigen — dort gibt
+  // es den Schalter in Einstellungen → Privatsphäre. Der Publisher läuft hier
+  // trotzdem, der Schalter wäre nur ein Duplikat, das die Tab-Leiste überlappt.
+  if (document.querySelector('.shell-tabbar')) return
   if (document.getElementById('shareLocToggle')) return
   const box = document.createElement('label')
   box.id = 'shareLocToggle'
@@ -442,14 +446,17 @@ async function init() {
 
   // Interest-Area-Publisher (Opt-in): teilt einen UNSCHARFEN Bereich, damit
   // Agents Daten in der Nähe liefern. Position aus der geteilten GPS/UWB-Quelle;
-  // eingeblendete Quellen aus dem Agent-Filter. Schalter siehe unten.
-  const interestArea = new InterestArea({
-    ajna,
-    getPosition: () => _hub.positionSource?.getWorldPosition?.() || null,
-    getSources: () => enabledSources()
-  })
-  interestArea.start()
-  mountShareLocationToggle(interestArea)
+  // eingeblendete Quellen aus dem Agent-Filter. NUR im Desktop-Map-Client — in
+  // der Mobile-Shell übernimmt MobileShell Publisher + Schalter (sonst doppelt).
+  if (!document.querySelector('.shell-tabbar')) {
+    const interestArea = new InterestArea({
+      ajna,
+      getPosition: () => _hub.positionSource?.getWorldPosition?.() || null,
+      getSources: () => enabledSources()
+    })
+    interestArea.start()
+    mountShareLocationToggle(interestArea)
+  }
 
   // Karte verschiebt sich → Off-Screen-Linie zum hervorgehobenen Marker neu zeichnen
   map.on('move', updateHighlightLine)
