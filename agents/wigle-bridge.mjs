@@ -64,11 +64,13 @@ const API_NAME   = process.env.WIGLE_API_NAME  || process.env.API_NAME
 const API_TOKEN  = process.env.WIGLE_API_TOKEN || process.env.API_TOKEN
 const CENTER_LAT = parseFloat(process.env.WIGLE_CENTER_LAT || '50.3569')
 const CENTER_LON = parseFloat(process.env.WIGLE_CENTER_LON || '7.5890')
-const RADIUS_M   = parseFloat(process.env.WIGLE_RADIUS_M   || '500')
-const MAX_NETS   = parseInt(process.env.WIGLE_MAX || '50', 10)
-const INTERVAL_MS = parseFloat(process.env.WIGLE_INTERVAL_S || '3600') * 1000
+const RADIUS_M   = parseFloat(process.env.WIGLE_RADIUS_M   || '1000')  // Abfrage-Radius je Ziel
+const MAX_NETS   = parseInt(process.env.WIGLE_MAX || '100', 10)        // Ergebnisse/Areal (max 100/Seite)
+const INTERVAL_MS = parseFloat(process.env.WIGLE_INTERVAL_S || '3600') * 1000  // Re-Query bei Stillstand
 const COVERAGE_M = parseFloat(process.env.WIGLE_COVERAGE_M || '50')
-const MAX_AREAS  = parseInt(process.env.WIGLE_MAX_AREAS || '8', 10)   // Quota-Schutz
+const MAX_AREAS  = parseInt(process.env.WIGLE_MAX_AREAS || '8', 10)    // Quota-Schutz
+const POLL_MS      = parseFloat(process.env.WIGLE_POLL_S || '60') * 1000        // Bereichs-Poll (billig, lokal)
+const QUERY_MIN_MS = parseFloat(process.env.WIGLE_QUERY_MIN_S || '300') * 1000  // min. Abstand WiGLE-Abfragen
 
 // Re-exec mit --use-system-ca bei HTTPS (Caddy-interne CA) — wie poi-bridge.
 if (AJNA_URL.startsWith('https://') && !process.execArgv.includes('--use-system-ca')) {
@@ -82,13 +84,12 @@ if (!AJNA_USER || !AJNA_PASS) die('AJNA_USER und AJNA_PASS fehlen')
 if (!API_NAME || !API_TOKEN)  die('WIGLE_API_NAME und WIGLE_API_TOKEN fehlen (wigle.net → Account → API)')
 if (!Number.isFinite(CENTER_LAT) || !Number.isFinite(CENTER_LON)) die('Ungültige Center-Koords')
 
-// ─── BoundingBox um das Zentrum (Quadrat, das den Radius enthält) ────────
-const KM_PER_DEG_LAT = 111000
-const dLat = RADIUS_M / KM_PER_DEG_LAT
-const dLon = RADIUS_M / (KM_PER_DEG_LAT * Math.cos(CENTER_LAT * Math.PI / 180))
-const BBOX = {
-  latMin: CENTER_LAT - dLat, latMax: CENTER_LAT + dLat,
-  lonMin: CENTER_LON - dLon, lonMax: CENTER_LON + dLon
+// BoundingBox (RADIUS_M) um ein beliebiges Zentrum — für den Zentrum-Fallback
+// und pro aktivem Interessensbereich (dessen Mittelpunkt).
+function bboxAround(lat, lon) {
+  const dla = RADIUS_M / 111000
+  const dlo = RADIUS_M / (111000 * Math.cos(lat * Math.PI / 180))
+  return { latMin: lat - dla, latMax: lat + dla, lonMin: lon - dlo, lonMax: lon + dlo }
 }
 
 const WIGLE_URL = 'https://api.wigle.net/api/v2/network/search'
@@ -172,31 +173,34 @@ async function fetchActiveAreas() {
   return Array.isArray(data?.areas) ? data.areas : []
 }
 
-// ─── Sync ─────────────────────────────────────────────────────────────────
-async function sync() {
-  // Demand-getrieben: dort abfragen, wo Spieler sind (anonymisierte Bereiche);
-  // ohne aktive Bereiche → konfiguriertes Zentrum.
+// Aktive Ziele: Mittelpunkte der Interessensbereiche, sonst Fallback-Zentrum.
+// `key` dient dem Änderungs-Vergleich (WiGLE nur bei Änderung neu abfragen).
+async function getTargets() {
   let areas = []
   try { areas = await fetchActiveAreas() }
   catch (err) { console.warn(`[wigle] interest-areas: ${err?.message || err} → Fallback Zentrum`) }
-
-  let targets = areas.length ? areas : [BBOX]
-  if (targets.length > MAX_AREAS) {
-    console.warn(`[wigle] ${targets.length} Bereiche → auf ${MAX_AREAS} begrenzt (WiGLE-Quota)`)
-    targets = targets.slice(0, MAX_AREAS)
+  if (!areas.length) return { centers: [{ lat: CENTER_LAT, lon: CENTER_LON }], key: 'center', fromAreas: false }
+  if (areas.length > MAX_AREAS) {
+    console.warn(`[wigle] ${areas.length} Bereiche → auf ${MAX_AREAS} begrenzt (WiGLE-Quota)`)
+    areas = areas.slice(0, MAX_AREAS)
   }
+  const centers = areas.map(a => ({ lat: (a.latMin + a.latMax) / 2, lon: (a.lonMin + a.lonMax) / 2 }))
+  const key = centers.map(c => `${c.lat.toFixed(4)},${c.lon.toFixed(4)}`).sort().join('|')
+  return { centers, key, fromAreas: true }
+}
 
-  // Union über alle Ziele, dedup nach BSSID (WiGLE-Quota: eine Abfrage/Areal).
+// WiGLE pro Ziel abfragen (RADIUS_M um den Mittelpunkt), Union, Bestand abgleichen.
+async function queryReconcile(centers, fromAreas) {
   const byNet = new Map()
-  for (const t of targets) {
+  for (const c of centers) {
     try {
-      for (const n of await fetchNetworks(t)) if (n.netid) byNet.set(String(n.netid), n)
+      for (const n of await fetchNetworks(bboxAround(c.lat, c.lon))) if (n.netid) byNet.set(String(n.netid), n)
     } catch (err) {
       console.warn(`[wigle] fetch fehlgeschlagen: ${err?.message || err}`)
     }
   }
   const results = Array.from(byNet.values())
-  console.log(`[wigle] ${results.length} Netze aus WiGLE (${areas.length ? `${targets.length} Bereich(e)` : 'Zentrum'})`)
+  console.log(`[wigle] ${results.length} Netze aus WiGLE (${fromAreas ? `${centers.length} Bereich(e)` : 'Zentrum'})`)
 
   const seen = new Set()
   let created = 0, skipped = 0, failed = 0
@@ -253,9 +257,26 @@ async function sync() {
   console.log(`[wigle] ${created} neu, ${skipped} bereits vorhanden, ${deleted} entfernt, ${failed} Fehler — Bestand: ${nets.size}`)
 }
 
-await sync()
-setInterval(() => { sync().catch(err => console.warn(`[wigle] sync-tick: ${err?.message || err}`)) }, INTERVAL_MS)
-console.log('[wigle] bereit — periodischer Sync aktiv. (Strg+C zum Beenden)')
+// Demand-getriebene Schleife: Bereiche häufig + billig pollen, WiGLE nur
+// abfragen, wenn sich die Ziele geändert haben (gedrosselt) ODER periodisch
+// (Staleness) — schont das WiGLE-Tageslimit, folgt aber zügig dem Spieler.
+let lastKey = null, lastQueryAt = 0
+async function tick() {
+  const { centers, key, fromAreas } = await getTargets()
+  const now = Date.now()
+  const changed = key !== lastKey
+  const stale = (now - lastQueryAt) >= INTERVAL_MS
+  if (lastKey === null || stale || (changed && (now - lastQueryAt) >= QUERY_MIN_MS)) {
+    if (changed && lastKey !== null) {
+      console.log(`[wigle] Ziel geändert → WiGLE-Abfrage (${fromAreas ? `${centers.length} Bereich(e)` : 'Zentrum'})`)
+    }
+    lastKey = key; lastQueryAt = now
+    await queryReconcile(centers, fromAreas)
+  }
+}
+await tick()
+setInterval(() => { tick().catch(err => console.warn(`[wigle] tick: ${err?.message || err}`)) }, POLL_MS)
+console.log(`[wigle] bereit — Bereichs-Poll alle ${(POLL_MS / 1000) | 0} s, WiGLE-Query min. alle ${(QUERY_MIN_MS / 1000) | 0} s, Re-Query alle ${(INTERVAL_MS / 1000) | 0} s. (Strg+C)`)
 
 process.on('SIGINT',  () => { console.log('\n[wigle] SIGINT — exit'); process.exit(0) })
 process.on('SIGTERM', () => { console.log('[wigle] SIGTERM — exit'); process.exit(0) })
