@@ -833,7 +833,14 @@ async function syncSceneObjects(scene, world, geo, objects) {
 // Toast plus einen kurzen Highlight-Pulse am betroffenen GameObject.
 function _handleInteractAR(go, data) {
   if (!_toast) _toast = new Toast()
-  _toast.show(`${data.action} → ${go.name || go.id}`, { title: "INTERACT" })
+  // examine → Beschreibung, talk → Dialog-Zeile (frischer Record aus dem Cache).
+  const rec = ajnaManager.getObjectById(go.id)
+  const reply =
+    (data.action === "talk"    && (rec?.state?.dialog || rec?.description)) ||
+    (data.action === "examine" && (rec?.description || rec?.state?.hint || rec?.state?.dialog)) ||
+    null
+  if (reply) _toast.show(reply, { title: go.name || go.id })
+  else _toast.show(`${data.action} → ${go.name || go.id}`, { title: "INTERACT" })
   if (_arHighlight) {
     _arHighlight(go, true)
     setTimeout(() => _arHighlight(go, false), 280)

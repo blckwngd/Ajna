@@ -194,6 +194,19 @@ function derivePoiName(tags = {}) {
   return tags.amenity || tags.shop || tags.tourism || tags.leisure || null
 }
 
+// Informative Beschreibung aus den OSM-Tags (wird via "examine" ausgegeben).
+function describePoi(tags = {}) {
+  const cat = tags.amenity || tags.shop || tags.tourism || tags.leisure
+  const parts = []
+  if (cat) parts.push(String(cat).replace(/_/g, ' '))
+  if (tags.cuisine)       parts.push(`Küche: ${String(tags.cuisine).replace(/_/g, ' ')}`)
+  if (tags.opening_hours) parts.push(`Öffnungszeiten: ${tags.opening_hours}`)
+  const addr = [tags['addr:street'], tags['addr:housenumber']].filter(Boolean).join(' ')
+  if (addr) parts.push(addr)
+  if (tags.website) parts.push(tags.website)
+  return parts.length ? `POI · ${parts.join(' · ')}` : 'Point of Interest (OpenStreetMap).'
+}
+
 async function syncPois() {
   let result
   try {
@@ -247,6 +260,7 @@ async function syncPois() {
       const obj = await ajna.createObject({
         name,
         type: 'poi',
+        description: describePoi(f.tags),
         lat, lon, altitude: 0,
         state: {
           osm_id:   osmId,

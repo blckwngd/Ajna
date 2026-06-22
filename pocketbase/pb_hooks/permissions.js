@@ -189,6 +189,10 @@ function resolveExplicit(userId, objectRecord) {
 /** Hilfsfunktion: prüft, ob ein Action-Key durch das effective-set abgedeckt ist. */
 function canInteract(effective, action) {
   const allowed = effective.interact_actions || []
+  // "examine" ist reines Inspizieren (gibt nur die Beschreibung aus, kein
+  // State-Effekt) — für JEDES sichtbare Objekt erlaubt, ohne dass jede Quelle
+  // (AIS, POI, …) es explizit in ihre ACE schreiben muss.
+  if (action === "examine" && (effective.rights || []).indexOf("view") !== -1) return true
   return allowed.indexOf("*") !== -1 || allowed.indexOf(action) !== -1
 }
 

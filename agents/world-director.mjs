@@ -153,6 +153,25 @@ const NAME_GEN = {
   hint:   () => 'Hinweis'
 }
 
+// Beschreibung (Top-Level-Feld), die "examine" ausgibt. Prozedural wie Namen.
+const DESCR_NPC = [
+  'Ein Passant auf dem Weg durch die Stadt.',
+  'Jemand, der hier offenbar öfter unterwegs ist.',
+  'Eine freundliche Gestalt mit eigener Route.'
+]
+const DESCR_ENEMY = [
+  'Eine zwielichtige Gestalt — besser auf Abstand bleiben.',
+  'Wirkt nicht eben freundlich gesinnt.'
+]
+const DESCRIPTION_GEN = {
+  npc:    () => pick(DESCR_NPC),
+  enemy:  () => pick(DESCR_ENEMY),
+  animal: (name) => `Ein wildlebendes Tier${name ? ` — ${name}` : ''}, das sich am liebsten auf Freiflächen aufhält.`,
+  dragon: () => 'Ein fliegendes Wesen, das hoch über den Dächern seine Bahnen zieht.',
+  item:   () => 'Ein Gegenstand. Aktuell ohne Funktion — vielleicht später aufsammelbar.',
+  hint:   () => pick(HINT_LINES)
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 //  Archetyp-Registry — der zentrale Contract (siehe docs/world-objects.md)
 // ─────────────────────────────────────────────────────────────────────────
@@ -194,6 +213,7 @@ function buildSpawn(archetype) {
   return {
     name,
     type: archetype,
+    description: DESCRIPTION_GEN[archetype](name),
     lat, lon, altitude,
     rotation: { x: 0, y: Math.random() * Math.PI * 2 - Math.PI, z: 0 },
     animation_state: arch.initialAnim,
@@ -267,6 +287,21 @@ async function ensureActions(obj) {
   }
 }
 
+// Setzt das description-Feld (für examine) bei Bestandsobjekten, die noch
+// keins haben. Top-Level-Feld → von Teil-Updates (Bewegung) unberührt.
+async function ensureDescription(obj) {
+  const a = obj.state?.archetype
+  if (!ARCHETYPES[a]) return
+  if (typeof obj.description === 'string' && obj.description.trim()) return
+  try {
+    const desc = DESCRIPTION_GEN[a](obj.name)
+    const updated = await ajna.updateObject(obj.id, { description: desc })
+    obj.description = updated?.description || desc
+  } catch (err) {
+    console.warn(`[director] description für ${obj.id} fehlgeschlagen: ${err?.message || err}`)
+  }
+}
+
 // ─── Adopt-on-Boot: vorhandene Director-Objekte sammeln + pro Archetyp zählen
 const existingByArch = {}
 for (const a of Object.keys(ARCHETYPES)) existingByArch[a] = 0
@@ -309,6 +344,7 @@ for (const obj of managed) {
   if (!ARCHETYPES[a]) continue
   await ensureAce(obj.id, actionKeys(a))
   await ensureActions(obj)
+  await ensureDescription(obj)
   reconciled++
 }
 console.log(`[director] ${reconciled} Objekte reconciled (ACE + Aktionen). Welt steht.`)

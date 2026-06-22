@@ -298,6 +298,7 @@ async function handlePosition(msg, meta, mmsi) {
       const obj = await ajna.createObject({
         name,
         type: 'ship',
+        description: `Schiff · MMSI ${mmsi} · Live-Position via aisstream.io (AIS).`,
         lat, lon, altitude: 0,
         rotation: { x: 0, y: degToYaw(heading), z: 0 },
         state: { mmsi, course: heading, source: 'aisstream' }
