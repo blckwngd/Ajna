@@ -11,6 +11,7 @@ import { AgentFilters } from "./core/AgentFilters.js"
 import { ObjectActions } from "./core/ObjectActions.js"
 import { Toast } from "./core/Toast.js"
 import { PositionSmoother } from "./core/PositionSmoother.js"
+import { encStyleOf } from "./core/wifiStyle.js"
 import { setupMapGps } from "./core/MapGpsControl.js"
 import { getAccessoryHub } from "./core/AccessoryHub.js"
 import { rayEndpointWgs84 } from "./core/PointingResolver.js"
@@ -21,6 +22,10 @@ import { rayEndpointWgs84 } from "./core/PointingResolver.js"
 const ajna = new AjnaManager(window.location.origin)
 window.ajna = ajna
 const markerLayer = new Map()
+// Abdeckungs-Kreise: pro Objekt mit state.coverage_radius (z. B. WLANs aus der
+// WiGLE-Bridge) ein L.circle um den Mittelpunkt. Lebenszyklus an den Marker
+// gekoppelt (addMarker/removeMarker).
+const coverageLayer = new Map()
 // Pro Marker ein PositionSmoother — füttert sich aus mapUpdateMarkers,
 // wird in tickMarkerSmoothers() pro Frame ausgelesen und auf den Marker
 // angewendet. Damit wirken die 5-Hz-Updates eines Agents (Fox-Walk) auf
@@ -68,12 +73,12 @@ function handleMarkerInteract(objectId, data) {
   const obj = ajna.getObjectById(objectId)
   const label = obj?.name || objectId
 
-  // Antwort des Objekts (simpler Dialog): spricht/zeigt seine im state
-  // hinterlegte Zeile. Kommt über denselben Realtime-Broadcast wie die
-  // Aktion → alle Zuschauer sehen die NPC-Antwort, nicht nur der Auslöser.
+  // Antwort des Objekts: examine gibt die Beschreibung aus (universell, für
+  // jedes Objekt mit description), talk die Dialog-Zeile. Kommt über denselben
+  // Realtime-Broadcast wie die Aktion → alle Zuschauer sehen es.
   const reply =
-    (data.action === "talk"    && obj?.state?.dialog) ||
-    (data.action === "examine" && (obj?.state?.hint || obj?.state?.dialog)) ||
+    (data.action === "talk"    && (obj?.state?.dialog || obj?.description)) ||
+    (data.action === "examine" && (obj?.description || obj?.state?.hint || obj?.state?.dialog)) ||
     null
   if (reply) toast.show(reply, { title: label })
   else toast.show(`${data.action} → ${label}`, { title: "INTERACT" })
@@ -183,16 +188,20 @@ const MARKER_TYPES = {
   animal: { emoji: '🐾', cls: 'map-marker-animal' },
   dragon: { emoji: '🐉', cls: 'map-marker-dragon' },
   item:   { emoji: '💎', cls: 'map-marker-item' },
-  hint:   { emoji: '💡', cls: 'map-marker-hint' }
+  hint:   { emoji: '💡', cls: 'map-marker-hint' },
+  wifi:   { emoji: '📶', cls: 'map-marker-wifi' }
 }
 
 function markerIconFor(obj) {
   const type = (obj.type || '').toLowerCase()
   const def = MARKER_TYPES[type]
+  // WLANs: Symbol nach Verschlüsselung (🔓 offen / 🔒 WPA2 / 🛡️ WPA3 …),
+  // damit der Typ schon am Marker erkennbar ist (zusätzlich zur Kreisfarbe).
+  const emoji = type === 'wifi' ? encStyleOf(obj).symbol : (def ? def.emoji : '❌')
   return window.L.divIcon({
     className: def ? `map-marker ${def.cls}` : 'map-marker',
     iconSize: [28, 28],
-    html: `${def ? def.emoji : '❌'} ${obj.name}`
+    html: `${emoji} ${obj.name}`
   })
 }
 
@@ -204,6 +213,22 @@ function addMarker(obj) {
   // Hover-Tooltip mit dem Objekt-Namen (Leaflet zeigt/blendet ihn automatisch
   // bei mouseover / mouseout)
   marker.bindTooltip(obj.name || 'unnamed', { direction: 'top', offset: [0, -8] })
+
+  // Abdeckungs-Kreis um den Mittelpunkt (z. B. geschätzte WLAN-Reichweite),
+  // sofern das Objekt einen state.coverage_radius (in Metern) trägt.
+  const coverR = Number(obj.state?.coverage_radius)
+  if (Number.isFinite(coverR) && coverR > 0) {
+    // WLAN-Kreise in der Verschlüsselungsfarbe (offen=rot … WPA3=blau),
+    // sonst neutrales Blau.
+    const cc = (obj.type || '').toLowerCase() === 'wifi' ? encStyleOf(obj).hex : '#28a0d7'
+    const circle = window.L.circle([obj.lat, obj.lon], {
+      radius: coverR,
+      color: cc, weight: 1, opacity: 0.6,
+      fillColor: cc, fillOpacity: 0.12,
+      interactive: false   // Klicks gehen an den Marker, nicht den Kreis
+    }).addTo(window.map)
+    coverageLayer.set(obj.id, circle)
+  }
 
   marker.on('dragstart', () => {
     // Während des Drags: Smoother-Sample-Loop überspringt diesen Marker.
@@ -218,6 +243,7 @@ function addMarker(obj) {
     markerSmoothers.get(obj.id)?.reset()
     const updated = await ajna.updateObject(obj.id, { lat, lon: lng })
     marker.setLatLng([lat, lng])
+    coverageLayer.get(obj.id)?.setLatLng([lat, lng])
     marker.bindPopup(`<strong>${updated.name || 'unnamed'}</strong><br>${lat.toFixed(5)}, ${lng.toFixed(5)}`)
     await ajna.loadObjects()
     mapUpdateMarkers(ajna.getObjectList())
@@ -241,6 +267,11 @@ function removeMarker(id) {
   if (marker) {
     window.map.removeLayer(marker)
     markerLayer.delete(id)
+  }
+  const circle = coverageLayer.get(id)
+  if (circle) {
+    window.map.removeLayer(circle)
+    coverageLayer.delete(id)
   }
   unsubscribeMarkerInteract(id)
 }

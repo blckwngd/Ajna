@@ -2,6 +2,7 @@ import { GeospatialComponent } from "./components/GeospatialComponent.js"
 import { TransformComponent } from "./components/TransformComponent.js"
 import { NetworkSyncComponent } from "./components/NetworkSyncComponent.js"
 import { PositionSmoother } from "../core/PositionSmoother.js"
+import { ENC_STYLE, encCategory } from "../core/wifiStyle.js"
 
 export class GameObject {
 
@@ -106,6 +107,11 @@ export class GameObject {
     // Object-Type bestimmt die Platzhalter-Optik (siehe #createPlaceholder).
     // Wird vom Agent über das `type`-Feld gesetzt — z. B. "poi" oder "ship".
     this._objectType = (data.type || '').toLowerCase()
+
+    // WLAN-Verschlüsselungskategorie für die Platzhalter-Farbe (siehe wifi-Case).
+    this._wifiCat = this._objectType === 'wifi'
+      ? encCategory(data.state?.enc_category || data.state?.encryption)
+      : null
 
     // Immer einen Platzhalter — das Modell-Loading ist ein nice-to-have,
     // das Verhalten der Szene darf davon nicht abhängen.
@@ -255,6 +261,14 @@ export class GameObject {
         mat.emissiveColor = new BABYLON.Color3(0.55, 0.45, 0.05)
         mesh.position.y = 1.4
         break
+      case 'wifi': {   // solider Mittelpunkt; Farbe = Verschlüsselung, schwebt ~5 m
+        const ws = ENC_STYLE[this._wifiCat] || ENC_STYLE.other
+        mesh = BABYLON.MeshBuilder.CreateSphere(phName, { diameter: 0.5, segments: 12 }, this.scene)
+        mat.diffuseColor  = new BABYLON.Color3(ws.rgb[0], ws.rgb[1], ws.rgb[2])
+        mat.emissiveColor = new BABYLON.Color3(ws.rgb[0] * 0.4, ws.rgb[1] * 0.4, ws.rgb[2] * 0.4)
+        mesh.position.y = 5   // ~5 m über dem Boden
+        break
+      }
       default:
         mesh = BABYLON.MeshBuilder.CreateBox(phName, { size: 1 }, this.scene)
         mat.diffuseColor = new BABYLON.Color3(0.8, 0.2, 0.2)
