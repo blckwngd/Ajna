@@ -58,8 +58,10 @@ loadDotenv()
 const AJNA_URL   = process.env.AJNA_URL  || 'http://127.0.0.1:8090'
 const AJNA_USER  = process.env.AJNA_USER
 const AJNA_PASS  = process.env.AJNA_PASS
-const API_NAME   = process.env.WIGLE_API_NAME
-const API_TOKEN  = process.env.WIGLE_API_TOKEN
+// Akzeptiert beide Namenskonventionen: WIGLE_API_NAME/TOKEN (kanonisch) und
+// API_NAME/API_TOKEN (wie auf wigle.net und in mancher .env).
+const API_NAME   = process.env.WIGLE_API_NAME  || process.env.API_NAME
+const API_TOKEN  = process.env.WIGLE_API_TOKEN || process.env.API_TOKEN
 const CENTER_LAT = parseFloat(process.env.WIGLE_CENTER_LAT || '50.3569')
 const CENTER_LON = parseFloat(process.env.WIGLE_CENTER_LON || '7.5890')
 const RADIUS_M   = parseFloat(process.env.WIGLE_RADIUS_M   || '500')
