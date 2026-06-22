@@ -199,21 +199,60 @@ try {
 // ───────────────────────────────────────────────────────────────────────
 
 const AIS_WS_URL = 'wss://stream.aisstream.io/v0/stream'
+const MAX_AREAS = parseInt(process.env.AIS_MAX_AREAS || '12', 10)
+const AREA_REFRESH_MS = parseFloat(process.env.AIS_AREA_REFRESH_S || '60') * 1000
 let ws = null
 let reconnectMs = 1000
+let lastBoxesKey = null
 const MAX_RECONNECT_MS = 60000
+
+// Aktive (anonymisierte) Interessensbereiche der Spieler, die AIS eingeblendet
+// haben. Leer → Fallback konfiguriertes Zentrum.
+async function fetchActiveAreas() {
+  const client = ajna.defaultClient
+  const base = (client.url || '').replace(/\/+$/, '')
+  const token = client.pb?.authStore?.token
+  const r = await fetch(`${base}/ajnaapi/interest-areas?source=aisstream`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  })
+  if (!r.ok) throw new Error(`interest-areas ${r.status}`)
+  const data = await r.json()
+  return Array.isArray(data?.areas) ? data.areas : []
+}
+
+// aisstream-BBOX-Format: [[swLat,swLon],[neLat,neLon]]. Demand-getrieben aus den
+// aktiven Bereichen; ohne Bereiche → konfiguriertes Zentrum.
+async function currentBoundingBoxes() {
+  let areas = []
+  try { areas = await fetchActiveAreas() }
+  catch (err) { console.warn(`[ais] interest-areas: ${err?.message || err} → Fallback Zentrum`) }
+  if (!areas.length) return [BBOX]
+  if (areas.length > MAX_AREAS) {
+    console.warn(`[ais] ${areas.length} Bereiche → auf ${MAX_AREAS} begrenzt`)
+    areas = areas.slice(0, MAX_AREAS)
+  }
+  return areas.map(a => [[a.latMin, a.lonMin], [a.latMax, a.lonMax]])
+}
+
+function sendSubscription(boxes) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false
+  ws.send(JSON.stringify({
+    APIKey: AIS_KEY, BoundingBoxes: boxes,
+    FilterMessageTypes: ['PositionReport', 'ShipStaticData']
+  }))
+  lastBoxesKey = JSON.stringify(boxes)
+  return true
+}
 
 function connect() {
   ws = new WebSocket(AIS_WS_URL)
 
-  ws.addEventListener('open', () => {
+  ws.addEventListener('open', async () => {
     console.log('[ws] verbunden, sende Subscription')
     reconnectMs = 1000
-    ws.send(JSON.stringify({
-      APIKey: AIS_KEY,
-      BoundingBoxes: [BBOX],
-      FilterMessageTypes: ['PositionReport', 'ShipStaticData']
-    }))
+    const boxes = await currentBoundingBoxes()
+    sendSubscription(boxes)
+    console.log(`[ais] abonniert: ${boxes.length} Box(en) (${lastBoxesKey === JSON.stringify([BBOX]) ? 'Zentrum' : 'interest-areas'})`)
   })
 
   ws.addEventListener('message', ev => {
@@ -405,6 +444,16 @@ setInterval(() => {
 function degToYaw(deg) {
   return (deg * Math.PI / 180) - Math.PI / 2
 }
+
+// Subscription periodisch an die aktiven Bereiche anpassen (Spieler bewegen
+// sich / kommen + gehen). Nur neu senden, wenn sich die BBOX-Menge ändert.
+setInterval(async () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return
+  const boxes = await currentBoundingBoxes()
+  if (JSON.stringify(boxes) !== lastBoxesKey && sendSubscription(boxes)) {
+    console.log(`[ais] Subscription aktualisiert: ${boxes.length} Box(en)`)
+  }
+}, AREA_REFRESH_MS)
 
 // ───────────────────────────────────────────────────────────────────────
 //  Start
