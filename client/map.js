@@ -12,6 +12,7 @@ import { ObjectActions } from "./core/ObjectActions.js"
 import { Toast } from "./core/Toast.js"
 import { PositionSmoother } from "./core/PositionSmoother.js"
 import { encStyleOf } from "./core/wifiStyle.js"
+import { InterestArea } from "./core/InterestArea.js"
 import { setupMapGps } from "./core/MapGpsControl.js"
 import { getAccessoryHub } from "./core/AccessoryHub.js"
 import { rayEndpointWgs84 } from "./core/PointingResolver.js"
@@ -357,6 +358,35 @@ function injectHighlightStyles() {
   document.head.appendChild(style)
 }
 
+// Eingeblendete Agent-Quellen (für den Interest-Area-Publish): alles, was im
+// Agent-Filter nicht explizit deaktiviert ist.
+function enabledSources() {
+  return agentFilters.getSources()
+    .map(s => s.source)
+    .filter(src => {
+      const sel = agentFilters.getSelection(src)
+      return sel === undefined || (Array.isArray(sel) && sel.length > 0)
+    })
+}
+
+// Datenschutz-Schalter unten links: Standort-Übermittlung an/aus (Opt-in).
+function mountShareLocationToggle(interestArea) {
+  if (document.getElementById('shareLocToggle')) return
+  const box = document.createElement('label')
+  box.id = 'shareLocToggle'
+  box.style.cssText = 'position:absolute;left:10px;bottom:24px;z-index:1000;'
+    + 'background:rgba(0,0,0,0.6);color:#fff;font:12px sans-serif;padding:6px 9px;'
+    + 'border-radius:6px;display:flex;align-items:center;gap:7px;cursor:pointer;user-select:none'
+  const cb = document.createElement('input')
+  cb.type = 'checkbox'
+  cb.checked = InterestArea.isEnabled()
+  cb.addEventListener('change', () => interestArea.onToggle(cb.checked))
+  box.appendChild(cb)
+  box.appendChild(document.createTextNode('Standort für Umgebung teilen'))
+  box.title = 'Sendet nur einen UNSCHARFEN Bereich (~500 m). Aus = es wird nichts übermittelt.'
+  document.body.appendChild(box)
+}
+
 async function init() {
   if (!window.L) {
     throw new Error('Leaflet ist nicht geladen')
@@ -409,6 +439,17 @@ async function init() {
   window.dispatchEvent(new CustomEvent('ajna:map-ready', {
     detail: { map, gpsControl, dummyMode }
   }))
+
+  // Interest-Area-Publisher (Opt-in): teilt einen UNSCHARFEN Bereich, damit
+  // Agents Daten in der Nähe liefern. Position aus der geteilten GPS/UWB-Quelle;
+  // eingeblendete Quellen aus dem Agent-Filter. Schalter siehe unten.
+  const interestArea = new InterestArea({
+    ajna,
+    getPosition: () => _hub.positionSource?.getWorldPosition?.() || null,
+    getSources: () => enabledSources()
+  })
+  interestArea.start()
+  mountShareLocationToggle(interestArea)
 
   // Karte verschiebt sich → Off-Screen-Linie zum hervorgehobenen Marker neu zeichnen
   map.on('move', updateHighlightLine)

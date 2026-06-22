@@ -66,6 +66,7 @@ const RADIUS_M   = parseFloat(process.env.WIGLE_RADIUS_M   || '500')
 const MAX_NETS   = parseInt(process.env.WIGLE_MAX || '50', 10)
 const INTERVAL_MS = parseFloat(process.env.WIGLE_INTERVAL_S || '3600') * 1000
 const COVERAGE_M = parseFloat(process.env.WIGLE_COVERAGE_M || '50')
+const MAX_AREAS  = parseInt(process.env.WIGLE_MAX_AREAS || '8', 10)   // Quota-Schutz
 
 // Re-exec mit --use-system-ca bei HTTPS (Caddy-interne CA) — wie poi-bridge.
 if (AJNA_URL.startsWith('https://') && !process.execArgv.includes('--use-system-ca')) {
@@ -138,10 +139,10 @@ function describeNet(n) {
   return parts.join(' · ') + ' (Quelle: WiGLE)'
 }
 
-async function fetchNetworks() {
+async function fetchNetworks(bbox) {
   const qs = new URLSearchParams({
-    latrange1: String(BBOX.latMin), latrange2: String(BBOX.latMax),
-    longrange1: String(BBOX.lonMin), longrange2: String(BBOX.lonMax),
+    latrange1: String(bbox.latMin), latrange2: String(bbox.latMax),
+    longrange1: String(bbox.lonMin), longrange2: String(bbox.lonMax),
     resultsPerPage: String(Math.min(MAX_NETS, 100))
   })
   const r = await fetch(`${WIGLE_URL}?${qs}`, {
@@ -155,16 +156,45 @@ async function fetchNetworks() {
   return Array.isArray(data?.results) ? data.results : []
 }
 
+// Aktive (anonymisierte) Interessensbereiche der Spieler, die WLANs eingeblendet
+// haben. Leer → niemand da (oder Opt-out) → Fallback konfiguriertes Zentrum.
+async function fetchActiveAreas() {
+  const client = ajna.defaultClient
+  const base = (client.url || '').replace(/\/+$/, '')
+  const token = client.pb?.authStore?.token
+  const r = await fetch(`${base}/ajnaapi/interest-areas?source=wigle`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  })
+  if (!r.ok) throw new Error(`interest-areas ${r.status}`)
+  const data = await r.json()
+  return Array.isArray(data?.areas) ? data.areas : []
+}
+
 // ─── Sync ─────────────────────────────────────────────────────────────────
 async function sync() {
-  let results
-  try {
-    results = await fetchNetworks()
-  } catch (err) {
-    console.warn(`[wigle] fetch fehlgeschlagen: ${err?.message || err}`)
-    return
+  // Demand-getrieben: dort abfragen, wo Spieler sind (anonymisierte Bereiche);
+  // ohne aktive Bereiche → konfiguriertes Zentrum.
+  let areas = []
+  try { areas = await fetchActiveAreas() }
+  catch (err) { console.warn(`[wigle] interest-areas: ${err?.message || err} → Fallback Zentrum`) }
+
+  let targets = areas.length ? areas : [BBOX]
+  if (targets.length > MAX_AREAS) {
+    console.warn(`[wigle] ${targets.length} Bereiche → auf ${MAX_AREAS} begrenzt (WiGLE-Quota)`)
+    targets = targets.slice(0, MAX_AREAS)
   }
-  console.log(`[wigle] ${results.length} Netze aus WiGLE`)
+
+  // Union über alle Ziele, dedup nach BSSID (WiGLE-Quota: eine Abfrage/Areal).
+  const byNet = new Map()
+  for (const t of targets) {
+    try {
+      for (const n of await fetchNetworks(t)) if (n.netid) byNet.set(String(n.netid), n)
+    } catch (err) {
+      console.warn(`[wigle] fetch fehlgeschlagen: ${err?.message || err}`)
+    }
+  }
+  const results = Array.from(byNet.values())
+  console.log(`[wigle] ${results.length} Netze aus WiGLE (${areas.length ? `${targets.length} Bereich(e)` : 'Zentrum'})`)
 
   const seen = new Set()
   let created = 0, skipped = 0, failed = 0

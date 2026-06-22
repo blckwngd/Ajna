@@ -15,6 +15,17 @@ import { WandManager } from './WandManager.js'
 import { UwbManager } from './UwbManager.js'
 import { WandAudioFeedback } from './WandAudioFeedback.js'
 import { PermissionDialog } from './PermissionDialog.js'
+import { InterestArea } from './InterestArea.js'
+
+// Eingeblendete Agent-Quellen (für den Interest-Area-Publish): alles, was im
+// Agent-Filter nicht explizit deaktiviert ist.
+function enabledSourcesFrom(filters) {
+  if (!filters?.getSources) return []
+  return filters.getSources().map(s => s.source).filter(src => {
+    const sel = filters.getSelection(src)
+    return sel === undefined || (Array.isArray(sel) && sel.length > 0)
+  })
+}
 
 const ALIGN_KEY = 'ajna_wand_alignment'  // persisted manual north-alignment offset (deg)
 const UWB_NET_KEY = 'ajna_uwb_network'   // persisted active PANS network id
@@ -68,6 +79,16 @@ export class MobileShell {
     this.wandAudio = hub.audio
     this.positionSource = hub.positionSource
     hub.setPositionFallback(() => window.ajnaGeo?.position || null)
+
+    // Interest-Area-Publisher (Opt-in, Default AUS): teilt einen UNSCHARFEN
+    // Bereich, damit Agents Daten in der Nähe liefern. Schalter siehe Settings.
+    this.interestArea = new InterestArea({
+      ajna: this.ajna,
+      getPosition: () => this.positionSource?.getWorldPosition?.() || window.ajnaGeo?.position || null,
+      getSources: () => enabledSourcesFrom(window.agentFilters)
+    })
+    this.interestArea.start()
+    this._unsubs.push(() => this.interestArea?.stop())
 
     // Apply a persisted manual north-alignment offset (optional calibration).
     const align = parseFloat(localStorage.getItem(ALIGN_KEY) || '0')
@@ -266,6 +287,17 @@ export class MobileShell {
       </section>
 
       <section class="settings-section">
+        <h3>Privatsphäre</h3>
+        <label class="meta" style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" data-field="share-location" ${InterestArea.isEnabled() ? 'checked' : ''}>
+          Ungefähren Standort für Inhalte in der Nähe teilen
+        </label>
+        <div class="meta" style="margin-top:6px">
+          Sendet nur einen unscharfen Bereich (~500 m). Aus = es wird nichts übermittelt.
+        </div>
+      </section>
+
+      <section class="settings-section">
         <h3>Geräte</h3>
         <button class="settings-btn secondary" data-action="wand">
           ${this.wandConnected ? 'Zauberstab trennen' : 'Zauberstab verbinden'}
@@ -414,6 +446,9 @@ export class MobileShell {
     })
     const audioToggle = root.querySelector('[data-field="wand-audio"]')
     audioToggle?.addEventListener('change', () => WandAudioFeedback.setEnabled(audioToggle.checked))
+
+    const shareToggle = root.querySelector('[data-field="share-location"]')
+    shareToggle?.addEventListener('change', () => this.interestArea?.onToggle(shareToggle.checked))
 
     const uwbModelSel = root.querySelector('[data-field="uwb-model"]')
     if (uwbModelSel) {

@@ -183,10 +183,54 @@ try {
 //  Fetch + Sync
 // ───────────────────────────────────────────────────────────────────────
 
+// Aktive (anonymisierte) Interessensbereiche der Spieler, die diesen Agent
+// eingeblendet haben. Leer → niemand da (oder alle opt-out) → Fallback Zentrum.
+async function fetchActiveAreas() {
+  const client = ajna.defaultClient
+  const base = (client.url || '').replace(/\/+$/, '')
+  const token = client.pb?.authStore?.token
+  const r = await fetch(`${base}/ajnaapi/interest-areas?source=overpass`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  })
+  if (!r.ok) throw new Error(`interest-areas ${r.status}`)
+  const data = await r.json()
+  return Array.isArray(data?.areas) ? data.areas : []
+}
+
+// BBOX → Center + Radius (halbe Diagonale, gedeckelt), für geo.poisNear.
+function bboxToTarget(b) {
+  const lat = (b.latMin + b.latMax) / 2
+  const lon = (b.lonMin + b.lonMax) / 2
+  const halfLatM = (b.latMax - b.latMin) / 2 * 111000
+  const halfLonM = (b.lonMax - b.lonMin) / 2 * 111000 * Math.cos(lat * Math.PI / 180)
+  return { lat, lon, radiusM: Math.min(2000, Math.round(Math.hypot(halfLatM, halfLonM))) }
+}
+
 async function fetchPois() {
-  // AjnaGeo kümmert sich um URL, Auth-Header, Caching. Radius wird in
-  // Meter erwartet (server/geo.js parst es als Integer-Meter).
-  return geo.poisNear(CENTER_LAT, CENTER_LON, Math.round(RADIUS_KM * 1000), FILTER)
+  // Demand-getrieben: dort holen, wo Spieler sind (anonymisierte Bereiche).
+  // Ohne aktive Bereiche → konfiguriertes Zentrum (Dev/Demo).
+  let areas = []
+  try { areas = await fetchActiveAreas() }
+  catch (err) { console.warn(`[poi] interest-areas: ${err?.message || err} → Fallback Zentrum`) }
+
+  const targets = areas.length
+    ? areas.map(bboxToTarget)
+    : [{ lat: CENTER_LAT, lon: CENTER_LON, radiusM: Math.round(RADIUS_KM * 1000) }]
+
+  // AjnaGeo cached pro Areal; Union über alle Ziele, dedup nach Feature-ID.
+  const byId = new Map()
+  for (const t of targets) {
+    try {
+      const res = await geo.poisNear(t.lat, t.lon, t.radiusM, FILTER)
+      for (const f of (res.features || [])) if (f.id) byId.set(f.id, f)
+    } catch (err) {
+      console.warn(`[poi] fetch @${t.lat.toFixed(4)},${t.lon.toFixed(4)}: ${err?.message || err}`)
+    }
+  }
+  return {
+    features: Array.from(byId.values()),
+    source: areas.length ? `interest-areas (${targets.length})` : 'center'
+  }
 }
 
 function derivePoiName(tags = {}) {

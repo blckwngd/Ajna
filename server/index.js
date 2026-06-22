@@ -1,6 +1,7 @@
 import express from "express"
 import PocketBase from "pocketbase"
 import { mountGeoRoutes } from "./geo.js"
+import { mountPresenceRoutes } from "./presence.js"
 
 // Ajna-Express-Backend für Server-Logik, die nicht als PocketBase-Hook
 // abgebildet werden kann oder soll (z. B. Aggregations-Queries, Upload-
@@ -17,6 +18,9 @@ app.use(express.json())
 
 // Geo-Kontext-Endpoints (OSM via Overpass).
 mountGeoRoutes(app)
+
+// Interest-Areas (datenschutzfreundliche Präsenz; in-memory, anonymisiert).
+mountPresenceRoutes(app)
 
 const pb = new PocketBase("http://127.0.0.1:8090")
 
