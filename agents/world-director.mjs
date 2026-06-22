@@ -361,28 +361,36 @@ console.log(`[director] ${reconciled} Objekte reconciled (ACE + Aktionen). Welt 
 const geo = new AjnaGeo(ajna)
 const speedFor = a => (a === 'enemy' ? ENEMY_SPEED : NPC_SPEED)
 
-// Geteilter Wegegraph: EINE Overpass-Abfrage um das Zentrum pro TTL, von allen
-// Figuren und allen Replans genutzt (zusätzlich zum Server-Cache in
-// server/geo.js, 1 h). Da alle Figuren im Spawn-Radius liegen, deckt eine
-// Abfrage das ganze Areal ab — keine Rate-Limit-Flut mehr.
-let sharedGraph = null, sharedGraphAt = 0, graphInflight = null
-async function getSharedGraph() {
-  if (sharedGraph && (Date.now() - sharedGraphAt) < GRAPH_TTL_MS) return sharedGraph
-  // Konkurrierende Aufrufe (mehrere Figuren beim Boot) teilen sich EINEN Fetch,
-  // sonst feuern sie parallel je eine Overpass-Abfrage → Rate-Limit.
-  if (graphInflight) return graphInflight
-  graphInflight = (async () => {
+// Wegegraph UM DIE FIGUR (nicht um ein festes Zentrum) — pro grober Zelle
+// (~300 m) gecacht und per TTL erneuert. So funktioniert die Routenplanung
+// auch, wenn Figuren über mehrere Areale verteilt sind (kein Teleport an ein
+// fixes Zentrum). Zusätzlich zum Server-Cache in server/geo.js (1 h).
+const GRAPH_CELL_M = 300
+const graphCache = new Map()          // cellKey → { graph, at }
+const graphInflight = new Map()       // cellKey → Promise (dedupe parallele Fetches)
+function graphCellKey(lat, lon) {
+  const g = GRAPH_CELL_M / 111000
+  return `${Math.round(lat / g)}|${Math.round(lon / g)}`
+}
+async function getGraphNear(lat, lon) {
+  const key = graphCellKey(lat, lon)
+  const hit = graphCache.get(key)
+  if (hit && (Date.now() - hit.at) < GRAPH_TTL_MS) return hit.graph
+  if (graphInflight.has(key)) return graphInflight.get(key)
+  const p = (async () => {
     try {
-      const res = await geo.waysNear(CENTER_LAT, CENTER_LON, GRAPH_RADIUS_M, 'walkable')
+      const res = await geo.waysNear(lat, lon, GRAPH_RADIUS_M, 'walkable')
       const graph = buildWayGraph(res.features || [])
       if (graph.nodes.size >= 2) {
-        sharedGraph = graph; sharedGraphAt = Date.now()
-        console.log(`[director] Wegegraph aktualisiert: ${graph.nodes.size} Knoten (Radius ${GRAPH_RADIUS_M} m)`)
+        graphCache.set(key, { graph, at: Date.now() })
+        console.log(`[director] Wegegraph @${lat.toFixed(4)},${lon.toFixed(4)}: ${graph.nodes.size} Knoten`)
+        return graph
       }
-      return graph.nodes.size >= 2 ? graph : null
-    } finally { graphInflight = null }
+      return null
+    } finally { graphInflight.delete(key) }
   })()
-  return graphInflight
+  graphInflight.set(key, p)
+  return p
 }
 
 function makeController(obj) {
@@ -412,7 +420,7 @@ function geoWarnOnce(err) {
 async function planFor(c) {
   c.busy = true; c.fsm = 'planning'
   try {
-    const graph = await getSharedGraph()
+    const graph = await getGraphNear(c.lat, c.lon)
     if (!graph) { geoWarnOnce(); c.fsm = 'idle'; c.nextPlanAt = Date.now() + PLAN_RETRY_MS; return }
     const startKey = nearestNodeKey(graph, c.lat, c.lon)
     const targetKey = startKey && randomReachableTarget(graph, startKey, { minDistM: 40, maxDistM: WAY_RADIUS_M })

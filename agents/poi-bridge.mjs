@@ -7,10 +7,10 @@
 // sie als Ajna-Objekte mit `type="poi"` an. Der AR-Client rendert sie
 // als grüne Stab-Marker (siehe GameObject.#createPlaceholder).
 //
-// POIs sind **statisch** — kein Realtime-Update. Der Agent macht einen
-// einmaligen Sync und beendet sich, sofern POI_REFRESH_S nicht gesetzt
-// ist. Idempotent über `state.osm_id` (kein doppeltes Anlegen bei
-// Re-Run).
+// POIs sind **statisch** — kein Realtime-Update. Der Agent ist demand-getrieben
+// (folgt den aktiven Interessensbereichen) und pollt kontinuierlich (Default
+// 120 s); POI_REFRESH_S=0 macht daraus einen einmaligen Sync. Idempotent über
+// `state.osm_id` (kein doppeltes Anlegen bei Re-Run).
 //
 // Konfiguration via Umgebungsvariablen (oder `.env` im CWD):
 //
@@ -20,10 +20,9 @@
 //   POI_FILTER           Filter-Set       (Default: "common";
 //                        erlaubt: common | amenity | shops | tourism —
 //                        siehe server/geo.js)
-//   POI_REFRESH_S        Refresh-Intervall in s. 0 = einmaliger Sync
-//                        (Default: 0). Nutzlich, wenn die Bbox sich
-//                        nicht ändert und nur neue OSM-POIs nachkommen
-//                        sollen — niedriger Wert bedeutet Overpass-Last.
+//   POI_REFRESH_S        Refresh-Intervall in s (Default: 120). 0 = einmaliger
+//                        Sync und Ende. Niedriger Wert = mehr Overpass-Last
+//                        (Server cached 1 h, also unkritisch).
 //
 //   AJNA_URL   PocketBase-URL  (Default: http://127.0.0.1:8090)
 //   AJNA_USER  Pflicht — dedizierter PB-User für den Agent
@@ -82,7 +81,9 @@ const CENTER_LAT = parseFloat(process.env.POI_CENTER_LAT || '50.3569')
 const CENTER_LON = parseFloat(process.env.POI_CENTER_LON || '7.5890')
 const RADIUS_KM  = parseFloat(process.env.POI_RADIUS_KM  || '1')
 const FILTER     = process.env.POI_FILTER || 'common'
-const REFRESH_MS = parseFloat(process.env.POI_REFRESH_S || '0') * 1000
+// Default kontinuierlich (120 s): die Bridge ist demand-getrieben und muss die
+// aktiven Interessensbereiche fortlaufend pollen. Einmal-Sync via POI_REFRESH_S=0.
+const REFRESH_MS = parseFloat(process.env.POI_REFRESH_S || '120') * 1000
 
 // Re-exec mit --use-system-ca, falls AJNA_URL HTTPS ist (Caddy-Interne-CA).
 if (AJNA_URL.startsWith('https://') && !process.execArgv.includes('--use-system-ca')) {
