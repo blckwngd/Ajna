@@ -12,6 +12,7 @@ import { ObjectActions } from "./core/ObjectActions.js"
 import { Toast } from "./core/Toast.js"
 import { PositionSmoother } from "./core/PositionSmoother.js"
 import { encStyleOf } from "./core/wifiStyle.js"
+import { shapeOf, emojiOf, colorOf, radiusOf } from "./core/Appearance.js"
 import { InterestArea } from "./core/InterestArea.js"
 import { setupMapGps } from "./core/MapGpsControl.js"
 import { getAccessoryHub } from "./core/AccessoryHub.js"
@@ -217,9 +218,10 @@ const MARKER_TYPES = {
 function markerIconFor(obj) {
   const type = (obj.type || '').toLowerCase()
   const def = MARKER_TYPES[type]
-  // WLANs: Symbol nach Verschlüsselung (🔓 offen / 🔒 WPA2 / 🛡️ WPA3 …),
-  // damit der Typ schon am Marker erkennbar ist (zusätzlich zur Kreisfarbe).
-  const emoji = type === 'wifi' ? encStyleOf(obj).symbol : (def ? def.emoji : '❌')
+  // Agent-definiertes Emoji (appearance.emoji) hat Vorrang; sonst die Legacy-
+  // Heuristik: WLAN-Verschlüsselungssymbol bzw. das Typ-Emoji.
+  const emoji = emojiOf(obj)
+    || (type === 'wifi' ? encStyleOf(obj).symbol : (def ? def.emoji : '❌'))
   return window.L.divIcon({
     className: def ? `map-marker ${def.cls}` : 'map-marker',
     iconSize: [28, 28],
@@ -227,11 +229,32 @@ function markerIconFor(obj) {
   })
 }
 
+// Wählt die Karten-Repräsentation aus dem agent-definierten `shape`:
+//   • "circle" → Canvas-circleMarker (günstig bei Masse, NICHT draggable)
+//   • sonst    → DOM-divIcon mit Emoji (draggable)
+// Fallback ohne appearance: WLANs werden als Canvas-Punkt gezeichnet (dichte
+// Masse), alles andere als divIcon — entspricht dem bisherigen Look.
+function makeMarker(obj) {
+  const type = (obj.type || '').toLowerCase()
+  const shape = shapeOf(obj)
+  const asCircle = shape === 'circle' || (shape === null && type === 'wifi')
+
+  if (asCircle) {
+    const color = colorOf(obj) || (type === 'wifi' ? encStyleOf(obj).hex : '#28a0d7')
+    const radius = radiusOf(obj) || 7
+    // preferCanvas (Map-Init) rendert Path-Layer wie circleMarker auf Canvas.
+    return window.L.circleMarker([obj.lat, obj.lon], {
+      radius, color, weight: 1, opacity: 0.9,
+      fillColor: color, fillOpacity: 0.4
+    })
+  }
+  return window.L.marker([obj.lat, obj.lon], { icon: markerIconFor(obj), draggable: true })
+}
+
 function addMarker(obj) {
   if (!window.L || markerLayer.has(obj.id)) return
 
-  const icon = markerIconFor(obj)
-  const marker = window.L.marker([obj.lat, obj.lon], { icon, draggable: true }).addTo(window.map)
+  const marker = makeMarker(obj).addTo(window.map)
   // Hover-Tooltip mit dem Objekt-Namen (Leaflet zeigt/blendet ihn automatisch
   // bei mouseover / mouseout)
   marker.bindTooltip(obj.name || 'unnamed', { direction: 'top', offset: [0, -8] })
@@ -240,9 +263,10 @@ function addMarker(obj) {
   // sofern das Objekt einen state.coverage_radius (in Metern) trägt.
   const coverR = Number(obj.state?.coverage_radius)
   if (Number.isFinite(coverR) && coverR > 0) {
-    // WLAN-Kreise in der Verschlüsselungsfarbe (offen=rot … WPA3=blau),
-    // sonst neutrales Blau.
-    const cc = (obj.type || '').toLowerCase() === 'wifi' ? encStyleOf(obj).hex : '#28a0d7'
+    // Kreisfarbe: agent-definiert (appearance.color) vor Legacy-Heuristik
+    // (WLAN-Verschlüsselungsfarbe offen=rot … WPA3=blau, sonst neutrales Blau).
+    const cc = colorOf(obj)
+      || ((obj.type || '').toLowerCase() === 'wifi' ? encStyleOf(obj).hex : '#28a0d7')
     const circle = window.L.circle([obj.lat, obj.lon], {
       radius: coverR,
       color: cc, weight: 1, opacity: 0.6,
@@ -252,24 +276,29 @@ function addMarker(obj) {
     coverageLayer.set(obj.id, circle)
   }
 
-  marker.on('dragstart', () => {
-    // Während des Drags: Smoother-Sample-Loop überspringt diesen Marker.
-    marker._ajnaDragging = true
-  })
+  // Drag-to-move nur für draggable Marker (divIcon). Canvas-circleMarker
+  // (dichte Masse, z. B. WLANs) ist bewusst nicht verschiebbar — Position
+  // dieser Agent-Objekte wird ohnehin vom Agent gepflegt.
+  if (marker.dragging) {
+    marker.on('dragstart', () => {
+      // Während des Drags: Smoother-Sample-Loop überspringt diesen Marker.
+      marker._ajnaDragging = true
+    })
 
-  marker.on('dragend', async event => {
-    marker._ajnaDragging = false
-    const { lat, lng } = event.target.getLatLng()
-    // Smoother zurücksetzen, sonst lerpt er vom Pre-Drag-Punkt zur neuen
-    // Position zurück und der Marker rutscht sichtbar zurück+nach vorn.
-    markerSmoothers.get(obj.id)?.reset()
-    const updated = await ajna.updateObject(obj.id, { lat, lon: lng })
-    marker.setLatLng([lat, lng])
-    coverageLayer.get(obj.id)?.setLatLng([lat, lng])
-    marker.bindPopup(`<strong>${updated.name || 'unnamed'}</strong><br>${lat.toFixed(5)}, ${lng.toFixed(5)}`)
-    await ajna.loadObjects()
-    mapUpdateMarkers(ajna.getObjectList())
-  })
+    marker.on('dragend', async event => {
+      marker._ajnaDragging = false
+      const { lat, lng } = event.target.getLatLng()
+      // Smoother zurücksetzen, sonst lerpt er vom Pre-Drag-Punkt zur neuen
+      // Position zurück und der Marker rutscht sichtbar zurück+nach vorn.
+      markerSmoothers.get(obj.id)?.reset()
+      const updated = await ajna.updateObject(obj.id, { lat, lon: lng })
+      marker.setLatLng([lat, lng])
+      coverageLayer.get(obj.id)?.setLatLng([lat, lng])
+      marker.bindPopup(`<strong>${updated.name || 'unnamed'}</strong><br>${lat.toFixed(5)}, ${lng.toFixed(5)}`)
+      await ajna.loadObjects()
+      mapUpdateMarkers(ajna.getObjectList())
+    })
+  }
 
   marker.on('click', e => {
     // Aktuelle Position des Records aus dem AjnaManager-Cache holen

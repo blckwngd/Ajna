@@ -3,6 +3,7 @@ import { TransformComponent } from "./components/TransformComponent.js"
 import { NetworkSyncComponent } from "./components/NetworkSyncComponent.js"
 import { PositionSmoother } from "../core/PositionSmoother.js"
 import { ENC_STYLE, encCategory } from "../core/wifiStyle.js"
+import { appearanceOf, gltfUrlOf } from "../core/Appearance.js"
 
 export class GameObject {
 
@@ -113,16 +114,22 @@ export class GameObject {
       ? encCategory(data.state?.enc_category || data.state?.encryption)
       : null
 
+    // Agent-definierte Darstellung (appearance). Im AR-Viewer gewinnt ein
+    // gültiges gltf; sonst dient appearance (shape/color) als Fallback-Look.
+    this._appearance = appearanceOf(data)
+
     // Immer einen Platzhalter — das Modell-Loading ist ein nice-to-have,
     // das Verhalten der Szene darf davon nicht abhängen.
     this.#createPlaceholder()
 
-    if (data.model_url) {
+    // appearance.gltf gewinnt vor Legacy model_url (siehe Appearance.gltfUrlOf).
+    const modelUrl = gltfUrlOf(data)
+    if (modelUrl) {
       // Fire-and-forget. Bei Erfolg ersetzt #loadModel den Platzhalter,
       // bei Fehler bleibt er stehen — kein Abbruch des syncSceneObjects-Loops.
-      this.#loadModel(data.model_url).catch(err => {
+      this.#loadModel(modelUrl).catch(err => {
         console.warn(
-          `GameObject ${this.id}: Modell konnte nicht geladen werden (${data.model_url})`,
+          `GameObject ${this.id}: Modell konnte nicht geladen werden (${modelUrl})`,
           err
         )
       })
@@ -272,6 +279,18 @@ export class GameObject {
       default:
         mesh = BABYLON.MeshBuilder.CreateBox(phName, { size: 1 }, this.scene)
         mat.diffuseColor = new BABYLON.Color3(0.8, 0.2, 0.2)
+    }
+
+    // Agent-definierte Farbe (appearance.color, Hex) übersteuert den Typ-
+    // Default — so steuert der Agent auch den Fallback-Look ohne Client-Wissen.
+    const apColor = this._appearance && typeof this._appearance.color === 'string'
+      ? this._appearance.color : null
+    if (apColor) {
+      try {
+        const c = BABYLON.Color3.FromHexString(apColor)
+        mat.diffuseColor = c
+        mat.emissiveColor = c.scale(0.4)
+      } catch { /* ungültiger Hex → Typ-Default behalten */ }
     }
 
     mesh.material = mat

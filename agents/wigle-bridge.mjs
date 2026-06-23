@@ -226,18 +226,27 @@ async function queryReconcile(centers, fromAreas) {
     if (nets.has(String(netid))) { skipped++; continue }
 
     const name = (n.ssid || '').trim() || `WLAN ${netid}`
+    const cat = encCategory(n.encryption)
     try {
       const obj = await ajna.createObject({
         name,
         type: 'wifi',
         description: describeNet(n),
         lat, lon, altitude: 0,
+        // Agent-definierte Darstellung: Karte zeichnet einen Canvas-Punkt in der
+        // Verschlüsselungsfarbe (günstig bei Masse). Der Viewer braucht dafür
+        // KEIN WLAN-Spezialwissen mehr — er interpretiert nur `appearance`.
+        appearance: {
+          shape: 'circle',
+          color: ENC_STYLE[cat].hex,
+          radius: 6
+        },
         state: {
           source: 'wigle',
           netid,
           ssid: n.ssid || null,
           encryption: n.encryption || null,
-          enc_category: encCategory(n.encryption),   // normalisiert → Farbe/Symbol/Filter
+          enc_category: cat,                 // normalisiert → Farbe/Symbol/Filter
           channel: n.channel ?? null,
           wifi_type: n.type || null,
           lastupdt: n.lastupdt || null,
