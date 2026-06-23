@@ -32,6 +32,10 @@ const coverageLayer = new Map()
 // angewendet. Damit wirken die 5-Hz-Updates eines Agents (Fox-Walk) auf
 // der Karte flüssig, statt zwischen Stützpunkten zu springen.
 const markerSmoothers = new Map()
+// IDs von Markern, die GERADE interpolieren (sich bewegen). Nur diese werden
+// pro Frame angefasst — statische Objekte (POIs, WLANs, Items) fallen nach dem
+// Settling raus, statt 60×/s dieselbe Position geschrieben zu bekommen.
+const movingIds = new Set()
 const interactSubs = new Map()
 const contextMenu = new ContextMenu()
 const permissionDialog = new PermissionDialog({ ajna })
@@ -150,13 +154,33 @@ function mapUpdateMarkers(objects) {
   }
 }
 
+// Leading+Trailing-Throttle: führt sofort aus, danach höchstens alle `ms` — und
+// immer mit den ZULETZT übergebenen Argumenten. Für den Realtime-Reconcile, der
+// sonst bei jedem Objekt-Update (Director ~2 Hz × N Figuren) komplett durchläuft.
+function throttleLatest(fn, ms) {
+  let last = 0, timer = null, lastArgs = null
+  return (...args) => {
+    lastArgs = args
+    const wait = ms - (Date.now() - last)
+    if (wait <= 0) {
+      if (timer) { clearTimeout(timer); timer = null }
+      last = Date.now()
+      fn(...lastArgs)
+    } else if (!timer) {
+      timer = setTimeout(() => { timer = null; last = Date.now(); fn(...lastArgs) }, wait)
+    }
+  }
+}
+
 function feedSmoother(obj) {
   let sm = markerSmoothers.get(obj.id)
   if (!sm) {
     sm = new PositionSmoother()
     markerSmoothers.set(obj.id, sm)
   }
-  sm.feed(obj)
+  // Nur wenn sich die Position tatsächlich geändert hat, wird der Marker (bis
+  // zum Settling) in den Pro-Frame-Loop aufgenommen.
+  if (sm.feed(obj)) movingIds.add(obj.id)
 }
 
 // Pro-Frame-Loop: gesampelten Position auf die Marker schreiben. Leaflet
@@ -167,13 +191,16 @@ function feedSmoother(obj) {
 // kämpft der Smoother-Sample (alte Position) jeden Frame gegen Leaflets
 // Maus-getriebene Position, und der Marker bleibt visuell "festgenagelt".
 function tickMarkerSmoothers() {
-  for (const [id, marker] of markerLayer) {
-    if (marker._ajnaDragging) continue
+  // Nur GERADE bewegte Marker anfassen — nicht alle. Ein settled-Marker wird
+  // einmal final gesetzt und dann aus movingIds entfernt (kein Frame-Spam mehr).
+  for (const id of movingIds) {
+    const marker = markerLayer.get(id)
     const sm = markerSmoothers.get(id)
-    if (!sm) continue
+    if (!marker || !sm) { movingIds.delete(id); continue }
+    if (marker._ajnaDragging) continue
     const snap = sm.sample()
-    if (!snap) continue
-    marker.setLatLng([snap.lat, snap.lon])
+    if (snap) marker.setLatLng([snap.lat, snap.lon])
+    if (sm.isSettled()) movingIds.delete(id)
   }
   requestAnimationFrame(tickMarkerSmoothers)
 }
@@ -274,6 +301,8 @@ function removeMarker(id) {
     window.map.removeLayer(circle)
     coverageLayer.delete(id)
   }
+  markerSmoothers.delete(id)
+  movingIds.delete(id)
   unsubscribeMarkerInteract(id)
 }
 
@@ -411,7 +440,9 @@ async function init() {
   const center = dummy ? [dummy.lat, dummy.lon] : [51.1657, 10.4515]
   const zoom = dummy ? 16 : 14
 
-  const map = window.L.map('map').setView(center, zoom)
+  // preferCanvas: Vektor-Layer (v. a. die vielen WLAN-Abdeckungskreise) rendern
+  // auf einem Canvas statt als einzelne SVG-Elemente → skaliert auf hunderte.
+  const map = window.L.map('map', { preferCanvas: true }).setView(center, zoom)
   // Eigenes GPS-Control: erster Klick aktiviert Watch + Follow + Marker,
   // weitere Klicks toggeln nur Follow. Auf Capacitor-Native triggern wir
   // das per Event-Listener (s. mobile.js) sofort beim App-Start.
@@ -495,9 +526,11 @@ async function init() {
   await editorUI.init()
   mapUpdateMarkers(ajna.getObjectList())
 
-  ajna.onObjectsChanged(objects => {
+  // Throttle: Realtime-Updates kommen gebündelt (bewegte Figuren), aber ein
+  // voller Marker-Reconcile pro Update ist bei vielen Objekten teuer. Max ~4×/s.
+  ajna.onObjectsChanged(throttleLatest(objects => {
     mapUpdateMarkers(objects)
-  })
+  }, 250))
 
   // Manifeste der Agents laden, sobald wir eingeloggt sind, und Filter-Änderungen
   // sofort in die Karte schreiben.

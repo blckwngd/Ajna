@@ -45,11 +45,25 @@ export class PositionSmoother {
    * @param {number} [now=performance.now()]
    */
   feed(record, now = performance.now()) {
-    if (!record || !Number.isFinite(record.lat) || !Number.isFinite(record.lon)) return
+    if (!record || !Number.isFinite(record.lat) || !Number.isFinite(record.lon)) return false
     const snap = _snapFromRecord(record, now)
-    if (this.curr && _sameTarget(this.curr, snap)) return
+    if (this.curr && _sameTarget(this.curr, snap)) return false   // No-op: keine Bewegung
     this.prev = this.curr
     this.curr = snap
+    return true
+  }
+
+  /**
+   * True, wenn keine laufende Interpolation mehr ansteht (Ziel erreicht oder
+   * gesnappt). Konsumenten (Map-Loop) können damit „ruhende" Objekte aus dem
+   * Pro-Frame-Update nehmen, statt jeden Frame dieselbe Position zu schreiben.
+   * @param {number} [now=performance.now()]
+   */
+  isSettled(now = performance.now()) {
+    if (!this.curr || !this.prev) return true
+    const duration = this.curr.t - this.prev.t
+    if (duration <= 0 || duration > MAX_INTERP_MS) return true
+    return (now - this.curr.t) >= duration
   }
 
   /**
