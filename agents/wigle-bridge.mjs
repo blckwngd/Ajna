@@ -65,7 +65,8 @@ const API_TOKEN  = process.env.WIGLE_API_TOKEN || process.env.API_TOKEN
 const CENTER_LAT = parseFloat(process.env.WIGLE_CENTER_LAT || '50.3569')
 const CENTER_LON = parseFloat(process.env.WIGLE_CENTER_LON || '7.5890')
 const RADIUS_M   = parseFloat(process.env.WIGLE_RADIUS_M   || '1000')  // Abfrage-Radius je Ziel
-const MAX_NETS   = parseInt(process.env.WIGLE_MAX || '100', 10)        // Ergebnisse/Areal (max 100/Seite)
+const MAX_NETS   = parseInt(process.env.WIGLE_MAX || '300', 10)        // Gesamt-Cap je Areal (über Seiten)
+const MAX_PAGES  = parseInt(process.env.WIGLE_MAX_PAGES || '3', 10)    // Seiten je Areal (je 100, Quota-Schutz)
 const INTERVAL_MS = parseFloat(process.env.WIGLE_INTERVAL_S || '3600') * 1000  // Re-Query bei Stillstand
 const COVERAGE_M = parseFloat(process.env.WIGLE_COVERAGE_M || '50')
 const MAX_AREAS  = parseInt(process.env.WIGLE_MAX_AREAS || '8', 10)    // Quota-Schutz
@@ -143,20 +144,32 @@ function describeNet(n) {
 }
 
 async function fetchNetworks(bbox) {
-  const qs = new URLSearchParams({
-    latrange1: String(bbox.latMin), latrange2: String(bbox.latMax),
-    longrange1: String(bbox.lonMin), longrange2: String(bbox.lonMax),
-    resultsPerPage: String(Math.min(MAX_NETS, 100))
-  })
-  const r = await fetch(`${WIGLE_URL}?${qs}`, {
-    headers: { Authorization: AUTH, Accept: 'application/json' }
-  })
-  if (r.status === 401) throw new Error('WiGLE 401 — API-Name/Token prüfen')
-  if (r.status === 429) throw new Error('WiGLE 429 — tägliches Query-Limit erreicht')
-  if (!r.ok) throw new Error(`WiGLE ${r.status}: ${await r.text().catch(() => '')}`)
-  const data = await r.json()
-  if (data && data.success === false) throw new Error(`WiGLE: ${data.message || 'Fehler'}`)
-  return Array.isArray(data?.results) ? data.results : []
+  // Paginiert über WiGLEs `searchAfter`-Token, bis MAX_NETS erreicht ist, keine
+  // weitere Seite kommt, oder MAX_PAGES (Quota-Schutz) ausgeschöpft ist. Jede
+  // Seite ist EINE WiGLE-Abfrage (zählt aufs Tageslimit).
+  const out = []
+  let searchAfter = null
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const params = {
+      latrange1: String(bbox.latMin), latrange2: String(bbox.latMax),
+      longrange1: String(bbox.lonMin), longrange2: String(bbox.lonMax),
+      resultsPerPage: '100'
+    }
+    if (searchAfter) params.searchAfter = searchAfter
+    const r = await fetch(`${WIGLE_URL}?${new URLSearchParams(params)}`, {
+      headers: { Authorization: AUTH, Accept: 'application/json' }
+    })
+    if (r.status === 401) throw new Error('WiGLE 401 — API-Name/Token prüfen')
+    if (r.status === 429) throw new Error('WiGLE 429 — tägliches Query-Limit erreicht')
+    if (!r.ok) throw new Error(`WiGLE ${r.status}: ${await r.text().catch(() => '')}`)
+    const data = await r.json()
+    if (data && data.success === false) throw new Error(`WiGLE: ${data.message || 'Fehler'}`)
+    const results = Array.isArray(data?.results) ? data.results : []
+    out.push(...results)
+    searchAfter = data?.searchAfter || data?.search_after || null
+    if (!searchAfter || results.length === 0 || out.length >= MAX_NETS) break
+  }
+  return out.length > MAX_NETS ? out.slice(0, MAX_NETS) : out
 }
 
 // Aktive (anonymisierte) Interessensbereiche der Spieler, die WLANs eingeblendet
