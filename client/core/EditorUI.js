@@ -1,10 +1,14 @@
 import { injectServerBadgeStyles, renderServerBadge } from './ServerBadge.js'
 
 export class EditorUI {
-  constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null, onManageGroups = null, onManageServers = null, onManageProfile = null, onManageFilters = null, onEditorActivate = null }) {
+  constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null, onManageGroups = null, onManageServers = null, onManageProfile = null, onManageFilters = null, onEditorActivate = null, objectFilter = null }) {
     this.ajna = ajna
     this.container = container
     this.mode = mode
+    // Optional: Prädikat (obj) => boolean. Wenn gesetzt, zeigt die Objektliste
+    // nur passende Objekte — konsistent mit den Agent-Filtern (Layer-Sicht).
+    // Host ruft renderObjectList() bei Filter-Änderung erneut auf.
+    this.objectFilter = objectFilter
     this.onObjectSelected = onObjectSelected
     this.onObjectsUpdated = onObjectsUpdated
     // Optional: fired when the editor form is engaged (edit existing or start a
@@ -387,7 +391,10 @@ export class EditorUI {
   }
 
   renderObjectList() {
-    const objects = this.ajna.getObjectList()
+    // Liste nach demselben Agent-Filter einschränken wie die Karten-/Szene-
+    // Sicht — sonst zeigt der Editor Objekte, die ausgeblendet sind.
+    const all = this.ajna.getObjectList()
+    const objects = this.objectFilter ? all.filter(o => this.objectFilter(o)) : all
     this.objectListEl.innerHTML = ''
 
     if (objects.length === 0) {

@@ -106,51 +106,45 @@ const gpsConfig = new GPSProvider()
 
 let editorUI = null
 
+// Viewport-Culling: nur Objekte im (um VIEWPORT_PAD gepufferten) Sichtbereich
+// bekommen einen DOM-Marker. Der Puffer verhindert sichtbares "Poppen" beim
+// Pannen. Re-Evaluierung bei jedem objectsChanged UND bei map moveend/zoomend.
+const VIEWPORT_PAD = 0.5
+
 function mapUpdateMarkers(objects) {
   if (!window.map) return
 
-  // Agent-Filter: nur Objekte zeichnen, die der Spieler sehen will.
-  // Default (kein Filter gesetzt) = alle sichtbar.
-  const visibleObjects = agentFilters
-    ? objects.filter(o => agentFilters.matches(o))
-    : objects
+  // Agent-Filter: nur Objekte, die der Spieler sehen will (Default = alle).
+  const filtered = agentFilters ? objects.filter(o => agentFilters.matches(o)) : objects
+  const bounds = window.map.getBounds().pad(VIEWPORT_PAD)
+  const keep = new Set()   // ids, die einen Marker haben SOLLEN
 
-  for (const obj of visibleObjects) {
-    // Defensive: ein einzelner Record mit kaputten Koordinaten würde sonst
-    // via `obj.lat.toFixed(...)` werfen und den gesamten Loop abreißen —
-    // alle nachfolgenden Objekte blieben unsichtbar (siehe Issue: nur
-    // erster Marker, keine Realtime-Updates mehr).
+  for (const obj of filtered) {
+    // Defensive: kaputte Koordinaten würden via toFixed() den Loop abreißen.
     if (!Number.isFinite(obj.lat) || !Number.isFinite(obj.lon)) {
-      console.warn(`mapUpdateMarkers: skip ${obj.id} (${obj.name || 'unnamed'}) — invalid lat/lon`,
-        { lat: obj.lat, lon: obj.lon })
+      console.warn(`mapUpdateMarkers: skip ${obj.id} (${obj.name || 'unnamed'}) — invalid lat/lon`)
       continue
     }
+    if (!bounds.contains([obj.lat, obj.lon])) continue   // außerhalb Viewport → kein Marker
+    keep.add(obj.id)
     try {
       if (markerLayer.has(obj.id)) {
-        // setLatLng übernimmt tickMarkerSmoothers; hier nur Popup aktualisieren.
         feedSmoother(obj)
-        const marker = markerLayer.get(obj.id)
-        marker.bindPopup(`<strong>${obj.name || 'unnamed'}</strong><br>${obj.lat.toFixed(5)}, ${obj.lon.toFixed(5)}`)
+        markerLayer.get(obj.id).bindPopup(`<strong>${obj.name || 'unnamed'}</strong><br>${obj.lat.toFixed(5)}, ${obj.lon.toFixed(5)}`)
       } else {
         addMarker(obj)
         feedSmoother(obj)
       }
     } catch (err) {
-      // Belt-and-Suspenders: addMarker / bindPopup können auch aus anderen
-      // Gründen werfen (Leaflet-Internals, fehlerhafte Icon-HTML, …).
-      // Wir loggen und machen mit dem nächsten Record weiter.
       console.warn(`mapUpdateMarkers: marker für ${obj.id} fehlgeschlagen`, err)
     }
   }
 
-  // Cleanup: alles entfernen, was nicht (mehr) in der sichtbaren Liste ist —
-  // sowohl real verschwundene Records als auch Filter-Opfer.
-  const visibleIds = new Set(visibleObjects.map(o => o.id))
+  // Cleanup: Marker entfernen, die nicht (mehr) gerendert werden sollen —
+  // verschwundene Records, Filter-Opfer ODER aus dem Viewport gewandert.
+  // (removeMarker räumt Kreis, Smoother, movingIds + interact-Sub mit ab.)
   for (const id of Array.from(markerLayer.keys())) {
-    if (!visibleIds.has(id)) {
-      removeMarker(id)
-      markerSmoothers.delete(id)
-    }
+    if (!keep.has(id)) removeMarker(id)
   }
 }
 
@@ -492,6 +486,9 @@ async function init() {
   // Karte verschiebt sich → Off-Screen-Linie zum hervorgehobenen Marker neu zeichnen
   map.on('move', updateHighlightLine)
   map.on('zoom', updateHighlightLine)
+  // Nach Pan/Zoom neu cullen: jetzt sichtbare Objekte einblenden, aus dem
+  // Viewport gewanderte ausblenden. moveend deckt Pan UND Zoom ab.
+  map.on('moveend', () => mapUpdateMarkers(ajna.getObjectList()))
 
   injectHighlightStyles()
 
@@ -511,7 +508,8 @@ async function init() {
     onManageGroups: () => groupDialog.open(),
     onManageServers: () => serverDialog.open(),
     onManageProfile: () => profileDialog.open(),
-    onManageFilters: () => filterDialog.open()
+    onManageFilters: () => filterDialog.open(),
+    objectFilter: obj => agentFilters.matches(obj)
   })
 
   // Marker-Klick-Aktionen verdrahten, sobald die EditorUI als Sink für
@@ -538,7 +536,10 @@ async function init() {
     if (user) agentFilters.refreshManifests().catch(err =>
       console.warn('[map] agent-manifests refresh:', err?.message || err))
   })
-  agentFilters.onChange(() => mapUpdateMarkers(ajna.getObjectList()))
+  agentFilters.onChange(() => {
+    mapUpdateMarkers(ajna.getObjectList())
+    editorUI?.renderObjectList()   // Editor-Liste mitziehen
+  })
 
   // Rechtsklick auf die Karte → "Neues Objekt…" an den geklickten
   // GPS-Koordinaten. Leaflet liefert e.latlng direkt; der Browser-eigene
