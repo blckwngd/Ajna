@@ -19,6 +19,14 @@
 
 const STORAGE_KEY = 'ajna.layer_filters'
 
+// AR-Render-Budget: maximale Anzahl gleichzeitig gerenderter Objekte JE AGENT
+// (Source). Begrenzt die Sichtweite indirekt — gerendert werden nur die X
+// kamera-nächsten Objekte einer Source. Dichte Agents (WiGLE) werden so stark
+// vereinfacht, dünne (AIS) bleiben komplett sichtbar (Liste < Budget = alle).
+// Pro Agent überschreibbar via Manifest-Feld `render_budget` (0/negativ =
+// unbegrenzt, z. B. ein Flugzeug-Tracker mit großer Reichweite).
+const DEFAULT_RENDER_BUDGET = 50
+
 export class AgentFilters {
   constructor(ajna) {
     this.ajna = ajna
@@ -52,6 +60,9 @@ export class AgentFilters {
           source: src,
           agent_name: m.agent_name || src,
           description: m.description || '',
+          // Optional, abwärtskompatibel: erst gesetzt, wenn ein Agent das Feld
+          // publisht. undefined → Client-Default (DEFAULT_RENDER_BUDGET).
+          render_budget: Number.isFinite(Number(m.render_budget)) ? Number(m.render_budget) : undefined,
           layers: []
         }
       }
@@ -72,6 +83,21 @@ export class AgentFilters {
   getSources() {
     return Object.values(this._layersBySource).sort((a, b) =>
       (a.agent_name || '').localeCompare(b.agent_name || ''))
+  }
+
+  /**
+   * Render-Budget einer Source (max. gleichzeitig gerenderte Objekte in der
+   * AR-Szene). Manifest-`render_budget` überschreibt den Default; 0/negativ
+   * bedeutet unbegrenzt (→ Infinity). syncSceneObjects rendert daraufhin nur
+   * die kamera-nächsten N Objekte dieser Source.
+   * @param {string} source
+   * @returns {number}  positive Zahl oder Infinity
+   */
+  getRenderBudget(source) {
+    const manifest = this._layersBySource[source]
+    const override = manifest ? manifest.render_budget : undefined
+    if (Number.isFinite(override)) return override <= 0 ? Infinity : override
+    return DEFAULT_RENDER_BUDGET
   }
 
   // ───────────────────────────────────────────────────────────────────

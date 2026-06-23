@@ -535,6 +535,29 @@ async function init() {
   })
   syncSceneObjects(scene, world, geo, ajnaManager.getObjectList())
 
+  // Re-Capping bei Kamerabewegung: die "nächsten X je Agent" hängen von der
+  // Kameraposition ab. syncSceneObjects feuert sonst nur bei Datenänderung —
+  // beim Laufen/Fliegen würde die Auswahl veralten. Daher ~alle 1.5 s prüfen,
+  // ob die Kamera sich > RE_CAP_DIST bewegt hat, und dann neu reconcilen.
+  // Guard verhindert überlappende (async) Reconcile-Läufe.
+  let _lastCapPos = null, _lastCapT = 0, _recapRunning = false
+  const RE_CAP_DIST2 = 25 * 25      // 25 m (quadriert)
+  scene.onBeforeRenderObservable.add(() => {
+    const cam = scene.activeCamera?.globalPosition
+    if (!cam || _recapRunning) return
+    const now = performance.now()
+    if (now - _lastCapT < 1500) return
+    if (_lastCapPos) {
+      const dx = cam.x - _lastCapPos.x, dy = cam.y - _lastCapPos.y, dz = cam.z - _lastCapPos.z
+      if (dx * dx + dy * dy + dz * dz < RE_CAP_DIST2) return
+    }
+    _lastCapT = now
+    _lastCapPos = cam.clone()
+    _recapRunning = true
+    Promise.resolve(syncSceneObjects(scene, world, geo, ajnaManager.getObjectList()))
+      .finally(() => { _recapRunning = false })
+  })
+
   // OSM-Kontext (Straßen + Gebäude) als Wireframe um den Origin zeichnen.
   // Die Geo-API ist standardmäßig authenticated-only — wenn beim Boot
   // noch nicht eingeloggt: stiller 401, erneuter Versuch beim Login.
@@ -802,6 +825,41 @@ function unsubscribeInteract(objectId) {
   interactSubs.delete(objectId)
 }
 
+// Sichtweiten-Begrenzung pro Agent: gruppiert die Objekte nach Source und
+// behält je Source nur die `render_budget` kamera-nächsten. Objekte ohne
+// Source (user-created) bleiben immer. Distanz im lokalen Meter-Raum
+// (geo.toLocal vs. Kamera-Weltposition); Quadrat-Distanz spart die Wurzel.
+function _capByAgentBudget(objects, geo, camera, filters) {
+  const cam = camera?.globalPosition
+  if (!cam || !filters) return objects
+
+  const bySource = new Map()
+  const keep = []
+  for (const o of objects) {
+    const src = o?.state?.source
+    if (!src) { keep.push(o); continue }            // Nicht-Agent-Objekte immer rendern
+    let list = bySource.get(src)
+    if (!list) bySource.set(src, list = [])
+    list.push(o)
+  }
+
+  for (const [src, list] of bySource) {
+    const budget = filters.getRenderBudget(src)
+    if (!Number.isFinite(budget) || list.length <= budget) {
+      keep.push(...list)                            // unbegrenzt oder unter Budget → alle
+      continue
+    }
+    const scored = list.map(o => {
+      const p = geo.toLocal(o.lat, o.lon, o.altitude || 0)
+      const dx = p.x - cam.x, dy = p.y - cam.y, dz = p.z - cam.z
+      return { o, d2: dx * dx + dy * dy + dz * dz }
+    })
+    scored.sort((a, b) => a.d2 - b.d2)
+    for (let i = 0; i < budget; i++) keep.push(scored[i].o)
+  }
+  return keep
+}
+
 // Reconcile-Schritt: bringt die Szene mit einer Objekt-Liste vom AjnaManager
 // in Übereinstimmung, ohne selbst eine Backend-Abfrage auszulösen. Wird vom
 // onObjectsChanged-Listener gefeuert; ein erneuter Backend-Roundtrip würde
@@ -812,9 +870,14 @@ async function syncSceneObjects(scene, world, geo, objects) {
 
   // Agent-Filter: aus der vollen Objekt-Liste nur das behalten, was
   // gemäß User-Setting sichtbar sein soll. Default = alles sichtbar.
-  const visibleObjects = _agentFilters
+  const filteredObjects = _agentFilters
     ? objects.filter(o => _agentFilters.matches(o))
     : objects
+
+  // Sichtweiten-Begrenzung: je Agent (Source) nur die X kamera-nächsten
+  // Objekte rendern (X = render_budget der Source). Dichte Agents (WiGLE)
+  // werden stark vereinfacht, dünne (AIS) bleiben komplett sichtbar.
+  const visibleObjects = _capByAgentBudget(filteredObjects, geo, scene.activeCamera, _agentFilters)
 
   const incomingIds = new Set(visibleObjects.map(o => o.id))
 
