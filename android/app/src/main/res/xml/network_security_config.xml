@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Portabel & ohne maschinenspezifisches Zertifikat im Repo.
+
+  • Release/Standard: nur System-CAs (kein Self-Signed). Cleartext erlaubt
+    (entspricht dem bisherigen usesCleartextTraffic), z. B. für http://<host>:8090.
+  • DEBUG-Builds (npm run mobile:run → installDebug): zusätzlich vom Nutzer
+    installierte CAs. Damit funktioniert ein lokal/im LAN per Caddy
+    ausgelieferter HTTPS-Endpunkt (z. B. https://LENOVO-T14S-AB) mit Caddys
+    interner CA, sobald deren Root-CA EINMALIG am Gerät installiert ist:
+        npm run android:trust-caddy   (schiebt die CA aufs Gerät)
+        Gerät → Einstellungen → Sicherheit → Zertifikat installieren → CA
+    `<certificates src="user">` greift nur in debuggable Builds — Release bleibt
+    sicher (nur System-Trust).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>

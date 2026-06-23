@@ -23,7 +23,8 @@
     "uwb-anchors": "node agents/uwb-anchors.mjs",
     "mobile:sync": "webpack && cap sync android",
     "mobile:run": "webpack && node scripts/mobile-run.mjs",
-    "mobile:open": "cap open android"
+    "mobile:open": "cap open android",
+    "android:trust-caddy": "node scripts/android-trust-caddy.mjs"
   },
   "dependencies": {
     "@babylonjs/core": "^8.54.3",
