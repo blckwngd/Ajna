@@ -58,6 +58,22 @@ export function radiusOf(record) {
 }
 
 /**
+ * AR-Sicht auf appearance: ein optionaler `ar`-Override wird über die
+ * Top-Level-Felder gemerged. Für Fälle, in denen sich 2D- und 3D-Darstellung
+ * unterscheiden — z. B. WLAN = Karten-Kreis, AR = transparente, schwebende
+ * Sphere. Ohne `ar` ist es identisch zu appearance.
+ *   Felder (alle optional): shape, color, opacity, y (Höhe in m),
+ *   diameter/size/height/thickness (Maße), gltf
+ * @returns {object|null}
+ */
+export function arViewOf(appearance) {
+  if (!appearance || typeof appearance !== 'object') return null
+  return (appearance.ar && typeof appearance.ar === 'object')
+    ? { ...appearance, ...appearance.ar }
+    : appearance
+}
+
+/**
  * AR-Modell-URL: `appearance.gltf` gewinnt, sonst Legacy `model_url`.
  * @returns {string|null}
  */

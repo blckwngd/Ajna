@@ -3,7 +3,7 @@ import { TransformComponent } from "./components/TransformComponent.js"
 import { NetworkSyncComponent } from "./components/NetworkSyncComponent.js"
 import { PositionSmoother } from "../core/PositionSmoother.js"
 import { ENC_STYLE, encCategory } from "../core/wifiStyle.js"
-import { appearanceOf, gltfUrlOf } from "../core/Appearance.js"
+import { appearanceOf, arViewOf, gltfUrlOf } from "../core/Appearance.js"
 
 export class GameObject {
 
@@ -223,8 +223,39 @@ export class GameObject {
     //   dragon  → violetter gestreckter Körper (fliegt via altitude im Record)
     //   item    → goldenes leuchtendes Oktaeder, schwebend
     //   hint    → gelbes leuchtendes Oktaeder, höher schwebend
-    const mat = new BABYLON.StandardMaterial(`mat_${this.id}`, this.scene)
     const phName = `placeholder_${this.id}`
+
+    // 1) Agent-definierte AR-Darstellung zuerst (appearance / appearance.ar) —
+    //    type-UNABHÄNGIG. Erkennt der Helfer ein 3D-Primitiv (z. B. WLAN als
+    //    "sphere"), rendern wir es direkt mit Farbe, Transparenz (opacity) und
+    //    Schwebehöhe (y) aus appearance. So braucht der Viewer kein Typ-Wissen.
+    const ar = arViewOf(this._appearance)
+    const apMesh = ar ? this.#primitiveFromShape((ar.shape || '').toLowerCase(), ar, phName) : null
+    if (apMesh) {
+      const apMat = new BABYLON.StandardMaterial(`mat_${this.id}`, this.scene)
+      if (typeof ar.color === 'string') {
+        try {
+          const c = BABYLON.Color3.FromHexString(ar.color)
+          apMat.diffuseColor = c
+          apMat.emissiveColor = c.scale(0.5)
+        } catch { /* ungültiger Hex → Default-Material */ }
+      }
+      const op = Number(ar.opacity)
+      if (Number.isFinite(op) && op > 0 && op < 1) {
+        apMat.alpha = op
+        apMat.backFaceCulling = false   // saubere Transparenz (Innen-/Außenflächen)
+      }
+      const yy = Number(ar.y)
+      apMesh.position.y = Number.isFinite(yy) ? yy : 0
+      apMesh.material = apMat
+      apMesh.parent = this.root
+      this.meshes = [apMesh]
+      return
+    }
+
+    // 2) Fallback: type-abhängiger Default-Look (Legacy), wenn appearance kein
+    //    bekanntes 3D-Primitiv vorgibt.
+    const mat = new BABYLON.StandardMaterial(`mat_${this.id}`, this.scene)
     let mesh
 
     switch (this._objectType) {
@@ -296,6 +327,27 @@ export class GameObject {
     mesh.material = mat
     mesh.parent = this.root
     this.meshes = [mesh]
+  }
+
+  // Baut ein Mesh aus einer agent-definierten Shape (appearance). Maße kommen
+  // aus appearance (diameter/size/height/thickness), sonst sinnvolle Defaults.
+  // Liefert null für unbekannte/2D-Shapes ("circle"/"emoji"/…) → Legacy-Fallback.
+  #primitiveFromShape(shape, ar, phName) {
+    const s = this.scene
+    switch (shape) {
+      case 'sphere':
+        return BABYLON.MeshBuilder.CreateSphere(phName, { diameter: Number(ar.diameter) || 0.5, segments: 12 }, s)
+      case 'box':
+        return BABYLON.MeshBuilder.CreateBox(phName, { size: Number(ar.size) || 1 }, s)
+      case 'capsule':
+        return BABYLON.MeshBuilder.CreateCapsule(phName, { height: Number(ar.height) || 1.7, radius: Number(ar.thickness) || 0.3 }, s)
+      case 'cylinder':
+        return BABYLON.MeshBuilder.CreateCylinder(phName, { height: Number(ar.height) || 1.5, diameter: Number(ar.diameter) || 0.4, tessellation: 12 }, s)
+      case 'octahedron':
+        return BABYLON.MeshBuilder.CreatePolyhedron(phName, { type: 1, size: Number(ar.size) || 0.3 }, s)
+      default:
+        return null
+    }
   }
 
   #disposePlaceholder() {

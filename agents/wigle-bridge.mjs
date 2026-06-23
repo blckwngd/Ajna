@@ -237,9 +237,12 @@ async function queryReconcile(centers, fromAreas) {
         // Verschlüsselungsfarbe (günstig bei Masse). Der Viewer braucht dafür
         // KEIN WLAN-Spezialwissen mehr — er interpretiert nur `appearance`.
         appearance: {
-          shape: 'circle',
+          shape: 'circle',                 // Karte: Canvas-Punkt
           color: ENC_STYLE[cat].hex,
-          radius: 6
+          radius: 6,
+          // AR weicht ab (2D-Kreis ≠ 3D): transparente, schwebende Kugel in
+          // Verschlüsselungsfarbe, 5 m über dem Boden.
+          ar: { shape: 'sphere', diameter: 0.8, opacity: 0.35, y: 5 }
         },
         state: {
           source: 'wigle',
