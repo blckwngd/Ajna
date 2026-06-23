@@ -130,14 +130,44 @@ async function init() {
   // in the shell, or <body> standalone) so they stay scoped to the AR view and
   // vanish with it on tab switch.
   const arRoot = canvas.parentElement || document.body
-  const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true })
+  // preserveDrawingBuffer bewusst NICHT gesetzt: kostet Performance (Treiber
+  // muss den Buffer halten) und wird nirgends gebraucht (keine Screenshots).
+  const engine = new BABYLON.Engine(canvas, true, { stencil: true })
   // The AR view may have just become visible (display toggled) when this runs;
   // the canvas can briefly report 0×0. Resize once layout settles so the scene
   // actually renders (otherwise the image looks static/empty).
   requestAnimationFrame(() => engine.resize())
   const scene = new BABYLON.Scene(engine)
   scene.useRightHandedSystem = true
-  
+
+  // ── Performance #1: kein automatisches Pointer-Move-Picking ──────────────
+  // Babylon raycastet sonst bei JEDER Pointer-Bewegung gegen die ganze Szene
+  // (setzt meshUnderPointer, feuert OnPointerOver). Das ist die Hauptursache
+  // fürs Ruckeln beim Touch-Umschauen — schon bei wenigen Objekten. Tap-Picks
+  // (Objekt-Interaktion) laufen weiter, die sind hiervon unberührt.
+  scene.skipPointerMovePicking = true
+  scene.constantlyUpdateMeshUnderPointer = false
+
+  // ── Performance #2: adaptive interne Render-Auflösung ────────────────────
+  // FPS ~1×/s messen; bei Einbrüchen die Auflösung senken (Fill-Rate-Schutz auf
+  // schwachen Phones), bei Reserve wieder anheben. Desktop bleibt bei Scale 1
+  // (volle Auflösung). setHardwareScalingLevel(>1) = weniger Pixel.
+  let _renderScale = 1, _fpsAccum = 0, _fpsFrames = 0
+  scene.onAfterRenderObservable.add(() => {
+    const fps = engine.getFps()
+    if (Number.isFinite(fps)) { _fpsAccum += fps; _fpsFrames++ }
+    if (_fpsFrames < 60) return                       // ~1× pro Sekunde auswerten
+    const avg = _fpsAccum / _fpsFrames
+    _fpsAccum = 0; _fpsFrames = 0
+    if (avg < 50 && _renderScale < 2) {
+      _renderScale = Math.min(2, _renderScale + 0.25)
+      engine.setHardwareScalingLevel(_renderScale)
+    } else if (avg > 58 && _renderScale > 1) {
+      _renderScale = Math.max(1, _renderScale - 0.25)
+      engine.setHardwareScalingLevel(_renderScale)
+    }
+  })
+
   const world = new World(scene)
   // Nord/Süd geflippt: gleicht die Default-Blickrichtung der Babylon-Kamera
   // (-Z = "in den Bildschirm hinein") gegen das Ajna-Daten-Convention
@@ -245,9 +275,10 @@ async function init() {
     if (user) agentFilters.refreshManifests().catch(() => {})
   })
 
-  // Filter-Änderungen → bestehende Szene neu reconcilen.
+  // Filter-Änderungen → bestehende Szene neu reconcilen + Editor-Liste mitziehen.
   agentFilters.onChange(() => {
     syncSceneObjects(scene, world, geo, ajnaManager.getObjectList())
+    editorUI?.renderObjectList()
   })
 
   // Set after setupArOverlayControls below; called when the editor is engaged
@@ -275,7 +306,8 @@ async function init() {
     onObjectHover: (obj, hovering) => {
       const go = objectMap.get(obj.id)
       if (go) setHighlight(go, hovering)
-    }
+    },
+    objectFilter: obj => agentFilters.matches(obj)
   })
 
   // Editor + Debug start hidden (editor open by default on wide screens),
@@ -988,6 +1020,14 @@ function setupHoverSystem(scene, engine, canvas) {
   // ---- Pointer-Hover über Mesh → Tooltip an Cursor-Position ----
   scene.onPointerObservable.add(eventData => {
     if (eventData.type !== BABYLON.PointerEventTypes.POINTERMOVE) return
+
+    // Hover-Tooltip ist eine Desktop-Affordance. Auf Touch gibt es keinen
+    // echten Hover — der scene.pick würde nur pro Drag-Frame das Umschauen
+    // ausbremsen (zweite Picking-Quelle neben skipPointerMovePicking).
+    if (eventData.event?.pointerType === 'touch') {
+      tooltip.style.display = 'none'
+      return
+    }
 
     const pickInfo = scene.pick(scene.pointerX, scene.pointerY)
     const go = pickInfo?.hit ? pickInfo.pickedMesh?.metadata?.gameObject : null
