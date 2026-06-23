@@ -310,7 +310,12 @@ function addMarker(obj) {
   })
 
   markerLayer.set(obj.id, marker)
-  subscribeMarkerInteract(obj.id)
+  // Realtime-Interact-Subscription nur für Objekte, die der Agent als
+  // "realtime-würdig" markiert (state.realtime === true) — z. B. interaktive
+  // NPCs. Statische Massendaten (WLANs, POIs) öffnen KEINE Subscription:
+  // sonst hunderte PB-Realtime-Abos + Sub/Unsub-Sturm bei jedem Pan (Culling).
+  // Objekt-Daten kommen ohnehin über das globale objects:*-Abo + 30s-Poll.
+  if (obj.state?.realtime === true) subscribeMarkerInteract(obj.id)
 }
 
 function removeMarker(id) {
