@@ -1194,6 +1194,14 @@ function setupHoverSystem(scene, engine, canvas) {
       return
     }
 
+    // Während eines Drags (Maustaste gedrückt = Kamera-Umschauen) KEINEN
+    // Hover-Pick: ein scene.pick (Raycast) pro pointermove bremst das Umschauen
+    // massiv aus — genau der pointermove-Block im Performance-Profil.
+    if (eventData.event?.buttons) {
+      tooltip.style.display = 'none'
+      return
+    }
+
     const pickInfo = scene.pick(scene.pointerX, scene.pointerY)
     const go = pickInfo?.hit ? pickInfo.pickedMesh?.metadata?.gameObject : null
 
