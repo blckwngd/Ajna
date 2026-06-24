@@ -264,10 +264,9 @@ export class WandManager {
   // ── mapping wand input → Ajna interaction (privacy-local resolution) ─
 
   _handleButton(msg) {
-    // Offline-capable local feedback: ask the wand to toggle its LED. The wand
-    // firmware also toggles locally on press, so this works with or without us.
-    this.sendCommand({ cmd: 'led', state: 'toggle' })
-
+    // (No LED command: the wand's on-board LED is unused — it shares the NINA's
+    // SPI with BLE, so driving it would break BLE. Visible feedback is an
+    // external light, handled wand-side.)
     const action = msg.long ? 'wand_long' : 'wand_press'
     this._interactTarget(action, { buttonId: msg.id, long: !!msg.long })
   }

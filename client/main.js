@@ -379,9 +379,9 @@ async function init() {
 
   function _triggerInteract(record, actionKey) {
     console.log(`[xr] trigger ${actionKey} on ${record.name || record.id}`)
-    ajnaManager.interact(record.id, actionKey).catch(err =>
-      console.warn("[xr] interact failed:", err?.message || err)
-    )
+    ajnaManager.interact(record.id, actionKey)
+      .then(() => _showInteractFeedback(record.id, actionKey))   // sofortiges Eigen-Feedback
+      .catch(err => console.warn("[xr] interact failed:", err?.message || err))
   }
 
   function _showInWorldMenuFor(go, record) {
@@ -530,9 +530,14 @@ async function init() {
 
   // Szene-Reconcile erst aktivieren, wenn Origin steht — sonst würden
   // alle GameObjects auf (0,0,0) landen.
-  ajnaManager.onObjectsChanged(objects => {
+  //
+  // Gethrottlet (wie die Karte): der Director tickt alle 500 ms und schreibt
+  // pro Figur ein Update; ungethrottlet liefe pro Tick ein Schwung voller
+  // Reconciles → periodisches Ruckeln. Max ~4×/s, immer mit der zuletzt
+  // gelieferten Objekt-Liste. PositionSmoother hält die Bewegung flüssig.
+  ajnaManager.onObjectsChanged(throttleLatest(objects => {
     syncSceneObjects(scene, world, geo, objects)
-  })
+  }, 250))
   syncSceneObjects(scene, world, geo, ajnaManager.getObjectList())
 
   // Re-Capping bei Kamerabewegung: die "nächsten X je Agent" hängen von der
@@ -569,7 +574,10 @@ async function init() {
   // setzt das Feld beim Start eines Pfads und löscht es beim Stoppen.
   const pathOverlay = new PathOverlay(scene, geo)
   window.pathOverlay = pathOverlay
-  ajnaManager.onObjectsChanged(objects => pathOverlay.update(objects))
+  // Gethrottlet: lief sonst pro objectsChanged-Event (Director: ~N Events je
+  // 500-ms-Tick) komplett durch → periodisches Ruckeln. Debug-Overlay, 5×/s
+  // reicht völlig.
+  ajnaManager.onObjectsChanged(throttleLatest(objects => pathOverlay.update(objects), 200))
   pathOverlay.update(ajnaManager.getObjectList())
   const _loadOSM = () => {
     if (!geo.origin) return
@@ -700,8 +708,7 @@ async function init() {
       const actions = [...base, { key: '__back', label: 'Zurück' }]
       inWorldMenu.show(focusedGo, record.name || record.id, actions, key => {
         if (key === '__back') return  // Menü ist beim trigger schon hidden
-        ajnaManager.interact(record.id, key).catch(err =>
-          console.warn('[xr] interact failed:', err?.message || err))
+        _triggerInteract(record, key)
       })
       inWorldMenu.focusButton(0)
       mode = 'MENU'
@@ -825,6 +832,33 @@ function unsubscribeInteract(objectId) {
   interactSubs.delete(objectId)
 }
 
+// Leading+Trailing-Throttle: führt sofort aus, danach höchstens alle `ms` —
+// immer mit den ZULETZT übergebenen Argumenten. Bündelt die Director-Tick-
+// Bursts (mehrere Figur-Updates je 500-ms-Tick) zu einem Reconcile.
+function throttleLatest(fn, ms) {
+  let last = 0, timer = null, lastArgs = null
+  return (...args) => {
+    lastArgs = args
+    const wait = ms - (Date.now() - last)
+    if (wait <= 0) {
+      if (timer) { clearTimeout(timer); timer = null }
+      last = Date.now()
+      fn(...lastArgs)
+    } else if (!timer) {
+      timer = setTimeout(() => { timer = null; last = Date.now(); fn(...lastArgs) }, wait)
+    }
+  }
+}
+
+// Cap-Cache: Position der letzten Cap-Berechnung + je Source die gewählten IDs.
+// So muss die teure Distanz-Sortierung NICHT bei jedem (500-ms-)Daten-Reconcile
+// laufen — nur wenn die Kamera sich seit der letzten Berechnung > Schwelle
+// bewegt hat. Verhindert das periodische Ruckeln durch Mesh-Churn (die nächste-X-
+// Auswahl bleibt zwischen Kamerabewegungen stabil → keine dispose/create-Welle).
+let _capCamPos = null
+const _capKeep = new Map()                          // source → Set<id>
+const CAP_RECOMPUTE_DIST2 = 15 * 15                 // 15 m (quadriert)
+
 // Sichtweiten-Begrenzung pro Agent: gruppiert die Objekte nach Source und
 // behält je Source nur die `render_budget` kamera-nächsten. Objekte ohne
 // Source (user-created) bleiben immer. Distanz im lokalen Meter-Raum
@@ -832,6 +866,14 @@ function unsubscribeInteract(objectId) {
 function _capByAgentBudget(objects, geo, camera, filters) {
   const cam = camera?.globalPosition
   if (!cam || !filters) return objects
+
+  // Cache wiederverwenden, solange die Kamera quasi steht (Daten-Reconciles
+  // des Directors alle 500 ms sollen NICHT neu cappen).
+  let recompute = true
+  if (_capCamPos) {
+    const dx = cam.x - _capCamPos.x, dy = cam.y - _capCamPos.y, dz = cam.z - _capCamPos.z
+    if (dx * dx + dy * dy + dz * dz < CAP_RECOMPUTE_DIST2) recompute = false
+  }
 
   const bySource = new Map()
   const keep = []
@@ -849,14 +891,26 @@ function _capByAgentBudget(objects, geo, camera, filters) {
       keep.push(...list)                            // unbegrenzt oder unter Budget → alle
       continue
     }
+    // Steht die Kamera + haben wir eine gültige Auswahl: wiederverwenden
+    // (nur noch existierende Objekte) → keine Distanzrechnung, kein Churn.
+    if (!recompute && _capKeep.has(src)) {
+      const cached = _capKeep.get(src)
+      const kept = list.filter(o => cached.has(o.id))
+      if (kept.length) { keep.push(...kept); continue }
+    }
+    // Neu berechnen: nach Distanz zur Kamera sortieren, die nächsten `budget`.
     const scored = list.map(o => {
       const p = geo.toLocal(o.lat, o.lon, o.altitude || 0)
       const dx = p.x - cam.x, dy = p.y - cam.y, dz = p.z - cam.z
       return { o, d2: dx * dx + dy * dy + dz * dz }
     })
     scored.sort((a, b) => a.d2 - b.d2)
-    for (let i = 0; i < budget; i++) keep.push(scored[i].o)
+    const chosen = scored.slice(0, budget).map(s => s.o)
+    keep.push(...chosen)
+    _capKeep.set(src, new Set(chosen.map(o => o.id)))
   }
+
+  if (recompute) _capCamPos = cam.clone()
   return keep
 }
 
@@ -916,7 +970,14 @@ async function syncSceneObjects(scene, world, geo, objects) {
       } else {
         const go = await GameObject.createFromPBData(scene, obj, geo, true)
         objectMap.set(obj.id, go)
-        subscribeInteract(ajnaManager, obj.id, data => _handleInteractAR(go, data))
+        // Stehendes Realtime-Abo nur für als realtime markierte Objekte (z. B.
+        // interaktive NPCs), um Interaktionen ANDERER zu sehen. Sonst öffnete
+        // jedes Objekt ein Abo → bei Cap-/Viewport-Churn ständige
+        // submitSubscriptions-POSTs an /api/realtime = periodisches Ruckeln.
+        // EIGENE Interaktionen zeigen ihr Feedback ohnehin lokal am Aufrufort.
+        if (obj.state?.realtime === true) {
+          subscribeInteract(ajnaManager, obj.id, data => _handleInteractAR(go, data))
+        }
       }
     } catch (err) {
       console.warn(`syncSceneObjects: GameObject für ${obj.id} fehlgeschlagen`, err)
@@ -924,22 +985,34 @@ async function syncSceneObjects(scene, world, geo, objects) {
   }
 }
 
-// Reagiert auf eingehende Broker-Events. Im AR-Modus zeigen wir einen
-// Toast plus einen kurzen Highlight-Pulse am betroffenen GameObject.
-function _handleInteractAR(go, data) {
+// Lokales Interact-Feedback (Toast + Highlight-Pulse) aus dem gecachten Record.
+// Der Reply-Text wird ohnehin client-seitig abgeleitet (der Server broadcastet
+// nur {action,source,ts}), daher kann das Feedback für EIGENE Aktionen sofort
+// am Aufrufort gezeigt werden — ohne stehendes Realtime-Abo auf das Objekt.
+function _showInteractFeedback(objectId, action) {
   if (!_toast) _toast = new Toast()
-  // examine → Beschreibung, talk → Dialog-Zeile (frischer Record aus dem Cache).
-  const rec = ajnaManager.getObjectById(go.id)
+  const go = objectMap.get(objectId)
+  const rec = ajnaManager.getObjectById(objectId)
+  const name = go?.name || rec?.name || objectId
+  // examine → Beschreibung, talk → Dialog-Zeile.
   const reply =
-    (data.action === "talk"    && (rec?.state?.dialog || rec?.description)) ||
-    (data.action === "examine" && (rec?.description || rec?.state?.hint || rec?.state?.dialog)) ||
+    (action === "talk"    && (rec?.state?.dialog || rec?.description)) ||
+    (action === "examine" && (rec?.description || rec?.state?.hint || rec?.state?.dialog)) ||
     null
-  if (reply) _toast.show(reply, { title: go.name || go.id })
-  else _toast.show(`${data.action} → ${go.name || go.id}`, { title: "INTERACT" })
-  if (_arHighlight) {
+  if (reply) _toast.show(reply, { title: name })
+  else _toast.show(`${action} → ${name}`, { title: "INTERACT" })
+  if (_arHighlight && go) {
     _arHighlight(go, true)
     setTimeout(() => _arHighlight(go, false), 280)
   }
+}
+
+// Reagiert auf eingehende Broker-Events (Interaktionen ANDERER Spieler auf
+// Objekten, die als realtime markiert sind). Eigene Aktionen kommen hier als
+// Echo zurück — die überspringen wir, weil das Feedback schon am Aufrufort lief.
+function _handleInteractAR(go, data) {
+  if (data?.source && data.source === ajnaManager.currentUser()?.id) return
+  _showInteractFeedback(go.id, data.action)
 }
 let _arHighlight = null  // wird in init() befüllt — Closure-Bridge auf setHighlight
 let _agentFilters = null // wird in init() gesetzt — Closure-Bridge für syncSceneObjects

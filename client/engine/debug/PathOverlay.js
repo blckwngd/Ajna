@@ -43,7 +43,13 @@ export class PathOverlay {
   }
 
   _drawIfChanged(id, path) {
-    const key = JSON.stringify(path)
+    // Günstige Change-Detection statt JSON.stringify des ganzen Pfads (lief
+    // sonst pro Objekt bei JEDEM objectsChanged — bei 500-ms-Director-Ticks
+    // ein spürbarer, periodischer Block). Länge + Start-/Endpunkt erkennt die
+    // relevanten Pfad-Änderungen (gesetzt/getrimmt/neues Ziel) zuverlässig.
+    const n = path.length
+    const a = path[0], b = path[n - 1]
+    const key = `${n}:${a[0]},${a[1]}:${b[0]},${b[1]}`
     const existing = this.meshes.get(id)
     if (existing && existing._pathKey === key) return
     if (existing) existing.dispose()
