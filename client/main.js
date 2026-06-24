@@ -938,6 +938,9 @@ async function syncSceneObjects(scene, world, geo, objects) {
 
   if (!geo.origin) return
 
+  const _t0 = performance.now()
+  let _created = 0, _disposed = 0, _applied = 0
+
   // Agent-Filter: aus der vollen Objekt-Liste nur das behalten, was
   // gemäß User-Setting sichtbar sein soll. Default = alles sichtbar.
   const filteredObjects = _agentFilters
@@ -958,6 +961,7 @@ async function syncSceneObjects(scene, world, geo, objects) {
       unsubscribeInteract(id)
       go.dispose()
       objectMap.delete(id)
+      _disposed++
     }
   }
 
@@ -983,9 +987,11 @@ async function syncSceneObjects(scene, world, geo, objects) {
       const existing = objectMap.get(obj.id)
       if (existing) {
         existing.applyData(obj, geo)
+        _applied++
       } else {
         const go = await GameObject.createFromPBData(scene, obj, geo, true)
         objectMap.set(obj.id, go)
+        _created++
         // Stehendes Realtime-Abo nur für als realtime markierte Objekte (z. B.
         // interaktive NPCs), um Interaktionen ANDERER zu sehen. Sonst öffnete
         // jedes Objekt ein Abo → bei Cap-/Viewport-Churn ständige
@@ -998,6 +1004,13 @@ async function syncSceneObjects(scene, world, geo, objects) {
     } catch (err) {
       console.warn(`syncSceneObjects: GameObject für ${obj.id} fehlgeschlagen`, err)
     }
+  }
+
+  // Perf-Diagnose: nur die teuren Reconciles loggen — Dispose/Create ist
+  // synchron + teuer und erklärt das [Violation] 'objects/*' handler took …ms.
+  const _dt = performance.now() - _t0
+  if (_dt > 30) {
+    console.warn(`[perf] syncSceneObjects ${_dt.toFixed(0)}ms · created=${_created} disposed=${_disposed} applied=${_applied} visible=${visibleObjects.length}`)
   }
 }
 
