@@ -89,6 +89,10 @@ export class MobileShell {
     })
     this.interestArea.start()
     this._unsubs.push(() => this.interestArea?.stop())
+    // Standort-Schalter sitzt (auch) im Profil-Dialog — diesen Publisher
+    // injizieren, damit der Schalter dort sofort wirkt (sonst greift er beim
+    // nächsten Publish-Tick, da das Flag dynamisch geprüft wird).
+    if (window.ajnaUI?.profileDialog) window.ajnaUI.profileDialog.interestArea = this.interestArea
 
     // Apply a persisted manual north-alignment offset (optional calibration).
     const align = parseFloat(localStorage.getItem(ALIGN_KEY) || '0')

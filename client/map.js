@@ -426,28 +426,6 @@ function enabledSources() {
     })
 }
 
-// Datenschutz-Schalter unten links: Standort-Übermittlung an/aus (Opt-in).
-function mountShareLocationToggle(interestArea) {
-  // In der Mobile-Shell (Bottom-Tab-Bar vorhanden) NICHT anzeigen — dort gibt
-  // es den Schalter in Einstellungen → Privatsphäre. Der Publisher läuft hier
-  // trotzdem, der Schalter wäre nur ein Duplikat, das die Tab-Leiste überlappt.
-  if (document.querySelector('.shell-tabbar')) return
-  if (document.getElementById('shareLocToggle')) return
-  const box = document.createElement('label')
-  box.id = 'shareLocToggle'
-  box.style.cssText = 'position:absolute;left:10px;bottom:24px;z-index:1000;'
-    + 'background:rgba(0,0,0,0.6);color:#fff;font:12px sans-serif;padding:6px 9px;'
-    + 'border-radius:6px;display:flex;align-items:center;gap:7px;cursor:pointer;user-select:none'
-  const cb = document.createElement('input')
-  cb.type = 'checkbox'
-  cb.checked = InterestArea.isEnabled()
-  cb.addEventListener('change', () => interestArea.onToggle(cb.checked))
-  box.appendChild(cb)
-  box.appendChild(document.createTextNode('Standort für Umgebung teilen'))
-  box.title = 'Sendet nur einen UNSCHARFEN Bereich (~500 m). Aus = es wird nichts übermittelt.'
-  document.body.appendChild(box)
-}
-
 async function init() {
   if (!window.L) {
     throw new Error('Leaflet ist nicht geladen')
@@ -514,7 +492,9 @@ async function init() {
       getSources: () => enabledSources()
     })
     interestArea.start()
-    mountShareLocationToggle(interestArea)
+    // Schalter sitzt jetzt im Profil-Dialog (aus jeder Ansicht erreichbar) statt
+    // als separater Karten-Button. Publisher injizieren → Sofort-Effekt.
+    profileDialog.interestArea = interestArea
   }
 
   // Karte verschiebt sich → Off-Screen-Linie zum hervorgehobenen Marker neu zeichnen

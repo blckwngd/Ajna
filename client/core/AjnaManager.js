@@ -5,9 +5,13 @@ import { ServerRegistry } from './ServerRegistry.js'
 const FALLBACK_SERVER_ID = 'default'
 
 function hasLocalStorage() {
-  // Existenz ALLEIN reicht nicht — Node 22+/25 stellt `localStorage` als
-  // unfertigen Global bereit, dessen Methoden bei Aufruf werfen. Wir
-  // probieren einen No-Op-Read, um die echte Funktionalität zu testen.
+  // Die Registry/Multi-Server ist ein BROWSER-Feature. Node 22+/25 stellt
+  // `localStorage` inzwischen als (teils dateigestützten) Global bereit —
+  // verlässt man sich nur auf dessen Existenz/Funktion, nimmt ein Agent
+  // fälschlich den Registry-Pfad und nutzt eine persistierte (ggf. stale)
+  // Server-URL statt der konfigurierten AJNA_URL (führte zu /ajnaapi-404).
+  // Daher zwingend einen echten Browser-Kontext (window) verlangen.
+  if (typeof window === 'undefined') return false
   try {
     if (typeof localStorage === 'undefined' || !localStorage) return false
     localStorage.getItem('__ajna_storage_probe__')

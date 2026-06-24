@@ -35,6 +35,7 @@ import { ServerDialog } from "./core/ServerDialog.js"
 import { ProfileDialog } from "./core/ProfileDialog.js"
 import { FilterDialog } from "./core/FilterDialog.js"
 import { AgentFilters } from "./core/AgentFilters.js"
+import { InterestArea } from "./core/InterestArea.js"
 import { AjnaGeo } from "./core/AjnaGeo.js"
 import { ObjectActions } from "./core/ObjectActions.js"
 import { InWorldActionMenu } from "./core/InWorldActionMenu.js"
@@ -280,6 +281,21 @@ async function init() {
     syncSceneObjects(scene, world, geo, ajnaManager.getObjectList())
     editorUI?.renderObjectList()
   })
+
+  // Interest-Area-Publisher (Opt-in, Default aus): teilt einen UNSCHARFEN
+  // Bereich, damit Agents Inhalte in der Nähe liefern. Der Schalter sitzt im
+  // Profil-Dialog (aus jeder Ansicht erreichbar); der Publisher prüft das Flag
+  // dynamisch. Position aus der geteilten GPS/UWB-Quelle, Quellen aus dem Filter.
+  const interestArea = new InterestArea({
+    ajna: ajnaManager,
+    getPosition: () => positionSource?.getWorldPosition?.() || null,
+    getSources: () => agentFilters.getSources().map(s => s.source).filter(src => {
+      const sel = agentFilters.getSelection(src)
+      return sel === undefined || (Array.isArray(sel) && sel.length > 0)
+    })
+  })
+  interestArea.start()
+  profileDialog.interestArea = interestArea
 
   // Set after setupArOverlayControls below; called when the editor is engaged
   // (edit/create) so a minimized editor panel pops open.
