@@ -416,6 +416,25 @@ export class AjnaManager {
   }
 
   // ===================================================================
+  //  Interest-Areas — datenschutzfreundliche Präsenz (Default-Server)
+  // ===================================================================
+
+  /** Eigenen unscharfen Interessensbereich veröffentlichen (Opt-in). */
+  async publishInterestArea(bbox, sources) {
+    return this.defaultClient.publishInterestArea(bbox, sources)
+  }
+
+  /** Eigenen Interessensbereich entfernen (Opt-out / Logout). */
+  async deleteInterestArea() {
+    return this.defaultClient.deleteInterestArea()
+  }
+
+  /** Anonymisiertes Aggregat aktiver Interessensbereiche lesen (für Agents). */
+  async fetchInterestAreas(source) {
+    return this.defaultClient.fetchInterestAreas(source)
+  }
+
+  // ===================================================================
   //  Berechtigungen
   // ===================================================================
 

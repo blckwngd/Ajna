@@ -323,6 +323,39 @@ export class AjnaClient {
   }
 
   // ===================================================================
+  //  Interest-Areas — datenschutzfreundliche Präsenz (/ajnaapi)
+  // ===================================================================
+  // Server-Logik (kein PB-Hook): /ajnaapi/* läuft über den Express-API-Server.
+  // `pb.send` löst Base-URL (= dieser Server, via Caddy) und das Auth-Token
+  // automatisch — Viewer wie Agents nutzen denselben Pfad, statt fetch/Base/
+  // Token von Hand zu bauen (das führte in Agents zu /ajnaapi-404).
+
+  /**
+   * Veröffentlicht den eigenen UNSCHARFEN Interessensbereich (Opt-in-Präsenz).
+   * @param {{latMin:number,latMax:number,lonMin:number,lonMax:number}} bbox  bereits gefuzzte BBOX
+   * @param {string[]} [sources]  eingeblendete Agent-Quellen (z. B. ['wigle'])
+   */
+  async publishInterestArea(bbox, sources = []) {
+    return this.pb.send('/ajnaapi/interest-areas', { method: 'POST', body: { bbox, sources } })
+  }
+
+  /** Entfernt den eigenen Interessensbereich (Opt-out / Logout). */
+  async deleteInterestArea() {
+    return this.pb.send('/ajnaapi/interest-areas', { method: 'DELETE' })
+  }
+
+  /**
+   * Liest das anonymisierte Aggregat aktiver Interessensbereiche (für Agents).
+   * @param {string} [source]  nur Bereiche von Spielern, die diese Quelle zeigen
+   * @returns {Promise<Array<{latMin:number,latMax:number,lonMin:number,lonMax:number}>>}
+   */
+  async fetchInterestAreas(source) {
+    const q = source ? `?source=${encodeURIComponent(source)}` : ''
+    const res = await this.pb.send(`/ajnaapi/interest-areas${q}`, { method: 'GET' })
+    return Array.isArray(res?.areas) ? res.areas : []
+  }
+
+  // ===================================================================
   //  Berechtigungen
   // ===================================================================
 

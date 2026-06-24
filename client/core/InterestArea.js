@@ -51,14 +51,9 @@ export class InterestArea {
   }
 
   // ── Internals ──────────────────────────────────────────────────────────
-  get _client() { return this.ajna.defaultClient }
-  _url(path) { return (this._client?.url || '').replace(/\/+$/, '') + path }
-  _headers() {
-    const token = this._client?.pb?.authStore?.token
-    const h = { 'Content-Type': 'application/json' }
-    if (token) h.Authorization = `Bearer ${token}`
-    return h
-  }
+  // HTTP-Aufrufe laufen über die Ajna-Library (ajna.publishInterestArea /
+  // deleteInterestArea) — Base-URL + Auth-Token werden dort zentral aufgelöst.
+  // Hier bleibt nur die viewer-spezifische Logik: Opt-in-Flag, Polling, Fuzzing.
 
   async _tick() {
     if (!InterestArea.isEnabled()) return
@@ -66,11 +61,7 @@ export class InterestArea {
     const p = this.getPosition?.()
     if (!p || !Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return
     try {
-      await fetch(this._url('/ajnaapi/interest-areas'), {
-        method: 'POST',
-        headers: this._headers(),
-        body: JSON.stringify({ bbox: fuzzBbox(p.lat, p.lon), sources: this.getSources() || [] })
-      })
+      await this.ajna.publishInterestArea(fuzzBbox(p.lat, p.lon), this.getSources() || [])
     } catch (err) {
       console.warn('[interest-area] publish failed:', err?.message || err)
     }
@@ -79,7 +70,7 @@ export class InterestArea {
   async _delete() {
     if (!this.ajna.isLoggedIn?.()) return
     try {
-      await fetch(this._url('/ajnaapi/interest-areas'), { method: 'DELETE', headers: this._headers() })
+      await this.ajna.deleteInterestArea()
     } catch { /* egal */ }
   }
 }

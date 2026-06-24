@@ -175,15 +175,8 @@ async function fetchNetworks(bbox) {
 // Aktive (anonymisierte) Interessensbereiche der Spieler, die WLANs eingeblendet
 // haben. Leer → niemand da (oder Opt-out) → Fallback konfiguriertes Zentrum.
 async function fetchActiveAreas() {
-  const client = ajna.defaultClient
-  const base = (client.url || '').replace(/\/+$/, '')
-  const token = client.pb?.authStore?.token
-  const r = await fetch(`${base}/ajnaapi/interest-areas?source=wigle`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {}
-  })
-  if (!r.ok) throw new Error(`interest-areas ${r.status}`)
-  const data = await r.json()
-  return Array.isArray(data?.areas) ? data.areas : []
+  // Über die Ajna-Library (Base-URL + Auth + /ajnaapi zentral aufgelöst).
+  return ajna.fetchInterestAreas('wigle')
 }
 
 // Aktive Ziele: Mittelpunkte der Interessensbereiche, sonst Fallback-Zentrum.

@@ -209,15 +209,8 @@ const MAX_RECONNECT_MS = 60000
 // Aktive (anonymisierte) Interessensbereiche der Spieler, die AIS eingeblendet
 // haben. Leer → Fallback konfiguriertes Zentrum.
 async function fetchActiveAreas() {
-  const client = ajna.defaultClient
-  const base = (client.url || '').replace(/\/+$/, '')
-  const token = client.pb?.authStore?.token
-  const r = await fetch(`${base}/ajnaapi/interest-areas?source=aisstream`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {}
-  })
-  if (!r.ok) throw new Error(`interest-areas ${r.status}`)
-  const data = await r.json()
-  return Array.isArray(data?.areas) ? data.areas : []
+  // Über die Ajna-Library (Base-URL + Auth + /ajnaapi zentral aufgelöst).
+  return ajna.fetchInterestAreas('aisstream')
 }
 
 // aisstream-BBOX-Format: [[swLat,swLon],[neLat,neLon]]. Demand-getrieben aus den
