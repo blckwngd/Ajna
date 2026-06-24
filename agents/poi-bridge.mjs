@@ -39,7 +39,7 @@
 
 import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { maybeReexecWithSystemCa } from './lib/system-ca.mjs'
 import { EventSource } from 'eventsource'
 // PB-SDK öffnet beim ersten refreshObjects()/connect() eine Realtime-SSE
 // und greift dabei auf globalThis.EventSource zu. In Node ist das je nach
@@ -85,15 +85,9 @@ const FILTER     = process.env.POI_FILTER || 'common'
 // aktiven Interessensbereiche fortlaufend pollen. Einmal-Sync via POI_REFRESH_S=0.
 const REFRESH_MS = parseFloat(process.env.POI_REFRESH_S || '120') * 1000
 
-// Re-exec mit --use-system-ca, falls AJNA_URL HTTPS ist (Caddy-Interne-CA).
-if (AJNA_URL.startsWith('https://') && !process.execArgv.includes('--use-system-ca')) {
-  const r = spawnSync(
-    process.execPath,
-    ['--use-system-ca', process.argv[1], ...process.argv.slice(2)],
-    { stdio: 'inherit' }
-  )
-  process.exit(r.status ?? 1)
-}
+// Bei HTTPS ggf. mit --use-system-ca neu starten (Caddys interne CA). Robust
+// gegen altes Node & öffentliche Zerts — siehe agents/lib/system-ca.mjs.
+maybeReexecWithSystemCa(AJNA_URL)
 
 function die(msg) { console.error(`✗ ${msg}`); process.exit(1) }
 

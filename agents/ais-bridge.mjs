@@ -42,7 +42,7 @@
 import WebSocket from 'ws'
 import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { maybeReexecWithSystemCa } from './lib/system-ca.mjs'
 import { EventSource } from 'eventsource'
 // PB-SDK öffnet beim ersten refreshObjects()/connect() eine Realtime-SSE
 // und greift dabei auf globalThis.EventSource zu. In Node ist das je nach
@@ -87,16 +87,9 @@ const UPDATE_INTERVAL_MS = parseFloat(process.env.AIS_UPDATE_INTERVAL_S || '5') 
 const STALE_TIMEOUT_MS   = parseFloat(process.env.AIS_STALE_TIMEOUT_S   || '600') * 1000
 const CLEANUP_INTERVAL_MS = 30 * 1000
 
-// Re-exec mit --use-system-ca, falls AJNA_URL HTTPS ist (Caddy-Interne-CA).
-// Identisches Pattern wie tools/ajna.mjs.
-if (AJNA_URL.startsWith('https://') && !process.execArgv.includes('--use-system-ca')) {
-  const r = spawnSync(
-    process.execPath,
-    ['--use-system-ca', process.argv[1], ...process.argv.slice(2)],
-    { stdio: 'inherit' }
-  )
-  process.exit(r.status ?? 1)
-}
+// Bei HTTPS ggf. mit --use-system-ca neu starten (Caddys interne CA). Robust
+// gegen altes Node & öffentliche Zerts — siehe agents/lib/system-ca.mjs.
+maybeReexecWithSystemCa(AJNA_URL)
 
 function die(msg) { console.error(`✗ ${msg}`); process.exit(1) }
 

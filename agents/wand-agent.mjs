@@ -27,7 +27,7 @@
 
 import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { maybeReexecWithSystemCa } from './lib/system-ca.mjs'
 import { EventSource } from 'eventsource'
 if (typeof globalThis.EventSource !== 'function') globalThis.EventSource = EventSource
 
@@ -56,12 +56,9 @@ const AJNA_PASS = process.env.AJNA_PASS
 const WAND_LAT  = parseFloat(process.env.WAND_LAT || '50.3569')
 const WAND_LON  = parseFloat(process.env.WAND_LON || '7.5890')
 
-// Re-exec mit --use-system-ca bei HTTPS (Caddy-interne CA).
-if (AJNA_URL.startsWith('https://') && !process.execArgv.includes('--use-system-ca')) {
-  const r = spawnSync(process.execPath,
-    ['--use-system-ca', process.argv[1], ...process.argv.slice(2)], { stdio: 'inherit' })
-  process.exit(r.status ?? 1)
-}
+// Bei HTTPS ggf. mit --use-system-ca neu starten (Caddys interne CA). Robust
+// gegen altes Node & öffentliche Zerts — siehe agents/lib/system-ca.mjs.
+maybeReexecWithSystemCa(AJNA_URL)
 
 function die(msg) { console.error(`✗ ${msg}`); process.exit(1) }
 if (!AJNA_USER || !AJNA_PASS) die('AJNA_USER und AJNA_PASS fehlen')
