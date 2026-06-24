@@ -535,9 +535,21 @@ export class AjnaManager {
   }
 
   _emitObjectsChanged() {
+    const _t0 = performance.now()
     const snapshot = this.getObjects()
+    const _tSnap = performance.now() - _t0
+    let _slowDt = 0
     for (const l of this._objectsChangedListeners) {
+      const _ts = performance.now()
       try { l(snapshot) } catch (e) { console.error('AjnaManager listener error', e) }
+      const _dt = performance.now() - _ts
+      if (_dt > _slowDt) _slowDt = _dt
+    }
+    // Perf-Diagnose: nur langsame Dispatches loggen — trennt Snapshot-Bau von
+    // den Listenern (langsamster Listener). [Violation] 'objects/*' kommt hierher.
+    const _total = performance.now() - _t0
+    if (_total > 30) {
+      console.warn(`[perf] emitObjectsChanged ${_total.toFixed(0)}ms · snapshot=${_tSnap.toFixed(0)}ms · ${this._objectsChangedListeners.size} listeners · slowestListener=${_slowDt.toFixed(0)}ms`)
     }
   }
 

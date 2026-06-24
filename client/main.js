@@ -246,8 +246,16 @@ async function init() {
 
   const renderLoop = () => {
     const delta = engine.getDeltaTime() / 1000
+    const _t0 = performance.now()
     objectMap.forEach(go => go.update(delta))
+    const _t1 = performance.now()
     scene.render()
+    const _t2 = performance.now()
+    // Perf-Diagnose: nur lange Frames loggen — trennt per-Frame-Update (Smoother)
+    // von scene.render() (Babylon: Rendern/Shader). mats wächst → Shader-Churn.
+    if (_t2 - _t0 > 50) {
+      console.warn(`[perf] frame ${(_t2 - _t0).toFixed(0)}ms · update=${(_t1 - _t0).toFixed(0)} render=${(_t2 - _t1).toFixed(0)} · meshes=${scene.meshes.length} mats=${scene.materials.length}`)
+    }
   }
   engine.runRenderLoop(renderLoop)
   // Embedded in the shell, the AR view is hidden behind other tabs; let the
