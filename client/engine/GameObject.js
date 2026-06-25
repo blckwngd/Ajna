@@ -136,13 +136,34 @@ export class GameObject {
     }
   }
 
+  // Lade-Kandidaten für ein Modell, in Reihenfolge der Bevorzugung.
+  // In der nativen App (Capacitor) liegen alle mit `client/` ausgelieferten
+  // Modelle im APK-Bundle und sind über die App-Origin (https://localhost)
+  // OHNE Netzzugriff erreichbar. Wir versuchen daher zuerst die Bundle-Kopie
+  // und fallen nur dann auf die (entfernte) Server-URL zurück, wenn das Modell
+  // nicht mitgeliefert wurde. Im Browser bleibt es bei der einen Server-URL.
+  #modelCandidates(url) {
+    const native = !!window.Capacitor?.isNativePlatform?.()
+    const idx = url.indexOf("/models/")
+    if (native && idx >= 0) {
+      const local = window.location.origin + url.slice(idx)   // /models/<x>.glb
+      if (local !== url) return [local, url]
+    }
+    return [url]
+  }
+
   async #loadModel(url) {
-    const result = await BABYLON.SceneLoader.ImportMeshAsync(
-      "",
-      "",
-      url,
-      this.scene
-    )
+    const candidates = this.#modelCandidates(url)
+    let result, lastErr
+    for (const candidate of candidates) {
+      try {
+        result = await BABYLON.SceneLoader.ImportMeshAsync("", "", candidate, this.scene)
+        break
+      } catch (err) {
+        lastErr = err   // z. B. nicht im Bundle → nächster Kandidat (Server)
+      }
+    }
+    if (!result) throw lastErr
 
     // Race-Guard: kam das GameObject während des Loads aus der Szene
     // (z. B. via syncSceneObjects → dispose), die geladenen Meshes wieder
