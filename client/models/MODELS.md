@@ -1,55 +1,51 @@
 # 3D-Modelle (`client/models/`)
 
-Werden über das Objekt-Feld `appearance.gltf` bzw. das Legacy-`model_url`
-referenziert (siehe `client/core/Appearance.js`, `client/engine/GameObject.js`).
-URL-Form: `https://<server>/models/<Datei>.glb`. Caddy liefert sie statisch aus
-(inkl. CORS für Cross-Origin-Viewer).
+Referenziert über `appearance.gltf` bzw. Legacy `model_url`
+(`https://<server>/models/<Datei>.glb`); Caddy liefert sie statisch + mit CORS
+aus. Auswahl: animiert (wo sinnvoll), leichtgewichtig (AR übers LAN), aus frei
+nutzbaren Quellen.
 
-Auswahlkriterien: **animiert** (wo sinnvoll), **leichtgewichtig** (AR übers LAN)
-und **frei lizenziert** (CC0 bevorzugt, CC-BY mit Attribution unten).
+> **Lizenz/Attribution wird später finalisiert.** Hier sind die **Quellen**
+> dokumentiert — über die verlinkten Seiten/Repos lassen sich Autor + genaue
+> Lizenz pro Modell ermitteln.
 
-## Bestand
+## Bestand nach Kategorie
 
-| Datei | Kategorie | Animiert | Lizenz | Quelle / Attribution |
-|---|---|---|---|---|
-| `Fox.glb` | animal | ✓ (Survey/Walk/Run) | CC0 (Modell) · CC-BY 4.0 (Animationen) | Khronos glTF-Sample-Assets · PixelMannen / Tomás Laulhé |
-| `Stag.glb` | animal | ✓ | CC0 | Quaternius |
-| `Wolf.glb` | animal / enemy | ✓ | CC0 | Quaternius |
-| `Deer.glb` | animal | ✓ | CC0 | Quaternius |
-| `MawGooey.glb` | enemy / monster | ✓ | CC0 | Quaternius (Ultimate Monsters) |
-| `Slime.glb` | enemy / monster | ✓ | CC0 | Quaternius (Ultimate Monsters) |
-| `CesiumMan.glb` | npc | ✓ (Walk) | CC-BY 4.0 | Khronos glTF-Sample-Assets · © Cesium |
-| `RiggedFigure.glb` | npc / enemy | ✓ | CC-BY 4.0 | Khronos glTF-Sample-Assets |
-| `BrainStem.glb` | device / robot | ✓ | ⚠️ **Poser EULA** | Smith Micro Software — **siehe Warnung** |
-| `vanguard.glb` | npc / enemy | (T-Pose) | ⚠️ **vermutlich Mixamo** | Adobe Mixamo — **siehe Warnung** |
-| `vanguard@samba.glb` | npc (Animation) | ✓ (Samba) | ⚠️ **vermutlich Mixamo** | Adobe Mixamo — **siehe Warnung** |
+| Datei | Kategorie | Animiert | Quelle |
+|---|---|---|---|
+| `CesiumMan.glb` | npc | ✓ | Khronos glTF-Sample-Assets (CC-BY 4.0, © Cesium) |
+| `Soldier.glb` | npc / enemy | ✓ | three.js examples |
+| `RobotExpressive.glb` | device / npc | ✓ (viele) | three.js examples (CC0, Tomás Laulhé / Don McCurdy) |
+| `MawGooey.glb` | enemy / monster | ✓ | Quaternius (CC0) |
+| `Slime.glb` | enemy / monster | ✓ | Quaternius (CC0) |
+| `Fox.glb` | animal | ✓ | Khronos glTF-Sample-Assets (CC0 / CC-BY) |
+| `Horse.glb` | animal | ✓ | three.js examples |
+| `Flamingo.glb` | animal / fliegend | ✓ | three.js examples |
+| `Stork.glb` | animal / fliegend | ✓ | three.js examples |
+| `Parrot.glb` | animal / fliegend | ✓ | three.js examples |
+| `Dragon.glb` | dragon | – (rigged) | Poly Pizza · „Dragon Rigged" |
+| `Sword.glb` | item | – | Poly Pizza |
+| `TreasureChest.glb` | item | – | Poly Pizza |
 
-## ⚠️ Lizenz-Warnungen (vor Public-Repo / Release prüfen)
+## Quellen (für Herkunft, Lizenz, Attribution + mehr Modelle)
 
-- **`BrainStem.glb` — Poser EULA (Smith Micro Software, Inc.):** NICHT frei
-  redistributierbar. In einem öffentlichen Repo problematisch. Empfehlung:
-  entfernen und durch ein CC0-Roboter-Modell ersetzen (Quaternius „Robot"-Packs).
-- **`vanguard.glb` / `vanguard@samba.glb` — vermutlich Adobe Mixamo:** Mixamo-
-  Inhalte dürfen in eigenen Projekten genutzt, aber **nicht als Asset
-  weiterverteilt** werden (z. B. in einem öffentlichen Asset-Repo). Herkunft/
-  Lizenz prüfen; ggf. durch CC0-Charaktere ersetzen (Quaternius „RPG/Survival
-  Characters").
+- **Khronos glTF-Sample-Assets** — CC0/CC-BY, direkt ladbar (raw GitHub):
+  <https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models>
+  (Lizenz je Modell in `Models/Models.md`).
+- **three.js examples** — animierte Demo-Modelle, direkt ladbar (raw GitHub):
+  <https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf>
+  (Credits/Lizenz im jeweiligen Ordner bzw. three.js-Repo).
+- **Quaternius** — CC0, game-ready (rigged + animiert): <https://quaternius.com>.
+  MawGooey/Slime stammen aus `Quaternius/TestGltfAssets` (GitHub, direkt ladbar).
+- **Poly Pizza** — große Auswahl, GLBs unter `https://static.poly.pizza/<uuid>.glb`
+  (URL steckt in der jeweiligen Modellseite `poly.pizza/m/<id>`):
+  - Dragon: <https://poly.pizza/m/WIOTISRjeX>
+  - Sword: <https://poly.pizza/m/9lLmH8Et4K>
+  - TreasureChest: <https://poly.pizza/m/O72u4Drp8k>
 
-CC0 = keine Attribution nötig. CC-BY 4.0 = Nutzung frei, **Namensnennung
-erforderlich** (siehe Spalte „Attribution"). Diese Datei dient als Nachweis.
+## Bewusst weggelassen / entfernt
 
-## Quellen für mehr (CC0, game-tauglich, leichtgewichtig)
-
-- **Quaternius** — alles CC0, klein & game-ready (rigged + animiert):
-  <https://quaternius.com> bzw. <https://quaternius.itch.io>.
-  Passende Packs: *Ultimate Monsters* (Gegner), *Animated Animals* (Tiere),
-  *RPG/Survival Characters* (NPCs), *Cute Robots* (Geräte), *RPG Items* (Items),
-  *Cyberpunk/Sci-Fi Props* (Geräte). Stag/Wolf/Deer/MawGooey/Slime stammen daher.
-- **Khronos glTF-Sample-Assets** (CC0/CC-BY, direkt ladbar):
-  <https://github.com/KhronosGroup/glTF-Sample-Assets> — eher Test-/Demo-Modelle.
-- **Poly Pizza** (CC0/CC-BY, große Auswahl): <https://poly.pizza>.
-
-Hinweis: Die Khronos-„Produktvisualisierungs"-Modelle (Avocado, BoomBox, Lantern
-…) sind zwar CC0, aber mit 8–10 MB (4K-Texturen) **zu schwer für AR übers LAN** —
-deshalb bewusst nicht aufgenommen. Für Items/Geräte die leichten Quaternius-Packs
-nehmen.
+- Khronos-„Produktvisualisierung" (Avocado/BoomBox/Lantern …): CC0, aber 8–10 MB
+  (4K-Texturen) → zu schwer für AR.
+- Frühere Modelle mit Lizenz-Problem (BrainStem = Poser-EULA, vanguard* =
+  vermutlich Mixamo) bzw. defekten Rigs wurden entfernt.
