@@ -250,16 +250,8 @@ async function init() {
 
   const renderLoop = () => {
     const delta = engine.getDeltaTime() / 1000
-    const _t0 = performance.now()
     objectMap.forEach(go => go.update(delta))
-    const _t1 = performance.now()
     scene.render()
-    const _t2 = performance.now()
-    // Perf-Diagnose: nur lange Frames loggen — trennt per-Frame-Update (Smoother)
-    // von scene.render() (Babylon: Rendern/Shader). mats wächst → Shader-Churn.
-    if (_t2 - _t0 > 50) {
-      console.warn(`[perf] frame ${(_t2 - _t0).toFixed(0)}ms · update=${(_t1 - _t0).toFixed(0)} render=${(_t2 - _t1).toFixed(0)} · meshes=${scene.meshes.length} mats=${scene.materials.length}`)
-    }
   }
   engine.runRenderLoop(renderLoop)
   // Embedded in the shell, the AR view is hidden behind other tabs; let the
@@ -597,16 +589,18 @@ async function init() {
   const osmContext = new OSMContext(scene, geo, window.ajnaGeo)
   window.osm = osmContext
 
-  // Debug-Overlay: zeichnet `state.walk_path` aus jedem Objekt-Record
-  // als leuchtend grüne Linie über die OSM-Wireframes. Der Walk-Agent
-  // setzt das Feld beim Start eines Pfads und löscht es beim Stoppen.
+  // Debug-Overlay: zeichnet `state.walk_path` jedes Objekts als grüne Linie.
+  // Standardmäßig AUS — update() iteriert die KOMPLETTE (ungecappte) Objektliste
+  // bei jedem Realtime-Update; bei vielen Objekten (eingeblendete WLANs) war das
+  // der teure objects/*-Listener (~150 ms). Zum Debuggen der Director-Routen in
+  // der Konsole `window.ajnaShowPaths = true` setzen und neu laden, oder manuell
+  // `window.pathOverlay.update(ajna.getObjectList())` aufrufen.
   const pathOverlay = new PathOverlay(scene, geo)
   window.pathOverlay = pathOverlay
-  // Gethrottlet: lief sonst pro objectsChanged-Event (Director: ~N Events je
-  // 500-ms-Tick) komplett durch → periodisches Ruckeln. Debug-Overlay, 5×/s
-  // reicht völlig.
-  ajnaManager.onObjectsChanged(throttleLatest(objects => pathOverlay.update(objects), 200))
-  pathOverlay.update(ajnaManager.getObjectList())
+  if (window.ajnaShowPaths) {
+    ajnaManager.onObjectsChanged(throttleLatest(objects => pathOverlay.update(objects), 200))
+    pathOverlay.update(ajnaManager.getObjectList())
+  }
   const _loadOSM = () => {
     if (!geo.origin) return
     osmContext.load(geo.origin.lat, geo.origin.lon).catch(err =>
@@ -950,9 +944,6 @@ async function syncSceneObjects(scene, world, geo, objects) {
 
   if (!geo.origin) return
 
-  const _t0 = performance.now()
-  let _created = 0, _disposed = 0, _applied = 0
-
   // Agent-Filter: aus der vollen Objekt-Liste nur das behalten, was
   // gemäß User-Setting sichtbar sein soll. Default = alles sichtbar.
   const filteredObjects = _agentFilters
@@ -973,7 +964,6 @@ async function syncSceneObjects(scene, world, geo, objects) {
       unsubscribeInteract(id)
       go.dispose()
       objectMap.delete(id)
-      _disposed++
     }
   }
 
@@ -999,11 +989,9 @@ async function syncSceneObjects(scene, world, geo, objects) {
       const existing = objectMap.get(obj.id)
       if (existing) {
         existing.applyData(obj, geo)
-        _applied++
       } else {
         const go = await GameObject.createFromPBData(scene, obj, geo, true)
         objectMap.set(obj.id, go)
-        _created++
         // Stehendes Realtime-Abo nur für als realtime markierte Objekte (z. B.
         // interaktive NPCs), um Interaktionen ANDERER zu sehen. Sonst öffnete
         // jedes Objekt ein Abo → bei Cap-/Viewport-Churn ständige
@@ -1016,13 +1004,6 @@ async function syncSceneObjects(scene, world, geo, objects) {
     } catch (err) {
       console.warn(`syncSceneObjects: GameObject für ${obj.id} fehlgeschlagen`, err)
     }
-  }
-
-  // Perf-Diagnose: nur die teuren Reconciles loggen — Dispose/Create ist
-  // synchron + teuer und erklärt das [Violation] 'objects/*' handler took …ms.
-  const _dt = performance.now() - _t0
-  if (_dt > 30) {
-    console.warn(`[perf] syncSceneObjects ${_dt.toFixed(0)}ms · created=${_created} disposed=${_disposed} applied=${_applied} visible=${visibleObjects.length}`)
   }
 }
 

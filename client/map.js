@@ -131,7 +131,9 @@ function mapUpdateMarkers(objects) {
     try {
       if (markerLayer.has(obj.id)) {
         feedSmoother(obj)
-        markerLayer.get(obj.id).bindPopup(`<strong>${obj.name || 'unnamed'}</strong><br>${obj.lat.toFixed(5)}, ${obj.lon.toFixed(5)}`)
+        // Kein bindPopup hier: der Popup-Inhalt ist als Funktion gebunden
+        // (siehe addMarker) und beim Öffnen automatisch aktuell. Das spart bei
+        // vielen Markern hunderte toFixed/bindPopup pro Reconcile.
       } else {
         addMarker(obj)
         feedSmoother(obj)
@@ -251,6 +253,16 @@ function makeMarker(obj) {
   return window.L.marker([obj.lat, obj.lon], { icon: markerIconFor(obj), draggable: true })
 }
 
+// Popup-Inhalt aus dem AjnaManager-Cache (frische Position). Als Funktion an
+// bindPopup übergeben → beim Öffnen ausgewertet, nie pro Reconcile neu gebaut.
+function popupHtml(id) {
+  const o = ajna.getObjectById(id)
+  const name = o?.name || 'unnamed'
+  const lat = Number.isFinite(o?.lat) ? o.lat.toFixed(5) : '?'
+  const lon = Number.isFinite(o?.lon) ? o.lon.toFixed(5) : '?'
+  return `<strong>${name}</strong><br>${lat}, ${lon}`
+}
+
 function addMarker(obj) {
   if (!window.L || markerLayer.has(obj.id)) return
 
@@ -258,6 +270,7 @@ function addMarker(obj) {
   // Hover-Tooltip mit dem Objekt-Namen (Leaflet zeigt/blendet ihn automatisch
   // bei mouseover / mouseout)
   marker.bindTooltip(obj.name || 'unnamed', { direction: 'top', offset: [0, -8] })
+  marker.bindPopup(() => popupHtml(obj.id))   // einmalig; Inhalt beim Öffnen aktuell
 
   // Abdeckungs-Kreis um den Mittelpunkt (z. B. geschätzte WLAN-Reichweite),
   // sofern das Objekt einen state.coverage_radius (in Metern) trägt.
@@ -291,10 +304,11 @@ function addMarker(obj) {
       // Smoother zurücksetzen, sonst lerpt er vom Pre-Drag-Punkt zur neuen
       // Position zurück und der Marker rutscht sichtbar zurück+nach vorn.
       markerSmoothers.get(obj.id)?.reset()
-      const updated = await ajna.updateObject(obj.id, { lat, lon: lng })
+      await ajna.updateObject(obj.id, { lat, lon: lng })
       marker.setLatLng([lat, lng])
       coverageLayer.get(obj.id)?.setLatLng([lat, lng])
-      marker.bindPopup(`<strong>${updated.name || 'unnamed'}</strong><br>${lat.toFixed(5)}, ${lng.toFixed(5)}`)
+      // Popup bleibt die Funktion aus addMarker (liest die frische Position) —
+      // kein Neubinden nötig.
       await ajna.loadObjects()
       mapUpdateMarkers(ajna.getObjectList())
     })
