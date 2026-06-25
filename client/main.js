@@ -50,6 +50,7 @@ import { NetworkSyncComponent } from "./engine/components/NetworkSyncComponent.j
 import { buildDebugScene } from "./engine/debug/DebugSceneBuilder.js"
 import { DebugUIManager } from "./engine/debug/DebugUIManager.js"
 import { buildEnvironment } from "./engine/environment/EnvironmentBuilder.js"
+import { ArPassthrough } from "./core/ArPassthrough.js"
 import { OSMContext } from "./engine/environment/OSMContext.js"
 import { PathOverlay } from "./engine/debug/PathOverlay.js"
 
@@ -229,7 +230,13 @@ async function init() {
   
   window.addEventListener("resize", () => engine.resize())
   
-  buildEnvironment(scene)
+  const arEnv = buildEnvironment(scene)
+
+  // Umschalter echtes AR (Kamera-Passthrough) ↔ XR (Skybox). Toggle sitzt im
+  // Editor neben "Kamera auf Spieler". Start je Session in XR (Skybox); der
+  // Kamerazugriff erfolgt erst beim bewussten Umschalten (Nutzergeste +
+  // Berechtigungs-Prompt).
+  const arPassthrough = new ArPassthrough({ scene, skybox: arEnv?.skybox, canvas })
 
   // Hover-System: Mesh-Tooltip beim Pointer-Move, Highlight + Off-Screen-
   // Linie wenn aus den Listen heraus angefragt. Setzt DOM-Overlays an,
@@ -313,6 +320,10 @@ async function init() {
     container: uiContainer,
     mode: 'ar',
     onFocusPlayer: () => focusCameraOn(scene, player),
+    // Echtes AR (Kamera) ↔ XR (Skybox) umschalten; Wurf bei fehlender Kamera
+    // wird im EditorUI gefangen (Toggle springt zurück + Statusmeldung).
+    onToggleArMode: (on) => arPassthrough.setEnabled(on),
+    getArMode: () => arPassthrough.enabled,
     onManageGroups: () => groupDialog.open(),
     onManageServers: () => serverDialog.open(),
     onManageProfile: () => profileDialog.open(),

@@ -48,6 +48,11 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Kamera: echter AR-Passthrough (getUserMedia im WebView). Capacitor
+         fragt die Laufzeit-Berechtigung beim ersten Kamerazugriff ab. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-permission android:name="android.permission.CAMERA" />
+
     <!-- Standort: Foreground-GPS fuer die Karten- und AR-Ansicht. Background-
          Permission (ACCESS_BACKGROUND_LOCATION) folgt in Phase B mit dem
          Background-Geolocation-Plugin und einem Foreground-Service. -->

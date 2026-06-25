@@ -30,4 +30,8 @@ export function buildEnvironment(scene) {
     if (activeCam) {
     }
   });
+
+  // Skybox + Licht zurückgeben, damit der AR-Client zwischen XR (Skybox) und
+  // echtem AR (Kamera-Passthrough → Skybox aus) umschalten kann.
+  return { skybox, light };
 }

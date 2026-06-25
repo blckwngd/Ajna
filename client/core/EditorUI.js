@@ -1,7 +1,7 @@
 import { injectServerBadgeStyles, renderServerBadge } from './ServerBadge.js'
 
 export class EditorUI {
-  constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null, onManageGroups = null, onManageServers = null, onManageProfile = null, onManageFilters = null, onEditorActivate = null, objectFilter = null }) {
+  constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null, onManageGroups = null, onManageServers = null, onManageProfile = null, onManageFilters = null, onEditorActivate = null, objectFilter = null, onToggleArMode = null, getArMode = null }) {
     this.ajna = ajna
     this.container = container
     this.mode = mode
@@ -18,6 +18,12 @@ export class EditorUI {
     // Client), der die aktive Kamera zur Spieler-Position bewegt.
     // Wenn nicht gesetzt, wird die zugehörige Schaltfläche nicht gerendert.
     this.onFocusPlayer = onFocusPlayer
+    // Optional (nur AR): Umschalter echtes AR (Kamera-Passthrough) ↔ XR
+    // (Skybox). onToggleArMode(on:boolean) führt den Wechsel aus, getArMode()
+    // liefert den initialen Zustand für die Toggle-Stellung. Ohne Callback wird
+    // der Schalter nicht gerendert (z. B. im Map-Editor).
+    this.onToggleArMode = onToggleArMode
+    this.getArMode = getArMode
     // Optional: Hover-Callback (record, hovering: boolean) — wird vom AR-
     // Client zum Hervorheben im 3D-Raum, vom Map-Client zum Markieren
     // auf der Karte genutzt.
@@ -70,9 +76,17 @@ export class EditorUI {
         <h3>Editor</h3>
       </header>
 
-      ${this.onFocusPlayer ? `
+      ${(this.onFocusPlayer || this.onToggleArMode) ? `
         <section class="ed-section" id="editorPlayerSection">
-          <button id="editorFocusPlayerBtn" type="button" class="ed-btn ed-btn-primary">Kamera auf Spieler</button>
+          ${this.onFocusPlayer ? `
+            <button id="editorFocusPlayerBtn" type="button" class="ed-btn ed-btn-primary">Kamera auf Spieler</button>
+          ` : ''}
+          ${this.onToggleArMode ? `
+            <label class="ed-toggle" style="display:flex;align-items:center;gap:8px;margin-top:8px;cursor:pointer;">
+              <input type="checkbox" id="editorArModeToggle" style="width:auto;display:inline-block;margin:0;">
+              <span>Echtes AR (Kamera-Durchsicht)</span>
+            </label>
+          ` : ''}
         </section>
       ` : ''}
 
@@ -136,6 +150,7 @@ export class EditorUI {
     this.refreshBtn = this.container.querySelector('#editorRefreshBtn')
     this.objectListEl = this.container.querySelector('#editorObjectList')
     this.focusPlayerBtn = this.container.querySelector('#editorFocusPlayerBtn')
+    this.arModeToggle = this.container.querySelector('#editorArModeToggle')
     this.manageGroupsBtn = this.container.querySelector('#editorManageGroupsBtn')
     this.manageServersBtn = this.container.querySelector('#editorManageServersBtn')
     this.manageProfileBtn = this.container.querySelector('#editorManageProfileBtn')
@@ -353,6 +368,20 @@ export class EditorUI {
 
     if (this.focusPlayerBtn && this.onFocusPlayer) {
       this.focusPlayerBtn.addEventListener('click', () => this.onFocusPlayer())
+    }
+
+    if (this.arModeToggle && this.onToggleArMode) {
+      // Initiale Stellung aus dem Host-Zustand (persistierter Wunsch).
+      try { this.arModeToggle.checked = !!this.getArMode?.() } catch {}
+      this.arModeToggle.addEventListener('change', async () => {
+        const want = this.arModeToggle.checked
+        try {
+          await this.onToggleArMode(want)
+        } catch (err) {
+          this.arModeToggle.checked = !want   // Wechsel fehlgeschlagen → zurück
+          this.setStatus(err?.message || 'AR-Moduswechsel fehlgeschlagen')
+        }
+      })
     }
   }
 
