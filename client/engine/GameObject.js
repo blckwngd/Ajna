@@ -5,6 +5,19 @@ import { PositionSmoother } from "../core/PositionSmoother.js"
 import { ENC_STYLE, encCategory } from "../core/wifiStyle.js"
 import { appearanceOf, arViewOf, gltfUrlOf } from "../core/Appearance.js"
 
+// Ziel-Welthöhe (Meter) pro Modell-Datei. Manche GLBs (three.js-Tiere, der
+// Khronos-Fox) sind in Eigen-Einheiten riesig → ohne Normierung füllen sie die
+// halbe Szene. Nach dem Laden wird das Modell auf diese Höhe skaliert (das
+// Record-`scale` wirkt weiterhin als Multiplikator obendrauf). Nicht gelistete
+// Modelle bleiben unverändert (1:1). Werte sind bewusst einfach justierbar.
+const MODEL_TARGET_HEIGHT = {
+  "Fox.glb": 0.6,
+  "Horse.glb": 1.7,
+  "Flamingo.glb": 1.3,
+  "Stork.glb": 1.1,
+  "Parrot.glb": 0.35,
+}
+
 export class GameObject {
 
   constructor(scene, id) {
@@ -185,7 +198,10 @@ export class GameObject {
     // auf. Würden wir die Children einzeln reparenten, ginge diese
     // Transformation verloren — Effekt: "nur Teil sichtbar, verzerrt".
     const importRoot = result.meshes[0]
-    if (importRoot) importRoot.parent = this.root
+    if (importRoot) {
+      importRoot.parent = this.root
+      this.#normalizeModelSize(importRoot, url)
+    }
 
     this.meshes = result.meshes
     this.animationGroups = result.animationGroups || []
@@ -203,6 +219,30 @@ export class GameObject {
     }
 
     this.#tagMeshes()
+  }
+
+  // Normiert die Welthöhe des geladenen Modells auf MODEL_TARGET_HEIGHT[Datei],
+  // falls gelistet. Misst die tatsächliche Hierarchie-Bounding-Box (inkl. aller
+  // Knoten-Transforms + Record-`scale`) und skaliert den Import-Root so, dass
+  // die finale Höhe = Zielhöhe × Record-`scale.y`. So bleibt `scale` ein
+  // Multiplikator und die Modelle wirken unabhängig von ihren Eigen-Einheiten
+  // realistisch groß.
+  #normalizeModelSize(importRoot, url) {
+    const file = (url.split(/[?#]/)[0].split("/").pop() || "")
+    const target = MODEL_TARGET_HEIGHT[file]
+    if (!target) return
+    try {
+      this.root.computeWorldMatrix(true)
+      importRoot.computeWorldMatrix(true)
+      const { min, max } = importRoot.getHierarchyBoundingVectors(true)
+      const height = max.y - min.y
+      if (Number.isFinite(height) && height > 1e-4) {
+        const factor = (target * (this.root.scaling?.y || 1)) / height
+        importRoot.scaling.scaleInPlace(factor)
+      }
+    } catch (err) {
+      console.warn(`GameObject ${this.id}: Größen-Normierung fehlgeschlagen`, err?.message || err)
+    }
   }
 
   // Wechselt zur AnimationGroup mit dem passenden Namen (case-insensitive).
