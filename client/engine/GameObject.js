@@ -223,10 +223,11 @@ export class GameObject {
 
   // Normiert die Welthöhe des geladenen Modells auf MODEL_TARGET_HEIGHT[Datei],
   // falls gelistet. Misst die tatsächliche Hierarchie-Bounding-Box (inkl. aller
-  // Knoten-Transforms + Record-`scale`) und skaliert den Import-Root so, dass
-  // die finale Höhe = Zielhöhe × Record-`scale.y`. So bleibt `scale` ein
-  // Multiplikator und die Modelle wirken unabhängig von ihren Eigen-Einheiten
-  // realistisch groß.
+  // Knoten-Transforms UND eines evtl. Record-`scale`) und skaliert den Import-
+  // Root so, dass die finale Welthöhe = Zielhöhe ist — ABSOLUT, unabhängig von
+  // einem Record-`scale`. Damit wirkt jedes Vorkommen des Modells konsistent
+  // gleich groß; auch Legacy-Objekte mit Kompensations-Scale werden nicht
+  // winzig. Nicht gelistete Modelle bleiben unverändert (Record-`scale` wirkt).
   #normalizeModelSize(importRoot, url) {
     const file = (url.split(/[?#]/)[0].split("/").pop() || "")
     const target = MODEL_TARGET_HEIGHT[file]
@@ -237,8 +238,7 @@ export class GameObject {
       const { min, max } = importRoot.getHierarchyBoundingVectors(true)
       const height = max.y - min.y
       if (Number.isFinite(height) && height > 1e-4) {
-        const factor = (target * (this.root.scaling?.y || 1)) / height
-        importRoot.scaling.scaleInPlace(factor)
+        importRoot.scaling.scaleInPlace(target / height)
       }
     } catch (err) {
       console.warn(`GameObject ${this.id}: Größen-Normierung fehlgeschlagen`, err?.message || err)
