@@ -156,12 +156,20 @@ export class ServerDialog {
       const b = document.createElement('span')
       b.className = 'sd-badge online'
       b.textContent = 'verbunden'
+      b.title = 'Angemeldet und Realtime-Verbindung aktiv (Live-Updates).'
       badges.appendChild(b)
     }
     if (s.isLoggedIn && !s.isConnected) {
       const b = document.createElement('span')
       b.className = 'sd-badge idle'
       b.textContent = 'eingeloggt'
+      // Wichtig: isLoggedIn = NUR lokales Token (authStore.isValid), NICHT gegen
+      // den Server geprüft. Ein erreichbarkeits-unabhängiger Zustand — deshalb
+      // kann ein unerreichbarer/abgemeldeter Server hier noch „eingeloggt"
+      // zeigen, solange das Token lokal nicht abgelaufen ist.
+      b.title = 'Gültiges Token vorhanden (nur lokal geprüft), aber keine aktive '
+        + 'Verbindung. „Verbinden" baut die Realtime-Verbindung auf; schlägt sie '
+        + 'fehl, ist der Server nicht erreichbar oder das Token veraltet.'
       badges.appendChild(b)
     }
 

@@ -153,17 +153,21 @@ async function init() {
   // FPS ~1×/s messen; bei Einbrüchen die Auflösung senken (Fill-Rate-Schutz auf
   // schwachen Phones), bei Reserve wieder anheben. Desktop bleibt bei Scale 1
   // (volle Auflösung). setHardwareScalingLevel(>1) = weniger Pixel.
+  // Schärfer als zuvor: max Scale 1.5 (war 2 = ¼ Pixel, sichtbar pixelig) und
+  // erst bei deutlichem FPS-Einbruch (<45) herunterregeln. Bei Reserve (>55)
+  // wieder Richtung volle Auflösung (Scale 1).
   let _renderScale = 1, _fpsAccum = 0, _fpsFrames = 0
+  const MAX_SCALE = 1.5
   scene.onAfterRenderObservable.add(() => {
     const fps = engine.getFps()
     if (Number.isFinite(fps)) { _fpsAccum += fps; _fpsFrames++ }
     if (_fpsFrames < 60) return                       // ~1× pro Sekunde auswerten
     const avg = _fpsAccum / _fpsFrames
     _fpsAccum = 0; _fpsFrames = 0
-    if (avg < 50 && _renderScale < 2) {
-      _renderScale = Math.min(2, _renderScale + 0.25)
+    if (avg < 45 && _renderScale < MAX_SCALE) {
+      _renderScale = Math.min(MAX_SCALE, _renderScale + 0.25)
       engine.setHardwareScalingLevel(_renderScale)
-    } else if (avg > 58 && _renderScale > 1) {
+    } else if (avg > 55 && _renderScale > 1) {
       _renderScale = Math.max(1, _renderScale - 0.25)
       engine.setHardwareScalingLevel(_renderScale)
     }
@@ -1250,12 +1254,19 @@ function setupPositionSourceHud(positionSource, arRoot = document.body) {
   arRoot.appendChild(el)
 
   const render = () => {
+    // activeSource: 'uwb' | 'real' | 'dummy' | 'gps' | null. Der GPSProvider
+    // liefert 'real' (echtes GPS) bzw. 'dummy' (Fallback-Position), NICHT 'gps'
+    // — deshalb hier alle echten Quellen behandeln, sonst stünde dauerhaft
+    // "kein Fix" trotz aktivem GPS.
     const src = positionSource.activeSource
     if (src === 'uwb') {
       const q = positionSource.quality
       el.style.background = 'rgba(20,120,40,0.75)'
       el.textContent = `UWB${Number.isFinite(q) ? ` · q${q}` : ''}`
-    } else if (src === 'gps') {
+    } else if (src === 'dummy') {
+      el.style.background = 'rgba(120,80,0,0.7)'
+      el.textContent = 'GPS (Dummy)'
+    } else if (src) {
       el.style.background = 'rgba(0,0,0,0.55)'
       el.textContent = 'GPS'
     } else {
