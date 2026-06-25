@@ -80,7 +80,14 @@ export function arViewOf(appearance) {
 export function gltfUrlOf(record) {
   const a = appearanceOf(record)
   const g = a && typeof a.gltf === 'string' ? a.gltf.trim() : ''
-  if (g) return g
   const m = typeof record?.model_url === 'string' ? record.model_url.trim() : ''
-  return m || null
+  const url = g || m
+  if (!url) return null
+  // Relativer Pfad ("/models/X.glb") → gegen den Herkunfts-Server auflösen
+  // (AjnaClient hat `_serverUrl` beim Empfang gesetzt). Absolute URLs (http…)
+  // und protokoll-relative (//host/…) bleiben unverändert.
+  if (url.startsWith('/') && !url.startsWith('//') && record?._serverUrl) {
+    return record._serverUrl.replace(/\/+$/, '') + url
+  }
+  return url
 }

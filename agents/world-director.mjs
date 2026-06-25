@@ -185,6 +185,26 @@ const ARCHETYPES = {
 }
 const actionKeys = a => ARCHETYPES[a].actions.map(x => x.key)
 
+// ── 3D-Modelle pro Archetyp ──────────────────────────────────────────────
+// Dateien liegen unter client/models/ und werden von Caddy als /models/<x>.glb
+// (mit CORS) ausgeliefert. Wir schreiben den Pfad RELATIV in appearance.gltf —
+// der Client (AjnaClient._serverUrl + gltfUrlOf) löst ihn gegen den Server auf,
+// von dem das Objekt stammt. So funktioniert es für jeden Client-Hostnamen
+// (localhost / LAN-Alias / Public-Domain) ohne Agent-seitige Konfiguration.
+// Map zeigt unverändert das Typ-Emoji (kein gltf nötig); gltf greift nur in AR.
+const MODEL_BASE = '/models/'
+const MODEL_POOL = {
+  npc:    ['CesiumMan.glb', 'Soldier.glb', 'RobotExpressive.glb'],
+  enemy:  ['MawGooey.glb', 'Slime.glb', 'Soldier.glb'],
+  animal: ['Fox.glb', 'Horse.glb', 'Flamingo.glb', 'Stork.glb', 'Parrot.glb'],
+  dragon: ['Dragon.glb'],
+  item:   ['Sword.glb', 'TreasureChest.glb'],
+  hint:   []   // kein Modell → Viewer nutzt den appearance-/Typ-Platzhalter
+}
+// Vögel wirken in der Luft natürlicher → leichte Flughöhe, auch wenn der
+// Archetyp (animal) sonst am Boden ist.
+const FLYING_MODELS = new Set(['Flamingo.glb', 'Stork.glb', 'Parrot.glb'])
+
 function targetCount(archetype) {
   const env = process.env[`WD_COUNT_${archetype.toUpperCase()}`]
   const n = env !== undefined ? parseInt(env, 10) : ARCHETYPES[archetype].count
@@ -195,7 +215,12 @@ function targetCount(archetype) {
 function buildSpawn(archetype) {
   const arch = ARCHETYPES[archetype]
   const { lat, lon } = randomPointNear(CENTER_LAT, CENTER_LON, RADIUS_M)
-  const altitude = arch.flying ? randInt(30, 80) : 0
+  const pool = MODEL_POOL[archetype] || []
+  const model = pool.length ? pick(pool) : null
+  // Flughöhe: echter Flieger (Drache) hoch, Vogel-Modelle niedrig, sonst Boden.
+  const altitude = arch.flying ? randInt(30, 80)
+                 : (model && FLYING_MODELS.has(model)) ? randInt(8, 25)
+                 : 0
   const name = NAME_GEN[archetype]()
 
   const state = {
@@ -207,7 +232,7 @@ function buildSpawn(archetype) {
   if (archetype === 'npc')  state.dialog = pick(DIALOG_LINES)
   if (archetype === 'hint') state.hint   = pick(HINT_LINES)
 
-  return {
+  const spawn = {
     name,
     type: archetype,
     description: DESCRIPTION_GEN[archetype](name),
@@ -216,6 +241,10 @@ function buildSpawn(archetype) {
     animation_state: arch.initialAnim,
     state
   }
+  // appearance.gltf nur setzen, wenn der Archetyp ein Modell hat — sonst
+  // bleibt das Feld leer und der Viewer fällt auf den Typ-Platzhalter zurück.
+  if (model) spawn.appearance = { gltf: MODEL_BASE + model }
+  return spawn
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -300,18 +329,32 @@ async function ensureDescription(obj) {
 }
 
 // ─── Adopt-on-Boot: vorhandene Director-Objekte sammeln + pro Archetyp zählen
+// Objekte, die deutlich AUSSERHALB des bespielbaren Bereichs liegen (typisch
+// nach einem Center-Wechsel), werden aufgeräumt statt adoptiert — sonst zählt
+// der alte Bestand mit und am neuen Zentrum spawnt nichts. Großzügiger Puffer
+// (Radius + Lauf-Radius + 300 m), damit normal umherlaufende Figuren NICHT
+// getroffen werden. Opt-out via WD_KEEP_OUTSIDE=1.
+const DESPAWN_RADIUS_M = RADIUS_M + WAY_RADIUS_M + 300
+const KEEP_OUTSIDE     = process.env.WD_KEEP_OUTSIDE === '1'
 const existingByArch = {}
 for (const a of Object.keys(ARCHETYPES)) existingByArch[a] = 0
 const managed = []   // alle vom Director verwalteten Objekte (adoptiert + neu)
+let despawned = 0
 try {
   await ajna.refreshObjects()
   for (const obj of ajna.getObjects()) {
     if (obj?.state?.director !== true) continue
     const a = obj.state.archetype
-    if (a in existingByArch) { existingByArch[a]++; managed.push(obj) }
+    if (!(a in existingByArch)) continue
+    const dist = haversine(CENTER_LAT, CENTER_LON, obj.lat, obj.lon)
+    if (!KEEP_OUTSIDE && Number.isFinite(dist) && dist > DESPAWN_RADIUS_M) {
+      try { await ajna.deleteObject(obj.id); despawned++; continue }
+      catch (err) { console.warn(`[director] despawn ${obj.id} fehlgeschlagen: ${err?.message || err}`) }
+    }
+    existingByArch[a]++; managed.push(obj)
   }
   const summary = Object.entries(existingByArch).map(([a, n]) => `${a}:${n}`).join(' ')
-  console.log(`[director] vorhanden — ${summary}`)
+  console.log(`[director] vorhanden — ${summary}${despawned ? ` · ${despawned} außerhalb despawnt` : ''}`)
 } catch (err) {
   console.warn(`[director] initiales Objekt-Listing fehlgeschlagen: ${err?.message || err}`)
 }

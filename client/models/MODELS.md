@@ -1,9 +1,28 @@
 # 3D-Modelle (`client/models/`)
 
-Referenziert über `appearance.gltf` bzw. Legacy `model_url`
-(`https://<server>/models/<Datei>.glb`); Caddy liefert sie statisch + mit CORS
-aus. Auswahl: animiert (wo sinnvoll), leichtgewichtig (AR übers LAN), aus frei
-nutzbaren Quellen.
+Referenziert über `appearance.gltf` bzw. Legacy `model_url`; Caddy liefert sie
+statisch + mit CORS aus. Auswahl: animiert (wo sinnvoll), leichtgewichtig (AR
+übers LAN), aus frei nutzbaren Quellen.
+
+**URL-Konvention:** Agenten schreiben den Pfad **relativ** (`/models/<Datei>.glb`).
+Der Client bindet ihn beim Empfang an die Basis-URL DES Servers, von dem das
+Objekt stammt (`AjnaClient._serverUrl` → `gltfUrlOf` in
+[`client/core/Appearance.js`](../core/Appearance.js)). So lädt jedes Gerät das
+Modell vom richtigen Host — egal ob `localhost`, LAN-Alias oder Public-Domain,
+ohne dass der Agent den Client-Hostnamen kennen muss. Absolute URLs (`http…`)
+bleiben unverändert.
+
+**Zuordnung im World-Director** ([`agents/world-director.mjs`](../../agents/world-director.mjs),
+`MODEL_POOL` — pro Spawn zufällig gewählt):
+
+| Archetyp | Modelle |
+|---|---|
+| `npc`    | CesiumMan, Soldier, RobotExpressive |
+| `enemy`  | MawGooey, Slime, Soldier |
+| `animal` | Fox, Horse, Flamingo, Stork, Parrot (Vögel mit leichter Flughöhe) |
+| `dragon` | Dragon (hohe Flughöhe) |
+| `item`   | Sword, TreasureChest |
+| `hint`   | — (kein Modell → appearance-/Typ-Platzhalter) |
 
 > **Lizenz/Attribution wird später finalisiert.** Hier sind die **Quellen**
 > dokumentiert — über die verlinkten Seiten/Repos lassen sich Autor + genaue

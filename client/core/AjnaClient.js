@@ -103,6 +103,12 @@ export class AjnaClient {
       record.id = `${this.id}:${record.id}`
     }
     record._origin = this.id
+    // Server-Basis-URL mitführen, damit relative Asset-Pfade (z. B.
+    // appearance.gltf = "/models/Fox.glb") gegen DEN Server aufgelöst werden,
+    // von dem das Objekt stammt — und nicht gegen die App-Origin. Ein Agent
+    // kennt den öffentlichen Hostnamen des Clients nicht (Phone nutzt evtl.
+    // einen anderen Alias als localhost), darum erst hier beim Empfang binden.
+    record._serverUrl = this.url
     return record
   }
 
