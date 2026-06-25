@@ -6,7 +6,7 @@
 //
 // Gewünschte Beispiele:
 //   Anvisieren:  "NPC Klaus"
-//   Untersuchen: "Untersuchen - ein NPC"
+//   Untersuchen: spricht die zurückgegebene Beschreibung (die "Antwort")
 //   Angriff:     "Angriff - NPC getötet"
 //   Erzeugen:    "Neues Objekt erzeugt: Monster Grimmroth"
 
@@ -15,25 +15,42 @@ import { TYPE_LABEL } from './SpawnHere.js'
 const typeLabel = record => TYPE_LABEL[record?.type] || record?.type || 'Objekt'
 const nameOf = record => record?.name || record?.id || 'Objekt'
 
+// Macht einen Text TTS-tauglich: Emoji/Symbole raus, Whitespace zusammenfassen,
+// auf `max` Zeichen kürzen (mit … am Ende). Lange Antworten wie examine-
+// Beschreibungen würden die Ausgabe sonst sprengen.
+export function forSpeech(text, max = 100) {
+  if (!text) return ''
+  let s = String(text)
+    .replace(/[\p{Extended_Pictographic}️‍]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (s.length > max) s = s.slice(0, max - 1).trimEnd() + '…'
+  return s
+}
+
 /** Anvisieren/Fokus: "<Typ> <Name>" → "NPC Klaus". */
 export function announceTargetText(record) {
   if (!record) return null
   return `${typeLabel(record)} ${nameOf(record)}`.trim()
 }
 
-/** Interaktion: "<Aktion> - <Ergebnis>". */
+/**
+ * Interaktion: informative Aktionen (examine/talk) sprechen die zurückgegebene
+ * Antwort (Beschreibung/Dialog/Hinweis); Effekt-Aktionen (attack/feed/…) ihr
+ * Ergebnis. Wird vom Announcer noch auf 100 Zeichen gekürzt.
+ */
 export function announceInteractionText(record, action) {
   const t = typeLabel(record)
   const name = nameOf(record)
   switch (String(action || '').toLowerCase()) {
     case 'examine': case 'lesen': case 'read':
-      return `Untersuchen - ein ${t}`
+      return record?.description || record?.state?.hint || record?.state?.dialog || `Ein ${t}.`
+    case 'talk': case 'sprechen':
+      return record?.state?.dialog || record?.description || `${name} nickt dir freundlich zu.`
     case 'attack': case 'angreifen':
       return `Angriff - ${t} getötet`
     case 'feed': case 'füttern':
       return `Füttern - ${t} gefüttert`
-    case 'talk': case 'sprechen':
-      return `Sprechen mit ${name}`
     case 'collect': case 'einsammeln':
       return `${name} eingesammelt`
     default:
@@ -50,7 +67,8 @@ export function announceCreateText(record) {
 /**
  * Typ-bewusste Ansagen über die geteilte Audio-Instanz, gegated über den
  * „Audio aktiviert"-Schalter. Hält das zuletzt angesagte Ziel, damit das
- * Halten des Fokus nicht wiederholt spricht.
+ * Halten des Fokus nicht wiederholt spricht. Alle Texte werden TTS-tauglich
+ * gemacht und auf 100 Zeichen gekürzt (forSpeech).
  */
 export class Announcer {
   constructor({ audio, ajna }) {
@@ -74,21 +92,21 @@ export class Announcer {
     if (id === this._lastTargetId) return
     this._lastTargetId = id
     if (!id || !this._on()) return
-    const text = announceTargetText(rec)
+    const text = forSpeech(announceTargetText(rec))
     if (text) this.audio.speak(text)        // unterbrechend (latest wins)
   }
 
-  /** Interaktion (Trigger oder eingehende Reaktion). */
+  /** Interaktion (Trigger oder eingehende Reaktion) — Antwort wird gesprochen. */
   interaction(recordOrId, action) {
     if (!this._on()) return
-    const text = announceInteractionText(this._rec(recordOrId), action)
+    const text = forSpeech(announceInteractionText(this._rec(recordOrId), action))
     if (text) this.audio.speak(text)
   }
 
   /** Neues Objekt erzeugt. */
   created(record) {
     if (!this._on()) return
-    const text = announceCreateText(record)
+    const text = forSpeech(announceCreateText(record))
     if (text) this.audio.announce(text)     // eingereiht (nicht abwürgen)
   }
 }

@@ -91,3 +91,17 @@ export async function spawnRandomHere({ ajna, position }) {
   }
   return obj
 }
+
+/**
+ * Erzeugt ein zufälliges Objekt an `position`, öffnet es zur Bearbeitung im
+ * Editor und sagt es (optional) an. Für das "Zufälliges Objekt…"-Kontextmenü
+ * in Karte/AR. Das Objekt existiert sofort; der Editor zeigt name/Position zum
+ * Feinschliff (Speichern = partielles Update, behält appearance/state).
+ * @param {{ajna:object, editorUI?:object, position:object, announcer?:object}} opts
+ */
+export async function spawnRandomAndEdit({ ajna, editorUI, position, announcer }) {
+  const obj = await spawnRandomHere({ ajna, position })
+  try { announcer?.created?.(obj) } catch {}
+  try { editorUI?.fillEditor?.(obj) } catch (err) { console.warn('[spawn] fillEditor:', err?.message || err) }
+  return obj
+}

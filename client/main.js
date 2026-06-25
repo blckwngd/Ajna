@@ -41,7 +41,7 @@ import { ObjectActions } from "./core/ObjectActions.js"
 import { InWorldActionMenu } from "./core/InWorldActionMenu.js"
 import { Toast } from "./core/Toast.js"
 import { interactionReply, isCollectAction } from "./core/InteractionReply.js"
-import { spawnRandomHere } from "./core/SpawnHere.js"
+import { spawnRandomAndEdit } from "./core/SpawnHere.js"
 import { CameraComponent } from "./engine/components/CameraComponent.js"
 import { DebugCameraComponent } from "./engine/components/DebugCameraComponent.js"
 import { PlayerGPSComponent } from "./engine/components/PlayerGPSComponent.js"
@@ -214,45 +214,6 @@ async function init() {
   window.ajnaUwbDisconnect = (role = 'viewer') => uwb.disconnect(role)
 
   setupPositionSourceHud(positionSource, arRoot)
-
-  // ── "Objekt hier"-Button (Demo) ──────────────────────────────────────
-  // Erzeugt ein zufälliges Spielobjekt an der aktuellen Position (für alle
-  // sichtbar) und sagt es an. Feste ID → kein zweiter Button, falls die
-  // Map-Seite den AR-Client per MobileShell nachlädt (Button existiert dann
-  // schon aus map.js).
-  if (!document.getElementById("ajna-spawn-here")) {
-    const spawnBtn = document.createElement("button")
-    spawnBtn.id = "ajna-spawn-here"
-    spawnBtn.textContent = "🎲 Objekt hier"
-    spawnBtn.title = "Zufälliges Objekt an meiner Position erzeugen"
-    Object.assign(spawnBtn.style, {
-      position: "fixed", left: "50%", bottom: "18px", transform: "translateX(-50%)",
-      zIndex: 30, padding: "10px 16px", borderRadius: "22px", border: "none",
-      background: "rgba(20,20,28,0.78)", color: "#fff",
-      font: "600 15px/1.2 system-ui, sans-serif",
-      boxShadow: "0 2px 10px rgba(0,0,0,0.4)", cursor: "pointer"
-    })
-    spawnBtn.addEventListener("click", async () => {
-      if (!_toast) _toast = new Toast()
-      const pos = positionSource?.getWorldPosition?.() || window.ajnaGeo?.position || null
-      if (!pos || !Number.isFinite(pos.lat)) {
-        _toast.show("Keine Position — warte auf GPS-Fix", { title: "Spawn" }); return
-      }
-      spawnBtn.disabled = true
-      try {
-        const obj = await spawnRandomHere({ ajna: ajnaManager, position: pos })
-        _toast.show(`${obj.name} erzeugt`, { title: "Neues Objekt" })
-        _announcer?.created(obj)
-      } catch (err) {
-        _toast.show(err?.message || "Spawn fehlgeschlagen", { title: "Spawn" })
-      } finally {
-        spawnBtn.disabled = false
-      }
-    })
-    document.body.appendChild(spawnBtn)
-  }
-  // Bequemer programmatischer Auslöser (Konsole/Tests).
-  window.ajnaSpawnHere = () => document.getElementById("ajna-spawn-here")?.click()
 
   if (DEBUG_WORLD) {
     window.engine= engine
@@ -536,6 +497,17 @@ async function init() {
           label: 'Neues Objekt…',
           disabled: !ajnaManager.isLoggedIn(),
           onClick: () => editorUI.startNewObjectAt(geoPos.lat, geoPos.lon, geoPos.altitude)
+        },
+        {
+          label: 'Zufälliges Objekt…',
+          disabled: !ajnaManager.isLoggedIn(),
+          onClick: () => spawnRandomAndEdit({
+            ajna: ajnaManager, editorUI, announcer: _announcer,
+            position: { lat: geoPos.lat, lon: geoPos.lon, altitude: geoPos.altitude }
+          }).catch(err => {
+            if (!_toast) _toast = new Toast()
+            _toast.show(err?.message || 'Spawn fehlgeschlagen', { title: 'Spawn' })
+          })
         }
       ]
     })
