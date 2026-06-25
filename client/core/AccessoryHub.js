@@ -16,6 +16,7 @@
 import { WandManager } from './WandManager.js'
 import { UwbManager } from './UwbManager.js'
 import { WandAudioFeedback } from './WandAudioFeedback.js'
+import { Announcer } from './Announce.js'
 import { GPSProvider } from './GPSProvider.js'
 import { FusedPositionSource } from './FusedPositionSource.js'
 import { PositionFilter } from './PositionFilter.js'
@@ -49,6 +50,9 @@ export function getAccessoryHub({ ajna } = {}) {
   const positionSource = new FusedPositionSource(gps, uwb.roleSource('viewer'))
   const wand = new WandManager({ ajna })
   const audio = new WandAudioFeedback()
+  // Typ-bewusste Ansagen (Name+Typ, Aktion+Ergebnis, Erzeugen) für ALLE Views
+  // — auch ohne Wand (Gaze/Tap/Spawn nutzen denselben Announcer).
+  const announcer = new Announcer({ audio, ajna })
 
   // Optional last-resort position getter a view can register (e.g. the map's
   // live window.ajnaGeo position) for when neither UWB nor the hub's own GPS
@@ -79,9 +83,11 @@ export function getAccessoryHub({ ajna } = {}) {
   // localStorage-backed). A view may override wand.isVisible with its own instance.
   wand.isVisible = (o) => (window.agentFilters?.matches ? window.agentFilters.matches(o) : true)
 
-  // Audio cues live on the shared wand (one place → no double TTS).
-  wand.onTarget((t) => audio.onTargetChange(t))
-  wand.onInteraction((i) => audio.onInteraction(i))
+  // Audio cues live on the shared wand (one place → no double TTS). Anvisieren
+  // spricht "<Typ> <Name>" über den Announcer; Fokusverlust behält den dezenten
+  // Ton (audio.onTargetChange(null)). Interaktionen sprechen "<Aktion> - <Ergebnis>".
+  wand.onTarget((t) => { if (t?.id) announcer.target(t.id); else audio.onTargetChange(null) })
+  wand.onInteraction((i) => announcer.interaction(i?.id, i?.action))
   // Debug announcer (audio + debug both on): speak state changes and raw input
   // events to learn the wand by ear. The '*' subscriber only observes — it never
   // consumes, so it does not affect forwarding.
@@ -133,7 +139,7 @@ export function getAccessoryHub({ ajna } = {}) {
   })
 
   const hub = {
-    ajna, wand, uwb, audio, gps, positionSource, originFilter,
+    ajna, wand, uwb, audio, announcer, gps, positionSource, originFilter,
     /** Register a last-resort position getter for wand ray origin. */
     setPositionFallback(fn) { positionFallback = typeof fn === 'function' ? fn : null }
   }

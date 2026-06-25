@@ -40,6 +40,8 @@ import { AjnaGeo } from "./core/AjnaGeo.js"
 import { ObjectActions } from "./core/ObjectActions.js"
 import { InWorldActionMenu } from "./core/InWorldActionMenu.js"
 import { Toast } from "./core/Toast.js"
+import { interactionReply, isCollectAction } from "./core/InteractionReply.js"
+import { spawnRandomHere } from "./core/SpawnHere.js"
 import { CameraComponent } from "./engine/components/CameraComponent.js"
 import { DebugCameraComponent } from "./engine/components/DebugCameraComponent.js"
 import { PlayerGPSComponent } from "./engine/components/PlayerGPSComponent.js"
@@ -188,6 +190,7 @@ async function init() {
   const gps = accessories.gps
   const uwb = accessories.uwb
   const positionSource = accessories.positionSource
+  _announcer = accessories.announcer   // geteilter TTS-Announcer (Gaze/Tap/Spawn)
 
   // Realtime-Updates laufen jetzt zentral über AjnaManager (subscribt
   // auf 'objects' und feuert emitObjectsChanged). Damit reagieren Liste,
@@ -211,6 +214,40 @@ async function init() {
   window.ajnaUwbDisconnect = (role = 'viewer') => uwb.disconnect(role)
 
   setupPositionSourceHud(positionSource, arRoot)
+
+  // ── "Objekt hier"-Button (Demo) ──────────────────────────────────────
+  // Erzeugt ein zufälliges Spielobjekt an der aktuellen Position (für alle
+  // sichtbar) und sagt es an. Schwebt unten mittig über der AR-Ansicht.
+  const spawnBtn = document.createElement("button")
+  spawnBtn.textContent = "🎲 Objekt hier"
+  spawnBtn.title = "Zufälliges Objekt an meiner Position erzeugen"
+  Object.assign(spawnBtn.style, {
+    position: "fixed", left: "50%", bottom: "18px", transform: "translateX(-50%)",
+    zIndex: 30, padding: "10px 16px", borderRadius: "22px", border: "none",
+    background: "rgba(20,20,28,0.78)", color: "#fff",
+    font: "600 15px/1.2 system-ui, sans-serif",
+    boxShadow: "0 2px 10px rgba(0,0,0,0.4)", cursor: "pointer"
+  })
+  spawnBtn.addEventListener("click", async () => {
+    if (!_toast) _toast = new Toast()
+    const pos = positionSource?.getWorldPosition?.() || window.ajnaGeo?.position || null
+    if (!pos || !Number.isFinite(pos.lat)) {
+      _toast.show("Keine Position — warte auf GPS-Fix", { title: "Spawn" }); return
+    }
+    spawnBtn.disabled = true
+    try {
+      const obj = await spawnRandomHere({ ajna: ajnaManager, position: pos })
+      _toast.show(`${obj.name} erzeugt`, { title: "Neues Objekt" })
+      _announcer?.created(obj)
+    } catch (err) {
+      _toast.show(err?.message || "Spawn fehlgeschlagen", { title: "Spawn" })
+    } finally {
+      spawnBtn.disabled = false
+    }
+  })
+  document.body.appendChild(spawnBtn)
+  // Bequemer programmatischer Auslöser (Konsole/Tests).
+  window.ajnaSpawnHere = () => spawnBtn.click()
 
   if (DEBUG_WORLD) {
     window.engine= engine
@@ -390,7 +427,10 @@ async function init() {
     ajna: ajnaManager,
     editorUI,
     contextMenu,
-    permissionDialog
+    permissionDialog,
+    // Tap-Menü-Interaktion → gleiches Feedback wie der XR-/Wand-Pfad
+    // (Reply-Toast + Highlight-Puls + TTS-Ansage).
+    onInteract: (record, key) => _showInteractFeedback(record.id, key)
   })
 
   // In-World-Menü für den XR-Modus. Sichtbar nur, wenn ein Objekt
@@ -400,7 +440,14 @@ async function init() {
   function _triggerInteract(record, actionKey) {
     console.log(`[xr] trigger ${actionKey} on ${record.name || record.id}`)
     ajnaManager.interact(record.id, actionKey)
-      .then(() => _showInteractFeedback(record.id, actionKey))   // sofortiges Eigen-Feedback
+      .then(() => {
+        _showInteractFeedback(record.id, actionKey)   // sofortiges Eigen-Feedback
+        // „Einsammeln" → Objekt entfernen (falls berechtigt).
+        if (isCollectAction(actionKey)) {
+          ajnaManager.deleteObject(record.id).catch(err =>
+            console.warn("[xr] Einsammeln/Löschen fehlgeschlagen:", err?.message || err))
+        }
+      })
       .catch(err => console.warn("[xr] interact failed:", err?.message || err))
   }
 
@@ -438,6 +485,8 @@ async function init() {
 
     const record = ajnaManager.objectMap.get(go.id)
     if (!record) return
+
+    _announcer?.target(record)   // "Zeigen": Tap sagt "<Typ> <Name>" an (gegated)
 
     const inXR = _xrExperience?.baseExperience?.state === BABYLON.WebXRState.IN_XR
     if (inXR) {
@@ -533,9 +582,11 @@ async function init() {
 
     if (_gazedGO) {
       setHighlight(_gazedGO, true)
+      _announcer?.target(_gazedGO.id)   // Ansage "<Typ> <Name>" (gegated)
       const record = ajnaManager.objectMap.get(_gazedGO.id)
       if (record) _showInWorldMenuFor(_gazedGO, record)
     } else {
+      _announcer?.target(null)
       inWorldMenu.hide()
     }
   })
@@ -1016,13 +1067,10 @@ function _showInteractFeedback(objectId, action) {
   const go = objectMap.get(objectId)
   const rec = ajnaManager.getObjectById(objectId)
   const name = go?.name || rec?.name || objectId
-  // examine → Beschreibung, talk → Dialog-Zeile.
-  const reply =
-    (action === "talk"    && (rec?.state?.dialog || rec?.description)) ||
-    (action === "examine" && (rec?.description || rec?.state?.hint || rec?.state?.dialog)) ||
-    null
-  if (reply) _toast.show(reply, { title: name })
-  else _toast.show(`${action} → ${name}`, { title: "INTERACT" })
+  // Reply-Text aus dem gecachten Record ableiten (examine/talk/attack/feed/…).
+  _toast.show(interactionReply(rec, action, name), { title: name })
+  // Akustische Ansage ("<Aktion> - <Ergebnis>"), gegated über Audio-Schalter.
+  _announcer?.interaction(rec || objectId, action)
   if (_arHighlight && go) {
     _arHighlight(go, true)
     setTimeout(() => _arHighlight(go, false), 280)
@@ -1038,6 +1086,7 @@ function _handleInteractAR(go, data) {
 }
 let _arHighlight = null  // wird in init() befüllt — Closure-Bridge auf setHighlight
 let _agentFilters = null // wird in init() gesetzt — Closure-Bridge für syncSceneObjects
+let _announcer = null    // wird in init() gesetzt — geteilter TTS-Announcer (Hub)
 
 // Baut das Hover-/Highlight-System für den AR-Modus auf:
 //   - DOM-Tooltip am Mauszeiger, sobald die Maus über einem GameObject-Mesh hängt

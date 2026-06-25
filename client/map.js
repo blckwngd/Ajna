@@ -13,6 +13,7 @@ import { Toast } from "./core/Toast.js"
 import { PositionSmoother } from "./core/PositionSmoother.js"
 import { encStyleOf } from "./core/wifiStyle.js"
 import { shapeOf, emojiOf, colorOf, radiusOf } from "./core/Appearance.js"
+import { interactionReply } from "./core/InteractionReply.js"
 import { InterestArea } from "./core/InterestArea.js"
 import { setupMapGps } from "./core/MapGpsControl.js"
 import { getAccessoryHub } from "./core/AccessoryHub.js"
@@ -56,11 +57,17 @@ window.ajnaUI = {
   permissionDialog, contextMenu, toast, agentFilters
 }
 let objectActions = null  // wird in init() verdrahtet, sobald editorUI da ist
+let _announcer = null      // wird in init() aus dem AccessoryHub gesetzt (TTS)
 
 function subscribeMarkerInteract(objectId) {
   if (interactSubs.has(objectId)) return
   interactSubs.set(objectId, null)
-  ajna.subscribeInteract(objectId, data => handleMarkerInteract(objectId, data))
+  // Eigene Aktionen kommen als Echo zurück — die zeigt/sagt schon der
+  // Auslöse-Pfad (onInteract). Nur fremde Reaktionen hier verarbeiten.
+  ajna.subscribeInteract(objectId, data => {
+    if (data?.source && data.source === ajna.currentUser()?.id) return
+    handleMarkerInteract(objectId, data)
+  })
     .then(unsub => { interactSubs.set(objectId, unsub) })
     .catch(err => {
       interactSubs.delete(objectId)
@@ -79,15 +86,11 @@ function handleMarkerInteract(objectId, data) {
   const obj = ajna.getObjectById(objectId)
   const label = obj?.name || objectId
 
-  // Antwort des Objekts: examine gibt die Beschreibung aus (universell, für
-  // jedes Objekt mit description), talk die Dialog-Zeile. Kommt über denselben
-  // Realtime-Broadcast wie die Aktion → alle Zuschauer sehen es.
-  const reply =
-    (data.action === "talk"    && (obj?.state?.dialog || obj?.description)) ||
-    (data.action === "examine" && (obj?.description || obj?.state?.hint || obj?.state?.dialog)) ||
-    null
-  if (reply) toast.show(reply, { title: label })
-  else toast.show(`${data.action} → ${label}`, { title: "INTERACT" })
+  // Antwort des Objekts (examine→Beschreibung, talk→Dialog, attack/feed/…→
+  // Flavor). Identische Ableitung wie im AR-Client (InteractionReply).
+  toast.show(interactionReply(obj, data.action, label), { title: label })
+  // Akustische Ansage ("<Aktion> - <Ergebnis>"), gegated über Audio-Schalter.
+  _announcer?.interaction(obj || objectId, data.action)
 
   // Kurzer optischer Pulse am Marker (CSS @keyframes via Klasse).
   const el = marker?.getElement()
@@ -469,6 +472,7 @@ async function init() {
   // Shared GPS/UWB position source so the map marker matches the AR camera
   // (UWB-corrected when available). onActivate starts the shared GPS provider.
   const _hub = getAccessoryHub({ ajna })
+  _announcer = _hub.announcer   // TTS-Ansagen für Marker-Interaktionen
   const gpsControl = setupMapGps(map, {
     positionSource: _hub.positionSource,
     onActivate: () => _hub.gps.start()
@@ -546,7 +550,10 @@ async function init() {
     ajna,
     editorUI,
     contextMenu,
-    permissionDialog
+    permissionDialog,
+    // Tap-Menü-Interaktion → sofort Reply-Toast + Puls + TTS (wie Echo-Pfad).
+    onInteract: (record, key) =>
+      handleMarkerInteract(record.id, { action: key, source: ajna.currentUser()?.id })
   })
 
   await editorUI.init()

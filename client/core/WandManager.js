@@ -291,13 +291,23 @@ export class WandManager {
     const target = pointed?.id || this._nearestObjectId()
     if (!target) { this.notify('Kein Ziel anvisiert / in der Nähe'); return }
     const name = this.getName(target)
+    // Map the generic short press onto the target's PRIMARY action (first in
+    // state.actions) so "point + click" performs the object's main interaction
+    // — and the server permits it (its interact_actions list those keys, not
+    // the raw 'wand_press'). Long-press/gestures stay generic for agents.
+    let effective = action
+    if (action === 'wand_press') {
+      const rec = this.ajna?.getObjectById?.(target)
+      const first = Array.isArray(rec?.state?.actions) && rec.state.actions[0]?.key
+      effective = first || 'examine'
+    }
     // Notify listeners (e.g. audio) that an action was triggered on a target.
-    this._interactionCbs.forEach(cb => { try { cb({ action, id: target, name, pointed: !!pointed }) } catch {} })
+    this._interactionCbs.forEach(cb => { try { cb({ action: effective, id: target, name, pointed: !!pointed }) } catch {} })
     try {
-      await this.ajna.interact(target, action, payload || {})
+      await this.ajna.interact(target, effective, payload || {})
       this.notify(pointed
-        ? `Aktion „${action}" → ${name || 'anvisiertes Objekt'} (${pointed.angleDeg.toFixed(0)}°)`
-        : `Aktion „${action}" → ${name || 'nächstes Objekt'}`)
+        ? `Aktion „${effective}" → ${name || 'anvisiertes Objekt'} (${pointed.angleDeg.toFixed(0)}°)`
+        : `Aktion „${effective}" → ${name || 'nächstes Objekt'}`)
     } catch (err) {
       // Offline / not logged in: the local wand reaction already happened.
       console.warn(WAND_LOG_PREFIX, 'interact failed (offline?)', err?.message || err)

@@ -12,17 +12,21 @@
 // Verhalten. Alle anderen Optionen sollen das Objekt selbst beisteuern.
 
 import { renderServerBadgeText } from './ServerBadge.js'
+import { applyInteractionSideEffect } from './InteractionReply.js'
 
 const FALLBACK_ACTIONS = [
   { key: 'examine', label: 'Untersuchen' }
 ]
 
 export class ObjectActions {
-  constructor({ ajna, editorUI, contextMenu, permissionDialog }) {
+  constructor({ ajna, editorUI, contextMenu, permissionDialog, onInteract }) {
     this.ajna = ajna
     this.editorUI = editorUI
     this.contextMenu = contextMenu
     this.permissionDialog = permissionDialog
+    // Erfolgs-Callback nach einer Interaktion (record, actionKey) — die View
+    // verdrahtet hier ihr sicht-/hörbares Feedback (Toast/Highlight/TTS).
+    this.onInteract = onInteract || null
   }
 
   // record = PocketBase-Record. x/y = Viewport-Pixelposition (für Menü).
@@ -78,6 +82,11 @@ export class ObjectActions {
     try {
       const res = await this.ajna.interact(record.id, actionKey)
       console.log('[interact]', actionKey, '→', res)
+      // Sicht-/hörbares Feedback (Reply-Toast, Highlight-Puls, TTS-Ansage) —
+      // BEVOR eine evtl. Nebenwirkung den Record entfernt.
+      try { this.onInteract?.(record, actionKey) } catch (e) { console.warn('[interact] feedback', e) }
+      // Nebenwirkung (z. B. „Einsammeln" → Objekt löschen, falls berechtigt).
+      await applyInteractionSideEffect(this.ajna, record, actionKey)
     } catch (err) {
       // Der interact-Hook antwortet mit { error: "…" } (nicht PB-Standard
       // { message }), deshalb response.error zuerst prüfen — sonst zeigt das
