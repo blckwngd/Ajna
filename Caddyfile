@@ -97,7 +97,19 @@
     }
 
     # Statischer Client (HTML, /dist/*.bundle.js, Modelle).
+    # CORS: GLTF-Modelle u. ä. werden vom Capacitor-Viewer (Origin
+    # https://localhost) CROSS-ORIGIN geladen. Öffentliche Assets ohne
+    # Credentials → Wildcard genügt. Expose-Headers für Range/206 (der
+    # Babylon-GLTF-Loader liest die GLB häufig per Range-Request).
     handle {
+        header {
+            Access-Control-Allow-Origin "*"
+            Access-Control-Allow-Methods "GET, HEAD, OPTIONS"
+            Access-Control-Allow-Headers "Range, Content-Type"
+            Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges"
+        }
+        @options method OPTIONS
+        respond @options 204
         root * {args[0]}
         file_server
         encode gzip
