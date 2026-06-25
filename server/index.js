@@ -14,6 +14,34 @@ import { mountPresenceRoutes } from "./presence.js"
 // erreichbar gemacht wird.
 
 const app = express()
+
+// CORS: /ajnaapi muss CROSS-ORIGIN erreichbar sein, damit ein Ajna-Viewer auf
+// Origin A (z. B. https://localhost) einen Server B (z. B. https://ajna.example)
+// für Interest-Areas/Geo nutzen kann (Multi-Server). PocketBase (/api) macht
+// CORS selbst — dieses Backend muss es ergänzen, sonst scheitern Cross-Origin-
+// Calls am Preflight (kein Access-Control-Allow-Origin).
+//
+// Sicherheit: Der Origin wird gespiegelt (keine Wildcard, da Authorization-
+// Header geschickt werden). Das ist unbedenklich, weil /ajnaapi ein Bearer-Token
+// verlangt — der Browser sendet diesen NICHT automatisch cross-site (kein Cookie,
+// kein CSRF). Optional auf eine Allowlist (AJNA_CORS_ORIGINS, kommasepariert)
+// einschränkbar.
+const CORS_ALLOW = (process.env.AJNA_CORS_ORIGINS || '')
+  .split(',').map(s => s.trim()).filter(Boolean)
+app.use((req, res, next) => {
+  const origin = req.headers.origin
+  if (origin && (CORS_ALLOW.length === 0 || CORS_ALLOW.includes(origin))) {
+    res.set('Access-Control-Allow-Origin', origin)
+    res.set('Vary', 'Origin')
+    res.set('Access-Control-Allow-Credentials', 'true')
+    res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type')
+    res.set('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
+    res.set('Access-Control-Max-Age', '600')
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204)
+  next()
+})
+
 app.use(express.json())
 
 // Geo-Kontext-Endpoints (OSM via Overpass).

@@ -2,6 +2,7 @@
   "appId": "de.blckwngd.ajna",
   "appName": "Ajna",
   "webDir": "client",
+  "loggingBehavior": "none",
   "server": {
     "androidScheme": "https"
   },
