@@ -21,6 +21,9 @@ export class ServerDialog {
     this._backdrop = null
     this._status = ''
     this._statusKind = ''
+    // serverId → 'pending'|'confirmed'|'unreachable' — Ergebnis der
+    // Server-Verifikation (authRefresh), für genaue „eingeloggt"-Badges.
+    this._verify = new Map()
     this._injectStyles()
     this._unsubServers = this.ajna.onServersChanged(() => {
       if (this._backdrop) this._render()
@@ -105,6 +108,60 @@ export class ServerDialog {
     }
 
     for (const s of servers) list.appendChild(this._renderServerRow(s))
+
+    // „eingeloggt"-Server gegen den Server verifizieren (authRefresh) und die
+    // Badges nachziehen — sonst zeigt ein unerreichbarer Server fälschlich
+    // „eingeloggt" (isLoggedIn ist nur ein lokaler Token-Check).
+    this._verifySessions(servers)
+  }
+
+  // serverId → Badge-Container aktuell halten (ohne die ganze Zeile/Formulare
+  // neu zu rendern, damit z. B. ein offenes Login-Feld erhalten bleibt).
+  _fillBadges(badges, s) {
+    badges.innerHTML = ''
+    const add = (cls, text, title) => {
+      const b = document.createElement('span')
+      b.className = `sd-badge ${cls}`
+      b.textContent = text
+      if (title) b.title = title
+      badges.appendChild(b)
+    }
+    if (s.isDefault) add('default', 'Standard', 'Standard-Server (Default für neue Objekte und Operationen).')
+    if (s.isConnected) add('online', 'verbunden', 'Angemeldet und Realtime-Verbindung aktiv (Live-Updates).')
+    if (s.isLoggedIn && !s.isConnected) {
+      const v = this._verify.get(s.id)
+      if (v === 'unreachable') {
+        add('warn', 'Token (offline)', 'Lokales Token vorhanden, aber der Server hat es nicht bestätigt '
+          + '(nicht erreichbar oder Timeout). Über „Verbinden" erneut versuchen.')
+      } else if (v === 'confirmed') {
+        add('idle', 'eingeloggt', 'Angemeldet — Token vom Server bestätigt, aber keine Realtime-Verbindung. '
+          + '„Verbinden" baut sie auf.')
+      } else {
+        // undefined | 'pending' — lokal gültig, Server-Check läuft noch.
+        add('idle', v === 'pending' ? 'eingeloggt …' : 'eingeloggt', 'Gültiges Token (lokal). '
+          + 'Wird gegen den Server verifiziert …')
+      }
+    }
+  }
+
+  _verifySessions(servers) {
+    for (const s of servers) {
+      if (!(s.isLoggedIn && !s.isConnected)) continue   // nur die „eingeloggt"-Fälle
+      if (!this._verify.has(s.id)) this._verify.set(s.id, 'pending')  // letztes Ergebnis halten
+      this.ajna.verifyServerSession(s.id).then(status => {
+        // 'revoked'/'logged-out' → Token weg; AjnaManager feuert onServersChanged
+        // → _render() zieht alles neu (Login-Status hat sich geändert).
+        if (status === 'revoked' || status === 'logged-out') { this._verify.delete(s.id); return }
+        this._verify.set(s.id, status)        // 'confirmed' | 'unreachable'
+        this._updateRowBadges(s)
+      }).catch(() => {})
+    }
+  }
+
+  _updateRowBadges(s) {
+    const list = this._backdrop?.querySelector('[data-role="list"]')
+    const row = list && Array.from(list.children).find(r => r.dataset?.serverId === s.id)
+    if (row) this._fillBadges(row.querySelector('.sd-badges'), s)
   }
 
   _renderServerRow(s) {
@@ -145,33 +202,8 @@ export class ServerDialog {
     row.querySelector('.sd-server-url').textContent = s.url
     row.querySelector('.sd-server-meta').textContent = `User: ${userLabel}`
 
-    const badges = row.querySelector('.sd-badges')
-    if (s.isDefault) {
-      const b = document.createElement('span')
-      b.className = 'sd-badge default'
-      b.textContent = 'Standard'
-      badges.appendChild(b)
-    }
-    if (s.isConnected) {
-      const b = document.createElement('span')
-      b.className = 'sd-badge online'
-      b.textContent = 'verbunden'
-      b.title = 'Angemeldet und Realtime-Verbindung aktiv (Live-Updates).'
-      badges.appendChild(b)
-    }
-    if (s.isLoggedIn && !s.isConnected) {
-      const b = document.createElement('span')
-      b.className = 'sd-badge idle'
-      b.textContent = 'eingeloggt'
-      // Wichtig: isLoggedIn = NUR lokales Token (authStore.isValid), NICHT gegen
-      // den Server geprüft. Ein erreichbarkeits-unabhängiger Zustand — deshalb
-      // kann ein unerreichbarer/abgemeldeter Server hier noch „eingeloggt"
-      // zeigen, solange das Token lokal nicht abgelaufen ist.
-      b.title = 'Gültiges Token vorhanden (nur lokal geprüft), aber keine aktive '
-        + 'Verbindung. „Verbinden" baut die Realtime-Verbindung auf; schlägt sie '
-        + 'fehl, ist der Server nicht erreichbar oder das Token veraltet.'
-      badges.appendChild(b)
-    }
+    row.dataset.serverId = s.id
+    this._fillBadges(row.querySelector('.sd-badges'), s)
 
     const loginRow = row.querySelector('.sd-login-row')
     const actionRow = row.querySelector('.sd-action-row')
@@ -365,6 +397,7 @@ export class ServerDialog {
       .ajna-sd-dialog .sd-badge.default { color: #f1c40f; border-color: #6a5520; }
       .ajna-sd-dialog .sd-badge.online  { color: #6fc8c8; border-color: #245959; }
       .ajna-sd-dialog .sd-badge.idle    { color: #c8a06f; border-color: #594224; }
+      .ajna-sd-dialog .sd-badge.warn    { color: #e08a3c; border-color: #6a3f18; }
 
       .ajna-sd-dialog .sd-server-actions {
         min-width: 240px;

@@ -134,6 +134,31 @@ export class AjnaClient {
   }
 
   /**
+   * Prüft das gespeicherte Token GEGEN den Server (authRefresh) — anders als
+   * isLoggedIn(), das nur lokal (authStore.isValid) prüft. Für die Server-UI,
+   * damit „eingeloggt" echte Erreichbarkeit widerspiegelt.
+   * @param {number} [timeoutMs=5000]
+   * @returns {Promise<'logged-out'|'confirmed'|'revoked'|'unreachable'>}
+   *   logged-out  — kein/abgelaufenes Token
+   *   confirmed   — Server akzeptiert das Token
+   *   revoked     — Server lehnt ab (401) → Token lokal geleert
+   *   unreachable — Netz-/Server-Fehler oder Timeout → Token bleibt, unbestätigt
+   */
+  async verifySession(timeoutMs = 5000) {
+    if (!this.pb.authStore.isValid) return 'logged-out'
+    try {
+      await Promise.race([
+        this.pb.collection('users').authRefresh(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), timeoutMs))
+      ])
+      return 'confirmed'
+    } catch (err) {
+      if (err?.status === 401) { this.pb.authStore.clear(); return 'revoked' }
+      return 'unreachable'
+    }
+  }
+
+  /**
    * Aktuell eingeloggter User auf DIESEM Server. ID wird composite-form
    * normalisiert, damit Vergleiche mit Object-Owner-Feldern konsistent
    * möglich sind — Foreign-Keys werden NICHT vom Server umgeschrieben,

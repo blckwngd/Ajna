@@ -288,6 +288,20 @@ export class AjnaManager {
   }
 
   /**
+   * Verifiziert das Token eines Servers gegen den Server (siehe
+   * AjnaClient.verifySession). Bei 'revoked' wurde das lokale Token geleert,
+   * daher anschließend ein onServersChanged feuern.
+   * @returns {Promise<'logged-out'|'confirmed'|'revoked'|'unreachable'>}
+   */
+  async verifyServerSession(serverId) {
+    const c = this.clients.get(serverId)
+    if (!c) return 'logged-out'
+    const status = await c.verifySession()
+    if (status === 'revoked') this._emitServersChanged()
+    return status
+  }
+
+  /**
    * Listener für Änderungen an der Server-Liste (add/remove/login/logout/
    * default-switch). Callback erhält keine Argumente — der Caller liest
    * den frischen Zustand via getServers().
