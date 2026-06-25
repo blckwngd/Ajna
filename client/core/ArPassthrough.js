@@ -47,11 +47,20 @@ export class ArPassthrough {
     // (höherer z-index) bleibt oben.
     Object.assign(v.style, {
       position: 'absolute', top: '0', left: '0', width: '100%', height: '100%',
-      objectFit: 'cover', background: '#000', display: 'none'
+      objectFit: 'cover', background: '#000', display: 'none', zIndex: '0'
     })
     const parent = this.canvas?.parentElement || document.body
     if (this.canvas && this.canvas.parentElement === parent) {
       parent.insertBefore(v, this.canvas)
+      // Der Canvas MUSS über dem Video liegen, sonst verdeckt das (positionierte)
+      // Video die transparent gerenderten 3D-Objekte. Ein statischer Canvas wird
+      // von einem positionierten Geschwister immer überzeichnet → Canvas selbst
+      // positionieren + höheren z-index geben. (Editor-#ui hat z-index 10, bleibt
+      // oben.)
+      if (getComputedStyle(this.canvas).position === 'static') {
+        this.canvas.style.position = 'relative'
+      }
+      this.canvas.style.zIndex = '1'
     } else {
       parent.appendChild(v)
     }
