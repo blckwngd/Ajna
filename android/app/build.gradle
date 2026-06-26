@@ -41,6 +41,10 @@ dependencies {
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
 
+    // Lokaler Asset-HTTP-Server (LocalServerPlugin) für WebXR-in-Chrome:
+    // liefert die gebündelten Web-Assets über 127.0.0.1 aus.
+    implementation "org.nanohttpd:nanohttpd:2.3.1"
+
     // Kotlin-Stdlib-Duplikate fixen: aeltere Cordova-Plugins ziehen
     // kotlin-stdlib-jdk7 / -jdk8 in 1.6.21 mit. Seit Kotlin 1.8 sind diese
     // Module in kotlin-stdlib aufgegangen; werden sie als alte Jars

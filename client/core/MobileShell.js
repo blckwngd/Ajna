@@ -188,16 +188,35 @@ export class MobileShell {
   }
 
   // Open the AR page in the external browser (Chrome, where WebXR + ARCore
-  // work), carrying the login token + filter config so work continues
-  // seamlessly there (same-origin with the backend via Caddy).
-  _openXrInChrome() {
-    const url = this._buildArDeepLink()
+  // work), carrying the login token + filter config so work continues there.
+  //
+  // Bevorzugt wird die im APK GEBÜNDELTE AR-Seite über einen lokalen Loopback-
+  // Server (LocalServer-Plugin) an Chrome gegeben: http://localhost gilt als
+  // secure context → WebXR funktioniert, und die aktuelle Web-App muss NICHT
+  // erst auf den Server deployt werden. Die API/Auth bleibt der entfernte
+  // Server (payload.base). Ohne lokalen Server (z. B. Desktop) Fallback auf den
+  // Server-Deep-Link (lädt die Seite vom entfernten Server → Deploy nötig).
+  async _openXrInChrome() {
     const meta = document.querySelector('[data-role="ar-hint"] .meta')
-    if (!url) {
+    const apiBase = this._arWebBase()   // entfernter Ajna-Server (API + Auth)
+    if (!apiBase) {
       if (meta) meta.textContent =
         'Kein erreichbarer Server konfiguriert — bitte zuerst unter Einstellungen → Verwaltung → Server eintragen.'
       return
     }
+    let pageBase = apiBase
+    try {
+      const { Capacitor, registerPlugin } = await import('@capacitor/core')
+      if (Capacitor?.isNativePlatform?.()) {
+        const LocalServer = registerPlugin('LocalServer')
+        const { url } = await LocalServer.start()
+        if (url) pageBase = url   // z. B. http://localhost:43219 (gebündelte Assets)
+      }
+    } catch (err) {
+      console.warn('[xr] lokaler Server nicht verfügbar, nutze Server-Deploy:', err?.message || err)
+    }
+    const url = this._buildArDeepLink(pageBase, apiBase)
+    if (!url) return
     window.open(url, '_blank')
   }
 
@@ -211,9 +230,13 @@ export class MobileShell {
     return isLocal(def) ? null : def
   }
 
-  _buildArDeepLink() {
-    const base = this._arWebBase()  // which backend serves index-ar.html (same-origin)
+  // pageBase: von wo Chrome die SEITE lädt (lokaler Loopback-Server ODER der
+  // entfernte Server). apiBase: das API-/Auth-Backend, das im Payload landet
+  // (immer der ENTFERNTE Server — auch wenn die Seite von localhost kommt).
+  _buildArDeepLink(pageBase = null, apiBase = null) {
+    const base = apiBase || this._arWebBase()  // API-Backend (entfernt)
     if (!base) return null
+    const page = pageBase || base               // wo die Seite ausgeliefert wird
     // Carry the ENTIRE multi-server setup verbatim so EVERY connected server
     // stays logged in in Chrome: the server registry + each server's PocketBase
     // auth blob (`ajna_auth_<id>`). Copying the raw localStorage strings avoids
@@ -231,7 +254,7 @@ export class MobileShell {
       filters: localStorage.getItem('ajna.layer_filters') || '',
       align: localStorage.getItem(ALIGN_KEY) || ''
     }
-    return `${base.replace(/\/+$/, '')}/index-ar.html#ajna=${b64url(JSON.stringify(payload))}`
+    return `${page.replace(/\/+$/, '')}/index-ar.html#ajna=${b64url(JSON.stringify(payload))}`
   }
 
   // Inject the AR (Babylon) bundle once, the first time it is needed. It renders
