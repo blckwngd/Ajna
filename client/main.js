@@ -705,19 +705,22 @@ async function init() {
   // WebXR — nach buildDebugScene, damit die Ground-Mesh als Floor für
   // die Teleportation verfügbar ist.
   //
-  // Default Mode ist `immersive-vr`. Die Babylon-Default-Experience baut
-  // automatisch einen "Enter XR"-Button ins DOM und aktiviert
-  // Pointer-Selection (Controller-Trigger feuert pointer-events, die
-  // unser bestehender POINTERTAP-Handler oben aufgreift) sowie
-  // Teleportation (Pointing-Gesture auf den Boden + Loslassen).
-  //
-  // Daydream-Controller und andere generische 3DOF-Controller werden
-  // über das Standard-WebXR-Profil mitgenommen.
+  // Session-Modus: bevorzugt `immersive-ar` (Kamera-Passthrough kommt vom
+  // XR-Compositor über ARCore), sonst Fallback `immersive-vr`. WICHTIG:
+  // immersive-VR hat KEIN Kamerabild — mit ausgeschalteter Skybox (z. B. via
+  // Kamera-Toggle) bliebe in VR nur ein schwarzer Hintergrund. Die Babylon-
+  // Default-Experience baut den "Enter XR"-Button ins DOM, Pointer-Selection
+  // (Controller-Trigger → pointer-events, die unser POINTERTAP-Handler
+  // aufgreift) und Teleportation.
+  let xrMode = "immersive-vr"
+  try {
+    if (await navigator.xr?.isSessionSupported?.("immersive-ar")) xrMode = "immersive-ar"
+  } catch {}
   try {
     _xrExperience = await scene.createDefaultXRExperienceAsync({
       floorMeshes: [debugScene.ground],
       uiOptions: {
-        sessionMode: "immersive-vr",
+        sessionMode: xrMode,
         referenceSpaceType: "local-floor"
       },
       pointerSelectionOptions: {
@@ -727,7 +730,19 @@ async function init() {
         floorMeshes: [debugScene.ground]
       }
     })
-    console.log("[xr] ready — Enter-XR button is in the DOM")
+    console.log(`[xr] ready (${xrMode}) — Enter-XR button is in the DOM`)
+
+    // In AR liefert der XR-Compositor das Kamerabild → Szene transparent +
+    // Skybox aus, solange die AR-Session läuft. Beim Verlassen Skybox wieder an
+    // (außer der DOM-Kamera-Passthrough ist gerade aktiv), Alpha zurück.
+    if (xrMode === "immersive-ar") {
+      _xrExperience.baseExperience?.onStateChangedObservable.add(state => {
+        const inXR = state === BABYLON.WebXRState.IN_XR
+        const transparent = inXR || arPassthrough.enabled
+        if (arEnv?.skybox) arEnv.skybox.setEnabled(!transparent)
+        if (scene.clearColor) scene.clearColor.a = transparent ? 0 : 1
+      })
+    }
 
     _xrExperience.baseExperience?.onStateChangedObservable.add(state => {
       const name = ({
