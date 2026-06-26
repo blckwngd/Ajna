@@ -716,20 +716,26 @@ async function init() {
   try {
     if (await navigator.xr?.isSessionSupported?.("immersive-ar")) xrMode = "immersive-ar"
   } catch {}
-  try {
-    _xrExperience = await scene.createDefaultXRExperienceAsync({
-      floorMeshes: [debugScene.ground],
-      uiOptions: {
-        sessionMode: xrMode,
-        referenceSpaceType: "local-floor"
-      },
-      pointerSelectionOptions: {
-        enablePointerSelectionOnAllControllers: true
-      },
-      teleportationOptions: {
-        floorMeshes: [debugScene.ground]
+  // AR-Session bewusst MINIMAL + tolerant konfigurieren: Kamera kommt vom
+  // Compositor, daher KEINE Teleportation (VR-Konzept, bräuchte Floor-Mesh) und
+  // optionale Features NICHT als Pflicht anfordern — sonst scheitert
+  // requestSession an einem Feature/Reference-Space, den die ARCore-Runtime
+  // nicht als „required" liefert ("session configuration is not supported").
+  // Reference-Space `local` (kein Floor-Detect) ist am breitesten unterstützt.
+  const xrOptions = xrMode === "immersive-ar"
+    ? {
+        uiOptions: { sessionMode: "immersive-ar", referenceSpaceType: "local" },
+        disableTeleportation: true,
+        optionalFeatures: true
       }
-    })
+    : {
+        floorMeshes: [debugScene.ground],
+        uiOptions: { sessionMode: "immersive-vr", referenceSpaceType: "local-floor" },
+        pointerSelectionOptions: { enablePointerSelectionOnAllControllers: true },
+        teleportationOptions: { floorMeshes: [debugScene.ground] }
+      }
+  try {
+    _xrExperience = await scene.createDefaultXRExperienceAsync(xrOptions)
     console.log(`[xr] ready (${xrMode}) — Enter-XR button is in the DOM`)
 
     // In AR liefert der XR-Compositor das Kamerabild → Szene transparent +
