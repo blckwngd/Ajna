@@ -474,7 +474,10 @@ async function init() {
   })
 
   // Visual pointing ray (origin → direction). Updated each orientation frame;
-  // removed when no orientation/origin (e.g. pointing mode 'disabled').
+  // removed when no orientation/origin (e.g. pointing mode 'disabled'). 5-m-
+  // Zeiger (kurz, reicht zur Richtungsanzeige); färbt sich GRÜN, sobald ein
+  // Objekt anvisiert wird (zusätzlich zum Objekt-Highlight via onTarget oben).
+  const WAND_RAY_M = 5
   let _wandRay = null
   wand.onOrientation(() => {
     const dir = wand.getPointingDirection()
@@ -483,14 +486,16 @@ async function init() {
       if (_wandRay) { _wandRay.dispose(); _wandRay = null }
       return
     }
-    const end = rayEndpointWgs84(origin, dir, wand.maxRangeM)
+    const end = rayEndpointWgs84(origin, dir, WAND_RAY_M)
     const pts = [
       geo.toLocal(origin.lat, origin.lon, origin.altitude || 0),
       geo.toLocal(end.lat, end.lon, end.altitude)
     ]
     _wandRay = BABYLON.MeshBuilder.CreateLines('wandRay',
       { points: pts, updatable: true, instance: _wandRay || undefined }, scene)
-    _wandRay.color = new BABYLON.Color3(0.3, 0.8, 1)
+    _wandRay.color = _wandHiId
+      ? new BABYLON.Color3(0.2, 1.0, 0.4)   // Treffer → grün
+      : new BABYLON.Color3(0.3, 0.8, 1.0)   // kein Treffer → cyan
     _wandRay.isPickable = false
   })
 

@@ -412,6 +412,11 @@ function injectHighlightStyles() {
       outline: 2px solid #f1c40f;
       border-radius: 4px;
     }
+    .map-marker.wand-target {
+      background: rgba(55, 214, 122, 0.35);
+      outline: 2px solid #37d67a;
+      border-radius: 4px;
+    }
     @keyframes ajna-marker-pulse {
       0%   { box-shadow: 0 0 0 0 rgba(241, 196, 15, 0.7); }
       70%  { box-shadow: 0 0 0 16px rgba(241, 196, 15, 0); }
@@ -481,8 +486,21 @@ async function init() {
   })
   window.ajnaGpsControl = gpsControl
 
-  // Visual pointing ray on the map (origin → direction), shared wand.
+  // Visual pointing ray on the map (origin → direction), shared wand. 5-m-
+  // Zeiger; färbt sich GRÜN und hebt den Marker hervor, sobald ein Objekt
+  // anvisiert wird ("getroffen").
+  const WAND_RAY_M = 5
   let _rayPoly = null
+  let _wandTargetId = null
+  const _setWandTarget = (id, on) => {
+    const el = id && markerLayer.get(id)?.getElement()
+    if (el) el.classList.toggle('wand-target', on)
+  }
+  _hub.wand.onTarget((target) => {
+    if (_wandTargetId && _wandTargetId !== target?.id) _setWandTarget(_wandTargetId, false)
+    if (target?.id) _setWandTarget(target.id, true)
+    _wandTargetId = target?.id || null
+  })
   _hub.wand.onOrientation(() => {
     const dir = _hub.wand.getPointingDirection()
     const origin = _hub.wand.getOrigin?.()
@@ -490,11 +508,12 @@ async function init() {
       if (_rayPoly) { _rayPoly.remove(); _rayPoly = null }
       return
     }
-    const end = rayEndpointWgs84(origin, dir, _hub.wand.maxRangeM)
+    const end = rayEndpointWgs84(origin, dir, WAND_RAY_M)
     const latlngs = [[origin.lat, origin.lon], [end.lat, end.lon]]
-    if (_rayPoly) _rayPoly.setLatLngs(latlngs)
+    const color = _wandTargetId ? '#37d67a' : '#4ea1ff'   // Treffer → grün
+    if (_rayPoly) { _rayPoly.setLatLngs(latlngs); _rayPoly.setStyle({ color }) }
     else _rayPoly = window.L.polyline(latlngs,
-      { color: '#4ea1ff', weight: 3, opacity: 0.85, interactive: false }).addTo(window.map)
+      { color, weight: 3, opacity: 0.85, interactive: false }).addTo(window.map)
   })
   window.map = map
   window.dispatchEvent(new CustomEvent('ajna:map-ready', {
