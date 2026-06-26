@@ -126,6 +126,41 @@ let _xrExperience = null  // gesetzt nach erfolgreichem WebXR-Setup
 // PHASE 1: INITIALIZATION
 // ==========================================================
 
+// Voll deckender Ladescreen für den AR-Kaltstart. Verbirgt die verwirrende
+// Anlaufphase (leere Szene, vor dem GPS-Fix springende Position, nach und nach
+// eintrudelnde Objekte/Gitter/Gebäude) hinter einem ruhigen Overlay mit
+// Statuszeile. Wird in den Canvas-Container gehängt → scoped zur AR-Ansicht
+// (verschwindet beim Tab-Wechsel) und funktioniert auch standalone in Chrome.
+function createLoadingOverlay(arRoot) {
+  const ov = document.createElement("div")
+  ov.id = "ar-loading-overlay"
+  Object.assign(ov.style, {
+    position: "fixed", top: "0", left: "0", right: "0", bottom: "0", zIndex: "50",
+    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+    gap: "18px", background: "#0b0b12", color: "#e8e8ef",
+    font: "500 16px/1.4 system-ui, sans-serif", textAlign: "center", padding: "24px",
+    transition: "opacity 0.45s ease", opacity: "1"
+  })
+  ov.innerHTML = `
+    <div style="width:46px;height:46px;border-radius:50%;
+      border:4px solid rgba(255,255,255,0.15);border-top-color:#4a90d9;
+      animation:arl-spin 0.9s linear infinite;"></div>
+    <div data-role="arl-status">AR wird gestartet…</div>
+    <style>@keyframes arl-spin{to{transform:rotate(360deg)}}</style>`
+  ;(arRoot || document.body).appendChild(ov)
+  const statusEl = ov.querySelector('[data-role="arl-status"]')
+  let done = false
+  return {
+    setStatus(text) { if (!done && statusEl) statusEl.textContent = text },
+    hide() {
+      if (done) return
+      done = true
+      ov.style.opacity = "0"
+      setTimeout(() => ov.remove(), 500)
+    }
+  }
+}
+
 async function init() {
 
   // Babylon Setup
@@ -134,6 +169,11 @@ async function init() {
   // in the shell, or <body> standalone) so they stay scoped to the AR view and
   // vanish with it on tab switch.
   const arRoot = canvas.parentElement || document.body
+  // Ladescreen so früh wie möglich hoch (vor dem Render-Loop), damit der leere/
+  // springende Kaltstart verborgen bleibt. Sicherheits-Timeout, falls ein
+  // Schritt (z. B. GPS) hängt — lieber die Szene zeigen als den Nutzer einsperren.
+  const loadingOverlay = createLoadingOverlay(arRoot)
+  const _loadingSafety = setTimeout(() => loadingOverlay.hide(), 25000)
   // preserveDrawingBuffer bewusst NICHT gesetzt: kostet Performance (Treiber
   // muss den Buffer halten) und wird nirgends gebraucht (keine Screenshots).
   const engine = new BABYLON.Engine(canvas, true, { stencil: true })
@@ -582,10 +622,12 @@ async function init() {
   // EditorUI-Backend-Load und GPS-Fix parallelisieren — bei realem GPS
   // spart das mehrere Sekunden, weil PocketBase-Load und Geolocation-
   // Wartezeit nicht hintereinander, sondern nebeneinander laufen.
+  loadingOverlay.setStatus("Warte auf Standort (GPS)…")
   await Promise.all([
     editorUI.init(),
     waitForOrigin(geo, positionSource)
   ])
+  loadingOverlay.setStatus("Welt wird aufgebaut…")
 
   // Szene-Reconcile erst aktivieren, wenn Origin steht — sonst würden
   // alle GameObjects auf (0,0,0) landen.
@@ -597,7 +639,9 @@ async function init() {
   ajnaManager.onObjectsChanged(throttleLatest(objects => {
     syncSceneObjects(scene, world, geo, objects)
   }, 250))
-  syncSceneObjects(scene, world, geo, ajnaManager.getObjectList())
+  // Erstes Reconcile awaiten → Objekt-Platzhalter stehen, bevor der Ladescreen
+  // weicht (Modelle tauschen sich danach unauffällig an Ort und Stelle ein).
+  await syncSceneObjects(scene, world, geo, ajnaManager.getObjectList())
 
   // Re-Capping bei Kamerabewegung: die "nächsten X je Agent" hängen von der
   // Kameraposition ab. syncSceneObjects feuert sonst nur bei Datenänderung —
@@ -652,6 +696,11 @@ async function init() {
   })
 
   const debugScene = buildDebugScene(scene)
+
+  // Szene ist sichtbar bereit (GPS-Origin steht, Objekt-Platzhalter + Gitter
+  // gezeichnet) → Ladescreen ausblenden. OSM-Gebäude trudeln gleich async nach.
+  clearTimeout(_loadingSafety)
+  loadingOverlay.hide()
 
   // WebXR — nach buildDebugScene, damit die Ground-Mesh als Floor für
   // die Teleportation verfügbar ist.
