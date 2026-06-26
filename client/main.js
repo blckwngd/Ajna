@@ -287,16 +287,18 @@ async function init() {
   // Permission-Geste (der Button-Tap deckt das ab), Android nicht.
   const _debugCam = player.getComponent(DebugCameraComponent)
   const _playerCam = player.getComponent(CameraComponent)?.camera
-  // Pitch-Korrektur: Babylons DeviceOrientation-Input invertiert in einer
-  // rechtshändigen Szene (useRightHandedSystem) oben/unten. Nach dem Input-Check
-  // den Pitch (Euler-x) negieren — nur solange der Kompass aktiv ist (AR-Modus).
+  // Handedness-Korrektur: Babylons DeviceOrientation-Input ist für linkshändige
+  // Szenen ausgelegt; unsere ist rechtshändig (useRightHandedSystem). Dadurch
+  // sind Pitch (oben/unten) UND Roll (Neigen im/gegen Uhrzeigersinn) invertiert
+  // — beide Euler-Anteile (x, z) negieren, Yaw (links/rechts) bleibt. Nur
+  // solange der Kompass aktiv ist (AR-Modus), nach dem Input-Check.
   let _compassActive = false
   if (_playerCam) {
     _playerCam.onAfterCheckInputsObservable.add(() => {
       const q = _playerCam.rotationQuaternion
       if (!_compassActive || !q) return
       const e = q.toEulerAngles()
-      BABYLON.Quaternion.RotationYawPitchRollToRef(e.y, -e.x, e.z, q)
+      BABYLON.Quaternion.RotationYawPitchRollToRef(e.y, -e.x, -e.z, q)
     })
   }
   async function _ensureOrientationPermission() {
