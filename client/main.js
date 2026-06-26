@@ -287,13 +287,20 @@ async function init() {
   // Permission-Geste (der Button-Tap deckt das ab), Android nicht.
   const _debugCam = player.getComponent(DebugCameraComponent)
   const _playerCam = player.getComponent(CameraComponent)?.camera
-  // Handedness-Korrektur: Babylons DeviceOrientation-Input ist für linkshändige
-  // Szenen ausgelegt; unsere ist rechtshändig (useRightHandedSystem). Dadurch
-  // sind Pitch (oben/unten) UND Roll (Neigen im/gegen Uhrzeigersinn) invertiert
-  // — beide Euler-Anteile (x, z) negieren, Yaw (links/rechts) bleibt. Nur
-  // solange der Kompass aktiv ist (AR-Modus), nach dem Input-Check.
   let _compassActive = false
   if (_playerCam) {
+    // Kompass-Input EINMAL einrichten: die Player-Kamera bekommt ausschließlich
+    // Babylons DeviceOrientation-Input (kein Maus/Touch/Tastatur). Bewusst NICHT
+    // bei jedem Moduswechsel neu klären/anlegen — dabei blieb der Input beim
+    // zweiten Aktivieren tot. Das Attach/Detach übernimmt der Kamerawechsel
+    // (DebugCameraComponent); dieselbe Input-Instanz bleibt erhalten.
+    try {
+      _playerCam.inputs.clear()
+      _playerCam.inputs.addDeviceOrientation()
+    } catch (e) { console.warn("[ar] Kompass-Setup fehlgeschlagen:", e?.message || e) }
+    // Handedness-Korrektur: rechtshändige Szene (useRightHandedSystem) invertiert
+    // Pitch (oben/unten) UND Roll (Neigen) — beide Euler-Anteile (x,z) negieren,
+    // Yaw (links/rechts) bleibt. Nur bei aktivem Kompass, nach dem Input-Check.
     _playerCam.onAfterCheckInputsObservable.add(() => {
       const q = _playerCam.rotationQuaternion
       if (!_compassActive || !q) return
@@ -307,20 +314,13 @@ async function init() {
       try { await D.requestPermission() } catch {}
     }
   }
-  async function _onCameraMode(mode) {
+  // Auf den Kamerawechsel reagieren: Player-Modus = AR (GPS-fix + Kompass +
+  // Passthrough), Free-Modus = frei + Skybox. Die Kamera + den Kompass-Input-
+  // Attach schaltet DebugCameraComponent selbst.
+  function _onCameraMode(mode) {
     const ar = mode === "player"
-    _compassActive = ar   // Pitch-Korrektur nur bei aktivem Kompass
-    if (ar && _playerCam) {
-      try {
-        await _ensureOrientationPermission()
-        _playerCam.detachControl()
-        _playerCam.inputs.clear()              // nur Kompass steuert die Blickrichtung
-        _playerCam.inputs.addDeviceOrientation()
-        _playerCam.attachControl(canvas, true)
-      } catch (e) { console.warn("[ar] Kompass-Input fehlgeschlagen:", e?.message || e) }
-    } else if (_playerCam) {
-      try { _playerCam.detachControl() } catch {}
-    }
+    _compassActive = ar
+    console.log(`[ar] Kamera-Modus → ${ar ? "AR (GPS-fix + Kompass)" : "Free-Fly"}`)
     if (ar) {
       arPassthrough.enable().catch(err => {
         if (!_toast) _toast = new Toast()
@@ -332,8 +332,13 @@ async function init() {
     try { editorUI?.setArModeToggle?.(ar) } catch {}   // Editor-Checkbox synchron
   }
   if (_debugCam) _debugCam.onModeChange = _onCameraMode
-  // Einheitlicher Auslöser für Button UND Editor-Toggle (DebugCam ist Wahrheit).
-  function setArMode(on) { _debugCam?.setMode(on ? "player" : "free") }
+  // Einheitlicher Auslöser für Button UND Editor-Toggle; iOS-Sensor-Permission
+  // vor dem Wechsel (Geste). DebugCam-Modus ist die Wahrheit.
+  async function setArMode(on) {
+    if (on) await _ensureOrientationPermission()
+    _debugCam?.setMode(on ? "player" : "free")
+  }
+  if (_debugCam) _debugCam.onToggle = () => setArMode(_debugCam.activeMode !== "player")
 
   // Hover-System: Mesh-Tooltip beim Pointer-Move, Highlight + Off-Screen-
   // Linie wenn aus den Listen heraus angefragt. Setzt DOM-Overlays an,

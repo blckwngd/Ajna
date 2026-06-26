@@ -16,6 +16,10 @@ export class DebugCameraComponent extends BaseComponent {
     // setzt, um an den Moduswechsel den AR-Modus zu koppeln: Kamera-Passthrough
     // + Geräte-Kompass auf der Player-Kamera (siehe main.js setArMode).
     this.onModeChange = null
+    // Optionaler Button-Callback: wird der Tap hierüber geleitet, kann der Host
+    // den Wechsel selbst auslösen (z. B. iOS-Sensor-Permission vor dem Wechsel
+    // anfordern). Ohne Callback bleibt der interne toggle().
+    this.onToggle = null
   }
 
   init(gameObject) {
@@ -78,7 +82,7 @@ export class DebugCameraComponent extends BaseComponent {
     this.button.style.cursor = "pointer"
     this.button.style.font = "12px ui-monospace, Menlo, Consolas, monospace"
 
-    this.button.onclick = () => this.toggle()
+    this.button.onclick = () => (this.onToggle ? this.onToggle() : this.toggle())
 
     this.container.appendChild(this.button)
   }
