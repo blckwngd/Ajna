@@ -278,6 +278,48 @@ async function init() {
   // Berechtigungs-Prompt).
   const arPassthrough = new ArPassthrough({ scene, skybox: arEnv?.skybox, canvas })
 
+  // ── AR-Modus an "Switch Camera" koppeln ──────────────────────────────────
+  // VOR Switch Camera (Free-Modus): frei bewegen + Skybox, kein Kompass.
+  // NACH Switch Camera (Player-Modus): an die GPS-Position fixiert, Kamera-
+  // Passthrough + Geräte-Kompass für möglichst realitätsnahes "Magic-Window"-AR.
+  // Die Kompass-Orientierung liefert Babylons integrierter DeviceOrientation-
+  // Input auf der (am Player-Root hängenden) Kamera. iOS verlangt eine
+  // Permission-Geste (der Button-Tap deckt das ab), Android nicht.
+  const _debugCam = player.getComponent(DebugCameraComponent)
+  const _playerCam = player.getComponent(CameraComponent)?.camera
+  async function _ensureOrientationPermission() {
+    const D = window.DeviceOrientationEvent
+    if (D && typeof D.requestPermission === "function") {
+      try { await D.requestPermission() } catch {}
+    }
+  }
+  async function _onCameraMode(mode) {
+    const ar = mode === "player"
+    if (ar && _playerCam) {
+      try {
+        await _ensureOrientationPermission()
+        _playerCam.detachControl()
+        _playerCam.inputs.clear()              // nur Kompass steuert die Blickrichtung
+        _playerCam.inputs.addDeviceOrientation()
+        _playerCam.attachControl(canvas, true)
+      } catch (e) { console.warn("[ar] Kompass-Input fehlgeschlagen:", e?.message || e) }
+    } else if (_playerCam) {
+      try { _playerCam.detachControl() } catch {}
+    }
+    if (ar) {
+      arPassthrough.enable().catch(err => {
+        if (!_toast) _toast = new Toast()
+        _toast.show(err?.message || "Kamera nicht verfügbar", { title: "AR" })
+      })
+    } else {
+      arPassthrough.disable()
+    }
+    try { editorUI?.setArModeToggle?.(ar) } catch {}   // Editor-Checkbox synchron
+  }
+  if (_debugCam) _debugCam.onModeChange = _onCameraMode
+  // Einheitlicher Auslöser für Button UND Editor-Toggle (DebugCam ist Wahrheit).
+  function setArMode(on) { _debugCam?.setMode(on ? "player" : "free") }
+
   // Hover-System: Mesh-Tooltip beim Pointer-Move, Highlight + Off-Screen-
   // Linie wenn aus den Listen heraus angefragt. Setzt DOM-Overlays an,
   // also nach Babylon-Setup und vor den UI-Managern (die den highlight-
@@ -362,8 +404,8 @@ async function init() {
     onFocusPlayer: () => focusCameraOn(scene, player),
     // Echtes AR (Kamera) ↔ XR (Skybox) umschalten; Wurf bei fehlender Kamera
     // wird im EditorUI gefangen (Toggle springt zurück + Statusmeldung).
-    onToggleArMode: (on) => arPassthrough.setEnabled(on),
-    getArMode: () => arPassthrough.enabled,
+    onToggleArMode: (on) => setArMode(on),
+    getArMode: () => _debugCam?.activeMode === "player",
     onManageGroups: () => groupDialog.open(),
     onManageServers: () => serverDialog.open(),
     onManageProfile: () => profileDialog.open(),
@@ -749,6 +791,36 @@ async function init() {
         if (scene.clearColor) scene.clearColor.a = transparent ? 0 : 1
       })
     }
+
+    // Enter-XR-Button + Fehlerbehandlung: Auf Geräten ohne ARCore (z. B.
+    // Fairphone 5) scheitert das Betreten der AR-Session ("runtime could not be
+    // installed"). Statt kryptischer Konsolenfehler einen Hinweis zeigen und den
+    // Button ausblenden + merken — dann bleibt der Kamera-Modus ("Switch Camera").
+    const _xrOverlay = _xrExperience.enterExitUI?.overlay
+    const _hideXrButton = () => { try { if (_xrOverlay) _xrOverlay.style.display = "none" } catch {} }
+    let _xrAttempting = false, _xrFailHandled = false
+    const _onXrEnterFailed = () => {
+      if (_xrFailHandled) return
+      _xrFailHandled = true
+      if (!_toast) _toast = new Toast()
+      _toast.show('Dieses Gerät unterstützt kein immersives WebXR-AR. Nutze „Switch Camera" für den Kamera-Modus.',
+        { title: "WebXR nicht verfügbar" })
+      _hideXrButton()
+      try { localStorage.setItem("ajna_xr_unsupported", "1") } catch {}
+    }
+    // Schon als nicht unterstützt bekannt → Button gar nicht erst anbieten.
+    try { if (localStorage.getItem("ajna_xr_unsupported") === "1") _hideXrButton() } catch {}
+    // Ein Klick startet einen Versuch; erreichen wir IN_XR nicht, ist er
+    // gescheitert (capture-Phase → läuft vor Babylons eigenem Handler).
+    if (_xrOverlay) _xrOverlay.addEventListener("click", () => { _xrAttempting = true }, true)
+    _xrExperience.baseExperience?.onStateChangedObservable.add(state => {
+      if (state === BABYLON.WebXRState.IN_XR) { _xrAttempting = false; return }
+      if ((state === BABYLON.WebXRState.NOT_IN_XR || state === BABYLON.WebXRState.EXITING_XR) && _xrAttempting) {
+        _xrAttempting = false
+        _onXrEnterFailed()
+      }
+    })
+    window.ajnaResetXR = () => { try { localStorage.removeItem("ajna_xr_unsupported") } catch {}; location.reload() }
 
     _xrExperience.baseExperience?.onStateChangedObservable.add(state => {
       const name = ({

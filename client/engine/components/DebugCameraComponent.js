@@ -12,6 +12,10 @@ export class DebugCameraComponent extends BaseComponent {
     this.freeCamera = null
     this.activeMode = "player"
     this.button = null
+    // Optionaler Callback (mode: 'free' | 'player'), den der Host (main.js)
+    // setzt, um an den Moduswechsel den AR-Modus zu koppeln: Kamera-Passthrough
+    // + Geräte-Kompass auf der Player-Kamera (siehe main.js setArMode).
+    this.onModeChange = null
   }
 
   init(gameObject) {
@@ -80,11 +84,15 @@ export class DebugCameraComponent extends BaseComponent {
   }
 
   toggle() {
-    if (this.activeMode === "player") {
-      this.#activateFreeCamera()
-    } else {
-      this.#activatePlayerCamera()
-    }
+    this.setMode(this.activeMode === "player" ? "free" : "player")
+  }
+
+  // Öffentlich: direkt einen Modus setzen (z. B. vom Editor-Toggle). Schaltet
+  // die aktive Kamera um und meldet den Wechsel an onModeChange.
+  setMode(mode) {
+    if (mode === this.activeMode) return
+    if (mode === "player") this.#activatePlayerCamera()
+    else this.#activateFreeCamera()
   }
 
   #activateFreeCamera() {
@@ -95,6 +103,7 @@ export class DebugCameraComponent extends BaseComponent {
     this.#attachTouchLook()
 
     this.activeMode = "free"
+    this.onModeChange?.("free")
   }
 
   #activatePlayerCamera() {
@@ -105,6 +114,7 @@ export class DebugCameraComponent extends BaseComponent {
     this.playerCameraComponent.camera.attachControl(this.canvas, true)
 
     this.activeMode = "player"
+    this.onModeChange?.("player")
   }
 
   // Eigenes Touch-Umschauen: ein Finger ziehen → Gier (rotation.y) + Nick

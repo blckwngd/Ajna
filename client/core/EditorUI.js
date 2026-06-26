@@ -419,6 +419,11 @@ export class EditorUI {
     this.statusEl.innerText = text
   }
 
+  /** Checkbox-Stellung des AR-Modus von außen setzen (Sync mit "Switch Camera"). */
+  setArModeToggle(on) {
+    if (this.arModeToggle) this.arModeToggle.checked = !!on
+  }
+
   renderObjectList() {
     // Liste nach demselben Agent-Filter einschränken wie die Karten-/Szene-
     // Sicht — sonst zeigt der Editor Objekte, die ausgeblendet sind.
