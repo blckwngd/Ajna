@@ -254,7 +254,7 @@ async function init() {
   }
   window.ajnaUwbDisconnect = (role = 'viewer') => uwb.disconnect(role)
 
-  setupPositionSourceHud(positionSource, arRoot)
+  setupPositionSourceHud(positionSource, arRoot, gps)
 
   if (DEBUG_WORLD) {
     window.engine= engine
@@ -1421,7 +1421,7 @@ function setupHoverSystem(scene, engine, canvas) {
 //   wäre das ein No-Op, was semantisch passt.
 // Small on-screen badge showing the active position source (UWB / GPS) and the
 // UWB quality factor, so it is obvious which source the AR camera is following.
-function setupPositionSourceHud(positionSource, arRoot = document.body) {
+function setupPositionSourceHud(positionSource, arRoot = document.body, gps = null) {
   const el = document.createElement('div')
   el.id = 'posSourceHud'
   Object.assign(el.style, {
@@ -1429,8 +1429,29 @@ function setupPositionSourceHud(positionSource, arRoot = document.body) {
     position: 'absolute', top: 'calc(env(safe-area-inset-top, 0px) + 10px)', left: '10px', zIndex: 1000,
     font: '12px/1.4 system-ui, sans-serif', padding: '3px 8px',
     borderRadius: '6px', color: '#fff', background: 'rgba(0,0,0,0.55)',
-    pointerEvents: 'none', userSelect: 'none'
+    // Tippbar, um zwischen echtem GPS und Dummy umzuschalten (nur das Badge
+    // fängt Taps; der Rest der AR-Ansicht bleibt durchlässig).
+    pointerEvents: gps ? 'auto' : 'none', cursor: gps ? 'pointer' : 'default', userSelect: 'none'
   })
+  if (gps) {
+    el.title = 'Tippen: GPS-Quelle umschalten (Echt ↔ Dummy)'
+    el.addEventListener('click', () => {
+      if (!gps.isDummyMode()) {
+        // Echt → Dummy: an der AKTUELLEN Position einfrieren (kein Default-Sprung).
+        const p = positionSource.getWorldPosition?.() || gps.data
+        if (p && Number.isFinite(p.lat)) gps.setDummyPosition(p.lat, p.lon, p.altitude || 0)
+        gps.enableDummyMode(true)
+        if (!_toast) _toast = new Toast()
+        _toast.show('Dummy-Position aktiv (hier eingefroren).', { title: 'GPS' })
+      } else {
+        // Dummy → echtes GPS.
+        gps.enableDummyMode(false)
+        if (!_toast) _toast = new Toast()
+        _toast.show('Echtes GPS aktiviert — warte auf Fix …', { title: 'GPS' })
+      }
+      render()
+    })
+  }
   arRoot.appendChild(el)
 
   const render = () => {

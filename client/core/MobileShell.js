@@ -78,6 +78,7 @@ export class MobileShell {
     this.uwb = hub.uwb
     this.wandAudio = hub.audio
     this.positionSource = hub.positionSource
+    this.gps = hub.gps   // für den Echt/Dummy-GPS-Schalter in den Einstellungen
     hub.setPositionFallback(() => window.ajnaGeo?.position || null)
 
     // Interest-Area-Publisher (Opt-in, Default AUS): teilt einen UNSCHARFEN
@@ -396,6 +397,14 @@ export class MobileShell {
       </section>
 
       <section class="settings-section">
+        <h3>Standort</h3>
+        <label class="meta" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" data-field="real-gps" ${this.gps && !this.gps.isDummyMode() ? 'checked' : ''}>
+          Echtes GPS verwenden (sonst Dummy-Position)
+        </label>
+      </section>
+
+      <section class="settings-section">
         <h3>Debug</h3>
         <div class="settings-row">
           <div class="label">GPS</div>
@@ -476,6 +485,20 @@ export class MobileShell {
 
     const shareToggle = root.querySelector('[data-field="share-location"]')
     shareToggle?.addEventListener('change', () => this.interestArea?.onToggle(shareToggle.checked))
+
+    // Echtes GPS ↔ Dummy. An: Dummy aus (echtes GPS). Aus: Dummy an, an der
+    // aktuellen Position eingefroren (kein Sprung auf eine Default-Koordinate).
+    const realGpsToggle = root.querySelector('[data-field="real-gps"]')
+    realGpsToggle?.addEventListener('change', () => {
+      if (!this.gps) return
+      if (realGpsToggle.checked) {
+        this.gps.enableDummyMode(false)
+      } else {
+        const p = this.positionSource?.getWorldPosition?.() || this.gps.data
+        if (p && Number.isFinite(p.lat)) this.gps.setDummyPosition(p.lat, p.lon, p.altitude || 0)
+        this.gps.enableDummyMode(true)
+      }
+    })
 
     const uwbModelSel = root.querySelector('[data-field="uwb-model"]')
     if (uwbModelSel) {
