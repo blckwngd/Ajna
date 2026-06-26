@@ -363,6 +363,11 @@ async function init() {
   const renderLoop = () => {
     const delta = engine.getDeltaTime() / 1000
     objectMap.forEach(go => go.update(delta))
+    // Player mit-updaten: er liegt in `world`, nicht in objectMap. Ohne diesen
+    // Aufruf lief PlayerGPSComponent.update() nie → die AR-Kamera blieb am
+    // Boot-Origin kleben und folgte weder GPS-Wechsel noch Bewegung (Karte
+    // stimmte, weil sie positionSource direkt liest).
+    player.update(delta)
     scene.render()
   }
   engine.runRenderLoop(renderLoop)
