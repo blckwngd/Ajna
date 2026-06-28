@@ -51,13 +51,15 @@ export class GameObject {
     go.name = data.name || data.id
     go.loadFromData(data, geo)
 
-    // Geospatial Component
+    // Geospatial Component — Höhen-Referenz aus state.altitude_ref
+    // ('msl' = über Normalnull, sonst 'ground' = über Boden, Default).
     go.addComponent(
       new GeospatialComponent(
         geo,
         data.lat,
         data.lon,
-        data.altitude ?? 0
+        data.altitude ?? 0,
+        data.state?.altitude_ref === 'msl' ? 'msl' : 'ground'
       )
     )
 
@@ -91,10 +93,11 @@ export class GameObject {
 
   loadFromData(data, geo) {
 
-    const position = geo.toLocal(
+    const position = geo.toLocalRef(
       data.lat,
       data.lon,
-      data.altitude ?? 0
+      data.altitude ?? 0,
+      data.state?.altitude_ref === 'msl' ? 'msl' : 'ground'
     )
 
     const rotation = new BABYLON.Vector3(
@@ -444,6 +447,11 @@ export class GameObject {
     // update() aus dem gesampelten Snap. Damit ist die Bewegung zwischen
     // Realtime-Updates flüssig statt sprunghaft.
     this._smoother.feed(data)
+
+    // Höhen-Referenz (AGL/MSL) live nachziehen — sie ist nicht Teil des
+    // Smoothers, geoComp.update() liest sie pro Frame.
+    const geoComp = this.getComponent(GeospatialComponent)
+    if (geoComp) geoComp.altitudeRef = data.state?.altitude_ref === 'msl' ? 'msl' : 'ground'
 
     // Scaling ist (noch) nicht Teil des Smoothers — selten geändert,
     // direkter Setter reicht.

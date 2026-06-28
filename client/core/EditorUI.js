@@ -122,6 +122,11 @@ export class EditorUI {
             <label for="lat">Lat</label><input id="lat" name="lat" type="number" step="0.000001" required>
             <label for="lon">Lon</label><input id="lon" name="lon" type="number" step="0.000001" required>
             <label for="altitude">Alt</label><input id="altitude" name="altitude" type="number" step="0.1" value="0">
+            <label for="altitude_ref">Höhe</label>
+            <select id="altitude_ref" name="altitude_ref">
+              <option value="ground">über Boden (AGL)</option>
+              <option value="msl">über Normalnull (AMSL)</option>
+            </select>
           </div>
           <div class="ed-buttons">
             <button type="submit" class="ed-btn ed-btn-primary">Speichern</button>
@@ -309,11 +314,15 @@ export class EditorUI {
 
     this.editorForm.addEventListener('submit', async (ev) => {
       ev.preventDefault()
+      // Höhen-Referenz in state.altitude_ref; bei Update den vorhandenen State
+      // mergen, damit andere Felder (actions/dialog/realtime …) erhalten bleiben.
+      const ref = this.editorForm.altitude_ref?.value === 'msl' ? 'msl' : 'ground'
       const data = {
         name: this.editorForm.name.value || `obj-${Date.now()}`,
         lat: parseFloat(this.editorForm.lat.value),
         lon: parseFloat(this.editorForm.lon.value),
-        altitude: parseFloat(this.editorForm.altitude.value)
+        altitude: parseFloat(this.editorForm.altitude.value),
+        state: { ...(this._editingState || {}), altitude_ref: ref }
       }
       const id = this.editorForm.objectId.value
       let obj
@@ -491,6 +500,8 @@ export class EditorUI {
     this.editorForm.lat.value = (obj.lat ?? 0).toFixed(6)
     this.editorForm.lon.value = (obj.lon ?? 0).toFixed(6)
     this.editorForm.altitude.value = (obj.altitude ?? 0).toFixed(2)
+    this.editorForm.altitude_ref.value = obj.state?.altitude_ref === 'msl' ? 'msl' : 'ground'
+    this._editingState = obj.state || {}   // beim Speichern mergen (State erhalten)
   }
 
   /**
@@ -510,6 +521,8 @@ export class EditorUI {
     this.editorForm.lat.value = lat.toFixed(6)
     this.editorForm.lon.value = lon.toFixed(6)
     this.editorForm.altitude.value = (altitude ?? 0).toFixed(2)
+    this.editorForm.altitude_ref.value = 'ground'   // Default: über Boden
+    this._editingState = {}
 
     const section = this.container.querySelector('#sharedEditorSection')
     if (section) section.scrollIntoView({ block: 'nearest', behavior: 'smooth' })

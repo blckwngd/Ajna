@@ -47,9 +47,11 @@ const FLYING_MODELS = new Set(['Flamingo.glb', 'Stork.glb', 'Parrot.glb'])
 export function randomSpawnData(position) {
   const arch = pick(SPAWN_ARCHETYPES)
   const model = pick(arch.models)
+  // Höhe ist ÜBER BODEN (AGL): Boden-Objekte 0 (am Boden), Vögel/Drache
+  // schweben um ihre AGL-Höhe. NICHT die GPS-Höhe verwenden (das wäre AMSL).
   const altitude = arch.fly ? 30 + Math.random() * 40
                  : FLYING_MODELS.has(model) ? 8 + Math.random() * 12
-                 : (position?.altitude ?? 0)
+                 : 0
   const name = NAMES[arch.type] ? pick(NAMES[arch.type]) : arch.type
   return {
     name,
@@ -61,7 +63,7 @@ export function randomSpawnData(position) {
     rotation: { x: 0, y: Math.random() * Math.PI * 2 - Math.PI, z: 0 },
     animation_state: 'idle',
     appearance: { gltf: '/models/' + model },
-    state: { actions: arch.actions, realtime: true, spawnedBy: 'player' },
+    state: { actions: arch.actions, realtime: true, spawnedBy: 'player', altitude_ref: 'ground' },
   }
 }
 

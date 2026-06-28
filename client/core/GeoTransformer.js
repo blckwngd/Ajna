@@ -26,6 +26,9 @@ export class GeoTransformer {
     this.earthRadius = 6378137
     this.invertNorthSouth = invertNorthSouth
     this.invertEastWest   = invertEastWest
+    // Bodenhöhe (AMSL) am Spieler — vom PlayerGPSComponent gepflegt. Referenz
+    // für die Umrechnung von "über Normalnull"-Objekthöhen (siehe toLocalRef).
+    this.groundAltitude = null
   }
 
   setOrigin(lat, lon, altitude) {
@@ -49,6 +52,31 @@ export class GeoTransformer {
     const y = altitude - this.origin.altitude
 
     return new BABYLON.Vector3(x, y, z)
+  }
+
+  /**
+   * Wie toLocal, aber die Höhe wird gemäß Referenz interpretiert:
+   *  • 'ground' (Default): `altitude` = Höhe ÜBER BODEN (AGL). Die Bodenebene
+   *    liegt bei Y=0 (der Spieler steht darauf) → Y = altitude. So sitzen
+   *    NPCs/Items bei altitude 0 am Boden und fliegende Objekte schweben um
+   *    ihre AGL-Höhe darüber.
+   *  • 'msl': `altitude` = Höhe über Normalnull (AMSL) → Y relativ zur
+   *    Bodenhöhe am Spieler (groundAltitude), sonst zur Origin-Höhe. So
+   *    erscheinen Echtwelt-Objekte (z. B. Flugzeuge) in korrekter absoluter Höhe.
+   * X/Z sind in beiden Fällen identisch (horizontale Projektion).
+   * @returns {BABYLON.Vector3}
+   */
+  toLocalRef(lat, lon, altitude = 0, ref = 'ground') {
+    const v = this.toLocal(lat, lon, 0)   // nur X/Z nutzen; Y unten setzen
+    if (ref === 'msl') {
+      const ground = Number.isFinite(this.groundAltitude)
+        ? this.groundAltitude
+        : (this.origin?.altitude || 0)
+      v.y = altitude - ground
+    } else {
+      v.y = altitude
+    }
+    return v
   }
 
   toWorld(x, y, z) {

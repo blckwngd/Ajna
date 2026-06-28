@@ -488,8 +488,8 @@ async function init() {
     }
     const end = rayEndpointWgs84(origin, dir, WAND_RAY_M)
     const pts = [
-      geo.toLocal(origin.lat, origin.lon, origin.altitude || 0),
-      geo.toLocal(end.lat, end.lon, end.altitude)
+      geo.toLocalRef(origin.lat, origin.lon, origin.altitude || 0, 'msl'),
+      geo.toLocalRef(end.lat, end.lon, end.altitude, 'msl')
     ]
     _wandRay = BABYLON.MeshBuilder.CreateLines('wandRay',
       { points: pts, updatable: true, instance: _wandRay || undefined }, scene)

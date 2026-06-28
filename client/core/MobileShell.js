@@ -102,14 +102,14 @@ export class MobileShell {
     if (Number.isFinite(align)) this.wand.setAlignmentDeg(align)
 
     this._unsubs.push(
-      this.wand.onStatusChange((connected) => { this.wandConnected = connected; this._renderSettings() }),
-      this.wand.onPointingModeChange(() => this._renderSettings()),
+      this.wand.onStatusChange((connected) => { this.wandConnected = connected; this._renderSettings(); this._refreshDeviceModal() }),
+      this.wand.onPointingModeChange(() => { this._renderSettings(); this._refreshDeviceModal() }),
       this.wand.onOrientation((o) => {
         const el = document.querySelector('[data-role="wand-orientation"]')
         if (el) el.textContent =
           `Heading ${o.headingDeg.toFixed(0)}° · ${o.eff || o.mode || ''} · Genauigkeit ${o.acc ?? '?'}/3`
       }),
-      this.uwb.onStatusChange((connected) => { this.uwbConnected = connected; this._renderSettings() })
+      this.uwb.onStatusChange((connected) => { this.uwbConnected = connected; this._renderSettings(); this._refreshDeviceModal() })
     )
 
     // Debug-Log: capture all wand + connection events for the collapsible viewer
@@ -476,7 +476,7 @@ export class MobileShell {
         </header>
         <div class="device-modal-body">${contentHtml}</div>
       </div>`
-    const close = () => overlay.remove()
+    const close = () => { this._deviceModalOpen = null; overlay.remove() }
     overlay.querySelector('.device-modal-close').addEventListener('click', close)
     overlay.addEventListener('click', e => { if (e.target === overlay) close() })
     document.body.appendChild(overlay)
@@ -484,8 +484,17 @@ export class MobileShell {
     return overlay
   }
 
-  _openWandModal() { this._openDeviceModal('Zauberstab', this._wandSettingsHtml(), r => this._wireWandModal(r)) }
-  _openUwbModal()  { this._openDeviceModal('UWB',        this._uwbSettingsHtml(),  r => this._wireUwbModal(r)) }
+  _openWandModal() { this._deviceModalOpen = 'wand'; this._openDeviceModal('Zauberstab', this._wandSettingsHtml(), r => this._wireWandModal(r)) }
+  _openUwbModal()  { this._deviceModalOpen = 'uwb';  this._openDeviceModal('UWB',        this._uwbSettingsHtml(),  r => this._wireUwbModal(r)) }
+
+  // Bei Geräte-Statuswechsel (verbunden/getrennt) das offene Gerätefenster mit
+  // frischem Zustand neu aufbauen, damit verbindungsabhängige Steuerungen
+  // korrekt aktiviert/deaktiviert sind.
+  _refreshDeviceModal() {
+    if (!document.getElementById('deviceModal')) return
+    if (this._deviceModalOpen === 'wand') this._openWandModal()
+    else if (this._deviceModalOpen === 'uwb') this._openUwbModal()
+  }
 
   _wandSettingsHtml() {
     return `

@@ -34,7 +34,16 @@ export class PlayerGPSComponent extends BaseComponent {
     const snap = this.smoother.sample()
     if (!snap) return
 
-    const local = this.geo.toLocal(snap.lat, snap.lon, snap.altitude ?? 0)
+    // Die GPS-Höhe (AMSL) ist die Bodenhöhe am Spieler — als Referenz für
+    // "über Normalnull"-Objekte mitführen (siehe GeoTransformer.toLocalRef).
+    if (Number.isFinite(snap.altitude)) this.geo.groundAltitude = snap.altitude
+
+    // Der Spieler steht IMMER auf der Bodenebene (Y=0); die Kamera sitzt über
+    // CameraComponent auf Augenhöhe darüber. Die GPS-Höhe fließt bewusst NICHT
+    // in die Spieler-Y ein (sonst schwebte er bei Origin-/Höhen-Versatz oder
+    // GPS-Höhenrauschen) — nur X/Z folgen der Position.
+    const local = this.geo.toLocal(snap.lat, snap.lon, 0)
+    local.y = 0
     this.gameObject.root.position.copyFrom(local)
   }
 
