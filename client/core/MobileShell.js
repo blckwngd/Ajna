@@ -48,6 +48,8 @@ export class MobileShell {
     this.activeTab = 'map'
     this._unsubs = []
     this._debugTimer = null
+    this._log = []            // rolling debug-event log (newest first), capped
+    this._logMax = 80
     this.wand = null          // shared WandManager (from AccessoryHub)
     this.wandConnected = false
     this.uwb = null           // shared UwbManager (from AccessoryHub)
@@ -109,6 +111,38 @@ export class MobileShell {
       }),
       this.uwb.onStatusChange((connected) => { this.uwbConnected = connected; this._renderSettings() })
     )
+
+    // Debug-Log: capture all wand + connection events for the collapsible viewer
+    // (orientation is excluded — it's continuous and would flood the log).
+    this._unsubs.push(
+      this.wand.on('*', (e) => this._logEvent(this._fmtWandEvent(e))),
+      this.wand.onState((name) => this._logEvent('state → ' + name)),
+      this.wand.onPointingModeChange((m) => this._logEvent('mode → ' + m)),
+      this.wand.onInteraction((i) => this._logEvent(`interact ${i.action}${i.name ? ' → ' + i.name : ''}`)),
+      this.wand.onStatusChange((c) => this._logEvent('Stab ' + (c ? 'verbunden' : 'getrennt'))),
+      this.uwb.onStatusChange((c) => this._logEvent('UWB ' + (c ? 'verbunden' : 'getrennt'))),
+      this.ajna.onAuthChanged((u) => this._logEvent(u ? `login ${u.email || ''}` : 'logout'))
+    )
+  }
+
+  _fmtWandEvent(e) {
+    const d = e?.data || {}
+    switch (e?.type) {
+      case 'button':  return `button ${d.id}${d.long ? ' (lang)' : ''}`
+      case 'tilt':    return `tilt ${d.dir}`
+      case 'gesture': return `gesture ${d.name}`
+      case 'effect':  return `effect ${d.domain}/${d.id}`
+      default:        return `${e?.type} ${JSON.stringify(d)}`
+    }
+  }
+
+  // Append a line to the rolling log (newest first) and refresh the viewer if open.
+  _logEvent(line) {
+    const t = new Date().toTimeString().slice(0, 8)
+    this._log.unshift(`${t}  ${line}`)
+    if (this._log.length > this._logMax) this._log.length = this._logMax
+    const el = document.querySelector('[data-role="debug-log"]')
+    if (el) el.textContent = this._log.join('\n')
   }
 
   destroy() {
@@ -326,74 +360,39 @@ export class MobileShell {
       </section>
 
       <section class="settings-section">
-        <h3>Geräte</h3>
-        <button class="settings-btn secondary" data-action="wand">
-          ${this.wandConnected ? 'Zauberstab trennen' : 'Zauberstab verbinden'}
-        </button>
-        <div class="meta" data-role="wand-status" style="margin-top:6px">
-          ${this.wandConnected ? 'verbunden' : 'nicht verbunden'}
-        </div>
-
-        <!-- Stab-Konfiguration: immer sichtbar. Verbindungsabhängige Aktionen
-             (Modus an den Stab senden, kalibrieren) sind getrennt deaktiviert. -->
-        <label class="meta" style="display:block;margin-top:10px">Zeige-Modus
-          <select class="settings-input" data-field="pointing-mode" style="margin-top:4px" ${this.wandConnected ? '' : 'disabled'}>
-            <option value="auto">Automatisch</option>
-            <option value="pointer">Zeigestock</option>
-            <option value="walkingstick">Wanderstab</option>
-            <option value="disabled">Deaktiviert (Stromsparen)</option>
-          </select>
-        </label>
-        <button class="settings-btn secondary" data-action="wand-calibrate" style="margin-top:8px" ${this.wandConnected ? '' : 'disabled'}>
-          Stab kalibrieren (senkrecht halten)
-        </button>
-        <label class="meta" style="display:flex;align-items:center;gap:8px;margin-top:8px">
+        <h3>Audio</h3>
+        <label class="meta" style="display:flex;align-items:center;gap:8px">
           <input type="checkbox" data-field="wand-audio" ${WandAudioFeedback.isEnabled() ? 'checked' : ''}>
           Audio-Hinweise (Name/Aktion vorlesen)
         </label>
-        <label class="meta" style="display:flex;align-items:center;gap:8px;margin-top:6px">
-          <input type="checkbox" data-field="wand-audio-debug" ${WandAudioFeedback.isDebugEnabled() ? 'checked' : ''}>
-          Debug-Ansagen (Zustände &amp; Events vorlesen)
-        </label>
-        <label class="meta" style="display:block;margin-top:8px">Nord-Ausrichtung (°)
-          <input class="settings-input" data-field="wand-align" type="number" step="1"
-                 value="${parseFloat(localStorage.getItem(ALIGN_KEY) || '0')}" style="margin-top:4px">
-          <span class="meta">Feinkorrektur zusätzlich zur Auto-Deklination</span>
-        </label>
-        <div class="meta" data-role="wand-orientation" style="margin-top:6px">
-          ${this.wandConnected ? 'Orientierung: —' : 'Orientierung: (Stab nicht verbunden)'}
+      </section>
+
+      <!-- Geräte: nur Verbinden + Status + Tür zu den geräte-spezifischen
+           Einstellungen (alles, was nur mit verbundenem Gerät sinnvoll ist,
+           liegt im jeweiligen Modal). -->
+      <section class="settings-section">
+        <h3>Geräte</h3>
+        <div class="settings-row">
+          <div class="label">
+            <div>Zauberstab</div>
+            <div class="meta" data-role="wand-status">${this.wandConnected ? 'verbunden' : 'nicht verbunden'}</div>
+          </div>
+          <button class="settings-btn-inline" data-action="wand-settings">Einstellungen</button>
         </div>
-        <button class="settings-btn secondary" data-action="uwb" style="margin-top:10px">
+        <button class="settings-btn secondary" data-action="wand" style="margin-top:8px">
+          ${this.wandConnected ? 'Zauberstab trennen' : 'Zauberstab verbinden'}
+        </button>
+
+        <div class="settings-row" style="margin-top:14px">
+          <div class="label">
+            <div>UWB</div>
+            <div class="meta" data-role="uwb-status">${this.uwbConnected ? 'verbunden' : 'nicht verbunden'}</div>
+          </div>
+          <button class="settings-btn-inline" data-action="uwb-settings">Einstellungen</button>
+        </div>
+        <button class="settings-btn secondary" data-action="uwb" style="margin-top:8px">
           ${this.uwbConnected ? 'UWB trennen' : 'UWB verbinden'}
         </button>
-        <div class="meta" data-role="uwb-status" style="margin-top:6px">
-          ${this.uwbConnected ? 'verbunden' : 'nicht verbunden'}
-        </div>
-        <label class="meta" style="display:block;margin-top:8px">UWB-Modell
-          <select class="settings-input" data-field="uwb-model" style="margin-top:4px">
-            <option value="onboard">A – Onboard-Engine</option>
-            <option value="ranging">B – Eigene Multilateration</option>
-          </select>
-        </label>
-
-        <label class="meta" style="display:block;margin-top:10px">UWB-Netz
-          <select class="settings-input" data-field="uwb-network" style="margin-top:4px">
-            <option value="">Alle Anker</option>
-          </select>
-        </label>
-        <div class="meta" data-role="uwb-network-pan" style="margin-top:4px"></div>
-        <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
-          <input class="settings-input" data-field="uwb-anchor-node" type="text" inputmode="numeric" placeholder="Node-ID" style="width:96px">
-          <button class="settings-btn secondary" data-action="uwb-anchor-add" style="flex:1">Anker hier anlegen</button>
-        </div>
-        <button class="settings-btn secondary" data-action="uwb-net-share" style="width:100%;margin-top:6px">Netz teilen (Rechte)</button>
-        <details style="margin-top:8px">
-          <summary class="meta">Neues UWB-Netz veröffentlichen</summary>
-          <input class="settings-input" data-field="uwb-net-name" placeholder="Name (z. B. Wohnzimmer)" style="margin-top:6px">
-          <input class="settings-input" data-field="uwb-net-pan" placeholder="PANS-Netz-ID (aus DRTLS, z. B. 0x89AB)" style="margin-top:6px">
-          <button class="settings-btn secondary" data-action="uwb-net-create" style="margin-top:6px;width:100%">Netz anlegen &amp; teilen</button>
-        </details>
-        <div class="meta" data-role="uwb-net-status" style="margin-top:6px"></div>
       </section>
 
       <section class="settings-section">
@@ -423,14 +422,189 @@ export class MobileShell {
           <div class="meta" data-role="debug-uwb">—</div>
         </div>
       </section>
+
+      <section class="settings-section">
+        <details>
+          <summary>Debug-Log (Events)</summary>
+          <div style="display:flex;justify-content:flex-end;margin:6px 0">
+            <button class="settings-btn secondary" data-action="debug-log-clear" style="width:auto;padding:2px 10px">Leeren</button>
+          </div>
+          <pre data-role="debug-log" style="max-height:240px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:11px ui-monospace,Menlo,Consolas,monospace;background:rgba(0,0,0,0.25);padding:8px;border-radius:6px;margin:0">${escapeHtml(this._log.join('\n'))}</pre>
+        </details>
+      </section>
     `
 
     this._wireSettingsEvents(root)
     this._updateDebugInfo()
   }
 
+  // ── Geräte-Einstellungs-Modals (Bottom-Sheet) ─────────────────────────
+  // Kapselt die geräte-spezifischen Einstellungen/Aktionen hinter einem Fenster,
+  // damit die Einstellungs-Seite schlank bleibt. Verbinden bleibt in den Settings.
+
+  _injectModalStyles() {
+    if (document.getElementById('deviceModalStyles')) return
+    const s = document.createElement('style')
+    s.id = 'deviceModalStyles'
+    s.textContent = `
+      .device-modal-overlay { position:fixed; inset:0; z-index:2000;
+        background:rgba(0,0,0,0.6); display:flex; align-items:flex-end; justify-content:center; }
+      .device-modal { width:100%; max-width:560px; max-height:88vh; background:var(--bg,#0f1115);
+        color:var(--fg,#eaeaea); border:1px solid var(--border,#2a2f37); border-bottom:none;
+        border-top-left-radius:14px; border-top-right-radius:14px; display:flex; flex-direction:column;
+        box-shadow:0 -8px 40px rgba(0,0,0,0.6); padding-bottom:env(safe-area-inset-bottom,0px); }
+      .device-modal-header { display:flex; align-items:center; justify-content:space-between;
+        padding:14px 16px; border-bottom:1px solid var(--border,#2a2f37); }
+      .device-modal-header h3 { margin:0; font-size:15px; }
+      .device-modal-close { background:transparent; border:none; color:var(--fg-muted,#8a8f99);
+        font-size:26px; line-height:1; cursor:pointer; padding:0 4px; }
+      .device-modal-body { padding:14px 16px; overflow-y:auto; }`
+    document.head.appendChild(s)
+  }
+
+  _openDeviceModal(title, contentHtml, wireFn) {
+    this._injectModalStyles()
+    document.getElementById('deviceModal')?.remove()
+    const overlay = document.createElement('div')
+    overlay.id = 'deviceModal'
+    overlay.className = 'device-modal-overlay'
+    overlay.innerHTML = `
+      <div class="device-modal" role="dialog" aria-modal="true">
+        <header class="device-modal-header">
+          <h3>${escapeHtml(title)}</h3>
+          <button class="device-modal-close" aria-label="Schließen">×</button>
+        </header>
+        <div class="device-modal-body">${contentHtml}</div>
+      </div>`
+    const close = () => overlay.remove()
+    overlay.querySelector('.device-modal-close').addEventListener('click', close)
+    overlay.addEventListener('click', e => { if (e.target === overlay) close() })
+    document.body.appendChild(overlay)
+    try { wireFn?.(overlay) } catch (e) { console.warn('[mobile] modal wire', e) }
+    return overlay
+  }
+
+  _openWandModal() { this._openDeviceModal('Zauberstab', this._wandSettingsHtml(), r => this._wireWandModal(r)) }
+  _openUwbModal()  { this._openDeviceModal('UWB',        this._uwbSettingsHtml(),  r => this._wireUwbModal(r)) }
+
+  _wandSettingsHtml() {
+    return `
+      <section class="settings-section">
+        <div class="meta" style="margin-bottom:10px">${this.wandConnected ? 'verbunden' : 'nicht verbunden — verbindungsabhängige Aktionen sind deaktiviert'}</div>
+        <label class="meta" style="display:block">Zeige-Modus
+          <select class="settings-input" data-field="pointing-mode" style="margin-top:4px" ${this.wandConnected ? '' : 'disabled'}>
+            <option value="auto">Automatisch</option>
+            <option value="pointer">Zeigestock</option>
+            <option value="walkingstick">Wanderstab</option>
+            <option value="disabled">Deaktiviert (Stromsparen)</option>
+          </select>
+        </label>
+        <button class="settings-btn secondary" data-action="wand-calibrate" style="margin-top:8px" ${this.wandConnected ? '' : 'disabled'}>
+          Stab kalibrieren (senkrecht halten)
+        </button>
+        <label class="meta" style="display:flex;align-items:center;gap:8px;margin-top:10px">
+          <input type="checkbox" data-field="wand-audio-debug" ${WandAudioFeedback.isDebugEnabled() ? 'checked' : ''}>
+          Debug-Ansagen (Zustände &amp; Events vorlesen)
+        </label>
+        <label class="meta" style="display:block;margin-top:8px">Nord-Ausrichtung (°)
+          <input class="settings-input" data-field="wand-align" type="number" step="1"
+                 value="${parseFloat(localStorage.getItem(ALIGN_KEY) || '0')}" style="margin-top:4px">
+          <span class="meta">Feinkorrektur zusätzlich zur Auto-Deklination</span>
+        </label>
+        <div class="meta" data-role="wand-orientation" style="margin-top:8px">
+          ${this.wandConnected ? 'Orientierung: —' : 'Orientierung: (Stab nicht verbunden)'}
+        </div>
+      </section>`
+  }
+
+  _uwbSettingsHtml() {
+    return `
+      <section class="settings-section">
+        <div class="meta" style="margin-bottom:10px">${this.uwbConnected ? 'verbunden' : 'nicht verbunden'}</div>
+        <label class="meta" style="display:block">UWB-Modell
+          <select class="settings-input" data-field="uwb-model" style="margin-top:4px">
+            <option value="onboard">A – Onboard-Engine</option>
+            <option value="ranging">B – Eigene Multilateration</option>
+          </select>
+        </label>
+        <label class="meta" style="display:block;margin-top:10px">UWB-Netz
+          <select class="settings-input" data-field="uwb-network" style="margin-top:4px">
+            <option value="">Alle Anker</option>
+          </select>
+        </label>
+        <div class="meta" data-role="uwb-network-pan" style="margin-top:4px"></div>
+        <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
+          <input class="settings-input" data-field="uwb-anchor-node" type="text" inputmode="numeric" placeholder="Node-ID" style="width:96px">
+          <button class="settings-btn secondary" data-action="uwb-anchor-add" style="flex:1">Anker hier anlegen</button>
+        </div>
+        <button class="settings-btn secondary" data-action="uwb-net-share" style="width:100%;margin-top:6px">Netz teilen (Rechte)</button>
+        <details style="margin-top:8px">
+          <summary class="meta">Neues UWB-Netz veröffentlichen</summary>
+          <input class="settings-input" data-field="uwb-net-name" placeholder="Name (z. B. Wohnzimmer)" style="margin-top:6px">
+          <input class="settings-input" data-field="uwb-net-pan" placeholder="PANS-Netz-ID (aus DRTLS, z. B. 0x89AB)" style="margin-top:6px">
+          <button class="settings-btn secondary" data-action="uwb-net-create" style="margin-top:6px;width:100%">Netz anlegen &amp; teilen</button>
+        </details>
+        <div class="meta" data-role="uwb-net-status" style="margin-top:6px"></div>
+      </section>`
+  }
+
+  // Verbindungsabhängige Stab-Aktionen im Modal verdrahten.
+  _wireWandModal(root) {
+    const modeSel = root.querySelector('[data-field="pointing-mode"]')
+    if (modeSel) {
+      if (this.wand?.pointingMode) modeSel.value = this.wand.pointingMode
+      modeSel.addEventListener('change', () => this.wand?.setPointingMode(modeSel.value))
+    }
+    root.querySelector('[data-action="wand-calibrate"]')?.addEventListener('click', () => {
+      this.wand?.calibrate('staff')
+      const el = root.querySelector('[data-role="wand-orientation"]')
+      if (el) el.textContent = 'Kalibriere … Stab senkrecht halten'
+    })
+    const audioDebugToggle = root.querySelector('[data-field="wand-audio-debug"]')
+    audioDebugToggle?.addEventListener('change', () => {
+      const on = audioDebugToggle.checked
+      WandAudioFeedback.setDebugEnabled(on)
+      const statusEl = root.querySelector('[data-role="wand-orientation"]')
+      if (!on) return
+      if (!WandAudioFeedback.ttsAvailable()) {
+        console.warn('[mobile] Web Speech TTS not available in this WebView')
+        if (statusEl) statusEl.textContent = 'TTS in dieser WebView nicht verfügbar (natives TTS nötig)'
+        return
+      }
+      this.wandAudio?.speak('Audio-Debugging aktiviert')
+      if (statusEl) statusEl.textContent = 'Audio-Test gesendet — hörst du „Audio-Debugging aktiviert"?'
+    })
+    const alignInput = root.querySelector('[data-field="wand-align"]')
+    alignInput?.addEventListener('change', () => {
+      const v = parseFloat(alignInput.value)
+      if (!Number.isFinite(v)) return
+      this.wand?.setAlignmentDeg(v)
+      try { localStorage.setItem(ALIGN_KEY, String(v)) } catch {}
+    })
+  }
+
+  // UWB-Konfiguration/Aktionen im Modal verdrahten.
+  _wireUwbModal(root) {
+    const uwbModelSel = root.querySelector('[data-field="uwb-model"]')
+    if (uwbModelSel) {
+      uwbModelSel.value = this.uwb?.model || (localStorage.getItem('ajna_uwb_model') === 'ranging' ? 'ranging' : 'onboard')
+      uwbModelSel.addEventListener('change', () => {
+        const m = uwbModelSel.value
+        try { localStorage.setItem('ajna_uwb_model', m) } catch {}
+        this.uwb?.setMode(m)
+      })
+    }
+    this._wireUwbNetwork(root)
+  }
+
   _wireSettingsEvents(root) {
     const action = sel => root.querySelector(`[data-action="${sel}"]`)
+
+    action('debug-log-clear')?.addEventListener('click', () => {
+      this._log = []
+      const el = root.querySelector('[data-role="debug-log"]')
+      if (el) el.textContent = ''
+    })
 
     action('login')?.addEventListener('click', async () => {
       const email = root.querySelector('[data-field="email"]')?.value?.trim() || ''
@@ -468,18 +642,9 @@ export class MobileShell {
 
     action('wand')?.addEventListener('click', () => this._toggleWand(root))
     action('uwb')?.addEventListener('click', () => this._toggleUwb(root))
+    action('wand-settings')?.addEventListener('click', () => this._openWandModal())
+    action('uwb-settings')?.addEventListener('click', () => this._openUwbModal())
 
-    // Wand config (only present while connected).
-    const modeSel = root.querySelector('[data-field="pointing-mode"]')
-    if (modeSel) {
-      if (this.wand?.pointingMode) modeSel.value = this.wand.pointingMode
-      modeSel.addEventListener('change', () => this.wand?.setPointingMode(modeSel.value))
-    }
-    action('wand-calibrate')?.addEventListener('click', () => {
-      this.wand?.calibrate('staff')
-      const el = root.querySelector('[data-role="wand-orientation"]')
-      if (el) el.textContent = 'Kalibriere … Stab senkrecht halten'
-    })
     const audioToggle = root.querySelector('[data-field="wand-audio"]')
     audioToggle?.addEventListener('change', () => WandAudioFeedback.setEnabled(audioToggle.checked))
 
@@ -498,43 +663,6 @@ export class MobileShell {
         if (p && Number.isFinite(p.lat)) this.gps.setDummyPosition(p.lat, p.lon, p.altitude || 0)
         this.gps.enableDummyMode(true)
       }
-    })
-
-    const uwbModelSel = root.querySelector('[data-field="uwb-model"]')
-    if (uwbModelSel) {
-      uwbModelSel.value = this.uwb?.model || (localStorage.getItem('ajna_uwb_model') === 'ranging' ? 'ranging' : 'onboard')
-      uwbModelSel.addEventListener('change', () => {
-        const m = uwbModelSel.value
-        try { localStorage.setItem('ajna_uwb_model', m) } catch {}
-        this.uwb?.setMode(m)
-      })
-    }
-
-    this._wireUwbNetwork(root)
-
-    const audioDebugToggle = root.querySelector('[data-field="wand-audio-debug"]')
-    audioDebugToggle?.addEventListener('change', () => {
-      const on = audioDebugToggle.checked
-      WandAudioFeedback.setDebugEnabled(on)
-      const statusEl = root.querySelector('[data-role="wand-orientation"]')
-      if (!on) return
-      // Audible smoke test (runs on this user gesture, regardless of the other
-      // gates) so it's obvious whether TTS works in this WebView at all.
-      if (!WandAudioFeedback.ttsAvailable()) {
-        console.warn('[mobile] Web Speech TTS not available in this WebView')
-        if (statusEl) statusEl.textContent = 'TTS in dieser WebView nicht verfügbar (natives TTS nötig)'
-        return
-      }
-      this.wandAudio?.speak('Audio-Debugging aktiviert')
-      if (statusEl) statusEl.textContent = 'Audio-Test gesendet — hörst du „Audio-Debugging aktiviert"?'
-    })
-
-    const alignInput = root.querySelector('[data-field="wand-align"]')
-    alignInput?.addEventListener('change', () => {
-      const v = parseFloat(alignInput.value)
-      if (!Number.isFinite(v)) return
-      this.wand?.setAlignmentDeg(v)
-      try { localStorage.setItem(ALIGN_KEY, String(v)) } catch {}
     })
   }
 
