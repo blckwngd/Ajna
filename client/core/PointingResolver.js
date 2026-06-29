@@ -29,9 +29,14 @@ const EARTH_R = 6378137
  */
 export function resolvePointingTarget({ origin, direction, objects, coneDeg = 12, releaseDeg, maxRangeM = 50, currentId = null }) {
   if (!origin || !Array.isArray(direction) || !objects?.length) return null
-  const dl = Math.hypot(direction[0], direction[1], direction[2])
-  if (dl < 1e-6) return null
-  const d = [direction[0] / dl, direction[1] / dl, direction[2] / dl]
+  // 2D-Auswahl: Treffer rein HORIZONTAL bestimmen (Höhe ignorieren). Der Stab-
+  // Origin liegt auf Spieler-Höhe, viele Objekte aber am Boden (alt 0) — in 3D
+  // sprengt dieser Höhenversatz den Kegel, obwohl der Strahl horizontal genau
+  // aufs Objekt zeigt. (Für Mehrstöckiges — viele Geräte übereinander — später
+  // wieder eine 3D-/Etagen-Auflösung erwägen.)
+  const dh = Math.hypot(direction[0], direction[1])
+  if (dh < 1e-6) return null
+  const d = [direction[0] / dh, direction[1] / dh]   // horizontale Richtung [E,N]
   const release = releaseDeg ?? coneDeg * 1.6
 
   let bestNarrow = null   // best within the acquire cone
@@ -39,9 +44,9 @@ export function resolvePointingTarget({ origin, direction, objects, coneDeg = 12
   for (const o of objects) {
     if (!Number.isFinite(o?.lat) || !Number.isFinite(o?.lon)) continue
     const v = wgs84ToEnu(origin, o.lat, o.lon, o.altitude || 0)
-    const dist = Math.hypot(v.E, v.N, v.U)
+    const dist = Math.hypot(v.E, v.N)   // horizontale Distanz (Höhe ignoriert)
     if (dist < 1e-3 || dist > maxRangeM) continue
-    const dot = (v.E * d[0] + v.N * d[1] + v.U * d[2]) / dist
+    const dot = (v.E * d[0] + v.N * d[1]) / dist
     const angle = Math.acos(Math.max(-1, Math.min(1, dot))) * 180 / Math.PI
     if (angle > release) continue
     const entry = { id: o.id, angleDeg: angle, distanceM: dist }
