@@ -101,6 +101,10 @@ export class MobileShell {
     const align = parseFloat(localStorage.getItem(ALIGN_KEY) || '0')
     if (Number.isFinite(align)) this.wand.setAlignmentDeg(align)
 
+    // Apply the persisted "run in background" preference — starts the foreground
+    // service + persistent notification so the app stays usable with the screen off.
+    if (MobileShell._bgServiceOn()) this.wand.setBackgroundService(true)
+
     this._unsubs.push(
       this.wand.onStatusChange((connected) => { this.wandConnected = connected; this._renderSettings(); this._refreshDeviceModal() }),
       this.wand.onPointingModeChange(() => { this._renderSettings(); this._refreshDeviceModal() }),
@@ -115,14 +119,46 @@ export class MobileShell {
     // Debug-Log: capture all wand + connection events for the collapsible viewer
     // (orientation is excluded — it's continuous and would flood the log).
     this._unsubs.push(
-      this.wand.on('*', (e) => this._logEvent(this._fmtWandEvent(e))),
+      // Skip raw 'gesture' — the wand already sends a readable "Geste: …" log line
+      // (covers Button 1 too, which only emits effects). Other events stay raw.
+      this.wand.on('*', (e) => { if (e?.type !== 'gesture') this._logEvent(this._fmtWandEvent(e)) }),
+      // Readable diagnostic lines: gestures (wand) + voice ptt/STT (app-side).
+      this.wand.onLog((line) => this._logEvent(line)),
       this.wand.onState((name) => this._logEvent('state → ' + name)),
       this.wand.onPointingModeChange((m) => this._logEvent('mode → ' + m)),
       this.wand.onInteraction((i) => this._logEvent(`interact ${i.action}${i.name ? ' → ' + i.name : ''}`)),
       this.wand.onStatusChange((c) => this._logEvent('Stab ' + (c ? 'verbunden' : 'getrennt'))),
       this.uwb.onStatusChange((c) => this._logEvent('UWB ' + (c ? 'verbunden' : 'getrennt'))),
-      this.ajna.onAuthChanged((u) => this._logEvent(u ? `login ${u.email || ''}` : 'logout'))
+      this.ajna.onAuthChanged((u) => this._logEvent(u ? `login ${u.email || ''}` : 'logout')),
+      // Selection lock (Button 2): show a small popup with the locked object.
+      // Secondary to the screen-off audio path — the wand+TTS flow needs no screen.
+      this.wand.onLock((o) => { this._logEvent(o ? `lock → ${o.name || o.id}` : 'lock aufgehoben'); this._showSelectionPopup(o) })
     )
+  }
+
+  /** "Run in background" preference (persisted). */
+  static _bgServiceOn() { try { return localStorage.getItem('ajna_bg_service') === '1' } catch { return false } }
+
+  // Minimal "selected object" popup (body overlay, visible across tabs). The lock
+  // itself + interactions work fully without it (screen-off via wand + TTS).
+  _showSelectionPopup(o) {
+    if (!o) { this._selPopup?.remove(); this._selPopup = null; return }
+    if (!this._selPopup) {
+      const el = document.createElement('div')
+      el.style.cssText = 'position:fixed;left:50%;bottom:calc(var(--tabbar-height, 0px) + var(--safe-bottom, env(safe-area-inset-bottom, 0px)) + 16px);transform:translateX(-50%);z-index:6000;'
+        + 'background:rgba(18,18,22,0.96);color:#eaeaea;border:1px solid #3a3a44;border-radius:10px;'
+        + 'padding:8px 12px;font:13px ui-monospace,Menlo,Consolas,monospace;display:flex;gap:12px;'
+        + 'align-items:center;box-shadow:0 8px 32px rgba(0,0,0,0.55)'
+      const label = document.createElement('span'); label.dataset.role = 'sel-name'
+      const x = document.createElement('button')
+      x.textContent = '✕'
+      x.style.cssText = 'background:none;border:1px solid #555;color:#eaeaea;border-radius:6px;cursor:pointer;padding:2px 9px'
+      x.addEventListener('click', () => this.wand?.clearLock())
+      el.append(label, x)
+      document.body.appendChild(el)
+      this._selPopup = el
+    }
+    this._selPopup.querySelector('[data-role="sel-name"]').textContent = '🔒 ' + (o.name || o.id)
   }
 
   _fmtWandEvent(e) {
@@ -150,6 +186,7 @@ export class MobileShell {
     this._unsubs = []
     if (this._debugTimer) clearInterval(this._debugTimer)
     this._debugTimer = null
+    this._selPopup?.remove(); this._selPopup = null
   }
 
   // ───────────────────────────────────────────────────────────────────
@@ -396,6 +433,19 @@ export class MobileShell {
       </section>
 
       <section class="settings-section">
+        <h3>Hintergrund</h3>
+        <label class="meta" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" data-field="bg-service" ${MobileShell._bgServiceOn() ? 'checked' : ''}>
+          App im Hintergrund ausführen (dauerhafte Benachrichtigung)
+        </label>
+        <div class="meta" style="margin-top:6px">
+          Erzwingt den Hintergrunddienst, damit Stab-Verbindung, Sprachausgabe und
+          Steuerung bei gesperrtem Bildschirm aktiv bleiben. Die Benachrichtigung
+          zeigt den Verbindungszustand — auch ohne verbundenen Stab.
+        </div>
+      </section>
+
+      <section class="settings-section">
         <h3>Standort</h3>
         <label class="meta" style="display:flex;align-items:center;gap:8px;cursor:pointer">
           <input type="checkbox" data-field="real-gps" ${this.gps && !this.gps.isDummyMode() ? 'checked' : ''}>
@@ -511,6 +561,21 @@ export class MobileShell {
         <button class="settings-btn secondary" data-action="wand-calibrate" style="margin-top:8px" ${this.wandConnected ? '' : 'disabled'}>
           Stab kalibrieren (senkrecht halten)
         </button>
+        <label class="meta" style="display:block;margin-top:10px">Licht-Effekt (läuft bis „Aus")
+          <select class="settings-input" data-field="wand-effect" style="margin-top:4px" ${this.wandConnected ? '' : 'disabled'}>
+            <option value="0">Aus</option>
+            <option value="1">Rune</option>
+            <option value="2">Taschenlampe (Stroboskop)</option>
+            <option value="3">Strip: Grün</option>
+            <option value="4">Strip: Blau</option>
+            <option value="5">Strip: Regenbogen</option>
+            <option value="6">Strip: Sparkle</option>
+            <option value="7">Strip: Comet</option>
+            <option value="8">Strip: Pulsieren</option>
+            <option value="10">Stroboskop (alle LEDs, grell)</option>
+            <option value="11">Scheinwerfer (alle LEDs, konstant)</option>
+          </select>
+        </label>
         <label class="meta" style="display:flex;align-items:center;gap:8px;margin-top:10px">
           <input type="checkbox" data-field="wand-audio-debug" ${WandAudioFeedback.isDebugEnabled() ? 'checked' : ''}>
           Debug-Ansagen (Zustände &amp; Events vorlesen)
@@ -564,6 +629,11 @@ export class MobileShell {
       if (this.wand?.pointingMode) modeSel.value = this.wand.pointingMode
       modeSel.addEventListener('change', () => this.wand?.setPointingMode(modeSel.value))
     }
+    const effSel = root.querySelector('[data-field="wand-effect"]')
+    effSel?.addEventListener('change', () => {
+      const id = parseInt(effSel.value, 10)
+      if (Number.isFinite(id)) this.wand?.sendCommand({ cmd: 'light', id })
+    })
     root.querySelector('[data-action="wand-calibrate"]')?.addEventListener('click', () => {
       this.wand?.calibrate('staff')
       const el = root.querySelector('[data-role="wand-orientation"]')
@@ -659,6 +729,13 @@ export class MobileShell {
 
     const shareToggle = root.querySelector('[data-field="share-location"]')
     shareToggle?.addEventListener('change', () => this.interestArea?.onToggle(shareToggle.checked))
+
+    const bgToggle = root.querySelector('[data-field="bg-service"]')
+    bgToggle?.addEventListener('change', () => {
+      const on = bgToggle.checked
+      try { localStorage.setItem('ajna_bg_service', on ? '1' : '0') } catch {}
+      this.wand?.setBackgroundService(on)
+    })
 
     // Echtes GPS ↔ Dummy. An: Dummy aus (echtes GPS). Aus: Dummy an, an der
     // aktuellen Position eingefroren (kein Sprung auf eine Default-Koordinate).

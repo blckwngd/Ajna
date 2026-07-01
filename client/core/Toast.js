@@ -16,7 +16,11 @@ export class Toast {
     style.textContent = `
       .ajna-toast-container {
         position: fixed;
-        bottom: 30px; left: 50%;
+        /* Über App-Tabbar UND System-Navigationsleiste (Safe-Area) halten, sonst
+           verschwindet der Toast dahinter. Fallbacks (0px / env()) greifen auf
+           den Standalone-Seiten ohne Shell-Variablen. */
+        bottom: calc(var(--tabbar-height, 0px) + var(--safe-bottom, env(safe-area-inset-bottom, 0px)) + 16px);
+        left: 50%;
         transform: translateX(-50%);
         display: flex; flex-direction: column;
         gap: 6px; align-items: center;

@@ -117,7 +117,16 @@ export class ContextMenu {
     // Positionieren — Viewport-Rand respektieren
     const rect = el.getBoundingClientRect()
     const maxX = window.innerWidth - rect.width - 8
-    const maxY = window.innerHeight - rect.height - 8
+    // Untere Steuerleisten (App-Tabbar + System-Navigation/Safe-Area) meiden,
+    // sonst klemmt das Menü dahinter. Zone über dieselbe CSS-Berechnung messen
+    // wie die Popups (Fallbacks greifen auf Standalone-Seiten ohne Shell-Vars).
+    const probe = document.createElement('div')
+    probe.style.cssText = 'position:fixed;left:-9999px;bottom:0;width:0;'
+      + 'height:calc(var(--tabbar-height, 0px) + var(--safe-bottom, env(safe-area-inset-bottom, 0px)))'
+    document.body.appendChild(probe)
+    const bottomInset = probe.getBoundingClientRect().height
+    probe.remove()
+    const maxY = window.innerHeight - bottomInset - rect.height - 8
     el.style.left = Math.min(Math.max(x, 8), maxX) + 'px'
     el.style.top  = Math.min(Math.max(y, 8), maxY) + 'px'
 
