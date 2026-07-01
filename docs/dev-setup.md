@@ -1,5 +1,8 @@
 # Dev-Setup
 
+> **Server-Deployment?** Für das automatisierte Ausrollen auf dem Server (PM2:
+> `git pull` → build → Prozesse neu laden) siehe [deployment.md](deployment.md).
+
 ## Voraussetzungen
 
 | Tool | Hinweis |

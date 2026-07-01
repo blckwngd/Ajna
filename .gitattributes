@@ -1,0 +1,4 @@
+# Shell- und Node-Skripte laufen auf dem Linux-Server — immer LF speichern.
+# Ein CRLF im Shebang bricht sonst den Interpreter ("bad interpreter: /bin/bash^M").
+*.sh   text eol=lf
+*.mjs  text eol=lf
