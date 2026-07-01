@@ -11,6 +11,10 @@
 
 const STORAGE_KEY = 'ajna_ar_passthrough'
 
+// Rückkamera bevorzugt (ideal, damit ein Gerät ohne Rückkamera trotzdem die
+// Frontkamera liefert statt zu scheitern). Geteilt von enable() und resume().
+const CAMERA_CONSTRAINTS = { video: { facingMode: { ideal: 'environment' } }, audio: false }
+
 export class ArPassthrough {
   /** @param {{scene:object, skybox?:object, canvas?:HTMLCanvasElement}} opts */
   constructor({ scene, skybox, canvas }) {
@@ -76,9 +80,7 @@ export class ArPassthrough {
     if (this._enabled) return
     const video = this._ensureVideo()
     try {
-      this._stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' } }, audio: false
-      })
+      this._stream = await navigator.mediaDevices.getUserMedia(CAMERA_CONSTRAINTS)
     } catch (err) {
       console.warn('[ar] Kamera-Zugriff fehlgeschlagen:', err?.message || err)
       throw new Error('Kamera nicht verfügbar (Berechtigung erteilt?)')
@@ -103,6 +105,40 @@ export class ArPassthrough {
     if (o) this.scene.clearColor?.set?.(o.r, o.g, o.b, o.a)
     this._enabled = false
     this._persist(false)
+  }
+
+  /**
+   * Kamerabild wieder anwerfen, nachdem der AR-Tab versteckt war oder die App
+   * im Hintergrund lag. Zwei Fälle:
+   *   • Tab-Wechsel: der Stream lebt noch, aber das <video> wurde pausiert
+   *     (Browser stoppt Wiedergabe in einem display:none-Subtree) → play().
+   *   • App minimiert/wieder geöffnet: Android gibt die Kamera frei, der Track
+   *     ENDET (stream.active=false / readyState='ended') → play() bringt nichts,
+   *     der Stream muss frisch geholt werden.
+   * No-op, wenn AR-Passthrough nicht aktiv ist. Reentrancy-geschützt, damit ein
+   * gleichzeitiges arResume + visibilitychange nicht zwei getUserMedia auslöst.
+   */
+  async resume() {
+    if (!this._enabled || !this._video || this._resuming) return
+    this._resuming = true
+    try {
+      const track = this._stream?.getVideoTracks?.()[0]
+      const dead = !this._stream || !this._stream.active || !track || track.readyState === 'ended'
+      if (dead) {
+        try { this._stream?.getTracks().forEach(t => { try { t.stop() } catch {} }) } catch {}
+        this._stream = null
+        try {
+          this._stream = await navigator.mediaDevices.getUserMedia(CAMERA_CONSTRAINTS)
+          this._video.srcObject = this._stream
+        } catch (err) {
+          console.warn('[ar] Kamera-Reaktivierung fehlgeschlagen:', err?.message || err)
+          return
+        }
+      }
+      try { await this._video.play() } catch {}
+    } finally {
+      this._resuming = false
+    }
   }
 
   _persist(on) {

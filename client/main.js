@@ -373,8 +373,19 @@ async function init() {
   engine.runRenderLoop(renderLoop)
   // Embedded in the shell, the AR view is hidden behind other tabs; let the
   // shell pause/resume the render loop to save battery (no-op standalone).
+  // arResume wirft AUCH das Kamerabild wieder an — nach einem Tab-Wechsel
+  // pausiert das <video> im versteckten Subtree (sonst eingefrorenes Bild).
   window.arPause = () => engine.stopRenderLoop()
-  window.arResume = () => { engine.runRenderLoop(renderLoop); engine.resize() }
+  window.arResume = () => {
+    engine.runRenderLoop(renderLoop); engine.resize()
+    arPassthrough.resume?.().catch(() => {})
+  }
+  // App minimiert + wieder geöffnet: Android gibt die Kamera im Hintergrund frei
+  // (Track endet). Beim Zurückkehren die Kamera neu holen — greift auch für die
+  // Standalone-AR-Seite (Chrome-Tab versteckt/aktiv), da resume() sonst no-op ist.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) arPassthrough.resume?.().catch(() => {})
+  })
   
   // Shared Editor UI im AR-Modus.
   // Kein onObjectsUpdated-Callback — die Szene wird über einen eigenen
