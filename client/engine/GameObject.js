@@ -259,15 +259,23 @@ export class GameObject {
     }
   }
 
-  // Wechselt zur AnimationGroup mit dem passenden Namen (case-insensitive).
-  // No-op wenn schon aktiv. Bei unbekanntem Namen: erste Group als Fallback.
+  // Wechselt zur AnimationGroup mit dem passenden Namen (case-insensitive, sonst
+  // Teilstring, z. B. "idle" → "IdleFinal"). No-op wenn schon aktiv. Bei
+  // unbekanntem Namen: erste Group als Fallback.
   _applyAnimationState(state) {
     if (!this.animationGroups || this.animationGroups.length === 0) return
+
+    // applyData() läuft bei JEDEM Objekt-Update (Realtime) — erneute Anfrage
+    // desselben Zustands nichts tun. Verhindert wiederholtes Auflösen UND
+    // Warn-Spam (die Warnung feuerte bisher pro syncSceneObjects erneut).
+    if (state === this._lastAnimState) return
+    this._lastAnimState = state
 
     let target = null
     if (state) {
       const lower = String(state).toLowerCase()
       target = this.animationGroups.find(g => (g.name || "").toLowerCase() === lower)
+            || this.animationGroups.find(g => (g.name || "").toLowerCase().includes(lower))
       if (!target) {
         console.warn(
           `GameObject ${this.id}: animation "${state}" not found. ` +
