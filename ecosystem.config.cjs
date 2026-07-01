@@ -12,7 +12,15 @@ const ROOT = __dirname
 // Agents, die die Welt bevölkern (wie `npm run stack:all`). Jeder wartet über
 // scripts/agent-wrapped.sh erst auf ein erreichbares Backend. Nicht benötigte
 // hier auskommentieren.
-const AGENTS = ['poi-bridge', 'ais-bridge', 'wigle-bridge', 'world-director']
+const AGENTS = [
+  'poi-bridge',
+  'ais-bridge',
+  'wigle-bridge',
+  'world-director',
+  // 'wand-agent',   // optional: Online-Teil der Zauberstab-Kette (legt ein
+  //                  // Demo-Zielobjekt an, schaltet animation_state auf wand_*).
+  //                  // Nur nötig, wenn du diese spezielle Wand-Demo willst.
+]
 
 module.exports = {
   apps: [
@@ -28,6 +36,17 @@ module.exports = {
     {
       name: 'api',
       script: 'server/index.js',            // ESM; Node respektiert "type":"module"
+      cwd: ROOT,
+      autorestart: true,
+      time: true,
+    },
+    {
+      // Statischer Client auf 8888 — die Caddyfile.prod proxyt den nicht-API-
+      // Verkehr per `handle { reverse_proxy 127.0.0.1:8888 }` hierher. (Wer im
+      // Caddyfile stattdessen `file_server` nutzt, kann diesen Dienst weglassen.)
+      name: 'client',
+      script: 'node_modules/serve/build/main.js',
+      args: 'client --listen 8888 --no-port-switching',
       cwd: ROOT,
       autorestart: true,
       time: true,

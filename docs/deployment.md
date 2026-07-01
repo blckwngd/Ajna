@@ -22,9 +22,22 @@ Definiert in [`ecosystem.config.cjs`](../ecosystem.config.cjs):
 |---|---|---|
 | `pocketbase` | `./pocketbase/pocketbase serve --http=127.0.0.1:8090` | 8090 (loopback) |
 | `api` | `node server/index.js` | 3000 |
+| `client` | `serve client --listen 8888` (statischer Client) | 8888 |
 | `poi-bridge`, `ais-bridge`, `wigle-bridge`, `world-director` | `node agents/<name>.mjs` (nach wait-stack) | — |
 
+Die Ports spiegeln die `Caddyfile.prod` wider: Caddy proxyt `/api/*`→8090,
+`/ajnaapi/*`→3000 und den restlichen (statischen) Verkehr →8888.
+
+> **Static-Server oder Caddy `file_server`?** Nutzt deine `Caddyfile.prod` für
+> den Client `handle { reverse_proxy 127.0.0.1:8888 }`, braucht es den
+> `client`-Dienst (so ist es hier vorkonfiguriert). Liefert Caddy den Client
+> stattdessen direkt (`root * ./client` + `file_server`, wie im committed
+> Template), kann der `client`-Dienst entfallen — ein Prozess weniger.
+
 Nicht benötigte Agents in der `AGENTS`-Liste der Ecosystem-Datei auskommentieren.
+`wand-agent` (Online-Teil der Zauberstab-Kette) ist dort als optionaler,
+auskommentierter Eintrag hinterlegt — nur einkommentieren, wenn du diese Demo
+brauchst.
 
 ## Einmalige Einrichtung
 
@@ -83,14 +96,41 @@ npm run deploy      # = bash scripts/deploy.sh
 
 ```bash
 pm2 status                 # Übersicht aller Prozesse
-pm2 logs                   # alle Logs (folgen)
-pm2 logs world-director    # nur ein Prozess
 pm2 restart world-director # einzelnen Prozess neu starten
 pm2 reload all             # alle neu laden
 pm2 stop all               # alle stoppen
 pm2 delete all             # alle aus PM2 entfernen
-pm2 monit                  # Live-Ressourcen (CPU / RAM)
 ```
+
+## Logs ansehen & in einen Prozess schauen
+
+```bash
+pm2 logs                        # alle Prozesse live (folgt, Ctrl+C beendet)
+pm2 logs world-director         # nur ein Prozess
+pm2 logs world-director --lines 200   # letzte 200 Zeilen zuerst
+pm2 logs world-director --err   # nur stderr
+pm2 monit                       # Live-Dashboard: CPU/RAM + Log-Tail je Prozess
+pm2 describe world-director     # Details: PID, cwd, Env, Restarts, Log-Pfade
+pm2 flush                       # alle Logdateien leeren
+```
+
+Die Logdateien liegen unter `~/.pm2/logs/<name>-out.log` und
+`<name>-error.log` — z. B. mit `tail -f` oder `grep` direkt durchsuchbar.
+
+**Sich „in den Prozess einklinken" (Shell) gibt es bei PM2 nicht** — ein
+PM2-Prozess ist kein Container, es gibt kein `exec` hinein. Für interaktives
+Debugging stattdessen den Dienst kurz aus PM2 nehmen und das Kommando von Hand in
+einer Shell laufen lassen (gleiches cwd + `.env`):
+
+```bash
+pm2 stop world-director
+node agents/world-director.mjs          # läuft im Vordergrund, volle Ausgabe
+# … debuggen, Ctrl+C …
+pm2 start world-director                # wieder unter PM2-Aufsicht
+```
+
+Node-Inspector bei Bedarf: `node --inspect agents/world-director.mjs` (dann
+`chrome://inspect`) statt des PM2-Starts.
 
 ## Prozess-Reihenfolge / Timing
 
