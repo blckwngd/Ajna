@@ -11,6 +11,8 @@
 // (agents/world-director.mjs) — bleibt eine kleine, absichtliche Duplizierung,
 // damit der Client keine Node-Agent-Module importieren muss.
 
+import { animalNameFor } from './animalNames.js'
+
 const pick = arr => arr[Math.floor(Math.random() * arr.length)]
 
 // Sprechende Typ-Labels (auch für TTS-Ansagen genutzt, siehe Announcer).
@@ -19,10 +21,11 @@ export const TYPE_LABEL = {
   dragon: 'Drache', item: 'Gegenstand', hint: 'Hinweis'
 }
 
+// Namens-Pools je Typ. Tiere sind hier NICHT gelistet — ihr Name wird aus dem
+// gewählten Modell abgeleitet (animalNameFor), damit er immer dazu passt.
 const NAMES = {
   npc:    ['Klaus', 'Sara', 'Ben', 'Lena', 'Ida', 'Mara', 'Tom', 'Nele'],
   enemy:  ['Grimmroth', 'Nebelbeißer', 'Aschkrieger', 'Schattenwächter', 'Düsterzahn'],
-  animal: ['Fuchs', 'Pferd', 'Flamingo', 'Storch', 'Papagei'],
   dragon: ['Ngeth', 'Ngwyn', 'Fafnir', 'Smaug'],
   item:   ['Schwert', 'Schatztruhe', 'Talisman', 'Kompass'],
 }
@@ -52,7 +55,18 @@ export function randomSpawnData(position) {
   const altitude = arch.fly ? 30 + Math.random() * 40
                  : FLYING_MODELS.has(model) ? 8 + Math.random() * 12
                  : 0
-  const name = NAMES[arch.type] ? pick(NAMES[arch.type]) : arch.type
+  // Tier-Name aus dem Modell ableiten (+ ggf. größenwirksames Adjektiv), sonst
+  // aus dem Namens-Pool.
+  let name, sizeScale = 1
+  if (arch.type === 'animal') {
+    const a = animalNameFor(model)
+    name = a.name
+    sizeScale = a.scale
+  } else {
+    name = NAMES[arch.type] ? pick(NAMES[arch.type]) : arch.type
+  }
+  const appearance = { gltf: '/models/' + model }
+  if (sizeScale !== 1) appearance.scale = sizeScale
   return {
     name,
     type: arch.type,
@@ -62,7 +76,7 @@ export function randomSpawnData(position) {
     altitude,
     rotation: { x: 0, y: Math.random() * Math.PI * 2 - Math.PI, z: 0 },
     animation_state: 'idle',
-    appearance: { gltf: '/models/' + model },
+    appearance,
     state: { actions: arch.actions, realtime: true, spawnedBy: 'player', altitude_ref: 'ground' },
   }
 }

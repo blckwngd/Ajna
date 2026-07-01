@@ -44,6 +44,7 @@ if (typeof globalThis.EventSource !== 'function') globalThis.EventSource = Event
 import { AjnaManager } from '../client/core/AjnaManager.js'
 import { AjnaGeo } from '../client/core/AjnaGeo.js'
 import { stepAlongPath, buildWayGraph, nearestNodeKey, randomReachableTarget, shortestPath, haversine } from '../client/core/StreetNav.js'
+import { animalNameFor } from '../client/core/animalNames.js'
 
 // ─── .env laden (gleiches Schema wie ais-bridge.mjs) ─────────────────────
 function loadDotenv() {
@@ -116,8 +117,8 @@ function randomPointNear(lat, lon, radiusM) {
 const NAME_POOLS = {
   npcFirst: ['Mara', 'Tom', 'Lena', 'Jonas', 'Ada', 'Nik', 'Sara', 'Ben', 'Ida', 'Paul'],
   npcLast:  ['Berger', 'Falk', 'Kraus', 'Roth', 'Stein', 'Vogt', 'Wendt', 'Sommer'],
-  enemyAdj: ['Schatten', 'Dorn', 'Nebel', 'Rost', 'Grimm', 'Asch'],
-  enemyN:   ['krieger', 'läufer', 'wächter', 'schleicher', 'beißer'],
+  enemyAdj: ['Schatten', 'Dorn', 'Nebel', 'Rost', 'Grimm', 'Blut', 'Frost', 'Sturm', 'Dunkel'],
+  enemyN:   ['krieger', 'läufer', 'wächter', 'schleicher', 'beißer', 'jäger'],
   animal:   ['Fuchs', 'Reh', 'Hase', 'Katze', 'Specht', 'Dachs', 'Igel', 'Eichhörnchen'],
   dragonA:  ['Vyr', 'Az', 'Mor', 'Syl', 'Drak', 'Ng', 'Tha'],
   dragonB:  ['thax', 'mir', 'gorn', 'wyn', 'ros', 'dûr', 'eth'],
@@ -221,7 +222,16 @@ function buildSpawn(archetype) {
   const altitude = arch.flying ? randInt(30, 80)
                  : (model && FLYING_MODELS.has(model)) ? randInt(8, 25)
                  : 0
-  const name = NAME_GEN[archetype]()
+  // Tier-Name IMMER passend zum gewählten Modell (+ optionales Adjektiv, das die
+  // Größe beeinflussen kann). Übrige Archetypen behalten ihre Namensgeneratoren.
+  let name, sizeScale = 1
+  if (archetype === 'animal' && model) {
+    const a = animalNameFor(model)
+    name = a.name
+    sizeScale = a.scale
+  } else {
+    name = NAME_GEN[archetype]()
+  }
 
   const state = {
     director: true,
@@ -243,7 +253,11 @@ function buildSpawn(archetype) {
   }
   // appearance.gltf nur setzen, wenn der Archetyp ein Modell hat — sonst
   // bleibt das Feld leer und der Viewer fällt auf den Typ-Platzhalter zurück.
-  if (model) spawn.appearance = { gltf: MODEL_BASE + model }
+  // sizeScale (Größen-Adjektiv) als appearance.scale mitgeben.
+  if (model) {
+    spawn.appearance = { gltf: MODEL_BASE + model }
+    if (sizeScale !== 1) spawn.appearance.scale = sizeScale
+  }
   return spawn
 }
 

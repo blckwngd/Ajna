@@ -230,18 +230,29 @@ export class GameObject {
   // Root so, dass die finale Welthöhe = Zielhöhe ist — ABSOLUT, unabhängig von
   // einem Record-`scale`. Damit wirkt jedes Vorkommen des Modells konsistent
   // gleich groß; auch Legacy-Objekte mit Kompensations-Scale werden nicht
-  // winzig. Nicht gelistete Modelle bleiben unverändert (Record-`scale` wirkt).
+  // winzig.
+  //
+  // `appearance.scale` (Skalar, Default 1) ist der GEWOLLTE relative Größen-
+  // Regler: z. B. "kleiner Fuchs" → 0.7, "großer Fuchs" → 1.4. Er multipliziert
+  // die Zielhöhe (gelistete Modelle) bzw. wirkt direkt auf den Import-Root
+  // (nicht gelistete Modelle). Getrennt vom Record-`scale`-Vektor, damit er
+  // nicht mit Legacy-Kompensations-Scales kollidiert.
   #normalizeModelSize(importRoot, url) {
     const file = (url.split(/[?#]/)[0].split("/").pop() || "")
     const target = MODEL_TARGET_HEIGHT[file]
-    if (!target) return
+    const sizeMult = Number(this._appearance?.scale) || 1
+    if (!target) {
+      // Nicht normiertes Modell: nur den gewollten Größen-Regler anwenden.
+      if (sizeMult !== 1) importRoot.scaling.scaleInPlace(sizeMult)
+      return
+    }
     try {
       this.root.computeWorldMatrix(true)
       importRoot.computeWorldMatrix(true)
       const { min, max } = importRoot.getHierarchyBoundingVectors(true)
       const height = max.y - min.y
       if (Number.isFinite(height) && height > 1e-4) {
-        importRoot.scaling.scaleInPlace(target / height)
+        importRoot.scaling.scaleInPlace((target * sizeMult) / height)
       }
     } catch (err) {
       console.warn(`GameObject ${this.id}: Größen-Normierung fehlgeschlagen`, err?.message || err)
