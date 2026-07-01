@@ -44,6 +44,14 @@
             android:exported="false" />
     </application>
 
+    <!-- Package visibility (Android 11+): let SpeechRecognizer discover the
+         on-device recognition service, else isRecognitionAvailable() is false. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
@@ -74,4 +82,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Android 13+ hides the foreground-service notification without this. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Push-to-talk voice commands: offline STT (SpeechRecognizer) + routing the
+         mic to a Bluetooth headset (SCO). MODIFY_AUDIO_SETTINGS is needed for the
+         SCO/communication-device switch. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 </manifest>

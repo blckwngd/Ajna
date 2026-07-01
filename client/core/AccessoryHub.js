@@ -17,6 +17,9 @@ import { WandManager } from './WandManager.js'
 import { UwbManager } from './UwbManager.js'
 import { WandAudioFeedback } from './WandAudioFeedback.js'
 import { Announcer } from './Announce.js'
+import { createSttEngine } from './SttEngine.js'
+import { VoiceCommandManager } from './VoiceCommandManager.js'
+import { loadVoiceCommands, loadLightCommands, matchVoiceCommand } from './voiceCommands.js'
 import { GPSProvider } from './GPSProvider.js'
 import { FusedPositionSource } from './FusedPositionSource.js'
 import { PositionFilter } from './PositionFilter.js'
@@ -88,6 +91,43 @@ export function getAccessoryHub({ ajna } = {}) {
   // Ton (audio.onTargetChange(null)). Interaktionen sprechen "<Aktion> - <Ergebnis>".
   wand.onTarget((t) => { if (t?.id) announcer.target(t.id); else audio.onTargetChange(null) })
   wand.onInteraction((i) => announcer.interaction(i?.id, i?.action))
+  // Lock confirmation (Button 2 released): speak "<obj> gewählt" — the primary
+  // screen-off feedback for "which object am I about to act on".
+  wand.onLock((o) => announcer.selected(o?.id || null))
+
+  // Push-to-talk voice commands: holding a button STILL opens an offline STT
+  // engine (native plugin on the phone, Web Speech in a browser). Audio + STT
+  // stay on-device (privacy); only the resulting action leaves. Two managers
+  // share ONE engine (the wand guarantees a single PTT hold at a time):
+  //   • Button 3 → command on the LOCKED object (interact)
+  //   • Button 1 → wand light effect (light command)
+  const sttEngine = createSttEngine({ lang: 'de-DE' })
+  const announceVoice = (t) => { if (audio.enabled) audio.speak(t) }   // gated feedback
+  // STT lifecycle/errors → Debug-Log (one place; the engine is shared). Reveals
+  // "bereit/Stimme erkannt/Sprechpause" and errors like "Offline-Sprachpaket fehlt".
+  sttEngine.onStatus?.((m) => wand.log(`🎤 ${m}`))
+
+  const lockedActions = () => {
+    const id = wand.getLockedTarget?.()?.id
+    const rec = id ? ajna?.getObjectById?.(id) : null
+    if (Array.isArray(rec?.actions) && rec.actions.length) return rec.actions
+    if (Array.isArray(rec?.state?.actions)) return rec.state.actions
+    return []
+  }
+
+  const voiceObject = new VoiceCommandManager({
+    wand, engine: sttEngine, button: 3, announce: announceVoice,
+    notReadyMsg: 'Kein Objekt gewählt',
+    canStart: () => !!wand.getLockedTarget?.(),
+    match: (t) => matchVoiceCommand(t, loadVoiceCommands(), lockedActions())?.action ?? null,
+    dispatch: (action) => wand.voiceInteract(action, { via: 'voice' })
+  })
+
+  const voiceLight = new VoiceCommandManager({
+    wand, engine: sttEngine, button: 1, announce: announceVoice,
+    match: (t) => matchVoiceCommand(t, loadLightCommands(), [])?.action ?? null,
+    dispatch: (id) => wand.sendCommand({ cmd: 'light', id })
+  })
   // Debug announcer (audio + debug both on): speak state changes and raw input
   // events to learn the wand by ear. The '*' subscriber only observes — it never
   // consumes, so it does not affect forwarding.
@@ -140,6 +180,7 @@ export function getAccessoryHub({ ajna } = {}) {
 
   const hub = {
     ajna, wand, uwb, audio, announcer, gps, positionSource, originFilter,
+    sttEngine, voiceObject, voiceLight,
     /** Register a last-resort position getter for wand ray origin. */
     setPositionFallback(fn) { positionFallback = typeof fn === 'function' ? fn : null }
   }

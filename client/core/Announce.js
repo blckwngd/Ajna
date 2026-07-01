@@ -96,6 +96,14 @@ export class Announcer {
     if (text) this.audio.speak(text)        // unterbrechend (latest wins)
   }
 
+  /** Objekt gesperrt/gewählt (Knopf 2). null = Auswahl aufgehoben. */
+  selected(recordOrId) {
+    if (!this._on()) return
+    const rec = this._rec(recordOrId)
+    const text = rec ? forSpeech(`${announceTargetText(rec)} gewählt`) : 'Auswahl aufgehoben'
+    if (text) this.audio.speak(text)
+  }
+
   /** Interaktion (Trigger oder eingehende Reaktion) — Antwort wird gesprochen. */
   interaction(recordOrId, action) {
     if (!this._on()) return

@@ -61,6 +61,7 @@ public class WandGatt {
     private BluetoothLeScanner scanner;
     private ScanCallback scanCallback;
     private boolean wantConnected = false;
+    private boolean connected = false;   // fully connected (NUS ready) — guards duplicate status emits
 
     public WandGatt(Context context, Listener listener) {
         this.appContext = context.getApplicationContext();
@@ -145,6 +146,7 @@ public class WandGatt {
 
     public void close() {
         wantConnected = false;
+        connected = false;
         stopScan();
         if (gatt != null) {
             try { gatt.disconnect(); } catch (Exception ignored) {}
@@ -157,11 +159,18 @@ public class WandGatt {
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
         @Override public void onConnectionStateChange(BluetoothGatt g, int status, int newState) {
             if (newState == BluetoothGatt.STATE_CONNECTED) {
-                listener.onLog("GATT connected, requesting MTU");
+                listener.onLog("GATT connected (status=" + status + "), requesting MTU");
                 g.requestMtu(REQUESTED_MTU);
             } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
+                // status != 0 here means "connection attempt failed" (e.g. 133/8/19)
+                // — happens on every failed 2 s reconnect while the wand reboots.
+                listener.onLog("GATT disconnected (status=" + status + ")");
                 rxChar = null;
-                listener.onDisconnected();
+                boolean wasConnected = connected;
+                connected = false;
+                // Only report a REAL connection loss — not each failed retry (those
+                // never became "connected"). Prevents the "getrennt getrennt …" storm.
+                if (wasConnected) listener.onDisconnected();
                 // Auto-reconnect if the user still wants the wand bound.
                 if (wantConnected) {
                     main.postDelayed(() -> { if (wantConnected) g.connect(); }, 2000);
@@ -195,6 +204,7 @@ public class WandGatt {
                     }
                 }
             }
+            connected = true;
             listener.onConnected(g.getDevice().getAddress());
         }
 

@@ -22,8 +22,7 @@ const ACTION_LABELS = {
 // German spoken labels for the debug announcer (state + raw events).
 const STATE_LABELS = {
   initialize: 'Initialisierung', idle: 'Bereit', flashlight: 'Taschenlampe',
-  ledshow: 'Lichtshow', lightcontrol: 'Lichtsteuerung', soundcontrol: 'Klangsteuerung',
-  debug: 'Debug-Modus', wifijam: 'WLAN-Störer', robotcontrol: 'Robotersteuerung'
+  ledshow: 'Lichtshow', debug: 'Debug-Modus'
 }
 const GESTURE_LABELS = {
   tap: 'Tippen', double_tap: 'Doppeltippen', flick: 'Schnipsen', shake: 'Schütteln',
@@ -32,6 +31,13 @@ const GESTURE_LABELS = {
   pose_back: 'Pose nach hinten', pose_left: 'Pose nach links', pose_right: 'Pose nach rechts'
 }
 const DIR_LABELS = { forward: 'vorne', back: 'hinten', left: 'links', right: 'rechts' }
+// Readable names for the CompLights effect ids (so debug audio says "Licht
+// Regenbogen", not "Effekt light 5").
+const LIGHT_EFFECT_LABELS = {
+  0: 'aus', 1: 'Rune', 2: 'Taschenlampe', 3: 'grün', 4: 'blau', 5: 'Regenbogen',
+  6: 'Funkeln', 7: 'Komet', 8: 'Pulsieren', 9: 'Rune aus', 10: 'Stroboskop',
+  11: 'Scheinwerfer', 12: 'Rune'
+}
 const POINTING_LABELS = { pointer: 'Zeigestock', walkingstick: 'Wanderstab', auto: 'Automatisch', disabled: 'Aus' }
 // Short system-status announcements (debug). Keep terse to avoid chatter.
 const SYSTEM_LABELS = {
@@ -173,25 +179,33 @@ export class WandAudioFeedback {
 
   // ── debug announcer (learning aid; audio + debug must both be on) ────
 
-  /** Announce a wand state change, e.g. 'lightcontrol' → "Lichtsteuerung". */
+  /** Announce a wand state change, e.g. 'ledshow' → "Lichtshow". */
   announceState(name) {
     if (!this.debug || !name) return
     this.announce(STATE_LABELS[name] || name)
   }
 
-  /** Announce a raw input event (bus event {type, data}) in German. */
+  /** Announce a raw input event (bus event {type, data}) in German. Button events
+   *  are intentionally NOT spoken (too chatty), and identical labels are de-duped
+   *  within a short window so a repeated effect isn't said twice in a row. */
   announceEvent(event) {
     if (!this.debug || !event) return
     const d = event.data || {}
     let label
     switch (event.type) {
-      case 'button':  label = `Knopf ${d.id}${d.long ? ' lang' : ''}`; break
-      case 'tilt':    label = `Neigung ${DIR_LABELS[d.dir] || d.dir || ''}`; break
       case 'gesture': label = GESTURE_LABELS[d.name] || d.name || 'Geste'; break
-      case 'effect':  label = `Effekt ${d.domain || ''} ${d.id ?? ''}`.trim(); break
-      default:        return
+      case 'effect':
+        label = d.domain === 'light'
+          ? `Licht ${LIGHT_EFFECT_LABELS[d.id] ?? d.id}`
+          : `Effekt ${d.domain || ''} ${d.id ?? ''}`.trim()
+        break
+      default:        return   // button/tilt/other → no audio
     }
-    if (label) this.announce(label)
+    if (!label) return
+    const now = Date.now()
+    if (label === this._lastDbgLabel && (now - (this._lastDbgT || 0)) < 1500) return
+    this._lastDbgLabel = label; this._lastDbgT = now
+    this.announce(label)
   }
 
   /** Announce a short system status (key from SYSTEM_LABELS), debug-gated. */

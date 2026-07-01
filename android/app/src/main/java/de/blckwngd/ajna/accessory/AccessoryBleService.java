@@ -3,6 +3,7 @@ package de.blckwngd.ajna.accessory;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
@@ -12,6 +13,8 @@ import android.os.IBinder;
 import android.os.PowerManager;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
+
+import de.blckwngd.ajna.MainActivity;
 
 import java.util.HashMap;
 import java.util.List;
@@ -39,11 +42,17 @@ public class AccessoryBleService extends Service {
     // UWB actions (carry EXTRA_ROLE)
     public static final String ACTION_UWB_START = "de.blckwngd.ajna.accessory.UWB_START";
     public static final String ACTION_UWB_STOP  = "de.blckwngd.ajna.accessory.UWB_STOP";
+    // Keep-alive: force the foreground service (+ notification) on with NO device
+    // connected, so the app keeps running in the background (carries EXTRA_ENABLED).
+    public static final String ACTION_KEEPALIVE = "de.blckwngd.ajna.accessory.KEEPALIVE";
+    // "Beenden" (Notification-Button / Wegwischen): App vollständig beenden.
+    public static final String ACTION_QUIT = "de.blckwngd.ajna.accessory.QUIT";
 
     public static final String EXTRA_ADDRESS = "address";
     public static final String EXTRA_NAME    = "name";
     public static final String EXTRA_JSON    = "json";
     public static final String EXTRA_ROLE    = "role";
+    public static final String EXTRA_ENABLED = "enabled";
 
     private static final String CHANNEL_ID = "ajna_accessory";
     private static final int NOTIFICATION_ID = 4711;
@@ -52,6 +61,7 @@ public class AccessoryBleService extends Service {
     private WandGatt wand;
     private boolean wandActive = false;
     private boolean wandConnected = false;
+    private boolean keepAlive = false;   // "run in background" — service stays up with no device
 
     private final Map<String, UwbGatt> uwbNodes = new HashMap<>();
     private PowerManager.WakeLock wakeLock;
@@ -71,6 +81,9 @@ public class AccessoryBleService extends Service {
         if (action == null) return START_STICKY;
 
         switch (action) {
+            case ACTION_QUIT:
+                quitApp();
+                return START_NOT_STICKY;
             case ACTION_STOP:
                 wandActive = false;
                 if (wand != null) wand.close();
@@ -92,6 +105,10 @@ public class AccessoryBleService extends Service {
             case ACTION_UWB_STOP:
                 stopUwb(roleOf(intent));
                 break;
+            case ACTION_KEEPALIVE:
+                keepAlive = intent.getBooleanExtra(EXTRA_ENABLED, false);
+                if (keepAlive) ensureForeground();
+                break;
             default:
                 break;
         }
@@ -104,7 +121,7 @@ public class AccessoryBleService extends Service {
         return START_STICKY;
     }
 
-    private boolean isAnyActive() { return wandActive || !uwbNodes.isEmpty(); }
+    private boolean isAnyActive() { return wandActive || !uwbNodes.isEmpty() || keepAlive; }
 
     private String roleOf(Intent intent) {
         String r = intent != null ? intent.getStringExtra(EXTRA_ROLE) : null;
@@ -149,6 +166,30 @@ public class AccessoryBleService extends Service {
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
+    }
+
+    /**
+     * "Beenden": Verbindungen sauber schließen, Foreground + Notification
+     * entfernen, die App-Task aus den Recents nehmen und den Prozess VOLLSTÄNDIG
+     * killen — damit ein Neustart garantiert sauber ist (keine hängende BLE-
+     * Verbindung, kein halb-lebender Prozess). Der harte Kill läuft in einem
+     * eigenen Thread mit kurzer Verzögerung, sodass er auch bei blockiertem/
+     * hängendem Main-Thread greift und die Aufräumarbeiten noch propagieren.
+     */
+    private void quitApp() {
+        wandActive = false; wandConnected = false; keepAlive = false;
+        if (wand != null) wand.close();
+        for (UwbGatt n : uwbNodes.values()) n.close();
+        uwbNodes.clear();
+        if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        stopForeground(STOP_FOREGROUND_REMOVE);
+        stopSelf();
+        MainActivity.finishIfRunning();   // App-Task aus den Recents entfernen
+        new Thread(() -> {
+            try { Thread.sleep(300); } catch (InterruptedException ignored) {}
+            android.os.Process.killProcess(android.os.Process.myPid());
+            System.exit(0);
+        }, "ajna-quit").start();
     }
 
     @Override
@@ -201,7 +242,8 @@ public class AccessoryBleService extends Service {
             if (sb.length() > 0) sb.append(" · ");
             sb.append("UWB ").append(up).append('/').append(uwbNodes.size());
         }
-        return sb.length() > 0 ? sb.toString() : "aktiv";
+        if (sb.length() > 0) return sb.toString();
+        return keepAlive ? "Bereit – kein Gerät verbunden" : "aktiv";
     }
 
     private void createChannel() {
@@ -214,12 +256,34 @@ public class AccessoryBleService extends Service {
         }
     }
 
+    /** Tapping the notification re-opens the app (the Capacitor MainActivity). */
+    private PendingIntent contentIntent() {
+        Intent launch = getPackageManager().getLaunchIntentForPackage(getPackageName());
+        if (launch == null) return null;
+        launch.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+        return PendingIntent.getActivity(this, 0, launch, flags);
+    }
+
+    /** "Beenden"-Aktion / Wegwischen → ACTION_QUIT an diesen Service. */
+    private PendingIntent quitIntent() {
+        Intent i = new Intent(this, AccessoryBleService.class).setAction(ACTION_QUIT);
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+        return PendingIntent.getService(this, 1, i, flags);
+    }
+
     private Notification buildNotification(String text) {
+        PendingIntent quit = quitIntent();
         return new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("Ajna · Zubehör aktiv")
+                .setContentTitle("Ajna läuft im Hintergrund")
                 .setContentText(text)
                 .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-                .setOngoing(true)
+                .setContentIntent(contentIntent())   // tap → back to the app
+                .addAction(android.R.drawable.ic_lock_power_off, "Beenden", quit)
+                .setDeleteIntent(quit)   // falls doch weggewischt (Android 14+) → ebenfalls beenden
+                .setOngoing(true)        // nicht-wegwischbar, wo unterstützt
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .build();
     }

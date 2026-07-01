@@ -15,6 +15,7 @@
 
 import { resolvePointingTarget } from './PointingResolver.js'
 import { WandEventBus } from './WandEventBus.js'
+import { spawnRandomHere } from './SpawnHere.js'
 
 const WAND_LOG_PREFIX = '[wand]'
 
@@ -42,6 +43,19 @@ export class WandManager {
     this._targetCbs = new Set()
     this._interactionCbs = new Set()
     this._lastTargetId = null
+    // Press-to-select (Button 2 held): a target is only ACQUIRED while selecting,
+    // and LOCKED on release. Interactions then act on the locked object — so a
+    // stray button/gesture can't fire on a random object.
+    this._selecting = false
+    this._lockedId = null
+    this._lockCbs = new Set()
+    // Push-to-talk (voice): the wand signals a button held-and-still as PTT, with
+    // `btn` (1 = light effect, 3 = locked object). The wand itself swallows the
+    // button release when PTT was active, so no double action here.
+    this._pttCbs = new Set()
+    // Diagnostic log lines (readable gesture/voice traces) for the app Debug-Log,
+    // from the wand ({"type":"log"}) and injected app-side via log().
+    this._logCbs = new Set()
     // Local-first event pipeline: subscribers run BEFORE an event is forwarded
     // to Ajna; a subscriber can `event.consume()` to keep it offline-local.
     this.bus = new WandEventBus()
@@ -75,8 +89,13 @@ export class WandManager {
 
     this._listeners.push(await this.Wand.addListener('wandStatus', (e) => this._onStatus(e)))
     this._listeners.push(await this.Wand.addListener('wandEvent', (e) => this._onEvent(e)))
-    this._listeners.push(await this.Wand.addListener('wandLog', (e) =>
-      console.debug(WAND_LOG_PREFIX, 'native:', e?.message)))
+    this._listeners.push(await this.Wand.addListener('wandLog', (e) => {
+      const m = e?.message
+      console.debug(WAND_LOG_PREFIX, 'native:', m)
+      // Surface native BLE logs (GATT connect steps, disconnect status codes) in
+      // the app Debug-Log so connect/disconnect storms are diagnosable on-device.
+      if (m) this._emitLog(`BLE: ${m}`)
+    }))
 
     await this.Wand.connect(address ? { address } : { name })
     this.notify('Verbinde mit Zauberstab …')
@@ -90,6 +109,20 @@ export class WandManager {
   }
 
   onStatusChange(cb) { this._statusCbs.add(cb); return () => this._statusCbs.delete(cb) }
+
+  /**
+   * Force ("run in background") or release the persistent foreground service +
+   * notification — independent of a wand connection. Keeps BLE/voice/control
+   * alive with the screen off. Native-only; a no-op in the browser.
+   */
+  async setBackgroundService(enabled) {
+    try {
+      const { Capacitor, registerPlugin } = await import('@capacitor/core')
+      if (!Capacitor?.isNativePlatform?.()) return
+      const Wand = this.Wand || registerPlugin('Wand')
+      await Wand.setBackground({ enabled: !!enabled })
+    } catch (e) { console.warn(WAND_LOG_PREFIX, 'setBackground failed', e?.message || e) }
+  }
 
   /** Send a JSON command line to the wand (e.g. drive an effect). */
   async sendCommand(obj) {
@@ -128,8 +161,18 @@ export class WandManager {
   // ── native event handlers ───────────────────────────────────────────
 
   _onStatus(e) {
-    this.connected = !!e?.connected
-    this.address = e?.address || null
+    const next = !!e?.connected
+    const addr = e?.address || null
+    // Raw trace into the Debug-Log — visible even when the announcement below is
+    // de-duped (e.g. the native side re-emitting "disconnected" on every failed
+    // 2 s reconnect attempt while the wand reboots).
+    this._emitLog(`BLE-Status: ${next ? 'verbunden' : 'getrennt'}${addr ? ' ' + addr : ''}`)
+    this.address = addr
+    // De-dupe: only notify/announce on a REAL change. This kills the repeated
+    // "Stab getrennt. Stab getrennt. …" (and double "verbunden") spam regardless
+    // of how many raw status events the native layer emits.
+    if (next === this.connected) return
+    this.connected = next
     this.notify(this.connected ? 'Zauberstab verbunden' : 'Zauberstab getrennt')
     this._statusCbs.forEach(cb => { try { cb(this.connected, this.address) } catch {} })
   }
@@ -152,6 +195,9 @@ export class WandManager {
       case 'orientation': return this._handleOrientation(msg)
       case 'mode':        return this._handleMode(msg)
       case 'state':       return this._handleState(msg)
+      case 'select':      return this._handleSelect(msg)
+      case 'ptt':         return this._handlePtt(msg)
+      case 'log':         return this._handleLog(msg)
       // Actionable inputs run through the local-first event bus.
       case 'button':
       case 'tilt':
@@ -226,8 +272,9 @@ export class WandManager {
     }
     this._orientationCbs.forEach(cb => { try { cb(this._orientation) } catch {} })
 
-    // Continuously resolve the pointed-at object (for AR highlight); fire only
-    // when the target changes to keep listeners cheap.
+    // Resolve the pointed-at object ONLY while selecting (Button 2 held). Outside
+    // selection the highlight stays on the locked object (we don't re-resolve).
+    if (!this._selecting) return
     const target = this.resolveTarget()
     if (target) target.name = this.getName(target.id)
     const id = target?.id || null
@@ -235,11 +282,88 @@ export class WandManager {
       this._lastTargetId = id
       // target is null on focus loss; listeners (highlight/audio) handle both.
       this._targetCbs.forEach(cb => { try { cb(target) } catch {} })
+      // Rune feedback: a target is being aimed at → hover (fast/bright); lost it
+      // → back to aim (slow/dim). The wand already shows "aim" locally on press.
+      this.sendCommand({ cmd: 'rune', fb: id ? 2 : 1 })
     }
+  }
+
+  // Button 2 down → start aiming; up → lock the currently-aimed object. Release
+  // outcomes drive the Rune feedback (the screen-off "what am I doing" cue):
+  //   • aimed at an object → LOCK it           → rune fb 3 (slow/bright)
+  //   • aimed at nothing, had a lock → DESELECT → rune fb 0 (off)
+  //   • quick tap, nothing selected → TOGGLE the manual Rune (the "hübscher
+  //     Effekt") via effect 12; the firmware clears the aim feedback itself.
+  //   • long hold, missed everything → just clear the aim feedback (fb 0).
+  _handleSelect(msg) {
+    if (msg.pressed) {
+      this._selecting = true
+      this._lastTargetId = null   // fresh aim: don't re-lock the previous target
+      return
+    }
+    this._selecting = false
+    const hovered = this._lastTargetId || null
+    const hadLock = !!this._lockedId
+
+    if (hovered) {
+      this._lockedId = hovered
+      this.sendCommand({ cmd: 'rune', fb: 3 })
+      const locked = { id: hovered, name: this.getName(hovered) }
+      this.notify(`Gewählt: ${locked.name || locked.id}`)
+      this._lockCbs.forEach(cb => { try { cb(locked) } catch {} })
+      return
+    }
+
+    this._lockedId = null
+    if (hadLock) {                                   // deselect a previous lock
+      this.sendCommand({ cmd: 'rune', fb: 0 })
+      this.notify('Auswahl aufgehoben')
+      this._lockCbs.forEach(cb => { try { cb(null) } catch {} })
+    } else if (msg.short) {                          // pure tap → toggle manual Rune
+      this.sendCommand({ cmd: 'light', id: 12 })
+      this.notify('Rune umgeschaltet')
+    } else {                                         // long hold, no target → clear aim
+      this.sendCommand({ cmd: 'rune', fb: 0 })
+    }
+  }
+
+  // Push-to-talk: the wand reports a button held-and-still (mic open) and release
+  // (mic close), with `btn` (1=light, 3=object). VoiceCommandManagers drive STT
+  // off this and filter by button; nothing here knows about audio.
+  _handlePtt(msg) {
+    this._pttCbs.forEach(cb => { try { cb(!!msg.pressed, msg.btn) } catch {} })
+  }
+  /** Subscribe to push-to-talk: cb(pressed, btn). pressed=true→listen, false→stop. */
+  onPtt(cb) { this._pttCbs.add(cb); return () => this._pttCbs.delete(cb) }
+
+  // Readable diagnostic log lines (gestures from the wand, voice from the app).
+  _handleLog(msg) { this._emitLog(typeof msg.msg === 'string' ? msg.msg : '') }
+  _emitLog(line) { if (line) this._logCbs.forEach(cb => { try { cb(line) } catch {} }) }
+  /** Inject an app-side log line (e.g. STT result) into the same Debug-Log feed. */
+  log(line) { this._emitLog(line) }
+  /** Subscribe to diagnostic log lines (wand + app). */
+  onLog(cb) { this._logCbs.add(cb); return () => this._logCbs.delete(cb) }
+
+  /** Fire a voice-resolved action on the locked object (same path as a gesture). */
+  voiceInteract(action, payload) {
+    return this._interactTarget(action, payload || {})
   }
 
   onTarget(cb) { this._targetCbs.add(cb); return () => this._targetCbs.delete(cb) }
   onInteraction(cb) { this._interactionCbs.add(cb); return () => this._interactionCbs.delete(cb) }
+  /** Subscribe to lock changes: cb({id,name}) on lock, cb(null) on deselect. */
+  onLock(cb) { this._lockCbs.add(cb); return () => this._lockCbs.delete(cb) }
+  /** Currently locked object, or null. */
+  getLockedTarget() { return this._lockedId ? { id: this._lockedId, name: this.getName(this._lockedId) } : null }
+  /** Clear the lock (e.g. from an app "deselect" button). */
+  clearLock() {
+    if (!this._lockedId) return
+    this._lockedId = null
+    this._lastTargetId = null
+    this.sendCommand({ cmd: 'rune', fb: 0 })                       // turn the lock-rune off
+    this._targetCbs.forEach(cb => { try { cb(null) } catch {} })   // drop the highlight
+    this._lockCbs.forEach(cb => { try { cb(null) } catch {} })
+  }
 
   /**
    * Resolve the object the wand currently points at (ray = origin + direction),
@@ -264,11 +388,37 @@ export class WandManager {
   // ── mapping wand input → Ajna interaction (privacy-local resolution) ─
 
   _handleButton(msg) {
+    // Button 3 short carries a `dir` (wand tilt at press) → a directional action.
+    if (msg.id === 3 && msg.dir) return this._handleDirAction(msg.dir)
     // (No LED command: the wand's on-board LED is unused — it shares the NINA's
     // SPI with BLE, so driving it would break BLE. Visible feedback is an
-    // external light, handled wand-side.)
+    // external light, handled wand-side. PTT-hold releases are swallowed wand-side.)
     const action = msg.long ? 'wand_long' : 'wand_press'
     this._interactTarget(action, { buttonId: msg.id, long: !!msg.long })
+  }
+
+  // Button 3 "tilt + press": the wand tilt selects the action on the locked object
+  // (or, for "down", spawns a new object here — no lock needed). The physical
+  // direction→name mapping depends on the wand mounting/grip; remap here if a tilt
+  // comes out as the wrong direction (the wand logs the detected direction).
+  async _handleDirAction(dir) {
+    switch (dir) {
+      case 'down': {                                  // create a random object here (no lock needed)
+        const position = this.getPosition?.() || this.getOrigin?.()   // GPS, else fused origin
+        try {
+          const obj = await spawnRandomHere({ ajna: this.ajna, position })
+          this.notify(`Erzeugt: ${obj?.name || 'Objekt'}`)
+        } catch (e) { this.notify('Spawn fehlgeschlagen: ' + (e?.message || e)) }
+        return
+      }
+      case 'back':                                    // attack + take (fire both)
+        await this._interactTarget('attack', { via: 'tilt' })
+        await this._interactTarget('collect', { via: 'tilt' })
+        return
+      case 'left':  return this._interactTarget('examine', { via: 'tilt' })  // untersuchen
+      case 'right': return this._interactTarget('talk', { via: 'tilt' })     // ansprechen
+      default:      return this._interactTarget('wand_press', { via: 'tilt' }) // forward/up → primary
+    }
   }
 
   _handleGestureLike(kind, name, msg) {
@@ -282,14 +432,13 @@ export class WandManager {
   }
 
   /**
-   * Pick the interaction target LOCALLY and send one interaction. Prefers the
-   * pointed-at object (ray) when orientation is available, else falls back to
-   * nearest-by-distance. No coordinates leave the device — only the object id.
+   * Send one interaction to the LOCKED object (selected by holding Button 2 and
+   * pointing, then releasing). No lock → no interaction, so a stray button or
+   * gesture can't fire on a random object. No coordinates leave the device.
    */
   async _interactTarget(action, payload) {
-    const pointed = this.resolveTarget()
-    const target = pointed?.id || this._nearestObjectId()
-    if (!target) { this.notify('Kein Ziel anvisiert / in der Nähe'); return }
+    const target = this._lockedId
+    if (!target) { this.notify('Kein Objekt gewählt — Knopf 2 halten und anvisieren'); return }
     const name = this.getName(target)
     // Map the generic short press onto the target's PRIMARY action (first in
     // state.actions) so "point + click" performs the object's main interaction
@@ -301,13 +450,11 @@ export class WandManager {
       const first = Array.isArray(rec?.state?.actions) && rec.state.actions[0]?.key
       effective = first || 'examine'
     }
-    // Notify listeners (e.g. audio) that an action was triggered on a target.
-    this._interactionCbs.forEach(cb => { try { cb({ action: effective, id: target, name, pointed: !!pointed }) } catch {} })
+    // Notify listeners (e.g. audio) that an action was triggered on the locked target.
+    this._interactionCbs.forEach(cb => { try { cb({ action: effective, id: target, name, locked: true }) } catch {} })
     try {
       await this.ajna.interact(target, effective, payload || {})
-      this.notify(pointed
-        ? `Aktion „${effective}" → ${name || 'anvisiertes Objekt'} (${pointed.angleDeg.toFixed(0)}°)`
-        : `Aktion „${effective}" → ${name || 'nächstes Objekt'}`)
+      this.notify(`Aktion „${effective}" → ${name || 'gewähltes Objekt'}`)
     } catch (err) {
       // Offline / not logged in: the local wand reaction already happened.
       console.warn(WAND_LOG_PREFIX, 'interact failed (offline?)', err?.message || err)

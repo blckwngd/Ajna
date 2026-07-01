@@ -35,7 +35,9 @@ import com.getcapacitor.annotation.PermissionCallback;
                 Manifest.permission.BLUETOOTH_CONNECT,
                 Manifest.permission.ACCESS_FINE_LOCATION
             }
-        )
+        ),
+        // Android 13+: needed for the foreground-service notification to be visible.
+        @Permission(alias = "notifications", strings = { Manifest.permission.POST_NOTIFICATIONS })
     }
 )
 public class WandPlugin extends Plugin implements WandBridge.Listener {
@@ -51,16 +53,52 @@ public class WandPlugin extends Plugin implements WandBridge.Listener {
             requestPermissionForAlias("ble", call, "blePermsCallback");
             return;
         }
-        startService(call);
+        ensureNotifsThenStart(call);
     }
 
     @PermissionCallback
     private void blePermsCallback(PluginCall call) {
         if (getPermissionState("ble") == com.getcapacitor.PermissionState.GRANTED) {
-            startService(call);
+            ensureNotifsThenStart(call);
         } else {
             call.reject("Bluetooth-Berechtigungen nicht erteilt");
         }
+    }
+
+    // Ask for POST_NOTIFICATIONS (Android 13+) so the foreground-service notification
+    // is visible, then start — regardless of the grant (the service still runs).
+    private void ensureNotifsThenStart(PluginCall call) {
+        if (getPermissionState("notifications") != com.getcapacitor.PermissionState.GRANTED) {
+            requestPermissionForAlias("notifications", call, "notifStartCallback");
+            return;
+        }
+        startService(call);
+    }
+
+    @PermissionCallback
+    private void notifStartCallback(PluginCall call) { startService(call); }
+
+    /** Force ("run in background") or release the persistent foreground service. */
+    @PluginMethod
+    public void setBackground(PluginCall call) {
+        boolean enabled = call.getBoolean("enabled", false);
+        if (enabled && getPermissionState("notifications") != com.getcapacitor.PermissionState.GRANTED) {
+            requestPermissionForAlias("notifications", call, "notifBgCallback");
+            return;
+        }
+        applyBackground(call, enabled);
+    }
+
+    @PermissionCallback
+    private void notifBgCallback(PluginCall call) { applyBackground(call, true); }
+
+    private void applyBackground(PluginCall call, boolean enabled) {
+        Intent i = new Intent(getContext(), AccessoryBleService.class);
+        i.setAction(AccessoryBleService.ACTION_KEEPALIVE);
+        i.putExtra(AccessoryBleService.EXTRA_ENABLED, enabled);
+        if (enabled) ContextCompat.startForegroundService(getContext(), i);
+        else getContext().startService(i);
+        call.resolve();
     }
 
     private void startService(PluginCall call) {
