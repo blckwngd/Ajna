@@ -432,10 +432,32 @@ function injectHighlightStyles() {
        Interaktions-Pulse bleiben als bewusstes Feedback erhalten. */
     .map-marker {
       white-space: nowrap;
+      font-size: 12.5px;
+      font-weight: 600;
+      /* Textfarbe + Halo kommen aus den Theme-Regeln unten (an Basemap gekoppelt). */
+    }
+    /* Label-Kontrast an die aktive Basemap koppeln: dunkler Text + heller Halo
+       auf heller Karte, heller Text + dunkler Halo auf dunkler Karte. Bisher
+       erbte der Text das helle Shell-Weiß und verschwand auf der hellen OSM-Karte. */
+    #map.map-theme-light .map-marker {
+      color: #16181d;
       text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 2px #fff;
+    }
+    #map.map-theme-dark .map-marker {
+      color: #f2f4f7;
+      text-shadow: 0 0 3px #000, 0 0 3px #000, 0 0 2px #000;
     }
   `
   document.head.appendChild(style)
+}
+
+// Setzt die Theme-Klasse am Karten-Container (#map) → steuert den Label-Kontrast
+// (CSS in injectHighlightStyles) passend zur hellen/dunklen Basemap.
+function applyMapTheme(theme) {
+  const el = document.getElementById('map')
+  if (!el) return
+  el.classList.toggle('map-theme-dark', theme === 'dark')
+  el.classList.toggle('map-theme-light', theme !== 'dark')
 }
 
 // Eingeblendete Agent-Quellen (für den Interest-Area-Publish): alles, was im
@@ -545,10 +567,30 @@ async function init() {
 
   injectHighlightStyles()
 
-  window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  // Basemap: hell (OSM) oder dunkel (CARTO dark_all — frei, ohne API-Key). Der
+  // Layer-Umschalter (oben rechts) bietet beides an; die Wahl bleibt gemerkt.
+  // Der Label-Kontrast (injectHighlightStyles) folgt der aktiven Basemap.
+  const lightTiles = window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; OpenStreetMap contributors'
-  }).addTo(map)
+  })
+  const darkTiles = window.L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 20, subdomains: 'abcd',
+    attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+  })
+  let mapTheme = 'light'
+  try { if (localStorage.getItem('ajna_map_theme') === 'dark') mapTheme = 'dark' } catch {}
+  ;(mapTheme === 'dark' ? darkTiles : lightTiles).addTo(map)
+  applyMapTheme(mapTheme)
+  window.L.control.layers(
+    { 'Karte hell': lightTiles, 'Karte dunkel': darkTiles },
+    null, { position: 'topright' }
+  ).addTo(map)
+  map.on('baselayerchange', e => {
+    const theme = e.layer === darkTiles ? 'dark' : 'light'
+    try { localStorage.setItem('ajna_map_theme', theme) } catch {}
+    applyMapTheme(theme)
+  })
 
   const editorSection = document.getElementById('editorSection')
   editorUI = new EditorUI({
