@@ -567,9 +567,11 @@ async function init() {
 
   injectHighlightStyles()
 
-  // Basemap: hell (OSM) oder dunkel (CARTO dark_all — frei, ohne API-Key). Der
-  // Layer-Umschalter (oben rechts) bietet beides an; die Wahl bleibt gemerkt.
-  // Der Label-Kontrast (injectHighlightStyles) folgt der aktiven Basemap.
+  // Basemaps (alle frei, ohne API-Key): hell (OSM), dunkel (CARTO dark_all),
+  // Satellit (Esri World Imagery). Der Layer-Umschalter (oben rechts) bietet alle
+  // an; die Wahl bleibt gemerkt. Der Label-Kontrast (injectHighlightStyles) folgt
+  // dem `contrast` der aktiven Basemap — Satellit nutzt den dunklen Kontrast
+  // (heller Text + dunkler Halo liest sich auf Luftbildern am besten).
   const lightTiles = window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; OpenStreetMap contributors'
@@ -578,18 +580,27 @@ async function init() {
     maxZoom: 20, subdomains: 'abcd',
     attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
   })
-  let mapTheme = 'light'
-  try { if (localStorage.getItem('ajna_map_theme') === 'dark') mapTheme = 'dark' } catch {}
-  ;(mapTheme === 'dark' ? darkTiles : lightTiles).addTo(map)
-  applyMapTheme(mapTheme)
-  window.L.control.layers(
-    { 'Karte hell': lightTiles, 'Karte dunkel': darkTiles },
-    null, { position: 'topright' }
-  ).addTo(map)
+  // Esri World Imagery — Achtung: Tile-URL in Reihenfolge {z}/{y}/{x}.
+  const satTiles = window.L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 19,
+    attribution: 'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'
+  })
+  const BASEMAPS = {
+    light:     { label: 'Karte hell',   layer: lightTiles, contrast: 'light' },
+    dark:      { label: 'Karte dunkel', layer: darkTiles,  contrast: 'dark'  },
+    satellite: { label: 'Satellit',     layer: satTiles,   contrast: 'dark'  },
+  }
+  let mapBase = 'light'
+  try { const s = localStorage.getItem('ajna_map_theme'); if (s && BASEMAPS[s]) mapBase = s } catch {}
+  BASEMAPS[mapBase].layer.addTo(map)
+  applyMapTheme(BASEMAPS[mapBase].contrast)
+  const baseLayers = {}
+  for (const key of Object.keys(BASEMAPS)) baseLayers[BASEMAPS[key].label] = BASEMAPS[key].layer
+  window.L.control.layers(baseLayers, null, { position: 'topright' }).addTo(map)
   map.on('baselayerchange', e => {
-    const theme = e.layer === darkTiles ? 'dark' : 'light'
-    try { localStorage.setItem('ajna_map_theme', theme) } catch {}
-    applyMapTheme(theme)
+    const key = Object.keys(BASEMAPS).find(k => BASEMAPS[k].layer === e.layer) || 'light'
+    try { localStorage.setItem('ajna_map_theme', key) } catch {}
+    applyMapTheme(BASEMAPS[key].contrast)
   })
 
   const editorSection = document.getElementById('editorSection')
