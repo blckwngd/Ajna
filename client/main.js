@@ -566,6 +566,58 @@ async function init() {
   // Klick auf ein 3D-Objekt:
   //   • Desktop → DOM-Kontextmenü an Cursor-Position (wie gehabt)
   //   • XR     → In-World-Menü (DOM ist unsichtbar)
+  // Touch-Selektion mit Toleranz (analog zum Stab-Zeigemodus): weit entfernte
+  // Objekte projizieren winzig, ein exakter Ray-Pick geht daneben. Fällt der
+  // exakte Pick aus, wählen wir das Objekt, dessen projiziertes Zentrum dem Tap
+  // am nächsten liegt (innerhalb eines Fingerradius). Tie-Break: klar näher am
+  // Tap gewinnt; bei ~gleicher Bildschirm-Nähe das dem Spieler nähere Objekt.
+  const TOUCH_TOLERANCE_CSS = 44   // Fingerradius in CSS-Pixeln
+  const SCREEN_TIE_BAND = 14       // "gleich nah am Tap" (CSS-px) → Weltnähe entscheidet
+
+  const objectWorldCenter = (root) => {
+    try {
+      const { min, max } = root.getHierarchyBoundingVectors(true)
+      if (min && max && Number.isFinite(min.x) && Number.isFinite(max.x)) {
+        return BABYLON.Vector3.Center(min, max)
+      }
+    } catch { /* leere Hierarchie → Fallback unten */ }
+    return root.getAbsolutePosition ? root.getAbsolutePosition() : root.position
+  }
+
+  const pickGameObjectTolerant = (px, py) => {
+    const cam = scene.activeCamera
+    if (!cam) return null
+    const rw = engine.getRenderWidth(), rh = engine.getRenderHeight()
+    // pointerX/Y + Vector3.Project liegen im Render-Pixel-Raum; Toleranz in
+    // CSS-px → mit dem Render/CSS-Verhältnis skalieren (DPI-unabhängig).
+    const dpr = rw / (canvas.clientWidth || rw)
+    const tol = TOUCH_TOLERANCE_CSS * dpr
+    const band = SCREEN_TIE_BAND * dpr
+    const vp = cam.viewport.toGlobal(rw, rh)
+    const transform = scene.getTransformMatrix()
+    const camPos = cam.globalPosition
+    const fwd = cam.getForwardRay().direction
+    const hits = []
+    objectMap.forEach(go => {
+      const root = go?.root
+      if (!root || (root.isEnabled && !root.isEnabled())) return
+      const pos = objectWorldCenter(root)
+      if (!pos) return
+      if (BABYLON.Vector3.Dot(pos.subtract(camPos), fwd) <= 0) return   // hinter der Kamera
+      const proj = BABYLON.Vector3.Project(pos, BABYLON.Matrix.Identity(), transform, vp)
+      if (!Number.isFinite(proj.x) || !Number.isFinite(proj.y)) return
+      const screenDist = Math.hypot(proj.x - px, proj.y - py)
+      if (screenDist > tol) return
+      hits.push({ go, screenDist, worldDist: BABYLON.Vector3.Distance(camPos, pos) })
+    })
+    if (!hits.length) return null
+    hits.sort((a, b) =>
+      Math.abs(a.screenDist - b.screenDist) > band
+        ? a.screenDist - b.screenDist    // klar näher am Tap gewinnt (exakter getroffen)
+        : a.worldDist - b.worldDist)      // ~gleich nah → das dem Spieler nähere
+    return hits[0].go
+  }
+
   scene.onPointerObservable.add(eventData => {
     if (eventData.type !== BABYLON.PointerEventTypes.POINTERTAP) return
 
@@ -580,7 +632,9 @@ async function init() {
     const pickInfo = scene.pick(scene.pointerX, scene.pointerY,
       mesh => !!mesh.metadata?.gameObject
     )
-    const go = pickInfo?.hit ? pickInfo.pickedMesh?.metadata?.gameObject : null
+    let go = pickInfo?.hit ? pickInfo.pickedMesh?.metadata?.gameObject : null
+    // Exakter Pick daneben (kleines/fernes Objekt)? → toleranter Fallback.
+    if (!go) go = pickGameObjectTolerant(scene.pointerX, scene.pointerY)
     if (!go?.name) return
 
     const record = ajnaManager.objectMap.get(go.id)
