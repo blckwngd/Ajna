@@ -20,6 +20,7 @@
     "wigle": "node agents/wigle-bridge.mjs",
     "wand-agent": "node agents/wand-agent.mjs",
     "director": "node agents/world-director.mjs",
+    "ha-bridge": "node agents/homeassistant-bridge.mjs",
     "uwb-anchors": "node agents/uwb-anchors.mjs",
     "mobile:sync": "webpack && cap sync android",
     "mobile:run": "webpack && node scripts/mobile-run.mjs",
