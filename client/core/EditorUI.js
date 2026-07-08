@@ -139,12 +139,12 @@ export class EditorUI {
                 <option value="msl">über Normalnull (AMSL)</option>
               </select>
               <label for="scale">Größe</label>
-              <input id="scale" name="scale" type="number" step="0.1" min="0.01" value="1" style="justify-self:start;width:90px">
+              <input id="scale" name="scale" type="number" step="any" min="0.01" value="1" style="justify-self:start;width:90px">
               <label for="rotX">Rotation (°)</label>
               <span class="ed-rot-cell">
-                <input id="rotX" name="rotX" type="number" step="1" value="0" title="X — Neigung">
-                <input id="rotY" name="rotY" type="number" step="1" value="0" title="Y — Drehung (Kompass)">
-                <input id="rotZ" name="rotZ" type="number" step="1" value="0" title="Z — Roll">
+                <input id="rotX" name="rotX" type="number" step="any" value="0" title="X — Neigung">
+                <input id="rotY" name="rotY" type="number" step="any" value="0" title="Y — Drehung (Kompass)">
+                <input id="rotZ" name="rotZ" type="number" step="any" value="0" title="Z — Roll">
               </span>
               <label for="emoji">Symbol</label>
               <input id="emoji" name="emoji" type="text" maxlength="8" placeholder="z. B. 💡" style="justify-self:start;width:90px">
