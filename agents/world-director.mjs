@@ -281,7 +281,12 @@ function buildSpawn(archetype) {
   if (model) {
     spawn.appearance = { gltf: MODEL_BASE + model }
     if (sizeScale !== 1) spawn.appearance.scale = sizeScale
-    if (archetype === 'diamond') spawn.appearance.color = '#8fe3ff'   // Diamant-Cyan (untexturiert → gefärbt)
+    if (archetype === 'diamond') {
+      spawn.appearance.color = '#8fe3ff'   // Diamant-Cyan (untexturiert → gefärbt)
+      spawn.appearance.emoji = '💎'         // 2D-Karten-Symbol
+      spawn.appearance.opacity = 0.7        // leicht transparent (3D)
+      spawn.appearance.spin = 45            // langsame Y-Rotation (Grad/s, rein kosmetisch)
+    }
   }
   return spawn
 }

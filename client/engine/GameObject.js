@@ -150,6 +150,9 @@ export class GameObject {
     // Agent-definierte Darstellung (appearance). Im AR-Viewer gewinnt ein
     // gültiges gltf; sonst dient appearance (shape/color) als Fallback-Look.
     this._appearance = appearanceOf(data)
+    // Kosmetischer Spin (appearance.spin = Grad/s um die Y-Achse) — rein lokal,
+    // nicht synchronisiert.
+    this._spinRad = (Number(this._appearance?.spin) || 0) * Math.PI / 180
 
     // Immer einen Platzhalter — das Modell-Loading ist ein nice-to-have,
     // das Verhalten der Szene darf davon nicht abhängen.
@@ -242,7 +245,15 @@ export class GameObject {
     // Transformation verloren — Effekt: "nur Teil sichtbar, verzerrt".
     const importRoot = result.meshes[0]
     if (importRoot) {
-      importRoot.parent = this.root
+      // Optionaler Spin: Container zwischen root und Modell, damit die
+      // kosmetische Y-Rotation die geo-Rotation auf root nicht stört.
+      if (this._spinRad) {
+        this._spinNode = new BABYLON.TransformNode(`spin_${this.id}`, this.scene)
+        this._spinNode.parent = this.root
+        importRoot.parent = this._spinNode
+      } else {
+        importRoot.parent = this.root
+      }
       this.#normalizeModelSize(importRoot, url)
     }
 
@@ -259,7 +270,8 @@ export class GameObject {
     this.skeletons = result.skeletons || []
     this._activeAnim = null
 
-    this.#applyModelColor()   // untexturierte Materialien mit appearance.color einfärben
+    this.#applyModelColor()     // untexturierte Materialien mit appearance.color einfärben
+    this.#applyModelOpacity()   // appearance.opacity → Material-Transparenz (alle Materialien)
 
     // Bevorzugt die im animation_state vermerkte AnimationGroup starten.
     // Fallback: erste Group (Skinned Modelle ohne laufende Animation
@@ -289,6 +301,19 @@ export class GameObject {
       if (textures.length > 0) continue                     // texturiert → Look behalten
       if ("albedoColor" in mat) mat.albedoColor = c         // PBRMaterial (GLB-Standard)
       else if ("diffuseColor" in mat) mat.diffuseColor = c  // StandardMaterial
+    }
+  }
+
+  // appearance.opacity (0..1) → Material-Transparenz für ALLE Modell-Materialien
+  // (auch texturierte). < 1 aktiviert Alpha-Blending.
+  #applyModelOpacity() {
+    const op = Number(this._appearance?.opacity)
+    if (!Number.isFinite(op) || op >= 1 || op < 0) return
+    for (const mesh of this.meshes || []) {
+      const mat = mesh.material
+      if (!mat) continue
+      mat.alpha = op
+      if ("transparencyMode" in mat) mat.transparencyMode = 2   // MATERIAL_ALPHABLEND
     }
   }
 
@@ -624,6 +649,9 @@ export class GameObject {
   }
 
   update(delta) {
+
+    // Kosmetischer Spin um die Y-Achse (rein lokal, unsynchronisiert).
+    if (this._spinNode && this._spinRad) this._spinNode.rotation.y += this._spinRad * delta
 
     // Smoother VOR den Components abtasten, damit GeospatialComponent.update
     // im selben Frame mit den frisch interpolierten lat/lon arbeitet.

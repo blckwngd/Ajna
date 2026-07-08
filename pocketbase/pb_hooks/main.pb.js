@@ -218,9 +218,21 @@ routerAdd("POST", "/api/objects/{id}/pickup", (e) => {
     const isOwner = obj.get("owner") === user.id
     let ownerChanged = false
     if (!isOwner) {
+      // PB-JSVM liefert JSON-Felder je nach Version als String ODER als
+      // Byte-/Zeichen-Array (JsonRaw) — beides robust nach Objekt parsen, sonst
+      // ist state.portable undefined und Loot wird fälschlich abgelehnt.
       let state = obj.get("state")
-      if (typeof state === "string") { try { state = JSON.parse(state) } catch (_) { state = {} } }
-      const portable = state && typeof state === "object" && state.portable === true
+      if (typeof state === "string") {
+        try { state = JSON.parse(state) } catch (_) { state = {} }
+      } else if (Array.isArray(state)) {
+        try {
+          const s = (state.length && typeof state[0] === "number")
+            ? String.fromCharCode.apply(null, state)
+            : state.join("")
+          state = JSON.parse(s)
+        } catch (_) { state = {} }
+      }
+      const portable = state && typeof state === "object" && !Array.isArray(state) && state.portable === true
       const eff = resolveEffective(user, obj)
       const canSee = (eff.rights || []).indexOf("view") !== -1
       if (!portable || !canSee) {
