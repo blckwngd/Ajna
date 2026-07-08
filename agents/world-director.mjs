@@ -163,7 +163,8 @@ const NAME_GEN = {
   animal: () => pick(NAME_POOLS.animal),
   dragon: () => `${pick(NAME_POOLS.dragonA)}${pick(NAME_POOLS.dragonB)}`,
   item:   () => `${pick(NAME_POOLS.itemAdj)} ${pick(NAME_POOLS.itemN)}`,
-  hint:   () => 'Hinweis'
+  hint:   () => 'Hinweis',
+  diamond: () => 'Diamant'
 }
 
 // Beschreibung (Top-Level-Feld), die "examine" ausgibt. Prozedural wie Namen.
@@ -182,7 +183,8 @@ const DESCRIPTION_GEN = {
   animal: (name) => `Ein wildlebendes Tier${name ? ` — ${name}` : ''}, das sich am liebsten auf Freiflächen aufhält.`,
   dragon: () => 'Ein fliegendes Wesen, das hoch über den Dächern seine Bahnen zieht.',
   item:   () => 'Ein Gegenstand. Aktuell ohne Funktion — vielleicht später aufsammelbar.',
-  hint:   () => pick(HINT_LINES)
+  hint:   () => pick(HINT_LINES),
+  diamond: () => 'Ein funkelnder Diamant. Einsammeln und stapeln — später wertvoll.'
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -197,7 +199,11 @@ const ARCHETYPES = {
   animal: { count: 2, actions: [{ key: 'feed', label: 'Füttern' }, { key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: false },
   dragon: { count: 1, actions: [{ key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: true  },
   item:   { count: 2, actions: [],                                         initialAnim: 'idle', flying: false },
-  hint:   { count: 1, actions: [{ key: 'examine', label: 'Lesen' }],       initialAnim: 'idle', flying: false }
+  hint:   { count: 1, actions: [{ key: 'examine', label: 'Lesen' }],       initialAnim: 'idle', flying: false },
+  // Diamanten: bewusst SELTEN (kleiner count), einsammelbar + stapelbar. Später
+  // Zahlungsmittel / Loot / NPC-Belohnung. Kein explizites collect in actions —
+  // portable=true blendet „🎒 Einsammeln" ohnehin ein.
+  diamond: { count: 3, actions: [],                                        initialAnim: null,  flying: false }
 }
 const actionKeys = a => ARCHETYPES[a].actions.map(x => x.key)
 
@@ -215,7 +221,8 @@ const MODEL_POOL = {
   animal: ['Fox.glb', 'Horse.glb', 'Flamingo.glb', 'Stork.glb', 'Parrot.glb'],
   dragon: ['Dragon.glb'],
   item:   ['Sword.glb', 'TreasureChest.glb'],
-  hint:   []   // kein Modell → Viewer nutzt den appearance-/Typ-Platzhalter
+  hint:   [],  // kein Modell → Viewer nutzt den appearance-/Typ-Platzhalter
+  diamond: ['Diamond.glb']
 }
 // Vögel wirken in der Luft natürlicher → leichte Flughöhe, auch wenn der
 // Archetyp (animal) sonst am Boden ist.
@@ -236,6 +243,7 @@ function buildSpawn(archetype) {
   // Flughöhe: echter Flieger (Drache) hoch, Vogel-Modelle niedrig, sonst Boden.
   const altitude = arch.flying ? randInt(30, 80)
                  : (model && FLYING_MODELS.has(model)) ? randInt(8, 25)
+                 : archetype === 'diamond' ? 0.6        // leicht schwebend, gut sichtbar
                  : 0
   // Tier-Name IMMER passend zum gewählten Modell (+ optionales Adjektiv, das die
   // Größe beeinflussen kann). Übrige Archetypen behalten ihre Namensgeneratoren.
@@ -256,6 +264,7 @@ function buildSpawn(archetype) {
   }
   if (archetype === 'npc')  state.dialogs = sample(DIALOG_LINES, 4)   // Reihe zufälliger Antworten
   if (archetype === 'hint') state.hint   = pick(HINT_LINES)
+  if (archetype === 'diamond') { state.stackable = true; state.portable = true }   // einsammel-/stapelbar
 
   const spawn = {
     name,
@@ -272,6 +281,7 @@ function buildSpawn(archetype) {
   if (model) {
     spawn.appearance = { gltf: MODEL_BASE + model }
     if (sizeScale !== 1) spawn.appearance.scale = sizeScale
+    if (archetype === 'diamond') spawn.appearance.color = '#8fe3ff'   // Diamant-Cyan (untexturiert → gefärbt)
   }
   return spawn
 }

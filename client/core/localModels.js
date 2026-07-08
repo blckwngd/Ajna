@@ -5,6 +5,7 @@
 // Listing zur Laufzeit — Webpack/Caddy liefern die Dateien einzeln aus).
 export const LOCAL_MODELS = [
   'CesiumMan.glb',
+  'Diamond.glb',
   'Dragon.glb',
   'Flamingo.glb',
   'Fox.glb',

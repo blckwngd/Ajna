@@ -108,7 +108,22 @@ export class InventoryUI {
       empty.textContent = 'Inventar leer — Objekte über „Einsammeln" aufnehmen.'
       this._itemsEl.appendChild(empty)
     } else {
-      for (const rec of items) this._itemsEl.appendChild(this._itemTile(rec))
+      // Stapelbare Items (state.stackable) nach Name+Modell gruppieren → EINE
+      // Kachel mit ×N-Badge; alles andere einzeln. Aktionen wirken auf eine
+      // Instanz (das Repräsentanten-Objekt) — Platzieren/Löschen zählt den Stapel
+      // beim nächsten Render runter.
+      const stacks = new Map()
+      const singles = []
+      for (const rec of items) {
+        if (rec.state?.stackable) {
+          const key = (rec.name || '') + '|' + (rec.appearance?.gltf || '')
+          const s = stacks.get(key) || { rep: rec, count: 0 }
+          s.count++
+          stacks.set(key, s)
+        } else singles.push(rec)
+      }
+      for (const rec of singles) this._itemsEl.appendChild(this._itemTile(rec))
+      for (const s of stacks.values()) this._itemsEl.appendChild(this._itemTile(s.rep, s.count))
     }
 
     // Geräte-Kacheln (optional)
@@ -122,12 +137,13 @@ export class InventoryUI {
     this._renderFoot()
   }
 
-  _itemTile(rec) {
+  _itemTile(rec, count = 1) {
     const tile = document.createElement('div')
     tile.className = 'ajna-inv-slot' + (rec.id === this._selectedId ? ' selected' : '')
     tile.draggable = true
-    tile.title = rec.name || rec.id
-    tile.innerHTML = `<span class="ajna-inv-emoji">${iconFor(rec)}</span><span class="ajna-inv-name"></span>`
+    tile.title = count > 1 ? `${rec.name || rec.id} ×${count}` : (rec.name || rec.id)
+    const badge = count > 1 ? `<span class="ajna-inv-badge">×${count}</span>` : ''
+    tile.innerHTML = `<span class="ajna-inv-emoji">${iconFor(rec)}</span><span class="ajna-inv-name"></span>${badge}`
     tile.querySelector('.ajna-inv-name').textContent = rec.name || rec.id
     tile.addEventListener('click', () => {
       this._selectedId = this._selectedId === rec.id ? null : rec.id
@@ -258,10 +274,16 @@ export class InventoryUI {
         gap: 8px; margin-bottom: 12px;
       }
       .ajna-inv-slot {
+        position: relative;
         display: flex; flex-direction: column; align-items: center; gap: 4px;
         padding: 8px 4px; min-height: 78px; cursor: pointer; user-select: none;
         background: rgba(255,255,255,0.04); border: 1px solid #3a3a44; border-radius: 8px;
         text-align: center;
+      }
+      .ajna-inv-badge {
+        position: absolute; top: 3px; right: 4px;
+        background: #c9a24b; color: #1a1a1a; font: 700 10px/15px system-ui, sans-serif;
+        border-radius: 8px; padding: 0 5px; min-width: 15px;
       }
       .ajna-inv-slot:hover { background: rgba(255,255,255,0.08); }
       .ajna-inv-slot.selected { border-color: #c9a24b; box-shadow: 0 0 0 1px #c9a24b inset; }

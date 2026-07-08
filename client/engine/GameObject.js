@@ -16,6 +16,7 @@ const MODEL_TARGET_HEIGHT = {
   "Flamingo.glb": 1.3,
   "Stork.glb": 1.1,
   "Parrot.glb": 0.35,
+  "Diamond.glb": 0.4,
 }
 
 // Aktion → mögliche Namen einer Reaktions-Animation (Teilstring, case-insensitiv).

@@ -22,6 +22,7 @@ bleiben unverändert.
 | `animal` | Fox, Horse, Flamingo, Stork, Parrot (Vögel mit leichter Flughöhe) |
 | `dragon` | Dragon (hohe Flughöhe) |
 | `item`   | Sword, TreasureChest |
+| `diamond`| Diamond (selten, einsammel-/stapelbar) |
 | `hint`   | — (kein Modell → appearance-/Typ-Platzhalter) |
 
 > **Lizenz/Attribution wird später finalisiert.** Hier sind die **Quellen**
@@ -45,6 +46,7 @@ bleiben unverändert.
 | `Dragon.glb` | dragon | – (rigged) | Poly Pizza · „Dragon Rigged" |
 | `Sword.glb` | item | – | Poly Pizza |
 | `TreasureChest.glb` | item | – | Poly Pizza |
+| `Diamond.glb` | diamond | – | Poly Pizza · Quaternius „Gem Green" (CC0) |
 
 ## Quellen (für Herkunft, Lizenz, Attribution + mehr Modelle)
 
@@ -61,6 +63,7 @@ bleiben unverändert.
   - Dragon: <https://poly.pizza/m/WIOTISRjeX>
   - Sword: <https://poly.pizza/m/9lLmH8Et4K>
   - TreasureChest: <https://poly.pizza/m/O72u4Drp8k>
+  - Diamond (Quaternius „Gem Green", CC0): <https://poly.pizza/m/kbgiCMzdxg>
 
 ## Bewusst weggelassen / entfernt
 
