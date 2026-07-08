@@ -41,6 +41,8 @@ import { ObjectActions } from "./core/ObjectActions.js"
 import { InWorldActionMenu } from "./core/InWorldActionMenu.js"
 import { Toast } from "./core/Toast.js"
 import { interactionReply, isCollectAction } from "./core/InteractionReply.js"
+import { InventoryUI, DRAG_MIME } from "./core/InventoryUI.js"
+import { inventoryDevices } from "./core/inventoryDevices.js"
 import { spawnRandomAndEdit } from "./core/SpawnHere.js"
 import { CameraComponent } from "./engine/components/CameraComponent.js"
 import { DebugCameraComponent } from "./engine/components/DebugCameraComponent.js"
@@ -618,8 +620,73 @@ async function init() {
     return hits[0].go
   }
 
+  // Bildschirmpunkt → Boden-GPS (Ray gegen die y=0-Ebene). Für Inventar-
+  // Platzieren (Tipp) und Drag&Drop.
+  const _groundGeoAt = (px, py) => {
+    if (!geo.origin) return null
+    const ray = scene.createPickingRay(px, py, BABYLON.Matrix.Identity(), scene.activeCamera)
+    const groundPlane = BABYLON.Plane.FromPositionAndNormal(BABYLON.Vector3.Zero(), new BABYLON.Vector3(0, 1, 0))
+    const dist = ray.intersectsPlane(groundPlane)
+    if (dist === null || dist < 0) return null
+    const point = ray.origin.add(ray.direction.scale(dist))
+    return geo.toWorld(point.x, point.y, point.z)
+  }
+
+  // Inventar-Platzieren: Tipp-Modus (nächster Tap legt das gewählte Objekt ab).
+  let _placingRecord = null
+  const _placeRecordAt = async (rec, geoPos) => {
+    if (!rec || !geoPos) return
+    try { await ajnaManager.place(rec.id, { lat: geoPos.lat, lon: geoPos.lon, altitude: 0 }) }
+    catch (err) {
+      if (!_toast) _toast = new Toast()
+      _toast.show('Platzieren fehlgeschlagen: ' + (err?.response?.error || err?.message || err), { title: 'Platzieren' })
+    }
+  }
+
+  const inventory = new InventoryUI({
+    ajna: ajnaManager,
+    editorUI,
+    container: document.querySelector('.shell-view[data-view="ar"]') || document.body,
+    onExamine: (rec) => {
+      if (!_toast) _toast = new Toast()
+      _toast.show(interactionReply(rec, 'examine', rec.name), { title: rec.name || 'Objekt' })
+      _announcer?.interaction(rec, 'examine')
+    },
+    onPlace: (rec) => {
+      _placingRecord = rec
+      if (!_toast) _toast = new Toast()
+      _toast.show(`Tippe in die Szene, um „${rec.name || 'Objekt'}" abzulegen`, { title: 'Platzieren' })
+    },
+    getDevices: () => inventoryDevices(accessories),
+  })
+  accessories.wand?.onStatusChange?.(() => inventory.refresh())
+  accessories.uwb?.onStatusChange?.(() => inventory.refresh())
+
+  // Drag&Drop (Desktop): Item aus dem Inventar auf die AR-Szene ablegen.
+  canvas.addEventListener('dragover', (e) => {
+    if (Array.from(e.dataTransfer?.types || []).includes(DRAG_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }
+  })
+  canvas.addEventListener('drop', (e) => {
+    const id = e.dataTransfer?.getData(DRAG_MIME)
+    if (!id) return
+    e.preventDefault()
+    const rect = canvas.getBoundingClientRect()
+    const geoPos = _groundGeoAt(e.clientX - rect.left, e.clientY - rect.top)
+    const rec = ajnaManager.getObjectById(id)
+    if (rec && geoPos) _placeRecordAt(rec, geoPos)
+  })
+
   scene.onPointerObservable.add(eventData => {
     if (eventData.type !== BABYLON.PointerEventTypes.POINTERTAP) return
+
+    // Inventar-Platzieren aktiv? Nächster Tap legt das Objekt auf den Boden.
+    if (_placingRecord) {
+      const geoPos = _groundGeoAt(scene.pointerX, scene.pointerY)
+      const rec = _placingRecord
+      _placingRecord = null
+      if (geoPos) _placeRecordAt(rec, geoPos)
+      return
+    }
 
     // Wenn der Tap einen In-World-Button getroffen hat: hier nichts mehr
     // tun. InWorldActionMenu setzt skipNextObservers, aber wir prüfen

@@ -18,6 +18,8 @@ import { spawnRandomAndEdit } from "./core/SpawnHere.js"
 import { InterestArea } from "./core/InterestArea.js"
 import { setupMapGps } from "./core/MapGpsControl.js"
 import { getAccessoryHub } from "./core/AccessoryHub.js"
+import { InventoryUI, DRAG_MIME } from "./core/InventoryUI.js"
+import { inventoryDevices } from "./core/inventoryDevices.js"
 import { rayEndpointWgs84 } from "./core/PointingResolver.js"
 // Hinweis: Leaflet selbst (JS + CSS) wird via CDN-Tag in index*.html
 // geladen — kein npm-Bundle-Import noetig.
@@ -631,6 +633,46 @@ async function init() {
     onInteract: (record, key) =>
       handleMarkerInteract(record.id, { action: key, source: ajna.currentUser()?.id })
   })
+
+  // ── Inventar: Fenster + Platzieren (Tipp-Modus & Drag&Drop) ──
+  let _placing = null
+  const _placeAt = async (rec, latlng) => {
+    try { await ajna.place(rec.id, { lat: latlng.lat, lon: latlng.lng }) }
+    catch (err) { toast.show('Platzieren fehlgeschlagen: ' + (err?.response?.error || err?.message || err), { title: 'Platzieren' }) }
+  }
+  const _endPlacing = () => { _placing = null; if (window.map) window.map.getContainer().style.cursor = '' }
+  window.map.on('click', (e) => { if (_placing) { const r = _placing; _endPlacing(); _placeAt(r, e.latlng) } })
+
+  const mapEl = document.getElementById('map')
+  mapEl.addEventListener('dragover', (e) => {
+    if (Array.from(e.dataTransfer?.types || []).includes(DRAG_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }
+  })
+  mapEl.addEventListener('drop', (e) => {
+    const id = e.dataTransfer?.getData(DRAG_MIME)
+    if (!id) return
+    e.preventDefault()
+    const rec = ajna.getObjectById(id)
+    const latlng = window.map.mouseEventToLatLng(e)
+    if (rec && latlng) _placeAt(rec, latlng)
+  })
+
+  const inventory = new InventoryUI({
+    ajna,
+    editorUI,
+    container: document.querySelector('.shell-view[data-view="map"]') || document.body,
+    onExamine: (rec) => {
+      toast.show(interactionReply(rec, 'examine', rec.name), { title: rec.name || 'Objekt' })
+      _announcer?.interaction(rec, 'examine')
+    },
+    onPlace: (rec) => {
+      _placing = rec
+      window.map.getContainer().style.cursor = 'crosshair'
+      toast.show(`Tippe auf die Karte, um „${rec.name || 'Objekt'}" zu platzieren`, { title: 'Platzieren' })
+    },
+    getDevices: () => inventoryDevices(_hub),
+  })
+  _hub.wand?.onStatusChange?.(() => inventory.refresh())
+  _hub.uwb?.onStatusChange?.(() => inventory.refresh())
 
   await editorUI.init()
   mapUpdateMarkers(ajna.getObjectList())
