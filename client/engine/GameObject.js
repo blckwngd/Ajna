@@ -243,12 +243,17 @@ export class GameObject {
     if (importRoot) {
       importRoot.parent = this.root
       this.#normalizeModelSize(importRoot, url)
-      // Echten Schattenwurf registrieren (Figuren/Modelle) — der ShadowGenerator
-      // projiziert auf die Boden-Ebene (bei fliegenden Kreaturen korrekt am Boden).
-      if (this._castsShadow) this.scene._ajnaShadowGenerator?.addShadowCaster(importRoot, true)
     }
 
     this.meshes = result.meshes
+
+    // Echten Schattenwurf: jedes geladene Mesh (nicht nur __root__) als Caster
+    // registrieren. Der ShadowGenerator projiziert auf die Boden-Ebene — bei
+    // fliegenden Kreaturen landet der Schatten korrekt am Boden.
+    const sg = this.scene?._ajnaShadowGenerator
+    if (this._castsShadow && sg) {
+      for (const m of this.meshes) { try { sg.addShadowCaster(m) } catch {} }
+    }
     this.animationGroups = result.animationGroups || []
     this.skeletons = result.skeletons || []
     this._activeAnim = null

@@ -18,22 +18,29 @@ export function buildEnvironment(scene) {
   sun.intensity = 0.5
   sun.autoCalcShadowZBounds = true
 
+  // PCF statt Blur-Exponential: komponiert zuverlässig mit ShadowOnlyMaterial
+  // (Blur-ESM lässt den Schatten dort oft komplett verschwinden).
   const shadowGenerator = new BABYLON.ShadowGenerator(1024, sun)
-  shadowGenerator.useBlurExponentialShadowMap = true   // weiche Kanten
-  shadowGenerator.blurKernel = 16
-  shadowGenerator.setDarkness(0.5)                      // halbtransparenter Schatten
+  shadowGenerator.usePercentageCloserFiltering = true
+  shadowGenerator.filteringQuality = BABYLON.ShadowGenerator.QUALITY_MEDIUM
+  shadowGenerator.setDarkness(0.2)                     // deutlich sichtbar auf dem dunklen Grid
 
   // Unsichtbare Boden-Ebene bei y≈0, die NUR den Schatten zeigt
   // (ShadowOnlyMaterial) — funktioniert über dem Grid UND über Kamera-Passthrough
-  // (nur der Schatten dunkelt das Bild ab).
-  const shadowGround = BABYLON.MeshBuilder.CreateGround("shadowGround", { width: 1000, height: 1000 }, scene)
-  shadowGround.position.y = 0.01     // knapp über dem Grid gegen z-fighting
+  // (nur der Schatten dunkelt das Bild ab). Folgt der Kamera in X/Z, damit der
+  // Schatten auch nach größeren Sprüngen unter den Figuren bleibt.
+  const shadowGround = BABYLON.MeshBuilder.CreateGround("shadowGround", { width: 2000, height: 2000 }, scene)
+  shadowGround.position.y = 0.02     // knapp über dem Grid gegen z-fighting
   shadowGround.isPickable = false
   shadowGround.receiveShadows = true
   const som = new ShadowOnlyMaterial("shadowOnlyMat", scene)
   som.activeLight = sun
-  som.alpha = 0.5                    // Halbtransparenz des Schattens
+  som.alpha = 0.55                   // Transparenz des Schattens
   shadowGround.material = som
+  scene.onBeforeRenderObservable.add(() => {
+    const cam = scene.activeCamera
+    if (cam) { shadowGround.position.x = cam.globalPosition.x; shadowGround.position.z = cam.globalPosition.z }
+  })
 
 
   // Skybox
