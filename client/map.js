@@ -136,15 +136,26 @@ function mapUpdateMarkers(objects) {
     }
     if (!bounds.contains([obj.lat, obj.lon])) continue   // außerhalb Viewport → kein Marker
     keep.add(obj.id)
+    // Signatur der Darstellung: Name (Label) + appearance (Emoji/Farbe/Modell).
+    // Ändert sie sich, muss das Icon neu gebaut werden — sonst zeigt der Marker
+    // das alte Bild bis zum Reload.
+    const sig = JSON.stringify([obj.name, obj.appearance ?? null])
     try {
-      if (markerLayer.has(obj.id)) {
+      const m = markerLayer.get(obj.id)
+      if (m) {
         feedSmoother(obj)
-        // Kein bindPopup hier: der Popup-Inhalt ist als Funktion gebunden
-        // (siehe addMarker) und beim Öffnen automatisch aktuell. Das spart bei
-        // vielen Markern hunderte toFixed/bindPopup pro Reconcile.
+        if (m._ajnaSig !== sig) {   // Darstellung geändert → Marker neu aufbauen
+          removeMarker(obj.id)
+          addMarker(obj)
+          feedSmoother(obj)
+          const nm = markerLayer.get(obj.id); if (nm) nm._ajnaSig = sig
+        }
+        // sonst: Popup-Inhalt ist als Funktion gebunden (siehe addMarker) und
+        // beim Öffnen automatisch aktuell — kein bindPopup pro Reconcile.
       } else {
         addMarker(obj)
         feedSmoother(obj)
+        const nm = markerLayer.get(obj.id); if (nm) nm._ajnaSig = sig
       }
     } catch (err) {
       console.warn(`mapUpdateMarkers: marker für ${obj.id} fehlgeschlagen`, err)
@@ -619,7 +630,11 @@ async function init() {
     onManageServers: () => serverDialog.open(),
     onManageProfile: () => profileDialog.open(),
     onManageFilters: () => filterDialog.open(),
-    objectFilter: obj => agentFilters.matches(obj)
+    objectFilter: obj => agentFilters.matches(obj),
+    onSaved: (obj, err) => {
+      if (obj) toast.show('Änderungen übernommen', { title: obj.name || 'Objekt' })
+      else if (err) toast.show('Speichern fehlgeschlagen', { title: 'Editor' })
+    }
   })
 
   // Marker-Klick-Aktionen verdrahten, sobald die EditorUI als Sink für

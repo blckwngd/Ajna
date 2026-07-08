@@ -448,6 +448,11 @@ async function init() {
     onManageServers: () => serverDialog.open(),
     onManageProfile: () => profileDialog.open(),
     onManageFilters: () => filterDialog.open(),
+    onSaved: (obj, err) => {
+      if (!_toast) _toast = new Toast()
+      if (obj) _toast.show('Änderungen übernommen', { title: obj.name || 'Objekt' })
+      else if (err) _toast.show('Speichern fehlgeschlagen', { title: 'Editor' })
+    },
     // Open the editor panel when editing or creating an object (if minimized).
     onEditorActivate: () => _openArEditor(),
     onObjectSelected: obj => {
@@ -1332,10 +1337,16 @@ async function syncSceneObjects(scene, world, geo, objects) {
         continue
       }
       const existing = objectMap.get(obj.id)
-      if (existing) {
+      const sig = JSON.stringify(obj.appearance ?? null)
+      if (existing && existing._appearanceSig === sig) {
         existing.applyData(obj, geo)
       } else {
+        // Neu ODER Darstellung geändert (Farbe/Modell/Symbol/Größe) → (neu)
+        // aufbauen, damit Appearance-Änderungen SOFORT wirken (Modell-Reload).
+        // Position/Rotation liefen sonst über applyData.
+        if (existing) { unsubscribeInteract(obj.id); existing.dispose(); objectMap.delete(obj.id) }
         const go = await GameObject.createFromPBData(scene, obj, geo, true)
+        go._appearanceSig = sig
         objectMap.set(obj.id, go)
         // Stehendes Realtime-Abo nur für als realtime markierte Objekte (z. B.
         // interaktive NPCs), um Interaktionen ANDERER zu sehen. Sonst öffnete

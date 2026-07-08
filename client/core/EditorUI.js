@@ -5,7 +5,7 @@ import { randomHexColor } from './randomColor.js'
 const EXT_MODELS_KEY = 'ajna_allow_ext_models'
 
 export class EditorUI {
-  constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null, onManageGroups = null, onManageServers = null, onManageProfile = null, onManageFilters = null, onEditorActivate = null, objectFilter = null, onToggleArMode = null, getArMode = null }) {
+  constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null, onManageGroups = null, onManageServers = null, onManageProfile = null, onManageFilters = null, onEditorActivate = null, objectFilter = null, onToggleArMode = null, getArMode = null, onSaved = null }) {
     this.ajna = ajna
     this.container = container
     this.mode = mode
@@ -28,6 +28,9 @@ export class EditorUI {
     // der Schalter nicht gerendert (z. B. im Map-Editor).
     this.onToggleArMode = onToggleArMode
     this.getArMode = getArMode
+    // Optional: onSaved(obj|null, err?) — Host zeigt eine kurze Bestätigung
+    // (Toast) nach dem Speichern.
+    this.onSaved = onSaved
     // Optional: Hover-Callback (record, hovering: boolean) — wird vom AR-
     // Client zum Hervorheben im 3D-Raum, vom Map-Client zum Markieren
     // auf der Karte genutzt.
@@ -135,6 +138,14 @@ export class EditorUI {
                 <option value="ground">über Boden (AGL)</option>
                 <option value="msl">über Normalnull (AMSL)</option>
               </select>
+              <label for="scale">Größe</label>
+              <input id="scale" name="scale" type="number" step="0.1" min="0.01" value="1" style="justify-self:start;width:90px">
+              <label for="rotX">Rotation (°)</label>
+              <span class="ed-rot-cell">
+                <input id="rotX" name="rotX" type="number" step="1" value="0" title="X — Neigung">
+                <input id="rotY" name="rotY" type="number" step="1" value="0" title="Y — Drehung (Kompass)">
+                <input id="rotZ" name="rotZ" type="number" step="1" value="0" title="Z — Roll">
+              </span>
               <label for="emoji">Symbol</label>
               <input id="emoji" name="emoji" type="text" maxlength="8" placeholder="z. B. 💡" style="justify-self:start;width:90px">
               <label for="color">Farbe</label>
@@ -148,8 +159,6 @@ export class EditorUI {
               <input id="gltfUrl" name="gltfUrl" type="text" placeholder="https://…/modell.glb">
               <label for="portable">Aufnehmbar</label>
               <input id="portable" name="portable" type="checkbox" style="width:auto;justify-self:start;">
-              <label for="allowExtModels" title="Sicherheit: erlaubt das Verlinken externer Modell-URLs">Externe URLs</label>
-              <input id="allowExtModels" name="allowExtModels" type="checkbox" style="width:auto;justify-self:start;">
             </div>
             <label for="stateJson" class="ed-full-label">State (JSON)</label>
             <textarea id="stateJson" name="stateJson" rows="4" class="ed-json" spellcheck="false"></textarea>
@@ -335,6 +344,8 @@ export class EditorUI {
       .editor-panel .ed-modal .ed-grid { grid-template-columns: 96px 1fr; }
       .editor-panel .ed-color-cell { display: flex; align-items: center; gap: 8px; justify-self: start; }
       .editor-panel .ed-color-cell input[type=color] { width: 44px; height: 26px; padding: 0; }
+      .editor-panel .ed-rot-cell { display: flex; gap: 4px; justify-self: start; }
+      .editor-panel .ed-rot-cell input { width: 50px; }
       .editor-panel .ed-full-label { display: block; color: #aab; margin: 6px 0 2px; }
       .editor-panel .ed-json {
         width: 100%; box-sizing: border-box; background: #15151a; color: #cfe;
@@ -392,11 +403,13 @@ export class EditorUI {
       state.altitude_ref = this.editorForm.altitude_ref?.value === 'msl' ? 'msl' : 'ground'
       state.portable = !!this.editorForm.portable?.checked
 
+      const d2r = d => (parseFloat(d) || 0) * Math.PI / 180
       const data = {
         name: this.editorForm.name.value || `obj-${Date.now()}`,
         lat: parseFloat(this.editorForm.lat.value),
         lon: parseFloat(this.editorForm.lon.value),
         altitude: parseFloat(this.editorForm.altitude.value),
+        rotation: { x: d2r(this.editorForm.rotX.value), y: d2r(this.editorForm.rotY.value), z: d2r(this.editorForm.rotZ.value) },
         appearance: this._appearanceFromForm(),
         state
       }
@@ -406,11 +419,13 @@ export class EditorUI {
         obj = !id ? await this.ajna.createObject(data) : await this.ajna.updateObject(id, data)
       } catch (err) {
         this.setStatus('Speichern fehlgeschlagen: ' + (err?.response?.error || err?.message || err))
+        this.onSaved?.(null, err)
         return
       }
       this.fillEditor(obj)
       this.renderObjectList()
       this.setStatus('Objekt gespeichert')
+      this.onSaved?.(obj)   // Host zeigt eine kurze Bestätigung (Toast)
     })
 
     this.editorDeleteBtn.addEventListener('click', async () => {
@@ -581,7 +596,6 @@ export class EditorUI {
     sel.appendChild(new Option('(kein Modell)', ''))
     for (const m of LOCAL_MODELS) sel.appendChild(new Option(m.replace(/\.glb$/i, ''), m))
     sel.appendChild(new Option('Externe URL…', '__url__'))
-    if (this.editorForm.allowExtModels) this.editorForm.allowExtModels.checked = this._allowExt()
   }
 
   // Modell-Feld aus einem gltf-Wert füllen: lokales Modell → Dropdown, sonst
@@ -613,10 +627,6 @@ export class EditorUI {
     this.container.querySelector('#editorCloseBtn')?.addEventListener('click', () => this._closeEditor())
     this.editorOverlay?.addEventListener('click', (e) => { if (e.target === this.editorOverlay) this._closeEditor() })
     this.editorForm?.gltfSelect?.addEventListener('change', () => this._updateModelUrlVisibility())
-    this.editorForm?.allowExtModels?.addEventListener('change', (e) => {
-      try { localStorage.setItem(EXT_MODELS_KEY, e.target.checked ? '1' : '0') } catch {}
-      this._updateModelUrlVisibility()
-    })
   }
 
   _openEditor()  { if (this.editorOverlay) this.editorOverlay.hidden = false }
@@ -639,6 +649,10 @@ export class EditorUI {
     // Farbe (nur wenn aktiviert)
     if (f.colorOn.checked) ap.color = f.color.value
     else delete ap.color
+    // Größe (Skalar; wirkt über GameObject.#normalizeModelSize)
+    const scale = parseFloat(f.scale.value)
+    if (Number.isFinite(scale) && Math.abs(scale - 1) > 1e-6) ap.scale = scale
+    else delete ap.scale
     return ap
   }
 
@@ -657,6 +671,11 @@ export class EditorUI {
     const hasColor = typeof ap.color === 'string' && ap.color
     f.colorOn.checked = !!hasColor
     f.color.value = hasColor ? ap.color : '#888888'
+    f.scale.value = Number(ap.scale) || 1
+    const rad2deg = r => Math.round((Number(r) || 0) * 180 / Math.PI)
+    f.rotX.value = rad2deg(obj.rotation?.x)
+    f.rotY.value = rad2deg(obj.rotation?.y)
+    f.rotZ.value = rad2deg(obj.rotation?.z)
     this._setModelField(typeof ap.gltf === 'string' ? ap.gltf : '')
     f.stateJson.value = JSON.stringify(obj.state || {}, null, 2)   // voller State, editierbar
     this._editingAppearance = { ...ap }
@@ -683,6 +702,8 @@ export class EditorUI {
     f.emoji.value = ''
     f.colorOn.checked = true
     f.color.value = randomHexColor()
+    f.scale.value = 1
+    f.rotX.value = 0; f.rotY.value = 0; f.rotZ.value = 0
     this._setModelField('')
     f.stateJson.value = '{}'
     this._editingAppearance = {}

@@ -93,6 +93,20 @@ export class ProfileDialog {
         </p>
       </section>
 
+      <section class="prof-privacy">
+        <h4>Sicherheit</h4>
+        <label class="prof-share">
+          <input type="checkbox" data-role="allow-ext-models">
+          <span>Externe 3D-Modell-URLs erlauben</span>
+        </label>
+        <p class="prof-share-desc">
+          Erlaubt, Objekte mit Modellen von <strong>fremden Servern</strong> zu
+          verlinken und solche Modelle zu laden. Standardmäßig aus
+          (Missbrauchsschutz). Lokale Modelle und Modelle vom Herkunfts-Server
+          sind immer erlaubt.
+        </p>
+      </section>
+
       <h4>Standard-Berechtigungen</h4>
       <p class="prof-desc">
         Diese Berechtigungen werden auf <strong>jedes neue Objekt</strong>
@@ -158,6 +172,16 @@ export class ProfileDialog {
         InterestArea.setEnabled(share.checked)
         // Sofort-Effekt (publish/delete), wenn diese Ansicht einen Publisher hat.
         this.interestArea?.onToggle(share.checked)
+      })
+    }
+
+    // Sicherheit: globaler Schalter für externe 3D-Modell-URLs (Default aus).
+    // Gelesen von EditorUI (URL-Eingabe) und GameObject (Laden fremd-origin).
+    const ext = dlg.querySelector('[data-role="allow-ext-models"]')
+    if (ext) {
+      try { ext.checked = localStorage.getItem('ajna_allow_ext_models') === '1' } catch {}
+      ext.addEventListener('change', () => {
+        try { localStorage.setItem('ajna_allow_ext_models', ext.checked ? '1' : '0') } catch {}
       })
     }
 
