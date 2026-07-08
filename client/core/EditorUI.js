@@ -1,4 +1,8 @@
 import { injectServerBadgeStyles, renderServerBadge } from './ServerBadge.js'
+import { LOCAL_MODELS } from './localModels.js'
+import { randomHexColor } from './randomColor.js'
+
+const EXT_MODELS_KEY = 'ajna_allow_ext_models'
 
 export class EditorUI {
   constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null, onManageGroups = null, onManageServers = null, onManageProfile = null, onManageFilters = null, onEditorActivate = null, objectFilter = null, onToggleArMode = null, getArMode = null }) {
@@ -113,29 +117,49 @@ export class EditorUI {
         </section>
       ` : ''}
 
-      <section class="ed-section" id="sharedEditorSection">
-        <h4>Objekt-Editor</h4>
-        <form id="sharedEditorForm">
-          <input type="hidden" name="objectId">
-          <div class="ed-grid">
-            <label for="name">Name</label><input id="name" name="name" type="text" required>
-            <label for="lat">Lat</label><input id="lat" name="lat" type="number" step="0.000001" required>
-            <label for="lon">Lon</label><input id="lon" name="lon" type="number" step="0.000001" required>
-            <label for="altitude">Alt</label><input id="altitude" name="altitude" type="number" step="0.1" value="0">
-            <label for="altitude_ref">Höhe</label>
-            <select id="altitude_ref" name="altitude_ref">
-              <option value="ground">über Boden (AGL)</option>
-              <option value="msl">über Normalnull (AMSL)</option>
-            </select>
-            <label for="portable">Aufnehmbar</label>
-            <input id="portable" name="portable" type="checkbox" style="width:auto;justify-self:start;">
+      <div id="objectEditorOverlay" class="ed-modal-overlay" hidden>
+        <div class="ed-modal">
+          <div class="ed-modal-head">
+            <h4 id="objectEditorTitle">Objekt-Editor</h4>
+            <button type="button" id="editorCloseBtn" class="ed-modal-close" title="Schließen">✕</button>
           </div>
-          <div class="ed-buttons">
-            <button type="submit" class="ed-btn ed-btn-primary">Speichern</button>
-            <button id="editorDeleteBtn" type="button" class="ed-btn">Löschen</button>
-          </div>
-        </form>
-      </section>
+          <form id="sharedEditorForm">
+            <input type="hidden" name="objectId">
+            <div class="ed-grid">
+              <label for="name">Name</label><input id="name" name="name" type="text" required>
+              <label for="lat">Lat</label><input id="lat" name="lat" type="number" step="0.000001" required>
+              <label for="lon">Lon</label><input id="lon" name="lon" type="number" step="0.000001" required>
+              <label for="altitude">Alt</label><input id="altitude" name="altitude" type="number" step="0.1" value="0">
+              <label for="altitude_ref">Höhe</label>
+              <select id="altitude_ref" name="altitude_ref">
+                <option value="ground">über Boden (AGL)</option>
+                <option value="msl">über Normalnull (AMSL)</option>
+              </select>
+              <label for="emoji">Symbol</label>
+              <input id="emoji" name="emoji" type="text" maxlength="8" placeholder="z. B. 💡" style="justify-self:start;width:90px">
+              <label for="color">Farbe</label>
+              <span class="ed-color-cell">
+                <input id="colorOn" name="colorOn" type="checkbox" style="width:auto;margin:0">
+                <input id="color" name="color" type="color" value="#888888">
+              </span>
+              <label for="gltfSelect">3D-Modell</label>
+              <select id="gltfSelect" name="gltfSelect"></select>
+              <label for="gltfUrl" id="gltfUrlLabel">Modell-URL</label>
+              <input id="gltfUrl" name="gltfUrl" type="text" placeholder="https://…/modell.glb">
+              <label for="portable">Aufnehmbar</label>
+              <input id="portable" name="portable" type="checkbox" style="width:auto;justify-self:start;">
+              <label for="allowExtModels" title="Sicherheit: erlaubt das Verlinken externer Modell-URLs">Externe URLs</label>
+              <input id="allowExtModels" name="allowExtModels" type="checkbox" style="width:auto;justify-self:start;">
+            </div>
+            <label for="stateJson" class="ed-full-label">State (JSON)</label>
+            <textarea id="stateJson" name="stateJson" rows="4" class="ed-json" spellcheck="false"></textarea>
+            <div class="ed-buttons">
+              <button type="submit" class="ed-btn ed-btn-primary">Speichern</button>
+              <button id="editorDeleteBtn" type="button" class="ed-btn">Löschen</button>
+            </div>
+          </form>
+        </div>
+      </div>
 
       <section class="ed-section">
         <div class="ed-row ed-list-header">
@@ -154,6 +178,10 @@ export class EditorUI {
     this.statusEl = this.container.querySelector('#editorStatus')
     this.editorForm = this.container.querySelector('#sharedEditorForm')
     this.editorDeleteBtn = this.container.querySelector('#editorDeleteBtn')
+    this.editorOverlay = this.container.querySelector('#objectEditorOverlay')
+    this.editorTitle = this.container.querySelector('#objectEditorTitle')
+    this._populateModelSelect()
+    this._wireEditorModal()
     this.refreshBtn = this.container.querySelector('#editorRefreshBtn')
     this.objectListEl = this.container.querySelector('#editorObjectList')
     this.focusPlayerBtn = this.container.querySelector('#editorFocusPlayerBtn')
@@ -282,6 +310,38 @@ export class EditorUI {
       .editor-panel .ed-object-empty {
         padding: 6px; color: #777; font-style: italic; text-align: center;
       }
+      /* ── Objekt-Editor als Modal-Overlay (statt Seitenleiste) ── */
+      .editor-panel .ed-modal-overlay {
+        position: fixed; inset: 0; z-index: 5200; display: flex;
+        align-items: center; justify-content: center;
+        background: rgba(0,0,0,0.5); padding: 16px;
+        padding-bottom: calc(16px + var(--safe-bottom, env(safe-area-inset-bottom, 0px)));
+      }
+      /* höhere Spezifität als display:flex, sonst wäre das Modal immer offen */
+      .editor-panel .ed-modal-overlay[hidden] { display: none; }
+      .editor-panel .ed-modal {
+        width: min(460px, 96vw); max-height: 86vh; overflow-y: auto;
+        background: #1b1c22; border: 1px solid #3a3a44; border-radius: 12px;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.6); padding: 14px 16px;
+        text-align: left;
+      }
+      .editor-panel .ed-modal-head {
+        display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;
+      }
+      .editor-panel .ed-modal-head h4 { margin: 0; }
+      .editor-panel .ed-modal-close {
+        background: none; border: none; color: #bbb; font-size: 18px; cursor: pointer;
+      }
+      .editor-panel .ed-modal .ed-grid { grid-template-columns: 96px 1fr; }
+      .editor-panel .ed-color-cell { display: flex; align-items: center; gap: 8px; justify-self: start; }
+      .editor-panel .ed-color-cell input[type=color] { width: 44px; height: 26px; padding: 0; }
+      .editor-panel .ed-full-label { display: block; color: #aab; margin: 6px 0 2px; }
+      .editor-panel .ed-json {
+        width: 100%; box-sizing: border-box; background: #15151a; color: #cfe;
+        border: 1px solid #2a2a32; border-radius: 4px; padding: 6px;
+        font: 12px ui-monospace, Menlo, Consolas, monospace; resize: vertical; margin-bottom: 6px;
+      }
+      .editor-panel #gltfUrl[hidden], .editor-panel #gltfUrlLabel[hidden] { display: none; }
     `
     document.head.appendChild(style)
   }
@@ -316,23 +376,37 @@ export class EditorUI {
 
     this.editorForm.addEventListener('submit', async (ev) => {
       ev.preventDefault()
-      // Höhen-Referenz in state.altitude_ref; bei Update den vorhandenen State
-      // mergen, damit andere Felder (actions/dialog/realtime …) erhalten bleiben.
-      const ref = this.editorForm.altitude_ref?.value === 'msl' ? 'msl' : 'ground'
-      const portable = !!this.editorForm.portable?.checked
+      // State kommt aus dem JSON-Feld (frei editierbar); Höhe/Aufnehmbar bleiben
+      // eigene Felder und überschreiben die entsprechenden Keys.
+      let state
+      try {
+        state = this.editorForm.stateJson.value.trim() ? JSON.parse(this.editorForm.stateJson.value) : {}
+      } catch (err) {
+        this.setStatus('State-JSON ungültig: ' + err.message)
+        return
+      }
+      if (typeof state !== 'object' || Array.isArray(state) || state === null) {
+        this.setStatus('State muss ein JSON-Objekt sein')
+        return
+      }
+      state.altitude_ref = this.editorForm.altitude_ref?.value === 'msl' ? 'msl' : 'ground'
+      state.portable = !!this.editorForm.portable?.checked
+
       const data = {
         name: this.editorForm.name.value || `obj-${Date.now()}`,
         lat: parseFloat(this.editorForm.lat.value),
         lon: parseFloat(this.editorForm.lon.value),
         altitude: parseFloat(this.editorForm.altitude.value),
-        state: { ...(this._editingState || {}), altitude_ref: ref, portable }
+        appearance: this._appearanceFromForm(),
+        state
       }
       const id = this.editorForm.objectId.value
       let obj
-      if (!id) {
-        obj = await this.ajna.createObject(data)
-      } else {
-        obj = await this.ajna.updateObject(id, data)
+      try {
+        obj = !id ? await this.ajna.createObject(data) : await this.ajna.updateObject(id, data)
+      } catch (err) {
+        this.setStatus('Speichern fehlgeschlagen: ' + (err?.response?.error || err?.message || err))
+        return
       }
       this.fillEditor(obj)
       this.renderObjectList()
@@ -344,6 +418,7 @@ export class EditorUI {
       if (!id) return
       await this.ajna.deleteObject(id)
       this.editorForm.reset()
+      this._closeEditor()
       this.renderObjectList()
       this.setStatus('Objekt gelöscht')
     })
@@ -411,7 +486,7 @@ export class EditorUI {
         this.userDisplay.style.display = ''
         this.userDisplay.textContent = me?.name || me?.username || me?.email || '(eingeloggt)'
       }
-      this.container.querySelector('#sharedEditorSection').style.display = ''
+      // Editor ist jetzt ein Modal (öffnet on demand via fillEditor/startNewObjectAt).
     } else {
       this.loginBtn.style.display = 'inline-block'
       this.logoutBtn.style.display = 'none'
@@ -423,7 +498,7 @@ export class EditorUI {
         this.userDisplay.style.display = 'none'
         this.userDisplay.textContent = ''
       }
-      this.container.querySelector('#sharedEditorSection').style.display = 'none'
+      this._closeEditor?.()   // beim Logout ein offenes Editor-Modal schließen
     }
   }
 
@@ -496,42 +571,124 @@ export class EditorUI {
     }
   }
 
+  // ── Objekt-Editor-Modal: Helfer ──────────────────────────────────────
+  _allowExt() { try { return localStorage.getItem(EXT_MODELS_KEY) === '1' } catch { return false } }
+
+  _populateModelSelect() {
+    const sel = this.editorForm?.gltfSelect
+    if (!sel) return
+    sel.innerHTML = ''
+    sel.appendChild(new Option('(kein Modell)', ''))
+    for (const m of LOCAL_MODELS) sel.appendChild(new Option(m.replace(/\.glb$/i, ''), m))
+    sel.appendChild(new Option('Externe URL…', '__url__'))
+    if (this.editorForm.allowExtModels) this.editorForm.allowExtModels.checked = this._allowExt()
+  }
+
+  // Modell-Feld aus einem gltf-Wert füllen: lokales Modell → Dropdown, sonst
+  // (externe URL / nicht-Standard-Pfad) → „Externe URL…" + URL-Feld.
+  _setModelField(gltf) {
+    const f = this.editorForm
+    const file = gltf ? gltf.split(/[?#]/)[0].split('/').pop() : ''
+    if (!gltf) { f.gltfSelect.value = ''; f.gltfUrl.value = '' }
+    else if (LOCAL_MODELS.includes(file) && gltf === '/models/' + file) { f.gltfSelect.value = file; f.gltfUrl.value = '' }
+    else { f.gltfSelect.value = '__url__'; f.gltfUrl.value = gltf }
+    this._updateModelUrlVisibility()
+  }
+
+  // URL-Feld nur bei „Externe URL…" zeigen; Eingabe nur bei aktivem Toggle.
+  _updateModelUrlVisibility() {
+    const f = this.editorForm
+    const isUrl = f.gltfSelect.value === '__url__'
+    const allow = this._allowExt()
+    const label = this.container.querySelector('#gltfUrlLabel')
+    f.gltfUrl.hidden = !isUrl
+    if (label) label.hidden = !isUrl
+    f.gltfUrl.disabled = isUrl && !allow
+    f.gltfUrl.placeholder = (isUrl && !allow)
+      ? 'Externe URLs deaktiviert (Checkbox oben)'
+      : 'https://…/modell.glb'
+  }
+
+  _wireEditorModal() {
+    this.container.querySelector('#editorCloseBtn')?.addEventListener('click', () => this._closeEditor())
+    this.editorOverlay?.addEventListener('click', (e) => { if (e.target === this.editorOverlay) this._closeEditor() })
+    this.editorForm?.gltfSelect?.addEventListener('change', () => this._updateModelUrlVisibility())
+    this.editorForm?.allowExtModels?.addEventListener('change', (e) => {
+      try { localStorage.setItem(EXT_MODELS_KEY, e.target.checked ? '1' : '0') } catch {}
+      this._updateModelUrlVisibility()
+    })
+  }
+
+  _openEditor()  { if (this.editorOverlay) this.editorOverlay.hidden = false }
+  _closeEditor() { if (this.editorOverlay) this.editorOverlay.hidden = true }
+
+  // Baut das appearance-Objekt aus den Editor-Feldern (Merge mit dem Bestand,
+  // damit shape/ar/… erhalten bleiben). Leere Felder entfernen den Schlüssel.
+  _appearanceFromForm() {
+    const f = this.editorForm
+    const ap = { ...(this._editingAppearance || {}) }
+    // 3D-Modell
+    const sv = f.gltfSelect.value
+    let gltf = ''
+    if (sv === '__url__') gltf = this._allowExt() ? f.gltfUrl.value.trim() : ''
+    else if (sv) gltf = '/models/' + sv
+    if (gltf) ap.gltf = gltf; else delete ap.gltf
+    // Symbol
+    const emoji = (f.emoji.value || '').trim()
+    if (emoji) ap.emoji = emoji; else delete ap.emoji
+    // Farbe (nur wenn aktiviert)
+    if (f.colorOn.checked) ap.color = f.color.value
+    else delete ap.color
+    return ap
+  }
+
   fillEditor(obj) {
-    this.onEditorActivate?.()   // pop the editor panel open if minimized
-    this.editorForm.objectId.value = obj.id
-    this.editorForm.name.value = obj.name || ''
-    this.editorForm.lat.value = (obj.lat ?? 0).toFixed(6)
-    this.editorForm.lon.value = (obj.lon ?? 0).toFixed(6)
-    this.editorForm.altitude.value = (obj.altitude ?? 0).toFixed(2)
-    this.editorForm.altitude_ref.value = obj.state?.altitude_ref === 'msl' ? 'msl' : 'ground'
-    if (this.editorForm.portable) this.editorForm.portable.checked = !!obj.state?.portable
-    this._editingState = obj.state || {}   // beim Speichern mergen (State erhalten)
+    this.onEditorActivate?.()
+    const f = this.editorForm
+    f.objectId.value = obj.id
+    f.name.value = obj.name || ''
+    f.lat.value = (obj.lat ?? 0).toFixed(6)
+    f.lon.value = (obj.lon ?? 0).toFixed(6)
+    f.altitude.value = (obj.altitude ?? 0).toFixed(2)
+    f.altitude_ref.value = obj.state?.altitude_ref === 'msl' ? 'msl' : 'ground'
+    if (f.portable) f.portable.checked = !!obj.state?.portable
+    const ap = obj.appearance || {}
+    f.emoji.value = typeof ap.emoji === 'string' ? ap.emoji : ''
+    const hasColor = typeof ap.color === 'string' && ap.color
+    f.colorOn.checked = !!hasColor
+    f.color.value = hasColor ? ap.color : '#888888'
+    this._setModelField(typeof ap.gltf === 'string' ? ap.gltf : '')
+    f.stateJson.value = JSON.stringify(obj.state || {}, null, 2)   // voller State, editierbar
+    this._editingAppearance = { ...ap }
+    if (this.editorTitle) this.editorTitle.textContent = 'Objekt bearbeiten'
+    this._openEditor()
   }
 
   /**
-   * Bereitet den Editor für ein NEUES Objekt an gegebenen Koordinaten vor:
-   * objectId leer (Submit → createObject), Name leer und fokussiert, Lat/Lon
-   * vorbefüllt. Wird vom "Neues Objekt…"-Kontextmenü in AR/Map aufgerufen.
-   * Owner wird serverseitig beim Create gesetzt — kein Client-Zutun nötig.
+   * Bereitet den Editor für ein NEUES Objekt an gegebenen Koordinaten vor und
+   * öffnet das Modal. objectId leer (Submit → createObject). Owner setzt der
+   * Server. Neue Objekte bekommen eine Zufallsfarbe (untexturierte Modelle).
    */
   startNewObjectAt(lat, lon, altitude = 0) {
-    this.onEditorActivate?.()   // pop the editor panel open if minimized
-    if (!this.ajna.isLoggedIn()) {
-      this.setStatus('Zum Anlegen bitte einloggen.')
-      return
-    }
-    this.editorForm.objectId.value = ''
-    this.editorForm.name.value = ''
-    this.editorForm.lat.value = lat.toFixed(6)
-    this.editorForm.lon.value = lon.toFixed(6)
-    this.editorForm.altitude.value = (altitude ?? 0).toFixed(2)
-    this.editorForm.altitude_ref.value = 'ground'   // Default: über Boden
-    if (this.editorForm.portable) this.editorForm.portable.checked = false
-    this._editingState = {}
-
-    const section = this.container.querySelector('#sharedEditorSection')
-    if (section) section.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-    this.editorForm.name.focus()
-    this.setStatus(`Neues Objekt @ ${lat.toFixed(5)}, ${lon.toFixed(5)} — Details ausfüllen & Speichern`)
+    this.onEditorActivate?.()
+    if (!this.ajna.isLoggedIn()) { this.setStatus('Zum Anlegen bitte einloggen.'); return }
+    const f = this.editorForm
+    f.objectId.value = ''
+    f.name.value = ''
+    f.lat.value = lat.toFixed(6)
+    f.lon.value = lon.toFixed(6)
+    f.altitude.value = (altitude ?? 0).toFixed(2)
+    f.altitude_ref.value = 'ground'
+    if (f.portable) f.portable.checked = false
+    f.emoji.value = ''
+    f.colorOn.checked = true
+    f.color.value = randomHexColor()
+    this._setModelField('')
+    f.stateJson.value = '{}'
+    this._editingAppearance = {}
+    if (this.editorTitle) this.editorTitle.textContent = 'Neues Objekt'
+    this._openEditor()
+    f.name.focus()
+    this.setStatus(`Neues Objekt @ ${lat.toFixed(5)}, ${lon.toFixed(5)}`)
   }
 }
