@@ -140,7 +140,9 @@ export class GameObject {
 
     // appearance.gltf gewinnt vor Legacy model_url (siehe Appearance.gltfUrlOf).
     const modelUrl = gltfUrlOf(data)
-    if (modelUrl) {
+    if (modelUrl && this.#externalModelBlocked(modelUrl, data?._serverUrl)) {
+      console.warn(`GameObject ${this.id}: externes Modell blockiert (Einstellung „Externe URLs" aus): ${modelUrl}`)
+    } else if (modelUrl) {
       // Fire-and-forget. Bei Erfolg ersetzt #loadModel den Platzhalter,
       // bei Fehler bleibt er stehen — kein Abbruch des syncSceneObjects-Loops.
       this.#loadModel(modelUrl).catch(err => {
@@ -150,6 +152,22 @@ export class GameObject {
         )
       })
     }
+  }
+
+  // Externe (fremd-origin) Modelle nur laden, wenn „Externe URLs" aktiviert ist
+  // (localStorage ajna_allow_ext_models) — schützt Betrachter vor untergeschobenen
+  // Modell-URLs. Lokale Modelle (App-Bundle/same-origin) und der Herkunfts-Server
+  // des Objekts sind immer erlaubt.
+  #externalModelBlocked(url, serverUrl) {
+    let allowed = false
+    try { allowed = localStorage.getItem("ajna_allow_ext_models") === "1" } catch {}
+    if (allowed) return false
+    try {
+      const origin = new URL(url, window.location.href).origin
+      if (origin === window.location.origin) return false
+      if (serverUrl && new URL(serverUrl).origin === origin) return false
+      return true
+    } catch { return false }
   }
 
   // Lade-Kandidaten für ein Modell, in Reihenfolge der Bevorzugung.
