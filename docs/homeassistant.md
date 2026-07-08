@@ -12,7 +12,7 @@ an, der Token verlässt die Maschine nicht) und verbindet sich zum Ajna-Server.
    listet alle nutzbaren HA-Entitäten.
 2. **Entität hinzufügen:** Klick auf eine Entität im Controller-Menü → der Agent
    legt ein Geräte-Objekt in der Szene an (z. B. „Deckenlicht" 💡 mit den
-   Aktionen *Einschalten / Ausschalten / Dimmen*) — mit dem aktuellen HA-Zustand.
+   Aktionen *Einschalten / Ausschalten / Heller / Dunkler*) — mit dem aktuellen HA-Zustand.
    Das Objekt ist danach frei verschieb- und bearbeitbar.
 3. **Steuern:** Interaktion auf einem Geräte-Objekt → HA-Service-Call
    (`light.turn_on`, `cover.open_cover`, …).
@@ -93,7 +93,7 @@ pm2 save
 - Das Controller-**Kontextmenü** wird bei sehr vielen Entitäten lang (es scrollt
   nicht). Mit `HA_DOMAINS` / `HA_ENTITIES` eingrenzen. Ein durchsuchbarer
   Entitäten-Picker-Dialog wäre die schönere UX (Client-Erweiterung, offen).
-- `dimmen` schaltet in Stufen 25→50→75→100 %. `climate` ändert die Zieltemperatur
-  um ±0,5 °.
+- Licht: `Heller`/`Dunkler` ändern die Helligkeit relativ um ±20 % (unter 0 % →
+  aus, über 100 % gedeckelt). `climate` ändert die Zieltemperatur um ±0,5 °.
 - Area-/Label-basierte Auswahl (statt Domains/Allowlist) bräuchte die
   HA-WebSocket-Registry-API — bewusst noch nicht umgesetzt.

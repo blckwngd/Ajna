@@ -12,7 +12,7 @@
 //      Kontextmenü (state.actions) listet alle nutzbaren Entitäten.
 //   3. Klick auf eine Entität → interact → dieser Agent legt ein Geräte-Objekt
 //      in der Szene an (z. B. "Deckenlicht" mit Aktionen einschalten/ausschalten/
-//      dimmen) mit dem aktuellen HA-Zustand. Frei verschieb-/bearbeitbar.
+//      heller/dunkler) mit dem aktuellen HA-Zustand. Frei verschieb-/bearbeitbar.
 //   4. Interaktion auf einem Geräte-Objekt → HA-Service-Call (turn_on/off/…).
 //   5. Live-Sync: HA-WebSocket (state_changed) → Geräte-Objekte spiegeln den
 //      echten Zustand in Echtzeit (auch bei externen Änderungen).
@@ -96,7 +96,8 @@ const DOMAINS = {
   light:         { emoji: '💡', actions: [
     { key: 'einschalten', label: 'Einschalten', service: 'turn_on' },
     { key: 'ausschalten', label: 'Ausschalten', service: 'turn_off' },
-    { key: 'dimmen',      label: 'Dimmen (25→50→75→100 %)', dim: true },
+    { key: 'heller',      label: 'Heller (+20 %)',  dim: +20 },
+    { key: 'dunkler',     label: 'Dunkler (−20 %)', dim: -20 },
   ]},
   switch:        { emoji: '🔌', actions: [
     { key: 'einschalten', label: 'Einschalten', service: 'turn_on' },
@@ -185,12 +186,12 @@ function humanState(stateOrObj, domain) {
   return s || 'unbekannt'
 }
 
-// Dimmen: nächste Stufe über der aktuellen Helligkeit (Zyklus).
-function nextDimLevel(curState) {
-  const b = Number(curState?.attributes?.brightness)
-  const cur = curState?.state === 'on' && Number.isFinite(b) ? Math.round(b / 255 * 100) : 0
-  return [25, 50, 75, 100].find(l => l > cur) ?? 25
+// Aktuelle Helligkeit in Prozent (0, wenn aus/unbekannt).
+function currentBrightnessPct(st) {
+  const b = Number(st?.attributes?.brightness)
+  return st?.state === 'on' && Number.isFinite(b) ? Math.round(b / 255 * 100) : 0
 }
+const clampPct = (p) => Math.max(0, Math.min(100, p))
 
 // ─── Zustands-Cache (aus initialem Fetch + WS/Poll) ──────────────────────
 const latestHaState = new Map()   // entity_id → HA-State-Objekt
@@ -370,8 +371,11 @@ async function runEntityAction(entityId, domain, actionKey) {
   if (!act) { console.warn(`[ha-bridge] Aktion ${actionKey} für ${domain} unbekannt`); return }
   if (act.service) {
     await haCallService(domain, act.service, { entity_id: entityId })
-  } else if (act.dim) {
-    await haCallService('light', 'turn_on', { entity_id: entityId, brightness_pct: nextDimLevel(latestHaState.get(entityId)) })
+  } else if (typeof act.dim === 'number') {
+    // Relativ heller/dunkler; unter 0 % → ausschalten, über 100 % → gedeckelt.
+    const next = clampPct(currentBrightnessPct(latestHaState.get(entityId)) + act.dim)
+    if (next <= 0) await haCallService('light', 'turn_off', { entity_id: entityId })
+    else await haCallService('light', 'turn_on', { entity_id: entityId, brightness_pct: next })
   } else if (typeof act.temp === 'number') {
     const target = Number(latestHaState.get(entityId)?.attributes?.temperature)
     if (Number.isFinite(target)) {
