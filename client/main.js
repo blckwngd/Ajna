@@ -52,6 +52,7 @@ import { NetworkSyncComponent } from "./engine/components/NetworkSyncComponent.j
 import { buildDebugScene } from "./engine/debug/DebugSceneBuilder.js"
 import { DebugUIManager } from "./engine/debug/DebugUIManager.js"
 import { buildEnvironment } from "./engine/environment/EnvironmentBuilder.js"
+import { sunPosition } from "./core/solarPosition.js"
 import { ArPassthrough } from "./core/ArPassthrough.js"
 import { OSMContext } from "./engine/environment/OSMContext.js"
 import { PathOverlay } from "./engine/debug/PathOverlay.js"
@@ -273,6 +274,31 @@ async function init() {
   window.addEventListener("resize", () => engine.resize())
   
   const arEnv = buildEnvironment(scene)
+
+  // Schattenwerfer-Registry: GameObjects registrieren ihre Modell-Meshes hier
+  // (siehe GameObject.#loadModel → scene._ajnaShadowGenerator).
+  scene._ajnaShadowGenerator = arEnv.shadowGenerator
+
+  // Schatten nach dem REALEN Sonnenstand ausrichten (geo-orientiert): aus der
+  // Spieler-Position (geo.origin) + Uhrzeit Höhe/Azimut berechnen und die
+  // Sonnen-Lichtrichtung setzen. Nord/Ost-Basis kommt aus dem GeoTransformer
+  // (respektiert dessen Invert-Flags automatisch). Unter dem Horizont (Nacht)
+  // wird die Höhe flach geclampt, damit der Schatten plausibel bleibt.
+  const _sunUp = new BABYLON.Vector3(0, 1, 0)
+  const _updateSun = () => {
+    const o = geo.origin
+    if (!o || !arEnv.sun) return
+    const { altitude, azimuth } = sunPosition(new Date(), o.lat, o.lon)
+    const elev = Math.max(altitude, 8 * Math.PI / 180)
+    const north = geo.toLocal(o.lat + 0.0015, o.lon).normalize()   // Scene-Nord (mit Vorzeichen)
+    const east  = geo.toLocal(o.lat, o.lon + 0.0015).normalize()   // Scene-Ost
+    const toward = north.scale(Math.cos(elev) * Math.cos(azimuth))
+      .add(east.scale(Math.cos(elev) * Math.sin(azimuth)))
+      .add(_sunUp.scale(Math.sin(elev)))
+    arEnv.sun.direction = toward.scale(-1).normalize()   // Licht fällt von der Sonne herab
+  }
+  _updateSun()
+  setInterval(_updateSun, 60000)   // Sonne wandert langsam
 
   // Umschalter echtes AR (Kamera-Passthrough) ↔ XR (Skybox). Toggle sitzt im
   // Editor neben "Kamera auf Spieler". Start je Session in XR (Skybox); der

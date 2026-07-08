@@ -154,10 +154,10 @@ export class GameObject {
     // das Verhalten der Szene darf davon nicht abhängen.
     this.#createPlaceholder()
 
-    // Halbtransparenter Blob-Schatten unter Figuren (und allem mit 3D-Modell) —
-    // erdet die Figur (Orientierung/Immersion), funktioniert auch über
-    // Kamera-Passthrough. POI/WLAN/Hints bekommen keinen.
-    if (FIGURE_TYPES.has(this._objectType) || gltfUrlOf(data)) this.#addBlobShadow()
+    // Figuren (und Objekte mit 3D-Modell) werfen echte Schatten (Babylon
+    // ShadowGenerator; die Meshes werden in #loadModel als Caster registriert).
+    // POI/WLAN/Hints nicht.
+    this._castsShadow = FIGURE_TYPES.has(this._objectType) || !!gltfUrlOf(data)
 
     // appearance.gltf gewinnt vor Legacy model_url (siehe Appearance.gltfUrlOf).
     const modelUrl = gltfUrlOf(data)
@@ -243,7 +243,9 @@ export class GameObject {
     if (importRoot) {
       importRoot.parent = this.root
       this.#normalizeModelSize(importRoot, url)
-      this.#resizeShadowToModel(importRoot)   // Schatten an die Grundfläche anpassen
+      // Echten Schattenwurf registrieren (Figuren/Modelle) — der ShadowGenerator
+      // projiziert auf die Boden-Ebene (bei fliegenden Kreaturen korrekt am Boden).
+      if (this._castsShadow) this.scene._ajnaShadowGenerator?.addShadowCaster(importRoot, true)
     }
 
     this.meshes = result.meshes
@@ -388,38 +390,6 @@ export class GameObject {
     setTimeout(revert, 4000)              // Sicherheitsnetz, falls kein End-Event
   }
 
-  // Halbtransparente Schatten-Scheibe unter der Figur (an root gehängt, skaliert
-  // mit ihr). disableLighting → rendert als flacher dunkler Fleck, auch über
-  // Kamera-Passthrough.
-  #addBlobShadow() {
-    if (this._shadow) return
-    const disc = BABYLON.MeshBuilder.CreateDisc(`shadow_${this.id}`, { radius: 1, tessellation: 24 }, this.scene)
-    disc.rotation.x = Math.PI / 2       // flach in die XZ-Ebene
-    disc.position.y = 0.02              // knapp über dem Boden (gegen z-fighting)
-    disc.scaling.set(0.5, 0.5, 0.5)     // Default 0.5 m; nach Modell-Load angepasst
-    disc.isPickable = false
-    disc.parent = this.root
-    const mat = new BABYLON.StandardMaterial(`shadowMat_${this.id}`, this.scene)
-    mat.disableLighting = true
-    mat.diffuseColor = new BABYLON.Color3(0, 0, 0)
-    mat.specularColor = new BABYLON.Color3(0, 0, 0)
-    mat.emissiveColor = new BABYLON.Color3(0, 0, 0)
-    mat.alpha = 0.32
-    disc.material = mat
-    this._shadow = disc
-  }
-
-  // Schatten-Radius an die Grundfläche des geladenen Modells anpassen.
-  #resizeShadowToModel(importRoot) {
-    if (!this._shadow) return
-    try {
-      const { min, max } = importRoot.getHierarchyBoundingVectors(true)
-      const rootS = Math.abs(this.root.scaling?.x || 1) || 1
-      const worldR = Math.max(max.x - min.x, max.z - min.z) * 0.5
-      const r = Math.max(0.15, (worldR / rootS) * 0.6)
-      this._shadow.scaling.set(r, r, r)
-    } catch { /* Default-Größe belassen */ }
-  }
 
   #createPlaceholder() {
     // Type-abhängiger Default-Look. Modell-URL überschreibt das später
@@ -708,7 +678,6 @@ export class GameObject {
 
   dispose() {
     this.components.forEach(c => c.dispose())
-    try { this._shadow?.material?.dispose() } catch {}   // Mesh geht mit root.dispose()
     this.root.dispose()
   }
 
