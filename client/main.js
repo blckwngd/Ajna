@@ -1220,11 +1220,13 @@ async function syncSceneObjects(scene, world, geo, objects) {
 
   if (!geo.origin) return
 
-  // Agent-Filter: aus der vollen Objekt-Liste nur das behalten, was
-  // gemäß User-Setting sichtbar sein soll. Default = alles sichtbar.
+  // Getragene Objekte (im Inventar) gehören nicht in die Welt, dann der
+  // Agent-Filter: aus der vollen Objekt-Liste nur das behalten, was gemäß
+  // User-Setting sichtbar sein soll. Default = alles sichtbar.
+  const worldObjects = objects.filter(o => !o.carried_by)
   const filteredObjects = _agentFilters
-    ? objects.filter(o => _agentFilters.matches(o))
-    : objects
+    ? worldObjects.filter(o => _agentFilters.matches(o))
+    : worldObjects
 
   // Sichtweiten-Begrenzung: je Agent (Source) nur die X kamera-nächsten
   // Objekte rendern (X = render_budget der Source). Dichte Agents (WiGLE)

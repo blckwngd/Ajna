@@ -119,8 +119,10 @@ const VIEWPORT_PAD = 0.5
 function mapUpdateMarkers(objects) {
   if (!window.map) return
 
+  // Getragene Objekte (im Inventar) gehören nicht in die Welt-Ansicht, dann der
   // Agent-Filter: nur Objekte, die der Spieler sehen will (Default = alle).
-  const filtered = agentFilters ? objects.filter(o => agentFilters.matches(o)) : objects
+  const inWorld = objects.filter(o => !o.carried_by)
+  const filtered = agentFilters ? inWorld.filter(o => agentFilters.matches(o)) : inWorld
   const bounds = window.map.getBounds().pad(VIEWPORT_PAD)
   const keep = new Set()   // ids, die einen Marker haben SOLLEN
 

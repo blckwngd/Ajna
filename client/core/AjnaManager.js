@@ -430,6 +430,38 @@ export class AjnaManager {
   }
 
   // ===================================================================
+  //  Inventar
+  // ===================================================================
+
+  /** Objekt ins Inventar aufnehmen (carried_by = ich). */
+  async pickup(compositeId) {
+    return this._clientFor(compositeId).pickup(compositeId)
+  }
+
+  /** Getragenes Objekt an neuer Position wieder in die Welt setzen. */
+  async place(compositeId, pos) {
+    return this._clientFor(compositeId).place(compositeId, pos)
+  }
+
+  /**
+   * Objekte im Inventar des angemeldeten Users (carried_by = eigener User),
+   * server-übergreifend. carried_by ist die User-ID auf dem jeweiligen Server.
+   */
+  inventoryItems() {
+    const items = []
+    for (const o of this.getObjects()) {
+      const uid = this._clientFor(o.id)?.currentUser?.()?.id
+      if (uid && o.carried_by === uid) items.push(o)
+    }
+    return items
+  }
+
+  /** True, wenn das Objekt gerade getragen wird (nicht in der Welt). */
+  isCarried(record) {
+    return !!(record && record.carried_by)
+  }
+
+  // ===================================================================
   //  Interest-Areas — datenschutzfreundliche Präsenz (Default-Server)
   // ===================================================================
 

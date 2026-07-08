@@ -127,6 +127,8 @@ export class EditorUI {
               <option value="ground">über Boden (AGL)</option>
               <option value="msl">über Normalnull (AMSL)</option>
             </select>
+            <label for="portable">Aufnehmbar</label>
+            <input id="portable" name="portable" type="checkbox" style="width:auto;justify-self:start;">
           </div>
           <div class="ed-buttons">
             <button type="submit" class="ed-btn ed-btn-primary">Speichern</button>
@@ -317,12 +319,13 @@ export class EditorUI {
       // Höhen-Referenz in state.altitude_ref; bei Update den vorhandenen State
       // mergen, damit andere Felder (actions/dialog/realtime …) erhalten bleiben.
       const ref = this.editorForm.altitude_ref?.value === 'msl' ? 'msl' : 'ground'
+      const portable = !!this.editorForm.portable?.checked
       const data = {
         name: this.editorForm.name.value || `obj-${Date.now()}`,
         lat: parseFloat(this.editorForm.lat.value),
         lon: parseFloat(this.editorForm.lon.value),
         altitude: parseFloat(this.editorForm.altitude.value),
-        state: { ...(this._editingState || {}), altitude_ref: ref }
+        state: { ...(this._editingState || {}), altitude_ref: ref, portable }
       }
       const id = this.editorForm.objectId.value
       let obj
@@ -501,6 +504,7 @@ export class EditorUI {
     this.editorForm.lon.value = (obj.lon ?? 0).toFixed(6)
     this.editorForm.altitude.value = (obj.altitude ?? 0).toFixed(2)
     this.editorForm.altitude_ref.value = obj.state?.altitude_ref === 'msl' ? 'msl' : 'ground'
+    if (this.editorForm.portable) this.editorForm.portable.checked = !!obj.state?.portable
     this._editingState = obj.state || {}   // beim Speichern mergen (State erhalten)
   }
 
@@ -522,6 +526,7 @@ export class EditorUI {
     this.editorForm.lon.value = lon.toFixed(6)
     this.editorForm.altitude.value = (altitude ?? 0).toFixed(2)
     this.editorForm.altitude_ref.value = 'ground'   // Default: über Boden
+    if (this.editorForm.portable) this.editorForm.portable.checked = false
     this._editingState = {}
 
     const section = this.container.querySelector('#sharedEditorSection')

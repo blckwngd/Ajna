@@ -191,6 +191,98 @@ routerAdd("POST", "/api/objects/{id}/interact", (e) => {
 
 
 // =====================================================================
+// POST /api/objects/{id}/pickup  — Objekt ins Inventar aufnehmen
+//
+// Setzt carried_by = anfragender User (Objekt verschwindet aus der Welt).
+// Erlaubt, wenn der User OWNER ist ODER das Objekt state.portable === true UND
+// er es sehen darf (view). Loot (Nicht-Owner + portable) → Eigentum übergeht auf
+// den Sammler, Permission-Cache wird neu berechnet.
+// =====================================================================
+routerAdd("POST", "/api/objects/{id}/pickup", (e) => {
+  try {
+    const { resolveEffective, recomputeForObject } = require(`${__hooks}/permissions.js`)
+    const objectId = e.request.pathValue("id")
+    const info = e.requestInfo()
+    const user = info.auth
+    if (!user) return e.json(401, { error: "authentication required" })
+
+    let obj
+    try { obj = $app.findRecordById("objects", objectId) }
+    catch (err) { return e.json(404, { error: "object not found" }) }
+
+    const carried = obj.get("carried_by")
+    if (carried && carried !== user.id) {
+      return e.json(409, { error: "object already carried by someone else" })
+    }
+
+    const isOwner = obj.get("owner") === user.id
+    let ownerChanged = false
+    if (!isOwner) {
+      let state = obj.get("state")
+      if (typeof state === "string") { try { state = JSON.parse(state) } catch (_) { state = {} } }
+      const portable = state && typeof state === "object" && state.portable === true
+      const eff = resolveEffective(user, obj)
+      const canSee = (eff.rights || []).indexOf("view") !== -1
+      if (!portable || !canSee) {
+        return e.json(403, { error: "not allowed to pick up this object" })
+      }
+      obj.set("owner", user.id)   // Loot: Eigentum übergeht auf den Sammler
+      ownerChanged = true
+    }
+
+    obj.set("carried_by", user.id)
+    $app.save(obj)
+    if (ownerChanged) { try { recomputeForObject(obj.id) } catch (_) {} }
+    return e.json(200, { ok: true, id: obj.id, owner: obj.get("owner") })
+  } catch (err) {
+    console.log("[pickup] error: " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err) })
+  }
+})
+
+
+// =====================================================================
+// POST /api/objects/{id}/place  — getragenes Objekt wieder in die Welt setzen
+//
+// Nur der Träger (carried_by) darf platzieren. Setzt lat/lon(/altitude) und
+// leert carried_by → Objekt erscheint an der neuen Position wieder in der Welt.
+// =====================================================================
+routerAdd("POST", "/api/objects/{id}/place", (e) => {
+  try {
+    const objectId = e.request.pathValue("id")
+    const info = e.requestInfo()
+    const user = info.auth
+    if (!user) return e.json(401, { error: "authentication required" })
+
+    let obj
+    try { obj = $app.findRecordById("objects", objectId) }
+    catch (err) { return e.json(404, { error: "object not found" }) }
+
+    if (obj.get("carried_by") !== user.id) {
+      return e.json(403, { error: "you can only place an object you carry" })
+    }
+
+    const body = info.body || {}
+    const lat = Number(body.lat), lon = Number(body.lon)
+    if (!isFinite(lat) || !isFinite(lon)) {
+      return e.json(400, { error: "fields 'lat' and 'lon' (numbers) are required" })
+    }
+    obj.set("lat", lat)
+    obj.set("lon", lon)
+    if (body.altitude !== undefined && isFinite(Number(body.altitude))) {
+      obj.set("altitude", Number(body.altitude))
+    }
+    obj.set("carried_by", "")   // zurück in die Welt
+    $app.save(obj)
+    return e.json(200, { ok: true, id: obj.id })
+  } catch (err) {
+    console.log("[place] error: " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err) })
+  }
+})
+
+
+// =====================================================================
 // Debug-Endpoint: View-Rule Klausel-für-Klausel auswerten
 //
 // Spiegelt die in objects.viewRule kodierte Logik in JS nach und sagt

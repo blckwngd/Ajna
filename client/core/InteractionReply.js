@@ -56,8 +56,10 @@ export function isCollectAction(action) {
  */
 export async function applyInteractionSideEffect(ajna, record, action) {
   if (isCollectAction(action) && record?.id) {
-    try { await ajna.deleteObject(record.id); return true }
-    catch (err) { console.warn('[interact] Einsammeln/Löschen fehlgeschlagen:', err?.message || err) }
+    // Aufnehmen = ins Inventar (carried_by), nicht mehr löschen. Der Server
+    // prüft die Rechte (Owner oder portable); bei 403 bleibt es folgenlos.
+    try { await ajna.pickup(record.id); return true }
+    catch (err) { console.warn('[interact] Einsammeln (Inventar) fehlgeschlagen:', err?.message || err) }
   }
   return false
 }

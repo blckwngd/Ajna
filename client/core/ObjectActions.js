@@ -50,9 +50,14 @@ export class ObjectActions {
     const me = client?.currentUser?.()
     const isOwner = !!me && !!record.owner && me.id === record.owner
 
+    // Einsammeln: eigene Objekte immer, fremde nur wenn `portable`. Nicht,
+    // wenn das Objekt schon getragen wird. Server prüft die Rechte final.
+    const collectible = !record.carried_by && (isOwner || !!record.state?.portable)
+
     const items = [
       { label: 'Bearbeiten',     onClick: () => this.editorUI?.fillEditor?.(record) },
       isOwner && { label: 'Berechtigungen', onClick: () => this.permissionDialog?.open(record) },
+      collectible && { label: '🎒 Einsammeln', onClick: () => this._pickup(record) },
       isOwner && { label: 'Löschen', danger: true, onClick: () => this._confirmDelete(record) },
       { separator: true },
       { sectionLabel: 'Interaktionen' },
@@ -97,6 +102,18 @@ export class ObjectActions {
                   || err?.message || String(err)
       console.warn('[interact] failed:', detail)
       alert(`Interaktion "${actionKey}" nicht möglich: ${detail}`)
+    }
+  }
+
+  // Einsammeln → Inventar (server-autoritativ). Bei fehlenden Rechten (403)
+  // eine kurze Meldung; sonst zieht das Objekt via Realtime ins Inventar um.
+  async _pickup(record) {
+    try {
+      await this.ajna.pickup(record.id)
+    } catch (err) {
+      const detail = err?.response?.error || err?.message || String(err)
+      console.warn('[inventory] Aufnehmen fehlgeschlagen:', detail)
+      alert('Aufnehmen nicht möglich: ' + detail)
     }
   }
 

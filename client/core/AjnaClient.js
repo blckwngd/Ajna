@@ -354,6 +354,24 @@ export class AjnaClient {
   }
 
   // ===================================================================
+  //  Inventar-Lifecycle (server-autoritativ)
+  // ===================================================================
+
+  /** Objekt ins Inventar aufnehmen (setzt carried_by serverseitig). */
+  async pickup(objectId) {
+    const raw = this._toRaw(objectId)
+    return this.pb.send(`/api/objects/${raw}/pickup`, { method: 'POST', body: {} })
+  }
+
+  /** Getragenes Objekt an neuer Position wieder in die Welt setzen. */
+  async place(objectId, { lat, lon, altitude } = {}) {
+    const raw = this._toRaw(objectId)
+    const body = { lat, lon }
+    if (altitude !== undefined) body.altitude = altitude
+    return this.pb.send(`/api/objects/${raw}/place`, { method: 'POST', body })
+  }
+
+  // ===================================================================
   //  Interest-Areas — datenschutzfreundliche Präsenz (/ajnaapi)
   // ===================================================================
   // Server-Logik (kein PB-Hook): /ajnaapi/* läuft über den Express-API-Server.
