@@ -1376,6 +1376,8 @@ function _showInteractFeedback(objectId, action) {
   _toast.show(interactionReply(rec, action, name), { title: name })
   // Akustische Ansage ("<Aktion> - <Ergebnis>"), gegated über Audio-Schalter.
   _announcer?.interaction(rec || objectId, action)
+  // Reaktions-Animation der Figur (wave/hit …), falls das Modell eine hat.
+  go?.playInteractionAnimation?.(action)
   if (_arHighlight && go) {
     _arHighlight(go, true)
     setTimeout(() => _arHighlight(go, false), 280)

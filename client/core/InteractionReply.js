@@ -17,6 +17,29 @@
  * @param {string} [name]  Anzeigename (überschreibt record.name)
  * @returns {string}
  */
+// Generische Gesprächs-Antworten, falls ein NPC (noch) keine eigenen Dialoge
+// hinterlegt hat — besser als die Objekt-Beschreibung ("Ein NPC.") als Antwort.
+const GENERIC_TALK = [
+  'Tag auch. Schönes Wetter heute, nicht?',
+  'Bleib wachsam da draußen.',
+  'Ich hab dir gerade nichts zu sagen.',
+  'Hast du die Drachen am Himmel gesehen?',
+  'Zieh weiter, Fremder.',
+]
+const randomOf = arr => arr[Math.floor(Math.random() * arr.length)]
+
+/**
+ * Gesprächs-Antwort: zufällig aus `state.dialogs` (Reihe von Antworten), sonst
+ * das einzelne `state.dialog`, sonst eine generische Zeile. Bewusst NICHT die
+ * Objekt-Beschreibung (die gehört zu "untersuchen"). Später ersetzt ein echtes
+ * Dialog-System diese Auswahl.
+ */
+export function talkResponse(record) {
+  const dialogs = record?.state?.dialogs
+  if (Array.isArray(dialogs) && dialogs.length) return randomOf(dialogs)
+  return record?.state?.dialog || randomOf(GENERIC_TALK)
+}
+
 export function interactionReply(record, action, name) {
   const label = name || record?.name || record?.id || 'das Objekt'
   switch (String(action || '').toLowerCase()) {
@@ -27,7 +50,7 @@ export function interactionReply(record, action, name) {
           || `Nichts Besonderes an ${label}.`
     case 'talk':
     case 'sprechen':
-      return record?.state?.dialog || record?.description || `${label} nickt dir freundlich zu.`
+      return talkResponse(record)
     case 'attack':
     case 'angreifen':
       return `Du greifst ${label} an! 💥`

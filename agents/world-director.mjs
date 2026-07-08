@@ -101,6 +101,14 @@ if (!Number.isFinite(CENTER_LAT) || !Number.isFinite(CENTER_LON)) die('Ungültig
 // ─────────────────────────────────────────────────────────────────────────
 const pick = arr => arr[Math.floor(Math.random() * arr.length)]
 const randInt = (a, b) => a + Math.floor(Math.random() * (b - a + 1))
+// n zufällige, verschiedene Elemente aus arr (für NPC-Dialog-Reihen).
+const sample = (arr, n) => {
+  const copy = arr.slice()
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));[copy[i], copy[j]] = [copy[j], copy[i]]
+  }
+  return copy.slice(0, Math.min(n, copy.length))
+}
 
 // Gleichverteilter Zufallspunkt in einem Kreis (Radius in m) um lat/lon.
 function randomPointNear(lat, lon, radiusM) {
@@ -131,7 +139,14 @@ const DIALOG_LINES = [
   'Pass auf dich auf da draußen.',
   'Hast du die Drachen am Himmel gesehen?',
   'Ich hätte schwören können, hier war mehr los.',
-  'Wenn du etwas Glänzendes findest — behalt es im Auge.'
+  'Wenn du etwas Glänzendes findest — behalt es im Auge.',
+  'Bleib nicht zu lange stehen, es wird bald dunkel.',
+  'Man erzählt sich Geschichten über diese Gegend …',
+  'Kennst du den Weg zum alten Turm? Ich leider auch nicht.',
+  'Hast du schon etwas zu essen dabei? Ich habe Hunger.',
+  'Sei vorsichtig, hier treiben sich Gestalten herum.',
+  'Ein Gruß aus der Ferne, Reisender.',
+  'Ich warte hier schon eine Weile. Auf was, weiß ich nicht mehr.'
 ]
 
 const HINT_LINES = [
@@ -239,7 +254,7 @@ function buildSpawn(archetype) {
     spawn_id: randomUUID(),
     actions: arch.actions          // Menü-Aktionen (Client liest state.actions)
   }
-  if (archetype === 'npc')  state.dialog = pick(DIALOG_LINES)
+  if (archetype === 'npc')  state.dialogs = sample(DIALOG_LINES, 4)   // Reihe zufälliger Antworten
   if (archetype === 'hint') state.hint   = pick(HINT_LINES)
 
   const spawn = {
@@ -342,6 +357,21 @@ async function ensureDescription(obj) {
   }
 }
 
+// Rüstet NPCs eine Antwort-Reihe (state.dialogs) nach, falls sie noch keine
+// haben (Altbestand mit nur state.dialog oder ganz ohne) — der Client wählt
+// beim „sprechen" zufällig daraus.
+async function ensureDialogs(obj) {
+  if (obj.state?.archetype !== 'npc') return
+  if (Array.isArray(obj.state?.dialogs) && obj.state.dialogs.length) return
+  try {
+    const next = { ...obj.state, dialogs: sample(DIALOG_LINES, 4) }
+    const updated = await ajna.updateObject(obj.id, { state: next })
+    obj.state = updated?.state || next
+  } catch (err) {
+    console.warn(`[director] dialogs für ${obj.id} fehlgeschlagen: ${err?.message || err}`)
+  }
+}
+
 // ─── Adopt-on-Boot: vorhandene Director-Objekte sammeln + pro Archetyp zählen
 // Objekte, die deutlich AUSSERHALB des bespielbaren Bereichs liegen (typisch
 // nach einem Center-Wechsel), werden aufgeräumt statt adoptiert — sonst zählt
@@ -399,6 +429,7 @@ for (const obj of managed) {
   await ensureAce(obj.id, actionKeys(a))
   await ensureActions(obj)
   await ensureDescription(obj)
+  await ensureDialogs(obj)
   reconciled++
 }
 console.log(`[director] ${reconciled} Objekte reconciled (ACE + Aktionen). Welt steht.`)
