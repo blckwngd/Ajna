@@ -229,6 +229,9 @@ export class InventoryUI {
         background: rgba(0,0,0,0.5); padding: 16px;
         padding-bottom: calc(16px + var(--safe-bottom, env(safe-area-inset-bottom, 0px)));
       }
+      /* Höhere Spezifität als die Basisregel, sonst überstimmt display:flex das
+         hidden-Attribut → Fenster wäre immer offen und ließe sich nicht schließen. */
+      .ajna-inv-overlay[hidden] { display: none; }
       .ajna-inv-window {
         width: min(560px, 96vw); max-height: 82vh; display: flex; flex-direction: column;
         background: linear-gradient(180deg, #23242c, #1a1b21);
