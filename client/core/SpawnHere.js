@@ -12,6 +12,7 @@
 // damit der Client keine Node-Agent-Module importieren muss.
 
 import { animalNameFor } from './animalNames.js'
+import { randomHexColor } from './randomColor.js'
 
 const pick = arr => arr[Math.floor(Math.random() * arr.length)]
 
@@ -65,7 +66,9 @@ export function randomSpawnData(position) {
   } else {
     name = NAMES[arch.type] ? pick(NAMES[arch.type]) : arch.type
   }
-  const appearance = { gltf: '/models/' + model }
+  // Zufallsfarbe fürs Material: wirkt nur auf untexturierte Modelle (Blob/Slime),
+  // texturierte behalten ihren Look (GameObject.#applyModelColor).
+  const appearance = { gltf: '/models/' + model, color: randomHexColor() }
   if (sizeScale !== 1) appearance.scale = sizeScale
   return {
     name,

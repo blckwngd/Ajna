@@ -211,6 +211,8 @@ export class GameObject {
     this.skeletons = result.skeletons || []
     this._activeAnim = null
 
+    this.#applyModelColor()   // untexturierte Materialien mit appearance.color einfärben
+
     // Bevorzugt die im animation_state vermerkte AnimationGroup starten.
     // Fallback: erste Group (Skinned Modelle ohne laufende Animation
     // zeigen einen verzerrten "Identity-Bones"-Zustand — siehe Hufe-Bug).
@@ -222,6 +224,24 @@ export class GameObject {
     }
 
     this.#tagMeshes()
+  }
+
+  // Färbt untexturierte Materialien des geladenen Modells mit appearance.color
+  // (Hex). Texturierte Materialien bleiben unangetastet — so bekommt z. B. der
+  // Blob/Slime seine (zufällige) Farbe, während der Fuchs seine Textur behält.
+  #applyModelColor() {
+    const hex = this._appearance?.color
+    if (typeof hex !== "string" || !hex) return
+    let c
+    try { c = BABYLON.Color3.FromHexString(hex) } catch { return }
+    for (const mesh of this.meshes || []) {
+      const mat = mesh.material
+      if (!mat) continue
+      const textures = mat.getActiveTextures ? mat.getActiveTextures() : []
+      if (textures.length > 0) continue                     // texturiert → Look behalten
+      if ("albedoColor" in mat) mat.albedoColor = c         // PBRMaterial (GLB-Standard)
+      else if ("diffuseColor" in mat) mat.diffuseColor = c  // StandardMaterial
+    }
   }
 
   // Normiert die Welthöhe des geladenen Modells auf MODEL_TARGET_HEIGHT[Datei],
