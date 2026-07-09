@@ -5,8 +5,11 @@ Alternative zur direkten [Node-Bridge](homeassistant.md): Ajna und HA reden übe
 per-Sprache-Client nötig), MQTT ist die Lingua Franca im IoT, und die
 Verbindungsrichtung passt zur typischen Topologie (HA privat, Ajna öffentlich).
 
-> Status: **Design + HA-Seiten-PoC**. Das Ajna-seitige **Gateway** (Node,
-> geteilte JS-Lib) folgt separat. HA-Seiten-Artefakte: [`integrations/homeassistant/`](../integrations/homeassistant/).
+> Status: **Design + HA-Seiten-PoC + Gateway (v1)**. Das Ajna-seitige Gateway
+> ([`agents/homeassistant-gateway.mjs`](../agents/homeassistant-gateway.mjs),
+> `npm run ha-gateway`) bringt einen **eingebetteten MQTT-Broker (aedes)** mit
+> ACL mit und ist end-to-end getestet (HA-Client → Discovery → Controller-Menü).
+> HA-Seiten-Artefakte: [`integrations/homeassistant/`](../integrations/homeassistant/).
 
 ## Konnektivität — HA verbindet sich zu Ajna (nicht umgekehrt)
 
@@ -79,11 +82,24 @@ Ein Plugin/Blueprint ist reine Politur — **keine neue Fähigkeit**. Setup-Schr
 5. **Mehrere HA-Instanzen isoliert:** je Instanz eigener Namespace + eigene
    Broker-Credentials + `ha_instance`-Tag an den Objekten.
 
-## Gateway-Aufgaben (Ajna-Seite, folgt separat)
+## Gateway (Ajna-Seite) — `agents/homeassistant-gateway.mjs`
 
-- Broker abonnieren (`ajna/ha/<inst>/+/+/state`, `…/attributes`, `…/status`),
-  Ajna-Login (gescopter User).
-- Entitätenliste aus State-Topics ableiten → Controller-Objekt + Menü pflegen.
-- „Entität hinzufügen"/interact → Geräte-Objekt anlegen bzw. `…/set` publishen.
+Weiterer Node-Agent (geteilte JS-Lib). Bringt einen **eingebetteten MQTT-Broker
+(aedes)** mit ACL mit — HA verbindet sich direkt dorthin; extern (Mosquitto/EMQX)
+optional per `MQTT_EXTERNAL_URL`. Aufgaben:
+
+- Broker mit **Namespace-ACL**: jeder HA-Client nur auf `ajna/ha/<instance>/#`.
+- State-Topics abonnieren → Entitätenliste ableiten → Controller-Objekt + Menü.
+- „Entität hinzufügen"/interact → Geräte-Objekt anlegen; Geräte-Aktion → `…/set`
+  publishen ({service,data}).
 - HA-State → Ajna-Objekt (Zustand/Beschreibung) nachziehen.
-- Fügt sich als weiterer Node-Agent ins bestehende Modell ein (geteilte JS-Lib).
+
+**Starten:** `npm run ha-gateway`. Konfiguration (`.env`): `AJNA_URL/USER/PASS`,
+`HA_INSTANCE` (Default `home`), `MQTT_PORT` (Default 1883), `MQTT_HA_USER/PASS`
+(Zugangsdaten des HA-Clients), optional `MQTT_TLS_CERT/KEY`, `MQTT_EXTERNAL_URL`,
+`HA_LAT/HA_LON` (Controller-Koordinaten). In HA die MQTT-Integration auf
+`<gateway-host>:<MQTT_PORT>` mit `MQTT_HA_USER/PASS` zeigen lassen.
+
+> **Rechte:** Controller/Geräte-Objekte bekommen die Standardrechte des
+> Gateway-Users (wie bei der Node-Bridge) — Profil-Default setzen, sonst
+> Startwarnung.

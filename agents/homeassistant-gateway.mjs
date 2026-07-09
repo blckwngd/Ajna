@@ -1,0 +1,406 @@
+#!/usr/bin/env node
+//
+// agents/homeassistant-gateway.mjs — Home-Assistant-MQTT-Gateway für Ajna
+//
+// Übersetzt zwischen MQTT (Home-Assistant-Seite) und Ajna-Objekten (PocketBase).
+// Bringt einen EINGEBETTETEN MQTT-Broker (aedes) mit — HA verbindet sich
+// AUSGEHEND dorthin, kein eingehender Port zu HA. Das Gateway ist die einzige
+// Vertrauensgrenze: Broker-ACL sperrt jeden HA-Client auf seinen Namespace, und
+// nur das Gateway schreibt (gescopt) nach Ajna. Design: docs/homeassistant-mqtt.md.
+//
+// Datenfluss:
+//   HA → mqtt_statestream → ajna/ha/<inst>/<domain>/<entity>/state (+ /attributes)
+//        → Gateway leitet die Entitätenliste ab, pflegt Controller + Geräte-Objekte.
+//   Ajna-Interaktion „einschalten" → Gateway publisht ajna/ha/<inst>/<d>/<e>/set
+//        {service,data} → HA-Automation ruft <domain>.<service>.
+//
+// Konfiguration (ENV oder .env im CWD):
+//   AJNA_URL/USER/PASS        Ajna-Login (Gateway-User; seine Standardrechte
+//                             gelten für die angelegten Objekte — s. Startwarnung)
+//   HA_INSTANCE               Namespace/Instanz (Default: home)
+//   MQTT_PORT                 Broker-Port des eingebetteten Brokers (Default: 1883)
+//   MQTT_HA_USER/MQTT_HA_PASS Zugangsdaten des HA-Clients (Pflicht für den Broker)
+//   MQTT_GATEWAY_USER/PASS    interner Gateway-Client (Default: ajna_gateway/zufällig)
+//   MQTT_TLS_CERT/MQTT_TLS_KEY  optional TLS für den eingebetteten Broker (empfohlen public)
+//   MQTT_EXTERNAL_URL         statt eingebettetem Broker einen externen nutzen
+//                             (z. B. mqtt://host:1883) — dann kein aedes
+//   HA_LAT/HA_LON             Controller-Koordinaten (Default: 50.3569/7.5890)
+//
+// Start:  node agents/homeassistant-gateway.mjs   bzw.   npm run ha-gateway
+
+import { readFileSync, existsSync } from 'node:fs'
+import { resolve } from 'node:path'
+import net from 'node:net'
+import tls from 'node:tls'
+import { randomUUID } from 'node:crypto'
+import { maybeReexecWithSystemCa } from './lib/system-ca.mjs'
+import { EventSource } from 'eventsource'
+if (typeof globalThis.EventSource !== 'function') globalThis.EventSource = EventSource
+
+import { Aedes } from 'aedes'
+import mqtt from 'mqtt'
+import { AjnaManager } from '../client/core/AjnaManager.js'
+
+// ─── .env laden ───────────────────────────────────────────────────────────
+function loadDotenv() {
+  const path = resolve(process.cwd(), '.env')
+  if (!existsSync(path)) return
+  for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
+    const m = line.replace(/^\s*#.*$/, '').trim().match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/i)
+    if (!m) continue
+    let v = m[2].trim()
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1)
+    if (process.env[m[1]] === undefined) process.env[m[1]] = v
+  }
+}
+loadDotenv()
+
+const AJNA_URL   = process.env.AJNA_URL  || 'http://127.0.0.1:8090'
+const AJNA_USER  = process.env.AJNA_USER
+const AJNA_PASS  = process.env.AJNA_PASS
+const HA_INSTANCE = (process.env.HA_INSTANCE || 'home').replace(/[^a-z0-9_-]/gi, '')
+const MQTT_PORT  = parseInt(process.env.MQTT_PORT || '1883', 10)
+const MQTT_HA_USER = process.env.MQTT_HA_USER
+const MQTT_HA_PASS = process.env.MQTT_HA_PASS
+const MQTT_GW_USER = process.env.MQTT_GATEWAY_USER || 'ajna_gateway'
+const MQTT_GW_PASS = process.env.MQTT_GATEWAY_PASS || randomUUID()   // intern, nur localhost
+const MQTT_EXTERNAL_URL = process.env.MQTT_EXTERNAL_URL || ''
+const TLS_CERT = process.env.MQTT_TLS_CERT
+const TLS_KEY  = process.env.MQTT_TLS_KEY
+const HA_LAT   = parseFloat(process.env.HA_LAT || '50.3569')
+const HA_LON   = parseFloat(process.env.HA_LON || '7.5890')
+const BASE = `ajna/ha/${HA_INSTANCE}`
+const CONTROLLER_NAME = 'Smart Home'
+
+maybeReexecWithSystemCa(AJNA_URL)
+
+function die(msg) { console.error(`✗ ${msg}`); process.exit(1) }
+if (!AJNA_USER || !AJNA_PASS) die('AJNA_USER und AJNA_PASS fehlen (.env)')
+if (!MQTT_EXTERNAL_URL && (!MQTT_HA_USER || !MQTT_HA_PASS)) die('MQTT_HA_USER/MQTT_HA_PASS fehlen (Zugangsdaten des HA-Clients)')
+if (!Number.isFinite(HA_LAT) || !Number.isFinite(HA_LON)) die('Ungültige HA_LAT/HA_LON')
+
+// ─── Steuerbare Domains: Emoji + Aktionen (→ MQTT-{service,data}) ─────────
+const DOMAINS = {
+  light:         { emoji: '💡', actions: [
+    { key: 'einschalten', label: 'Einschalten', service: 'turn_on' },
+    { key: 'ausschalten', label: 'Ausschalten', service: 'turn_off' },
+    { key: 'heller',      label: 'Heller (+20 %)',  dim: +20 },
+    { key: 'dunkler',     label: 'Dunkler (−20 %)', dim: -20 },
+  ]},
+  switch:        { emoji: '🔌', actions: [
+    { key: 'einschalten', label: 'Einschalten', service: 'turn_on' },
+    { key: 'ausschalten', label: 'Ausschalten', service: 'turn_off' },
+  ]},
+  input_boolean: { emoji: '🔘', actions: [
+    { key: 'einschalten', label: 'Einschalten', service: 'turn_on' },
+    { key: 'ausschalten', label: 'Ausschalten', service: 'turn_off' },
+  ]},
+  fan:           { emoji: '🌀', actions: [
+    { key: 'einschalten', label: 'Einschalten', service: 'turn_on' },
+    { key: 'ausschalten', label: 'Ausschalten', service: 'turn_off' },
+  ]},
+  cover:         { emoji: '🪟', actions: [
+    { key: 'oeffnen',   label: 'Öffnen',   service: 'open_cover' },
+    { key: 'schliessen', label: 'Schließen', service: 'close_cover' },
+    { key: 'stoppen',   label: 'Stoppen',  service: 'stop_cover' },
+  ]},
+  lock:          { emoji: '🔒', actions: [
+    { key: 'abschliessen', label: 'Abschließen', service: 'lock' },
+    { key: 'aufschliessen', label: 'Aufschließen', service: 'unlock' },
+  ]},
+  climate:       { emoji: '🌡️', actions: [
+    { key: 'waermer', label: 'Wärmer (+0,5°)', temp: +0.5 },
+    { key: 'kaelter', label: 'Kälter (−0,5°)', temp: -0.5 },
+  ]},
+  media_player:  { emoji: '📺', actions: [
+    { key: 'abspielen', label: 'Abspielen', service: 'media_play' },
+    { key: 'pause',     label: 'Pause',     service: 'media_pause' },
+  ]},
+  scene:         { emoji: '🎬', actions: [{ key: 'aktivieren', label: 'Aktivieren', service: 'turn_on' }]},
+  script:        { emoji: '▶️', actions: [{ key: 'ausfuehren', label: 'Ausführen', service: 'turn_on' }]},
+}
+
+const domainOf = (entityId) => String(entityId).split('.')[0]
+const humanState = (s, domain, attrs) => {
+  if (s === 'on') {
+    const b = Number(attrs?.brightness)
+    if (domain === 'light' && Number.isFinite(b)) return `an (${Math.round(b / 255 * 100)} %)`
+    return 'an'
+  }
+  if (s === 'off') return 'aus'
+  if (s === 'open') return 'offen'; if (s === 'closed') return 'geschlossen'
+  if (s === 'locked') return 'verriegelt'; if (s === 'unlocked') return 'entriegelt'
+  return s || 'unbekannt'
+}
+const brightnessPct = (e) => {
+  const b = Number(e?.attributes?.brightness)
+  return e?.state === 'on' && Number.isFinite(b) ? Math.round(b / 255 * 100) : 0
+}
+const clampPct = (p) => Math.max(0, Math.min(100, p))
+const controllerActions = (list) => list.map(e => ({ key: e.entity_id, label: `${e.friendly} · ${e.domain}` }))
+
+// ─── Zustand ────────────────────────────────────────────────────────────
+const registry = new Map()   // entity_id → { domain, state, attributes, friendly }
+const subscribedObjs = new Set()
+let controller = null
+let createdCount = 0
+let refreshTimer = null
+
+// ═════════════════════════════════════════════════════════════════════════
+//  MQTT-Broker (eingebettet, mit ACL) — oder externer Broker
+// ═════════════════════════════════════════════════════════════════════════
+function topicInNamespace(client, topic) {
+  const inst = client?._ajnaInstance
+  if (inst === '*') return topic.startsWith('ajna/ha/')          // Gateway darf alles unter ajna/ha/
+  if (inst) return topic.startsWith(`ajna/ha/${inst}/`) || topic === `ajna/ha/${inst}`
+  return false
+}
+
+function startEmbeddedBroker() {
+  const broker = new Aedes()
+  broker.authenticate = (client, username, password, cb) => {
+    const pass = password ? password.toString() : ''
+    if (username === MQTT_GW_USER && pass === MQTT_GW_PASS) { client._ajnaInstance = '*'; return cb(null, true) }
+    if (username === MQTT_HA_USER && pass === MQTT_HA_PASS) { client._ajnaInstance = HA_INSTANCE; return cb(null, true) }
+    const err = new Error('Auth failed'); err.returnCode = 4; cb(err, false)
+  }
+  broker.authorizePublish = (client, packet, cb) =>
+    topicInNamespace(client, packet.topic) ? cb(null) : cb(new Error('publish denied'))
+  broker.authorizeSubscribe = (client, sub, cb) =>
+    topicInNamespace(client, sub.topic) ? cb(null, sub) : cb(new Error('subscribe denied'))
+
+  const useTls = TLS_CERT && TLS_KEY
+  const handler = broker.handle
+  const server = useTls
+    ? tls.createServer({ cert: readFileSync(TLS_CERT), key: readFileSync(TLS_KEY) }, handler)
+    : net.createServer(handler)
+  server.listen(MQTT_PORT, () => {
+    console.log(`[ha-gateway] Broker läuft auf ${useTls ? 'mqtts' : 'mqtt'}://0.0.0.0:${MQTT_PORT} (Instanz „${HA_INSTANCE}")`)
+    if (!useTls) console.log('[ha-gateway] Hinweis: ohne TLS — für öffentlich erreichbare Broker MQTT_TLS_CERT/KEY setzen.')
+  })
+  broker.on('clientReady', (c) => console.log(`[ha-gateway] Client verbunden: ${c?.id}`))
+  broker.on('clientDisconnect', (c) => console.log(`[ha-gateway] Client getrennt: ${c?.id}`))
+  return `mqtt://127.0.0.1:${MQTT_PORT}`
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+//  Ajna
+// ═════════════════════════════════════════════════════════════════════════
+const ajna = new AjnaManager(AJNA_URL)
+try { await ajna.login(AJNA_USER, AJNA_PASS) }
+catch (err) { die(`Ajna-Login fehlgeschlagen: ${err?.response?.data?.message || err?.message || err}`) }
+console.log(`[ha-gateway] eingeloggt als ${ajna.currentUser()?.email || AJNA_USER}`)
+await ajna.connect()
+warnIfNoDefaults()
+
+// ─── Broker + eigener MQTT-Client ─────────────────────────────────────────
+const brokerUrl = MQTT_EXTERNAL_URL || startEmbeddedBroker()
+const mc = mqtt.connect(brokerUrl, {
+  username: MQTT_EXTERNAL_URL ? (process.env.MQTT_GATEWAY_USER || MQTT_GW_USER) : MQTT_GW_USER,
+  password: MQTT_EXTERNAL_URL ? (process.env.MQTT_GATEWAY_PASS || MQTT_GW_PASS) : MQTT_GW_PASS,
+  reconnectPeriod: 3000,
+})
+mc.on('connect', () => {
+  console.log(`[ha-gateway] mit Broker verbunden (${brokerUrl})`)
+  mc.subscribe([`${BASE}/+/+/state`, `${BASE}/+/+/attributes`, `${BASE}/status`], (err) => {
+    if (err) console.warn('[ha-gateway] subscribe:', err.message)
+  })
+})
+mc.on('error', (e) => console.warn('[ha-gateway] MQTT-Fehler:', e?.message || e))
+mc.on('message', (topic, payload) => { try { onMqtt(topic, payload) } catch (e) { console.warn('[ha-gateway] onMqtt:', e?.message || e) } })
+
+// ─── Controller sicherstellen + Bestand adoptieren ───────────────────────
+controller = await ensureController([])
+subscribeController(controller)
+adoptExisting()
+
+console.log(`[ha-gateway] bereit. Warte auf HA-State-Topics unter ${BASE}/… (Strg+C zum Beenden)`)
+process.on('SIGINT', () => { console.log('\n[ha-gateway] beende.'); process.exit(0) })
+
+// ═════════════════════════════════════════════════════════════════════════
+//  MQTT → Registry → Ajna
+// ═════════════════════════════════════════════════════════════════════════
+function onMqtt(topic, payloadBuf) {
+  const payload = payloadBuf.toString()
+  const parts = topic.split('/')                 // ajna ha <inst> <domain> <entity> <kind>
+  if (parts.length === 4 && parts[3] === 'status') {
+    console.log(`[ha-gateway] HA-Verbindung: ${payload}`)
+    return
+  }
+  if (parts.length !== 6) return
+  const domain = parts[3], entity = parts[4], kind = parts[5]
+  if (!DOMAINS[domain]) return                   // nicht steuerbare Domain ignorieren
+  const entityId = `${domain}.${entity}`
+  const e = registry.get(entityId) || { domain, state: 'unknown', attributes: {}, friendly: entityId }
+  if (kind === 'state') {
+    e.state = payload
+  } else if (kind === 'attributes') {
+    try { e.attributes = JSON.parse(payload) } catch { e.attributes = {} }
+    if (e.attributes?.friendly_name) e.friendly = e.attributes.friendly_name
+  } else return
+  registry.set(entityId, e)
+  scheduleControllerRefresh()
+  if (kind === 'state') updateObjectsFor(entityId)
+}
+
+function usableList() {
+  return [...registry.entries()]
+    .map(([entity_id, e]) => ({ entity_id, domain: e.domain, friendly: e.friendly || entity_id }))
+    .sort((a, b) => a.friendly.localeCompare(b.friendly, 'de'))
+}
+
+function scheduleControllerRefresh() {
+  if (refreshTimer) return
+  refreshTimer = setTimeout(() => { refreshTimer = null; refreshController().catch(() => {}) }, 1500)
+}
+
+// HA-Zustand → alle Ajna-Objekte dieser Entität aktualisieren.
+async function updateObjectsFor(entityId) {
+  const e = registry.get(entityId)
+  const domain = domainOf(entityId)
+  for (const o of ajna.getObjects()) {
+    if (o?.state?.ha_entity !== entityId || o?.state?.ha_instance !== HA_INSTANCE) continue
+    const cur = ajna.getObjectById(o.id) || o
+    const s = e?.state ?? 'unknown'
+    if (cur.state?.ha_state === s) continue
+    try {
+      await ajna.updateObject(o.id, {
+        animation_state: s,
+        description: `${cur.name} — ${humanState(s, domain, e?.attributes)}`,
+        state: { ...(cur.state || {}), ha_state: s },
+      })
+    } catch (err) { console.warn('[ha-gateway] Objekt-Update:', err?.message || err) }
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+//  Controller-Objekt
+// ═════════════════════════════════════════════════════════════════════════
+async function ensureController(list) {
+  let ctrl = ajna.getObjects().find(o => o?.state?.ha_controller === true && o?.state?.ha_instance === HA_INSTANCE)
+  const actions = controllerActions(list)
+  if (!ctrl) {
+    ctrl = await ajna.createObject({
+      name: `${CONTROLLER_NAME} (${HA_INSTANCE})`,
+      type: 'item',
+      lat: HA_LAT, lon: HA_LON, altitude: 0,
+      description: 'Smart-Home-Controller (MQTT). Kontextmenü öffnen und eine Entität hinzufügen.',
+      appearance: { emoji: '🏠' },
+      state: { ha_controller: true, ha_bridge: true, ha_instance: HA_INSTANCE, actions, realtime: true },
+    })
+    console.log(`[ha-gateway] Controller angelegt: ${ctrl.id} @ ${HA_LAT.toFixed(4)}, ${HA_LON.toFixed(4)}`)
+  }
+  return ctrl
+}
+
+async function refreshController() {
+  const list = usableList()
+  const cur = ajna.getObjectById(controller.id)
+  if (!cur) return
+  await ajna.updateObject(controller.id, {
+    description: `Smart-Home-Controller (MQTT) — ${list.length} Entitäten.`,
+    state: { ...(cur.state || {}), actions: controllerActions(list) },
+  })
+}
+
+function subscribeController(ctrl) {
+  ajna.subscribeInteract(ctrl.id, async (evt) => {
+    const action = evt?.action
+    if (!action || action === 'examine') return
+    if (!registry.has(action)) { console.log(`[ha-gateway] unbekannte Entität: ${action}`); return }
+    console.log(`[ha-gateway] + Entität hinzufügen: ${action} (durch ${evt.source || '?'})`)
+    try { await createEntityObject(action) }
+    catch (err) { console.warn('[ha-gateway] Anlegen fehlgeschlagen:', err?.message || err) }
+  }).catch(err => console.warn('[ha-gateway] Controller-Abo:', err?.message || err))
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+//  Geräte-Objekte
+// ═════════════════════════════════════════════════════════════════════════
+function spreadOffset(i) {
+  const ring = Math.floor(i / 8), idx = i % 8, r = 4 + ring * 4, theta = idx * (Math.PI / 4)
+  return { dLat: (r * Math.cos(theta)) / 111000, dLon: (r * Math.sin(theta)) / (111000 * Math.cos(HA_LAT * Math.PI / 180)) }
+}
+
+async function createEntityObject(entityId) {
+  const domain = domainOf(entityId)
+  const def = DOMAINS[domain]
+  if (!def) return null
+  const e = registry.get(entityId)
+  const name = e?.friendly || entityId
+  const off = spreadOffset(createdCount++)
+  const rec = await ajna.createObject({
+    name,
+    type: 'item',
+    lat: HA_LAT + off.dLat, lon: HA_LON + off.dLon, altitude: 0,
+    animation_state: e?.state || 'unknown',
+    description: `${name} — ${humanState(e?.state, domain, e?.attributes)}`,
+    appearance: { emoji: def.emoji },
+    state: {
+      ha_bridge: true, ha_instance: HA_INSTANCE, ha_entity: entityId, ha_domain: domain,
+      ha_state: e?.state ?? 'unknown',
+      actions: def.actions.map(a => ({ key: a.key, label: a.label })),
+      realtime: true,
+    },
+  })
+  subscribeEntity(rec.id, entityId, domain)
+  console.log(`[ha-gateway] Objekt angelegt: "${name}" (${entityId}) → ${rec.id}`)
+  return rec
+}
+
+function adoptExisting() {
+  let n = 0
+  for (const o of ajna.getObjects()) {
+    if (o?.state?.ha_bridge === true && o?.state?.ha_entity && o?.state?.ha_instance === HA_INSTANCE) {
+      subscribeEntity(o.id, o.state.ha_entity, o.state.ha_domain || domainOf(o.state.ha_entity))
+      n++
+    }
+  }
+  createdCount = n
+  if (n) console.log(`[ha-gateway] ${n} vorhandene Geräte-Objekte adoptiert`)
+}
+
+function subscribeEntity(objId, entityId, domain) {
+  if (subscribedObjs.has(objId)) return
+  subscribedObjs.add(objId)
+  ajna.subscribeInteract(objId, async (evt) => {
+    const action = evt?.action
+    if (!action || action === 'examine') return
+    console.log(`[ha-gateway] ${entityId}: ${action} (durch ${evt.source || '?'})`)
+    try { runEntityAction(entityId, domain, action) }
+    catch (err) { console.warn(`[ha-gateway] Kommando (${entityId}/${action}):`, err?.message || err) }
+  }).catch(err => console.warn(`[ha-gateway] Abo ${objId}:`, err?.message || err))
+}
+
+// Aktion → {service,data} → publish auf …/<domain>/<entity>/set
+function runEntityAction(entityId, domain, actionKey) {
+  const def = DOMAINS[domain]
+  const act = def?.actions.find(a => a.key === actionKey)
+  if (!act) { console.warn(`[ha-gateway] Aktion ${actionKey} für ${domain} unbekannt`); return }
+  let msg = null
+  if (act.service) {
+    msg = { service: act.service }
+  } else if (typeof act.dim === 'number') {
+    const next = clampPct(brightnessPct(registry.get(entityId)) + act.dim)
+    msg = next <= 0 ? { service: 'turn_off' } : { service: 'turn_on', data: { brightness_pct: next } }
+  } else if (typeof act.temp === 'number') {
+    const t = Number(registry.get(entityId)?.attributes?.temperature)
+    if (Number.isFinite(t)) msg = { service: 'set_temperature', data: { temperature: Math.round((t + act.temp) * 10) / 10 } }
+    else { console.warn(`[ha-gateway] ${entityId}: keine Zieltemperatur bekannt`); return }
+  }
+  if (!msg) return
+  const [d, ...rest] = entityId.split('.')
+  mc.publish(`${BASE}/${d}/${rest.join('.')}/set`, JSON.stringify(msg))
+}
+
+// ─── Hilfen ────────────────────────────────────────────────────────────
+function warnIfNoDefaults() {
+  const dp = ajna.currentUser?.()?.default_permissions
+  const empty = !dp || (Array.isArray(dp) && dp.length === 0) ||
+    (typeof dp === 'object' && !Array.isArray(dp) && Object.keys(dp).length === 0)
+  if (empty) {
+    console.warn('[ha-gateway] ⚠ Gateway-User hat KEINE Standardrechte (default_permissions).')
+    console.warn('[ha-gateway]   → Andere Nutzer sehen/steuern die Objekte nicht. Im Ajna-Profil')
+    console.warn('[ha-gateway]     des Gateway-Users der Zielgruppe view + interact „*" geben.')
+  }
+}
