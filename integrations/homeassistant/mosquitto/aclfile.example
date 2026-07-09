@@ -1,0 +1,14 @@
+# Broker-ACL: Zugriff strikt pro Rolle. Kern der Sicherheit — der HA-Client
+# sieht/schreibt NUR seinen eigenen Namespace, nie fremde Topics.
+
+# HA-Instanz "home" — ausschließlich ajna/ha/home/#
+user ha_home
+topic readwrite ajna/ha/home/#
+
+# Weitere HA-Instanz → eigener Namespace + eigener Broker-User:
+# user ha_ferienhaus
+# topic readwrite ajna/ha/ferienhaus/#
+
+# Ajna-Gateway — Übersetzer MQTT ↔ PocketBase, darf alle HA-Namespaces:
+user ajna_gateway
+topic readwrite ajna/ha/#

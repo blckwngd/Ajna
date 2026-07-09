@@ -1,0 +1,22 @@
+# Ajna-seitiger MQTT-Broker (Mosquitto). HA verbindet sich AUSGEHEND hierher —
+# kein eingehender Port zu HA nötig.
+#
+# Benutzer anlegen (Passwort-Datei):
+#   mosquitto_passwd -c /mosquitto/config/passwd ha_home
+#   mosquitto_passwd    /mosquitto/config/passwd ajna_gateway
+
+persistence true
+persistence_location /mosquitto/data/
+log_dest stdout
+
+# Öffentlich erreichbar → TLS dringend empfohlen. Zertifikatspfade anpassen und
+# den listener auf 8883 (TLS) stellen. Für einen rein lokalen PoC kann man
+# vorübergehend Port 1883 ohne TLS nutzen.
+listener 8883
+# cafile   /mosquitto/config/certs/ca.crt
+# certfile /mosquitto/config/certs/server.crt
+# keyfile  /mosquitto/config/certs/server.key
+
+allow_anonymous false
+password_file /mosquitto/config/passwd
+acl_file /mosquitto/config/aclfile

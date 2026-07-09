@@ -1,0 +1,30 @@
+# MQTT-Statestream — publisht die Zustände der freigegebenen Domains an den
+# Ajna-Broker. In HAs `configuration.yaml` einfügen (oder per `!include`).
+#
+# base_topic MUSS zum Ajna-Namespace der Instanz passen: ajna/ha/<instance>.
+# Nur bewusst freigegebene Domains/Entities exponieren (Sicherheit + weniger
+# Rauschen). Ergibt Topics:  ajna/ha/home/<domain>/<entity>/state (+ /attributes)
+#
+# Voraussetzung: die MQTT-Integration ist eingerichtet und zeigt auf den
+# Ajna-seitigen Broker (Settings → Devices & Services → MQTT).
+
+mqtt_statestream:
+  base_topic: ajna/ha/home
+  publish_attributes: true
+  publish_timestamps: false
+  include:
+    domains:
+      - light
+      - switch
+      - cover
+      - fan
+      - lock
+      - climate
+      - input_boolean
+      - scene
+      - script
+      - media_player
+    # Alternativ/zusätzlich gezielt einzelne Entitäten:
+    # entities:
+    #   - light.deckenlicht
+    #   - cover.rollo_wohnzimmer

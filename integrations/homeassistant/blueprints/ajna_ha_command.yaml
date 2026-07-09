@@ -1,0 +1,42 @@
+blueprint:
+  name: Ajna → HA Kommando-Brücke
+  description: >
+    Führt Schalt-Kommandos aus, die Ajna über MQTT publisht. Ajna sendet auf
+    `ajna/ha/<instance>/<domain>/<entity>/set` eine JSON-Nutzlast
+    `{"service": "turn_on", "data": {"brightness_pct": 60}}`. Diese Automation
+    ruft daraus `<domain>.<service>` auf der Zielentität mit den `data` auf.
+    Nur ausgehende MQTT-Verbindung nötig — kein eingehender Port zu HA.
+  domain: automation
+  input:
+    command_topic:
+      name: Kommando-Topic (Wildcard)
+      description: >
+        Muss zum base_topic der Statestream-Config passen, plus `/+/+/set`.
+        Beispiel für base_topic `ajna/ha/home`: `ajna/ha/home/+/+/set`.
+      default: "ajna/ha/home/+/+/set"
+      selector:
+        text: {}
+
+mode: parallel
+max: 25
+
+trigger:
+  - platform: mqtt
+    topic: !input command_topic
+
+action:
+  - variables:
+      domain: "{{ trigger.topic.split('/')[-3] }}"
+      object_id: "{{ trigger.topic.split('/')[-2] }}"
+      svc: "{{ (trigger.payload_json | default({}, true)).service | default('turn_on') }}"
+      svc_data: "{{ (trigger.payload_json | default({}, true)).data | default({}, true) }}"
+  # Nur bekannte, steuerbare Domains zulassen (defensive Freigabe).
+  - condition: template
+    value_template: >
+      {{ domain in ['light','switch','cover','fan','lock','climate',
+                    'input_boolean','scene','script','media_player']
+         and object_id | length > 0 }}
+  - service: "{{ domain ~ '.' ~ svc }}"
+    target:
+      entity_id: "{{ domain ~ '.' ~ object_id }}"
+    data: "{{ svc_data }}"
