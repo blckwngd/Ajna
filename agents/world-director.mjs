@@ -97,6 +97,16 @@ const FLY_SPEED     = parseFloat(process.env.WD_FLY_SPEED     || '7')    // m/s
 const FLY_TURN_RATE = parseFloat(process.env.WD_FLY_TURN_RATE || '0.7')  // rad/s max. Drehrate → weiche Kurven
 const FLY_WANDER    = parseFloat(process.env.WD_FLY_WANDER    || '0.6')  // rad/s Wander-Amplitude
 
+// ── Interest-Areas: Welt dort bevölkern, wo Spieler sind (folgt echtem GPS) ──
+// Der Director fragt periodisch die (anonymisierten) Interessensbereiche ab und
+// hält an jedem Zentrum den Soll-Bestand; weit entfernte Figuren werden
+// abgeräumt. Ohne aktive Area fällt er auf WD_CENTER_LAT/LON zurück.
+const FOLLOW_AREAS  = (process.env.WD_FOLLOW_AREAS || 'on').toLowerCase() !== 'off'
+const RECONCILE_MS  = parseFloat(process.env.WD_RECONCILE_S || '45') * 1000
+// Quelle-Filter: nur Spieler, die den World-Director eingeblendet haben. Leer
+// (WD_SOURCE="") = alle Areas berücksichtigen.
+const WD_SOURCE     = process.env.WD_SOURCE ?? 'world-director'
+
 // Bei HTTPS ggf. mit --use-system-ca neu starten (Caddys interne CA). Robust
 // gegen altes Node & öffentliche Zerts — siehe agents/lib/system-ca.mjs.
 maybeReexecWithSystemCa(AJNA_URL)
@@ -253,10 +263,11 @@ function targetCount(archetype) {
   return Number.isFinite(n) && n >= 0 ? n : ARCHETYPES[archetype].count
 }
 
-// Baut den Spawn-Datensatz für einen Archetyp (statisch, P0).
-function buildSpawn(archetype) {
+// Baut den Spawn-Datensatz für einen Archetyp um ein Zentrum (Interest-Area
+// oder das konfigurierte Fallback-Zentrum).
+function buildSpawn(archetype, center = { lat: CENTER_LAT, lon: CENTER_LON }) {
   const arch = ARCHETYPES[archetype]
-  const { lat, lon } = randomPointNear(CENTER_LAT, CENTER_LON, RADIUS_M)
+  const { lat, lon } = randomPointNear(center.lat, center.lon, RADIUS_M)
   const pool = MODEL_POOL[archetype] || []
   const model = pool.length ? pick(pool) : null
   // Flughöhe: echter Flieger (Drache) hoch, Vogel-Modelle niedrig, sonst Boden.
@@ -324,7 +335,9 @@ async function publishManifest() {
     await ajna.upsertAgentManifest({
       source: 'world-director',
       agent_name: 'World-Director',
-      description: `Automatische Welt-Bevölkerung (Figuren, Hinweise, Items) im Radius ${RADIUS_M} m um ${CENTER_LAT.toFixed(3)}, ${CENTER_LON.toFixed(3)}`,
+      description: FOLLOW_AREAS
+        ? `Automatische Welt-Bevölkerung (Figuren, Hinweise, Items) — folgt deiner Position (Interest-Area), Fallback-Zentrum ${CENTER_LAT.toFixed(3)}, ${CENTER_LON.toFixed(3)}`
+        : `Automatische Welt-Bevölkerung (Figuren, Hinweise, Items) im Radius ${RADIUS_M} m um ${CENTER_LAT.toFixed(3)}, ${CENTER_LON.toFixed(3)}`,
       layers: Object.keys(ARCHETYPES).map(a => ({ key: a, label: a, predicate: null }))
     })
   } catch (err) {
@@ -425,7 +438,9 @@ try {
     const a = obj.state.archetype
     if (!(a in existingByArch)) continue
     const dist = haversine(CENTER_LAT, CENTER_LON, obj.lat, obj.lon)
-    if (!KEEP_OUTSIDE && Number.isFinite(dist) && dist > DESPAWN_RADIUS_M) {
+    // Im Interest-Area-Modus NICHT am fixen Zentrum despawnen — das macht
+    // reconcile() später relativ zu den aktiven Zentren (Spieler-Positionen).
+    if (!KEEP_OUTSIDE && !FOLLOW_AREAS && Number.isFinite(dist) && dist > DESPAWN_RADIUS_M) {
       try { await ajna.deleteObject(obj.id); despawned++; continue }
       catch (err) { console.warn(`[director] despawn ${obj.id} fehlgeschlagen: ${err?.message || err}`) }
     }
@@ -438,15 +453,17 @@ try {
 }
 
 // ─── Fehlende Objekte bis zum Soll-Bestand anlegen ───────────────────────
-async function spawnOne(archetype) {
-  const data = buildSpawn(archetype)
+async function spawnOne(archetype, center) {
+  const data = buildSpawn(archetype, center)
   const obj = await ajna.createObject(data)
   console.log(`[director] + ${archetype.padEnd(6)} "${data.name}" @ ${data.lat.toFixed(5)}, ${data.lon.toFixed(5)} → ${obj.id}`)
   return obj
 }
 
+// Boot-Fill nur ohne Interest-Area-Modus — sonst übernimmt reconcile() das
+// Auffüllen an den aktiven Zentren (Spieler-Positionen bzw. Fallback-Zentrum).
 let spawned = 0
-for (const archetype of Object.keys(ARCHETYPES)) {
+if (!FOLLOW_AREAS) for (const archetype of Object.keys(ARCHETYPES)) {
   const need = targetCount(archetype) - existingByArch[archetype]
   for (let i = 0; i < need; i++) {
     try { managed.push(await spawnOne(archetype)); spawned++ }
@@ -669,20 +686,101 @@ function tick() {
   }
 }
 
-const controllers = AUTONOMY
-  ? [
-      ...managed.filter(o => STREET_ARCHETYPES.has(o.state?.archetype)).map(makeController),
-      ...managed.filter(isFlyer).map(makeFlyer),
-    ]
-  : []
-// Initiale Planung staffeln, damit nicht alle gleichzeitig Overpass treffen.
-controllers.forEach((c, i) => { c.nextPlanAt = Date.now() + i * 800 })
+// Passenden Controller für ein Objekt: Flieger → Freiflug, Straßen-Archetyp →
+// Wegenetz, sonst keiner (statisch).
+function controllerFor(obj) {
+  if (isFlyer(obj)) return makeFlyer(obj)
+  if (STREET_ARCHETYPES.has(obj.state?.archetype)) return makeController(obj)
+  return null
+}
 
-if (controllers.length) {
+// Controller-Liste an `managed` angleichen: bestehende behalten (Zustand!),
+// neue anlegen, entfernte fallen weg. Idempotent — von reconcile() gerufen.
+let controllers = []
+function syncControllers() {
+  if (!AUTONOMY) { controllers = []; return }
+  const keep = new Map(controllers.map(c => [c.id, c]))
+  const next = []
+  managed.forEach((obj, i) => {
+    if (keep.has(obj.id)) { next.push(keep.get(obj.id)); return }
+    const c = controllerFor(obj)
+    if (c) { c.nextPlanAt = Date.now() + i * 200; next.push(c) }   // Planung staffeln
+  })
+  controllers = next
+}
+syncControllers()
+
+if (AUTONOMY) {
   console.log(`[director] Autonomie aktiv für ${controllers.length} Figur(en) (Tick ${TICK_MS} ms, Pause ${(PAUSE_MS / 1000) | 0} s)`)
   setInterval(tick, TICK_MS)
 } else {
-  console.log(`[director] keine autonomen Figuren (AUTONOMY=${AUTONOMY ? 'on' : 'off'})`)
+  console.log(`[director] keine autonomen Figuren (AUTONOMY off)`)
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Interest-Area-Reconcile: Welt an aktiven Zentren (Spieler / Fallback) halten
+// ─────────────────────────────────────────────────────────────────────────
+const bboxCenter = b => ({ lat: (b.latMin + b.latMax) / 2, lon: (b.lonMin + b.lonMax) / 2 })
+const nearAny = (lat, lon, centers, r) => centers.some(c => haversine(c.lat, c.lon, lat, lon) <= r)
+
+// Aktive Zentren: gemergte Interessensbereiche (folgt echtem GPS der Spieler),
+// sonst das konfigurierte Fallback-Zentrum.
+async function fetchCenters() {
+  try {
+    const areas = await ajna.fetchInterestAreas(WD_SOURCE || undefined)   // liefert das Array direkt
+    const centers = (Array.isArray(areas) ? areas : []).map(bboxCenter)
+    if (centers.length) return centers
+  } catch (err) {
+    console.warn(`[director] interest-areas nicht abrufbar: ${err?.message || err}`)
+  }
+  return [{ lat: CENTER_LAT, lon: CENTER_LON }]
+}
+
+let reconcileBusy = false
+async function reconcile() {
+  if (reconcileBusy) return
+  reconcileBusy = true
+  try {
+    const centers = await fetchCenters()
+    // 1) Despawn: verwaltete Objekte weit von ALLEN aktiven Zentren.
+    let removed = 0
+    if (!KEEP_OUTSIDE) {
+      for (const obj of [...managed]) {
+        if (nearAny(obj.lat, obj.lon, centers, DESPAWN_RADIUS_M)) continue
+        try {
+          await ajna.deleteObject(obj.id)
+          const i = managed.indexOf(obj); if (i >= 0) managed.splice(i, 1)
+          removed++
+        } catch (err) { console.warn(`[director] despawn ${obj.id}: ${err?.message || err}`) }
+      }
+    }
+    // 2) Spawn: pro Zentrum bis zum Soll-Bestand auffüllen.
+    let added = 0
+    for (const center of centers) {
+      for (const archetype of Object.keys(ARCHETYPES)) {
+        const have = managed.filter(o => o.state?.archetype === archetype &&
+          haversine(center.lat, center.lon, o.lat, o.lon) <= RADIUS_M).length
+        for (let i = have; i < targetCount(archetype); i++) {
+          try {
+            const obj = await spawnOne(archetype, center)
+            managed.push(obj); added++
+            await ensureAce(obj.id, actionKeys(archetype))
+            await ensureActions(obj); await ensureDescription(obj); await ensureDialogs(obj)
+          } catch (err) { console.warn(`[director] spawn ${archetype}: ${err?.message || err}`) }
+        }
+      }
+    }
+    if (added || removed) {
+      syncControllers()
+      console.log(`[director] reconcile @ ${centers.length} Zentrum/Zentren: +${added} / -${removed} (Bestand ${managed.length})`)
+    }
+  } finally { reconcileBusy = false }
+}
+
+if (FOLLOW_AREAS && AUTONOMY) {
+  console.log(`[director] folgt Interest-Areas (Quelle "${WD_SOURCE || '*'}", alle ${(RECONCILE_MS / 1000) | 0} s; Fallback-Zentrum ${CENTER_LAT.toFixed(4)}, ${CENTER_LON.toFixed(4)})`)
+  reconcile()
+  setInterval(() => { reconcile() }, RECONCILE_MS)
 }
 
 // ─── Heartbeat hält den Prozess am Leben (+ späterer Online-Status-Anker) ─
