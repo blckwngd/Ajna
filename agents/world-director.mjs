@@ -17,9 +17,11 @@
 //      spezifische interact_actions), Dialog/Hinweis im state.
 //   5. Heartbeat (Manifest-Refresh) hält den Prozess am Leben.
 //
-// NOCH NICHT (kommt in späteren Phasen, siehe docs/world-objects.md):
+// UMGESETZT:
 //   • P2 Bewegung/Autonomie auf dem Straßennetz (geo.waysNear + Routing)
-//   • P3 Drachen-Freiflug + Tiere auf Freiflächen (geo.areasNear)
+//   • P3 Drachen-/Vogel-Freiflug: sanftes Umherfliegen im Areal (makeFlyer)
+// NOCH NICHT (kommt in späteren Phasen, siehe docs/world-objects.md):
+//   • Boden-Tiere auf Freiflächen (geo.areasNear)
 //   • Echte Interaktions-Effekte / Belohnungen / GLB-Modelle
 //
 // Konfiguration (ENV oder .env im CWD):
@@ -43,7 +45,7 @@ if (typeof globalThis.EventSource !== 'function') globalThis.EventSource = Event
 
 import { AjnaManager } from '../client/core/AjnaManager.js'
 import { AjnaGeo } from '../client/core/AjnaGeo.js'
-import { stepAlongPath, buildWayGraph, nearestNodeKey, randomReachableTarget, shortestPath, haversine } from '../client/core/StreetNav.js'
+import { stepAlongPath, buildWayGraph, nearestNodeKey, randomReachableTarget, shortestPath, haversine, bearingRad } from '../client/core/StreetNav.js'
 import { animalNameFor } from '../client/core/animalNames.js'
 
 // ─── .env laden (gleiches Schema wie ais-bridge.mjs) ─────────────────────
@@ -83,10 +85,17 @@ const PLAN_RETRY_MS = 15000
 // Figuren (statt pro Figur/Replan) — drückt die Overpass-Last drastisch.
 const GRAPH_TTL_MS   = parseFloat(process.env.WD_GRAPH_TTL_S || '3600') * 1000
 const GRAPH_RADIUS_M = Math.min(2000, RADIUS_M + WAY_RADIUS_M)
-// Welche Archetypen laufen in P2 auf Straßen? (animal=Fläche, dragon=Flug → P3)
+// Welche Archetypen laufen auf Straßen? (npc/enemy). Fliegende Wesen (dragon +
+// Vogel-Modelle) bekommen stattdessen freien Flug (siehe makeFlyer/advanceFlyer).
 const STREET_ARCHETYPES = new Set(['npc', 'enemy'])
 // Modell-Yaw vs. Bewegungsrichtung — wie in client/agent.js (Modell zeigt +Z).
 const HEADING_TO_YAW = h => h - Math.PI / 2
+
+// ── Freiflug (Drachen/Vögel): sanftes Umherfliegen in einem Areal ──────────
+const FLY_AREA_M    = parseFloat(process.env.WD_FLY_AREA_M    || '150')  // Radius Flug-Areal um Spawn (m)
+const FLY_SPEED     = parseFloat(process.env.WD_FLY_SPEED     || '7')    // m/s
+const FLY_TURN_RATE = parseFloat(process.env.WD_FLY_TURN_RATE || '0.7')  // rad/s max. Drehrate → weiche Kurven
+const FLY_WANDER    = parseFloat(process.env.WD_FLY_WANDER    || '0.6')  // rad/s Wander-Amplitude
 
 // Bei HTTPS ggf. mit --use-system-ca neu starten (Caddys interne CA). Robust
 // gegen altes Node & öffentliche Zerts — siehe agents/lib/system-ca.mjs.
@@ -101,6 +110,16 @@ if (!Number.isFinite(CENTER_LAT) || !Number.isFinite(CENTER_LON)) die('Ungültig
 // ─────────────────────────────────────────────────────────────────────────
 const pick = arr => arr[Math.floor(Math.random() * arr.length)]
 const randInt = (a, b) => a + Math.floor(Math.random() * (b - a + 1))
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
+// Winkel auf (-π, π] normalisieren; kleinste vorzeichenbehaftete Differenz.
+const wrapPi = a => { let x = (a + Math.PI) % (2 * Math.PI); if (x < 0) x += 2 * Math.PI; return x - Math.PI }
+const angleDiff = (a, b) => wrapPi(a - b)
+// Zielpunkt distM Meter entlang Kompass-Bearing (0=Nord, +=Ost) — passt zu bearingRad.
+function destPoint(lat, lon, heading, distM) {
+  const dLat = (distM * Math.cos(heading)) / 111320
+  const dLon = (distM * Math.sin(heading)) / (111320 * Math.cos(lat * Math.PI / 180))
+  return { lat: lat + dLat, lon: lon + dLon }
+}
 // n zufällige, verschiedene Elemente aus arr (für NPC-Dialog-Reihen).
 const sample = (arr, n) => {
   const copy = arr.slice()
@@ -509,6 +528,34 @@ function makeController(obj) {
   }
 }
 
+// Fliegt das Objekt? Drachen (flying-Archetyp) oder ein Vogel-Modell (FLYING_MODELS).
+function isFlyer(obj) {
+  if (ARCHETYPES[obj.state?.archetype]?.flying) return true
+  const model = (obj.appearance?.gltf || '').split('/').pop()
+  return !!(model && FLYING_MODELS.has(model))
+}
+
+// Controller für freien Flug: Position + Richtung + Höhen-Phase. Das Flug-Areal
+// ist ein Kreis (FLY_AREA_M) um den Spawn.
+function makeFlyer(obj) {
+  const alt = Number.isFinite(obj.altitude) && obj.altitude > 3 ? obj.altitude : randInt(30, 70)
+  return {
+    id: obj.id,
+    archetype: obj.state?.archetype,
+    kind: 'fly',
+    lat: obj.lat, lon: obj.lon,
+    homeLat: obj.lat, homeLon: obj.lon,
+    areaR: FLY_AREA_M,
+    heading: Math.random() * Math.PI * 2,
+    speed: FLY_SPEED,
+    altBase: alt,
+    altPhase: Math.random() * Math.PI * 2,
+    anim: null,
+    lastTickAt: Date.now(),
+    busy: false
+  }
+}
+
 let geoWarned = false
 function geoWarnOnce(err) {
   if (geoWarned) return
@@ -567,17 +614,66 @@ async function advanceFor(c) {
   } finally { c.busy = false }
 }
 
+// Ein Tick freien Flugs: Wander + Randlenkung Richtung Zentrum (mit der Distanz
+// stärker), begrenzte Drehrate → weiche Kurven statt 180°-Sprung am Rand.
+async function advanceFlyer(c) {
+  c.busy = true
+  try {
+    const now = Date.now()
+    const dt = Math.min(1, (now - c.lastTickAt) / 1000)
+    c.lastTickAt = now
+
+    // Wunschrichtung: aktuelle Richtung + sanftes zufälliges Wandern.
+    let desired = c.heading + (Math.random() - 0.5) * FLY_WANDER * dt * 2
+
+    // Randlenkung: ab halbem Radius Richtung Zentrum blenden, am Rand voll.
+    const dHome = haversine(c.lat, c.lon, c.homeLat, c.homeLon)
+    const edge = clamp((dHome - c.areaR * 0.5) / (c.areaR * 0.5), 0, 1)
+    if (edge > 0) {
+      const toHome = bearingRad(c.lat, c.lon, c.homeLat, c.homeLon)
+      desired = c.heading + angleDiff(toHome, c.heading) * edge
+    }
+
+    // Drehrate begrenzen → immer weiche Kurve (Wenderadius = speed / turnRate).
+    const maxTurn = FLY_TURN_RATE * dt
+    const turn = clamp(angleDiff(desired, c.heading), -maxTurn, maxTurn)
+    c.heading = wrapPi(c.heading + turn)
+
+    // Vorwärts + sanfte Höhenwelle.
+    const p = destPoint(c.lat, c.lon, c.heading, c.speed * dt)
+    c.lat = p.lat; c.lon = p.lon
+    c.altPhase = wrapPi(c.altPhase + dt * 0.3)
+    const altitude = Math.max(6, c.altBase + Math.sin(c.altPhase) * 6)
+
+    // Animation: kräftige Kurve oder nah am Rand → flap (FlapFlight), sonst
+    // gleiten (GlideFlight). Nur bei Wechsel schreiben (spart Realtime-Updates).
+    const wantAnim = (Math.abs(turn) > maxTurn * 0.5 || edge > 0.5) ? 'fly' : 'glide'
+    if (wantAnim !== c.anim) { c.anim = wantAnim; await ajna.setAnimation(c.id, wantAnim) }
+
+    await ajna.updateObject(c.id, {
+      lat: c.lat, lon: c.lon, altitude,
+      rotation: { x: 0, y: HEADING_TO_YAW(c.heading), z: 0 }
+    })
+  } catch (err) {
+    console.warn(`[director] Flug "${c.id}" fehlgeschlagen: ${err?.message || err}`)
+  } finally { c.busy = false }
+}
+
 function tick() {
   const now = Date.now()
   for (const c of controllers) {
     if (c.busy) continue
+    if (c.kind === 'fly') { advanceFlyer(c); continue }
     if (c.fsm === 'walking') advanceFor(c)
     else if (c.fsm === 'idle' && now >= c.nextPlanAt) planFor(c)
   }
 }
 
 const controllers = AUTONOMY
-  ? managed.filter(o => STREET_ARCHETYPES.has(o.state?.archetype)).map(makeController)
+  ? [
+      ...managed.filter(o => STREET_ARCHETYPES.has(o.state?.archetype)).map(makeController),
+      ...managed.filter(isFlyer).map(makeFlyer),
+    ]
   : []
 // Initiale Planung staffeln, damit nicht alle gleichzeitig Overpass treffen.
 controllers.forEach((c, i) => { c.nextPlanAt = Date.now() + i * 800 })

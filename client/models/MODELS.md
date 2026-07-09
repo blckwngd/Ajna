@@ -61,7 +61,7 @@ Externe Modelle brauchen keine Registrierung — im Editor „Externe URL…" w�
 | `Flamingo.glb` | animal / fliegend | ✓ | three.js examples |
 | `Stork.glb` | animal / fliegend | ✓ | three.js examples |
 | `Parrot.glb` | animal / fliegend | ✓ | three.js examples |
-| `Dragon.glb` | dragon | – (rigged) | Poly Pizza · „Dragon Rigged" |
+| `Dragon.glb` | dragon | ✓ (Idle/Walk/FlapFlight/GlideFlight/Roar/Hit) | animiertes Replacement — Quelle/Lizenz prüfen |
 | `Sword.glb` | item | – | Poly Pizza |
 | `TreasureChest.glb` | item | – | Poly Pizza |
 | `Diamond.glb` | diamond | – | Poly Pizza · Quaternius „Gem Green" (CC0) |

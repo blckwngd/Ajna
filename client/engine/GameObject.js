@@ -31,6 +31,18 @@ const INTERACTION_ANIM = {
   "füttern": ["eat", "chew"],
 }
 
+// Logische Animationszustände → Prioritätsliste von Namens-Teilstrings. So mappt
+// derselbe Director-State auf modell-spezifische Clip-Namen: ein fliegendes Wesen
+// nutzt für „fly" FlapFlight, für „glide" GlideFlight; ein Vogel mit nur einem
+// Clip fällt auf dessen erste Group zurück. Deckt Groß-/Kleinschreibung ab.
+const ANIM_ALIASES = {
+  walk:  ["walk", "move", "trot", "flapflight", "fly", "run"],
+  run:   ["run", "gallop", "sprint", "flapflight", "fly", "walk"],
+  idle:  ["idle", "survey", "rest", "stand", "glideflight", "glide", "hover"],
+  fly:   ["flapflight", "flap", "fly", "flight", "wing", "walk", "run", "move"],
+  glide: ["glideflight", "glide", "soar", "hover", "idle", "flight", "flapflight"],
+}
+
 // Typen, die als „Figur" einen Blob-Schatten bekommen (Objekte mit 3D-Modell
 // ebenfalls, siehe loadFromData).
 const FIGURE_TYPES = new Set(["npc", "enemy", "animal", "dragon"])
@@ -352,9 +364,26 @@ export class GameObject {
     }
   }
 
-  // Wechselt zur AnimationGroup mit dem passenden Namen (case-insensitive, sonst
-  // Teilstring, z. B. "idle" → "IdleFinal"). No-op wenn schon aktiv. Bei
-  // unbekanntem Namen: erste Group als Fallback.
+  // Löst einen logischen Zustand (z. B. "idle", "fly", "glide") auf die passende
+  // AnimationGroup auf: 1) exakter Name, 2) Alias-Prioritätsliste (ANIM_ALIASES,
+  // deckt modell-spezifische Namen wie "FlapFlight"/"GlideFlight" ab), 3) Fallback
+  // auf die erste Group (skinned Modelle brauchen eine laufende Animation, sonst
+  // verzerrte Identity-Bones). Kein Warn-Spam mehr — der Fallback ist gewollt.
+  _resolveAnimGroup(state) {
+    const groups = this.animationGroups
+    if (!state) return groups[0]
+    const lower = String(state).toLowerCase()
+    const exact = groups.find(g => (g.name || "").toLowerCase() === lower)
+    if (exact) return exact
+    for (const needle of (ANIM_ALIASES[lower] || [lower])) {
+      const g = groups.find(x => (x.name || "").toLowerCase().includes(needle))
+      if (g) return g
+    }
+    return groups[0]
+  }
+
+  // Wechselt zur AnimationGroup für den logischen Zustand (siehe _resolveAnimGroup).
+  // No-op wenn schon aktiv.
   _applyAnimationState(state) {
     if (!this.animationGroups || this.animationGroups.length === 0) return
 
@@ -369,19 +398,7 @@ export class GameObject {
     if (state === this._lastAnimState) return
     this._lastAnimState = state
 
-    let target = null
-    if (state) {
-      const lower = String(state).toLowerCase()
-      target = this.animationGroups.find(g => (g.name || "").toLowerCase() === lower)
-            || this.animationGroups.find(g => (g.name || "").toLowerCase().includes(lower))
-      if (!target) {
-        console.warn(
-          `GameObject ${this.id}: animation "${state}" not found. ` +
-          `Available: ${this.animationGroups.map(g => g.name).join(", ")}`
-        )
-      }
-    }
-    const next = target || this.animationGroups[0]
+    const next = this._resolveAnimGroup(state)
     if (this._activeAnim === next) return
 
     // Vorherige stoppen — Babylon spielt sonst beide gleichzeitig.
