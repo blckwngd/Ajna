@@ -573,6 +573,8 @@ async function init() {
     // als separater Karten-Button. Publisher injizieren → Sofort-Effekt.
     profileDialog.interestArea = interestArea
     window.ajnaInterestArea = interestArea   // Debug-Zugriff (Konsole + Overlay)
+    // Neu publishen, sobald Manifeste geladen/Filter geändert → Quellen aktuell.
+    agentFilters.onChange(() => interestArea.publishNow())
   }
 
   // Debug-Overlay „📡 IA" (oben links): zeigt eigenen + Server-Interessensbereiche
@@ -707,12 +709,10 @@ async function init() {
     mapUpdateMarkers(objects)
   }, 250))
 
-  // Manifeste der Agents laden, sobald wir eingeloggt sind, und Filter-Änderungen
-  // sofort in die Karte schreiben.
-  ajna.onAuthChanged(user => {
-    if (user) agentFilters.refreshManifests().catch(err =>
-      console.warn('[map] agent-manifests refresh:', err?.message || err))
-  })
+  // Manifeste selbst aktuell halten: Erst-Load (deckt persistierte Session ab, wo
+  // onAuthChanged nicht feuert) + Auth-Wechsel + periodisch. window.agentFilters
+  // wird auch von der Mobile-Shell (deren Interest-Area-Publisher) gelesen.
+  agentFilters.startAutoRefresh()
   agentFilters.onChange(() => {
     mapUpdateMarkers(ajna.getObjectList())
     editorUI?.renderObjectList()   // Editor-Liste mitziehen

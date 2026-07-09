@@ -431,11 +431,6 @@ async function init() {
   _agentFilters = agentFilters       // sichtbar für syncSceneObjects
   window.agentFilters = agentFilters  // für Console-Debugging
 
-  // Manifests beim Login + bei Auth-Wechsel neu laden.
-  ajnaManager.onAuthChanged(user => {
-    if (user) agentFilters.refreshManifests().catch(() => {})
-  })
-
   // Filter-Änderungen → bestehende Szene neu reconcilen + Editor-Liste mitziehen.
   agentFilters.onChange(() => {
     syncSceneObjects(scene, world, geo, ajnaManager.getObjectList())
@@ -456,6 +451,11 @@ async function init() {
   })
   interestArea.start()
   profileDialog.interestArea = interestArea
+  // Manifeste selbst aktuell halten (Erst-Load deckt persistierte Session ab, wo
+  // onAuthChanged nicht feuert) und die Area neu publishen, sobald die Quellen
+  // geladen/geändert sind — sonst ginge sie ohne Quellen raus (Agents sehen sie nicht).
+  agentFilters.onChange(() => interestArea.publishNow())
+  agentFilters.startAutoRefresh()
 
   // Set after setupArOverlayControls below; called when the editor is engaged
   // (edit/create) so a minimized editor panel pops open.

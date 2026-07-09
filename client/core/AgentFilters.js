@@ -79,6 +79,25 @@ export class AgentFilters {
     this._emit()
   }
 
+  /**
+   * Manifeste selbst aktuell halten: sofort (falls eingeloggt), bei jedem
+   * Auth-Wechsel UND periodisch. Nötig, weil onAuthChanged bei BESTEHENDER
+   * Session (Reload) NICHT feuert (PB authStore.onChange ohne fireImmediately) —
+   * sonst bliebe die (in-memory) Manifest-Liste leer und getSources() gäbe [],
+   * womit z. B. die Interest-Area OHNE Quellen publiziert würde (Agents wie der
+   * World-Director sehen sie dann nicht). Periodisch, damit neu gestartete Agents
+   * ohne Reload sichtbar werden. Idempotent.
+   */
+  startAutoRefresh(intervalMs = 180000) {
+    if (this._autoStarted) return this
+    this._autoStarted = true
+    const tryRefresh = () => { if (this.ajna.isLoggedIn?.()) this.refreshManifests().catch(() => {}) }
+    tryRefresh()
+    this.ajna.onAuthChanged?.(u => { if (u) this.refreshManifests().catch(() => {}) })
+    this._autoTimer = setInterval(tryRefresh, intervalMs)
+    return this
+  }
+
   /** Alle bekannten Sources (typisch: 1–N pro registriertem Agent). */
   getSources() {
     return Object.values(this._layersBySource).sort((a, b) =>
