@@ -462,22 +462,37 @@ export class AjnaManager {
   }
 
   // ===================================================================
-  //  Interest-Areas — datenschutzfreundliche Präsenz (Default-Server)
+  //  Interest-Areas — datenschutzfreundliche Präsenz (alle Server)
   // ===================================================================
 
-  /** Eigenen unscharfen Interessensbereich veröffentlichen (Opt-in). */
+  // Alle Server, bei denen der Spieler eingeloggt ist (der Presence-Endpoint
+  // verlangt Auth). Anonyme Verbindungen werden übersprungen.
+  _presenceTargets() {
+    return Array.from(this.clients.values()).filter(c => c.isLoggedIn())
+  }
+
+  /**
+   * Eigenen unscharfen Interessensbereich veröffentlichen (Opt-in) — an ALLE
+   * verbundenen Server, damit auch deren Agents (World-Director etc.) um die
+   * Position herum bevölkern. Jeder Server anonymisiert für sich.
+   */
   async publishInterestArea(bbox, sources) {
-    return this.defaultClient.publishInterestArea(bbox, sources)
+    return Promise.allSettled(this._presenceTargets().map(c => c.publishInterestArea(bbox, sources)))
   }
 
-  /** Eigenen Interessensbereich entfernen (Opt-out / Logout). */
+  /** Eigenen Interessensbereich entfernen (Opt-out / Logout) — auf allen Servern. */
   async deleteInterestArea() {
-    return this.defaultClient.deleteInterestArea()
+    return Promise.allSettled(this._presenceTargets().map(c => c.deleteInterestArea()))
   }
 
-  /** Anonymisiertes Aggregat aktiver Interessensbereiche lesen (für Agents). */
-  async fetchInterestAreas(source) {
-    return this.defaultClient.fetchInterestAreas(source)
+  /**
+   * Anonymisiertes Aggregat aktiver Interessensbereiche lesen. Optional für einen
+   * bestimmten Server; ohne serverId der Default-Server (Agents lesen ohnehin je
+   * ihren eigenen Server; das Debug-Overlay zeigt den Default).
+   */
+  async fetchInterestAreas(source, serverId = null) {
+    const c = serverId ? this.clients.get(serverId) : this.defaultClient
+    return c ? c.fetchInterestAreas(source) : []
   }
 
   // ===================================================================
