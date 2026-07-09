@@ -17,6 +17,11 @@ const AGENTS = [
   'ais-bridge',
   'wigle-bridge',
   'world-director',
+  'homeassistant-gateway', // MQTT-Gateway: eingebetteter Broker (Port 1883) +
+                           // HA-Anbindung. BRAUCHT MQTT_HA_USER/MQTT_HA_PASS in
+                           // der .env DIESER Umgebung — sonst fail-fast (exit 1)
+                           // → pm2-Restart-Loop. .env ist nicht eingecheckt, also
+                           // pro Server separat setzen (docs/homeassistant-mqtt.md).
   // 'wand-agent',   // optional: Online-Teil der Zauberstab-Kette (legt ein
   //                  // Demo-Zielobjekt an, schaltet animation_state auf wand_*).
   //                  // Nur nötig, wenn du diese spezielle Wand-Demo willst.
