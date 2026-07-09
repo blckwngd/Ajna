@@ -56,16 +56,35 @@ export class InterestArea {
   // Hier bleibt nur die viewer-spezifische Logik: Opt-in-Flag, Polling, Fuzzing.
 
   async _tick() {
-    if (!InterestArea.isEnabled()) return
-    if (!this.ajna.isLoggedIn?.()) return
+    if (!InterestArea.isEnabled())  return this._note({ ok: false, reason: 'sharing-off' })
+    if (!this.ajna.isLoggedIn?.())  return this._note({ ok: false, reason: 'not-logged-in' })
     const p = this.getPosition?.()
-    if (!p || !Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return
+    if (!p || !Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return this._note({ ok: false, reason: 'no-position' })
+    const pos = { lat: p.lat, lon: p.lon }
+    const bbox = fuzzBbox(p.lat, p.lon)
+    const sources = this.getSources() || []
     try {
-      await this.ajna.publishInterestArea(fuzzBbox(p.lat, p.lon), this.getSources() || [])
+      await this.ajna.publishInterestArea(bbox, sources)
+      return this._note({ ok: true, reason: 'published', pos, bbox, sources })
     } catch (err) {
-      console.warn('[interest-area] publish failed:', err?.message || err)
+      return this._note({ ok: false, reason: 'publish-failed', error: err?.message || String(err), pos, bbox, sources })
     }
   }
+
+  // Letzten Publish-Versuch merken (für Debug-Anzeige/Konsole). Grund + Quellen +
+  // BBOX helfen zu lokalisieren, warum ein Agent (z. B. world-director) nichts sieht.
+  _note(info) {
+    this.last = { at: Date.now(), ...info }
+    if (this._debug) console.debug('[interest-area]', this.last.reason, this.last)
+    return this.last
+  }
+
+  /** Letzter Publish-Status: {at, ok, reason, sources?, bbox?, pos?, error?} | null */
+  getLast() { return this.last || null }
+  /** Konsolen-Logging pro Tick an/aus. */
+  setDebug(on) { this._debug = !!on; return this }
+  /** Sofortiger Publish-Versuch (Debug/„jetzt teilen"). */
+  publishNow() { return this._tick() }
 
   async _delete() {
     if (!this.ajna.isLoggedIn?.()) return

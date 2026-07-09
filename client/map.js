@@ -16,6 +16,7 @@ import { shapeOf, emojiOf, colorOf, radiusOf } from "./core/Appearance.js"
 import { interactionReply } from "./core/InteractionReply.js"
 import { spawnRandomAndEdit } from "./core/SpawnHere.js"
 import { InterestArea } from "./core/InterestArea.js"
+import { InterestAreaDebug } from "./core/InterestAreaDebug.js"
 import { setupMapGps } from "./core/MapGpsControl.js"
 import { getAccessoryHub } from "./core/AccessoryHub.js"
 import { InventoryUI, DRAG_MIME } from "./core/InventoryUI.js"
@@ -571,7 +572,15 @@ async function init() {
     // Schalter sitzt jetzt im Profil-Dialog (aus jeder Ansicht erreichbar) statt
     // als separater Karten-Button. Publisher injizieren → Sofort-Effekt.
     profileDialog.interestArea = interestArea
+    window.ajnaInterestArea = interestArea   // Debug-Zugriff (Konsole + Overlay)
   }
+
+  // Debug-Overlay „📡 IA" (oben links): zeigt eigenen + Server-Interessensbereiche
+  // und den letzten Publish-Grund. Holt die InterestArea-Instanz aus window
+  // (Shell oder Desktop). Nur zur Fehlersuche, standardmäßig aus.
+  try {
+    window.ajnaInterestAreaDebug = new InterestAreaDebug({ map, ajna, getInterestArea: () => window.ajnaInterestArea })
+  } catch (err) { console.warn('[map] InterestAreaDebug init:', err?.message || err) }
 
   // Karte verschiebt sich → Off-Screen-Linie zum hervorgehobenen Marker neu zeichnen
   map.on('move', updateHighlightLine)

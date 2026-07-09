@@ -91,6 +91,7 @@ export class MobileShell {
       getSources: () => enabledSourcesFrom(window.agentFilters)
     })
     this.interestArea.start()
+    window.ajnaInterestArea = this.interestArea   // Debug-Zugriff (Konsole + Karten-Overlay)
     this._unsubs.push(() => this.interestArea?.stop())
     // Standort-Schalter sitzt (auch) im Profil-Dialog — diesen Publisher
     // injizieren, damit der Schalter dort sofort wirkt (sonst greift er beim

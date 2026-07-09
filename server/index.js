@@ -1,7 +1,19 @@
 import express from "express"
 import PocketBase from "pocketbase"
+import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
 import { mountGeoRoutes } from "./geo.js"
 import { mountPresenceRoutes } from "./presence.js"
+
+// .env aus dem CWD nachladen (nur Keys, die NICHT schon in der Umgebung stehen —
+// Shell-Export gewinnt). Damit wirken AJNA_CORS_ORIGINS / AJNA_PRESENCE_DEBUG u. Ä.
+// auch ohne manuellen Export. Bewusst minimal, keine Abhängigkeit.
+try {
+  for (const line of readFileSync(resolve(process.cwd(), ".env"), "utf8").split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*)\s*$/)
+    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "")
+  }
+} catch { /* keine .env — ok */ }
 
 // Ajna-Express-Backend für Server-Logik, die nicht als PocketBase-Hook
 // abgebildet werden kann oder soll (z. B. Aggregations-Queries, Upload-

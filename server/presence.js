@@ -109,5 +109,27 @@ export function mountPresenceRoutes(app) {
     res.json({ source, gridM: GRID_M, ttlMs: TTL_MS, areas: Array.from(uniq.values()) })
   })
 
+  // ── Debug: rohe aktive Bereiche (ohne User-ID) zur Fehlersuche ──────────
+  // Zeigt Zentrum, BBOX, sources und Rest-TTL jedes aktiven Eintrags — so lässt
+  // sich prüfen, ob überhaupt publiziert wird und ob die Quelle (z. B.
+  // "world-director") mitgeschickt wird. Nur mit AJNA_PRESENCE_DEBUG=1 aktiv
+  // (deanonymisiert teilweise → nicht für den Normalbetrieb).
+  if (process.env.AJNA_PRESENCE_DEBUG === '1') {
+    app.get('/ajnaapi/interest-areas/debug', async (req, res) => {
+      const uid = await authUserId(req)
+      if (!uid) return res.status(401).json({ error: 'auth token required' })
+      pruneExpired()
+      const now = Date.now()
+      const list = Array.from(areas.values()).map(a => ({
+        center: { lat: (a.bbox.latMin + a.bbox.latMax) / 2, lon: (a.bbox.lonMin + a.bbox.lonMax) / 2 },
+        bbox: a.bbox,
+        sources: a.sources,
+        expiresInMs: a.expiresAt - now
+      }))
+      res.json({ count: list.length, ttlMs: TTL_MS, now, areas: list })
+    })
+    console.log('[presence] DEBUG aktiv: GET /ajnaapi/interest-areas/debug')
+  }
+
   console.log(`[presence] mounted /ajnaapi/interest-areas (ttl: ${TTL_MS} ms, grid: ${GRID_M} m, in-memory)`)
 }
