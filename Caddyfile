@@ -110,6 +110,11 @@
         }
         @options method OPTIONS
         respond @options 204
+        # Bundles/Styles haben feste Namen (kein Content-Hash) → sonst serviert
+        # der Browser altes JS. no-cache = vor Nutzung revalidieren; mit ETag ist
+        # das ein billiges 304, liefert aber nach jedem Build sofort das neue Bundle.
+        @assets path *.js *.css
+        header @assets Cache-Control "no-cache"
         root * {args[0]}
         file_server
         encode gzip
