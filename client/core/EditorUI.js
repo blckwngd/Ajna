@@ -1,8 +1,25 @@
 import { injectServerBadgeStyles, renderServerBadge } from './ServerBadge.js'
 import { LOCAL_MODELS } from './localModels.js'
 import { randomHexColor } from './randomColor.js'
+import { SPAWN_ARCHETYPES } from './SpawnHere.js'
 
 const EXT_MODELS_KEY = 'ajna_allow_ext_models'
+
+// Objekt-Typen fürs Editor-Dropdown. Aktionen werden — wo vorhanden — aus den
+// SpawnHere-Archetypen abgeleitet, damit „Neuer NPC" dieselben Default-Aktionen
+// bekommt wie ein per SpawnHere erzeugter. emoji/portable sind sinnvolle
+// Startwerte, die der Nutzer danach überschreiben kann.
+const _archActions = (t) => SPAWN_ARCHETYPES.find(a => a.type === t)?.actions || null
+const EDITOR_TYPES = [
+  { key: 'default', label: 'Allgemein',   emoji: '' },
+  { key: 'npc',     label: 'NPC',         emoji: '🧑' },
+  { key: 'enemy',   label: 'Gegner',      emoji: '👹' },
+  { key: 'animal',  label: 'Tier',        emoji: '🦊' },
+  { key: 'dragon',  label: 'Drache',      emoji: '🐉' },
+  { key: 'item',    label: 'Gegenstand',  emoji: '📦', portable: true },
+  { key: 'diamond', label: 'Diamant',     emoji: '💎', portable: true, actions: [{ key: 'collect', label: 'Einsammeln' }] },
+  { key: 'hint',    label: 'Hinweis',     emoji: '💡', actions: [{ key: 'examine', label: 'Untersuchen' }] },
+]
 
 export class EditorUI {
   constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null, onManageGroups = null, onManageServers = null, onManageProfile = null, onManageFilters = null, onEditorActivate = null, objectFilter = null, onToggleArMode = null, getArMode = null, onSaved = null }) {
@@ -130,6 +147,8 @@ export class EditorUI {
             <input type="hidden" name="objectId">
             <div class="ed-grid">
               <label for="name">Name</label><input id="name" name="name" type="text" required>
+              <label for="type">Typ</label>
+              <select id="type" name="type"></select>
               <label for="lat">Lat</label><input id="lat" name="lat" type="number" step="0.000001" required>
               <label for="lon">Lon</label><input id="lon" name="lon" type="number" step="0.000001" required>
               <label for="altitude">Alt</label><input id="altitude" name="altitude" type="number" step="0.1" value="0">
@@ -189,6 +208,19 @@ export class EditorUI {
     this.editorDeleteBtn = this.container.querySelector('#editorDeleteBtn')
     this.editorOverlay = this.container.querySelector('#objectEditorOverlay')
     this.editorTitle = this.container.querySelector('#objectEditorTitle')
+    // Das Editor-Modal muss aus dem Container heraus: in der mobilen Shell ist
+    // dessen Container (#editorSection) `display:none !important`, und ein
+    // display:none-Vorfahre versteckt auch position:fixed-Kinder — sonst geht
+    // das Modal in der Kartenansicht nie auf. In einen sichtbaren body-Host
+    // (Klasse .editor-panel, damit die Modal-Styles greifen) verschieben.
+    if (this.editorOverlay) {
+      const host = document.createElement('div')
+      host.className = 'editor-panel ed-modal-host'
+      host.appendChild(this.editorOverlay)
+      document.body.appendChild(host)
+      this._modalHost = host
+    }
+    this._populateTypeSelect()
     this._populateModelSelect()
     this._wireEditorModal()
     this.refreshBtn = this.container.querySelector('#editorRefreshBtn')
@@ -406,6 +438,7 @@ export class EditorUI {
       const d2r = d => (parseFloat(d) || 0) * Math.PI / 180
       const data = {
         name: this.editorForm.name.value || `obj-${Date.now()}`,
+        type: this.editorForm.type?.value || 'default',
         lat: parseFloat(this.editorForm.lat.value),
         lon: parseFloat(this.editorForm.lon.value),
         altitude: parseFloat(this.editorForm.altitude.value),
@@ -598,6 +631,40 @@ export class EditorUI {
     sel.appendChild(new Option('Externe URL…', '__url__'))
   }
 
+  _populateTypeSelect() {
+    const sel = this.editorForm?.type
+    if (!sel) return
+    sel.innerHTML = ''
+    for (const t of EDITOR_TYPES) sel.appendChild(new Option(t.label, t.key))
+  }
+
+  // Typ-Feld setzen; unbekannte Bestandstypen (z. B. 'poi', 'ship') als eigene
+  // Option ergänzen, damit ein Edit sie nicht versehentlich auf 'default' ändert.
+  _setTypeField(type) {
+    const sel = this.editorForm?.type
+    if (!sel) return
+    const val = type || 'default'
+    if (![...sel.options].some(o => o.value === val)) sel.appendChild(new Option(val, val))
+    sel.value = val
+  }
+
+  // Beim Typwechsel eines NEUEN Objekts sinnvolle Startwerte setzen (Symbol,
+  // Aufnehmbar, Default-Aktionen im State). Bestehende State-Keys bleiben.
+  _applyTypeDefaults(typeKey) {
+    const f = this.editorForm
+    const t = EDITOR_TYPES.find(x => x.key === typeKey)
+    if (!t) return
+    if (t.emoji) f.emoji.value = t.emoji
+    if (f.portable) f.portable.checked = !!t.portable
+    let state = {}
+    try { state = f.stateJson.value.trim() ? JSON.parse(f.stateJson.value) : {} } catch { state = {} }
+    if (typeof state !== 'object' || Array.isArray(state) || state === null) state = {}
+    const actions = t.actions || _archActions(typeKey)
+    if (actions) state.actions = actions
+    if (t.portable) state.portable = true
+    f.stateJson.value = JSON.stringify(state, null, 2)
+  }
+
   // Modell-Feld aus einem gltf-Wert füllen: lokales Modell → Dropdown, sonst
   // (externe URL / nicht-Standard-Pfad) → „Externe URL…" + URL-Feld.
   _setModelField(gltf) {
@@ -614,7 +681,7 @@ export class EditorUI {
     const f = this.editorForm
     const isUrl = f.gltfSelect.value === '__url__'
     const allow = this._allowExt()
-    const label = this.container.querySelector('#gltfUrlLabel')
+    const label = this.editorOverlay?.querySelector('#gltfUrlLabel')
     f.gltfUrl.hidden = !isUrl
     if (label) label.hidden = !isUrl
     f.gltfUrl.disabled = isUrl && !allow
@@ -624,9 +691,14 @@ export class EditorUI {
   }
 
   _wireEditorModal() {
-    this.container.querySelector('#editorCloseBtn')?.addEventListener('click', () => this._closeEditor())
+    this.editorOverlay?.querySelector('#editorCloseBtn')?.addEventListener('click', () => this._closeEditor())
     this.editorOverlay?.addEventListener('click', (e) => { if (e.target === this.editorOverlay) this._closeEditor() })
     this.editorForm?.gltfSelect?.addEventListener('change', () => this._updateModelUrlVisibility())
+    // Typwechsel wendet Default-Symbol/Aktionen nur bei NEUEN Objekten an, damit
+    // ein Umtypisieren eines bestehenden Objekts dessen State nicht überschreibt.
+    this.editorForm?.type?.addEventListener('change', () => {
+      if (!this.editorForm.objectId.value) this._applyTypeDefaults(this.editorForm.type.value)
+    })
   }
 
   _openEditor()  { if (this.editorOverlay) this.editorOverlay.hidden = false }
@@ -661,6 +733,7 @@ export class EditorUI {
     const f = this.editorForm
     f.objectId.value = obj.id
     f.name.value = obj.name || ''
+    this._setTypeField(obj.type)
     f.lat.value = (obj.lat ?? 0).toFixed(6)
     f.lon.value = (obj.lon ?? 0).toFixed(6)
     f.altitude.value = (obj.altitude ?? 0).toFixed(2)
@@ -694,6 +767,7 @@ export class EditorUI {
     const f = this.editorForm
     f.objectId.value = ''
     f.name.value = ''
+    this._setTypeField('default')
     f.lat.value = lat.toFixed(6)
     f.lon.value = lon.toFixed(6)
     f.altitude.value = (altitude ?? 0).toFixed(2)

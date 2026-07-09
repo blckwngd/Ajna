@@ -4,6 +4,7 @@
 // Beim Hinzufügen einer neuen .glb-Datei diese Liste ergänzen (kein Verzeichnis-
 // Listing zur Laufzeit — Webpack/Caddy liefern die Dateien einzeln aus).
 export const LOCAL_MODELS = [
+  'AIMonster.glb',
   'CesiumMan.glb',
   'Diamond.glb',
   'Dragon.glb',

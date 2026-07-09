@@ -12,6 +12,23 @@ Modell vom richtigen Host — egal ob `localhost`, LAN-Alias oder Public-Domain,
 ohne dass der Agent den Client-Hostnamen kennen muss. Absolute URLs (`http…`)
 bleiben unverändert.
 
+## Neues Modell hinzufügen
+
+1. Die `.glb` nach `client/models/` legen (erledigt, wenn sie schon dort liegt).
+2. Den **Dateinamen** in [`client/core/localModels.js`](../core/localModels.js)
+   (`LOCAL_MODELS`) eintragen — **das** macht sie im Objekt-Editor-Dropdown
+   „3D-Modell" auswählbar (kein Verzeichnis-Listing zur Laufzeit).
+3. **Neu bauen** (`npm run build`), damit das Bundle die aktualisierte Liste
+   enthält. Ausgeliefert wird die Datei statisch unter `/models/<Datei>.glb`.
+4. *Optional:* hier in der Tabelle dokumentieren; soll das Modell **zufällig
+   gespawnt** werden, zusätzlich in `MODEL_POOL` des World-Directors ergänzen.
+5. *Optional:* passt die Größe nicht, einen Ziel-Höhenwert in
+   `MODEL_TARGET_HEIGHT` ([`client/engine/GameObject.js`](../engine/GameObject.js))
+   setzen (sonst greift die Standard-Normalisierung).
+
+Externe Modelle brauchen keine Registrierung — im Editor „Externe URL…" wählen
+(sofern global erlaubt) und die absolute `https://…/modell.glb` eintragen.
+
 **Zuordnung im World-Director** ([`agents/world-director.mjs`](../../agents/world-director.mjs),
 `MODEL_POOL` — pro Spawn zufällig gewählt):
 
@@ -33,6 +50,7 @@ bleiben unverändert.
 
 | Datei | Kategorie | Animiert | Quelle |
 |---|---|---|---|
+| `AIMonster.glb` | enemy / monster | ? | vom Nutzer ergänzt — Quelle/Lizenz noch einzutragen |
 | `CesiumMan.glb` | npc | ✓ | Khronos glTF-Sample-Assets (CC-BY 4.0, © Cesium) |
 | `Soldier.glb` | npc / enemy | ✓ | three.js examples |
 | `RobotExpressive.glb` | device / npc | ✓ (viele) | three.js examples (CC0, Tomás Laulhé / Don McCurdy) |
