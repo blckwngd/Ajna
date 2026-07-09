@@ -220,6 +220,8 @@ export class EditorUI {
       document.body.appendChild(host)
       this._modalHost = host
     }
+    // Explizite Referenz statt form.type (robuster; das Modal liegt jetzt im body-Host).
+    this.typeSelect = this.editorOverlay?.querySelector('#type')
     this._populateTypeSelect()
     this._populateModelSelect()
     this._wireEditorModal()
@@ -438,7 +440,7 @@ export class EditorUI {
       const d2r = d => (parseFloat(d) || 0) * Math.PI / 180
       const data = {
         name: this.editorForm.name.value || `obj-${Date.now()}`,
-        type: this.editorForm.type?.value || 'default',
+        type: this.typeSelect?.value || 'default',
         lat: parseFloat(this.editorForm.lat.value),
         lon: parseFloat(this.editorForm.lon.value),
         altitude: parseFloat(this.editorForm.altitude.value),
@@ -632,7 +634,7 @@ export class EditorUI {
   }
 
   _populateTypeSelect() {
-    const sel = this.editorForm?.type
+    const sel = this.typeSelect
     if (!sel) return
     sel.innerHTML = ''
     for (const t of EDITOR_TYPES) sel.appendChild(new Option(t.label, t.key))
@@ -641,7 +643,7 @@ export class EditorUI {
   // Typ-Feld setzen; unbekannte Bestandstypen (z. B. 'poi', 'ship') als eigene
   // Option ergänzen, damit ein Edit sie nicht versehentlich auf 'default' ändert.
   _setTypeField(type) {
-    const sel = this.editorForm?.type
+    const sel = this.typeSelect
     if (!sel) return
     const val = type || 'default'
     if (![...sel.options].some(o => o.value === val)) sel.appendChild(new Option(val, val))
@@ -696,8 +698,8 @@ export class EditorUI {
     this.editorForm?.gltfSelect?.addEventListener('change', () => this._updateModelUrlVisibility())
     // Typwechsel wendet Default-Symbol/Aktionen nur bei NEUEN Objekten an, damit
     // ein Umtypisieren eines bestehenden Objekts dessen State nicht überschreibt.
-    this.editorForm?.type?.addEventListener('change', () => {
-      if (!this.editorForm.objectId.value) this._applyTypeDefaults(this.editorForm.type.value)
+    this.typeSelect?.addEventListener('change', () => {
+      if (!this.editorForm.objectId.value) this._applyTypeDefaults(this.typeSelect.value)
     })
   }
 
