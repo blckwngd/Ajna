@@ -468,7 +468,6 @@ async function init() {
     })
   })
   interestArea.start()
-  profileDialog.interestArea = interestArea
   // Manifeste selbst aktuell halten (Erst-Load deckt persistierte Session ab, wo
   // onAuthChanged nicht feuert) und die Area neu publishen, sobald die Quellen
   // geladen/geändert sind — sonst ginge sie ohne Quellen raus (Agents sehen sie nicht).

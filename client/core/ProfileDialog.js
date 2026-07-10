@@ -13,7 +13,6 @@
 // Spätere Erweiterung: gleiche Modal kann weitere Profil-Settings aufnehmen
 // (Anzeigename, Avatar-URL, Sync-Server-Liste etc.).
 
-import { InterestArea } from './InterestArea.js'
 
 const IMPLICIT_AUDIENCES = new Set(['authenticated', 'anonymous', 'everyone'])
 const ALL_RIGHTS = ['view', 'edit', 'move']
@@ -29,12 +28,9 @@ export class ProfileDialog {
   /**
    * @param {{ajna: import('./AjnaManager.js').AjnaManager}} opts
    */
-  constructor({ ajna, interestArea = null } = {}) {
+  constructor({ ajna } = {}) {
     this.ajna = ajna
-    // Optionaler Interest-Area-Publisher der jeweiligen Ansicht — für den
-    // Sofort-Effekt beim Umschalten. Ohne ihn greift der Schalter beim nächsten
-    // Publish-Tick des laufenden Publishers (Flag wird dynamisch geprüft).
-    this.interestArea = interestArea
+    // (Standort-Teilen-Schalter entfernt — sitzt jetzt nur in den Einstellungen.)
     this._backdrop = null
     this._aces = []
     this._users = []
@@ -78,20 +74,6 @@ export class ProfileDialog {
         <h3>Mein Profil</h3>
         <button class="prof-close" title="Schließen">✕</button>
       </div>
-
-      <section class="prof-privacy">
-        <h4>Privatsphäre</h4>
-        <label class="prof-share">
-          <input type="checkbox" data-role="share-location">
-          <span>Ungefähren Standort teilen</span>
-        </label>
-        <p class="prof-share-desc">
-          Veröffentlicht einen <strong>unscharfen</strong> Bereich (~500 m, Zentrum
-          gerastert) — damit Agents (POI, WLAN, AIS …) Inhalte in deiner Nähe liefern
-          statt an einem festen Ort. Standardmäßig aus; jederzeit abschaltbar, der
-          Eintrag verfällt automatisch.
-        </p>
-      </section>
 
       <section class="prof-privacy">
         <h4>Sicherheit</h4>
@@ -163,17 +145,8 @@ export class ProfileDialog {
       typeEl.appendChild(opt)
     }
 
-    // Privatsphäre: Standort-Teilen-Schalter (Opt-in, Default aus).
-    const share = dlg.querySelector('[data-role="share-location"]')
-    if (share) {
-      share.checked = InterestArea.isEnabled()
-      share.addEventListener('change', () => {
-        // Flag setzen — jeder laufende Publisher respektiert es dynamisch.
-        InterestArea.setEnabled(share.checked)
-        // Sofort-Effekt (publish/delete), wenn diese Ansicht einen Publisher hat.
-        this.interestArea?.onToggle(share.checked)
-      })
-    }
+    // Standort-Teilen-Schalter sitzt jetzt NUR noch in den Einstellungen
+    // (präsent + einfach erreichbar) — hier bewusst entfernt (war doppelt).
 
     // Sicherheit: globaler Schalter für externe 3D-Modell-URLs (Default aus).
     // Gelesen von EditorUI (URL-Eingabe) und GameObject (Laden fremd-origin).

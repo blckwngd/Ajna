@@ -585,9 +585,6 @@ async function init() {
       getSources: () => enabledSources()
     })
     interestArea.start()
-    // Schalter sitzt jetzt im Profil-Dialog (aus jeder Ansicht erreichbar) statt
-    // als separater Karten-Button. Publisher injizieren → Sofort-Effekt.
-    profileDialog.interestArea = interestArea
     window.ajnaInterestArea = interestArea   // Debug-Zugriff (Konsole + Overlay)
     // Neu publishen, sobald Manifeste geladen/Filter geändert → Quellen aktuell.
     agentFilters.onChange(() => interestArea.publishNow())
