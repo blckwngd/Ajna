@@ -35,6 +35,8 @@ export class ArPassthrough {
   }
 
   get enabled() { return this._enabled }
+  /** Das <video>-Element (für FOV-Kalibrierung: videoWidth/Height). */
+  get video() { return this._video }
 
   _ensureVideo() {
     if (this._video) return this._video

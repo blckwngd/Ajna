@@ -54,6 +54,7 @@ import { DebugUIManager } from "./engine/debug/DebugUIManager.js"
 import { buildEnvironment } from "./engine/environment/EnvironmentBuilder.js"
 import { sunPosition } from "./core/solarPosition.js"
 import { ArPassthrough } from "./core/ArPassthrough.js"
+import { ArFovCalibration } from "./core/ArFovCalibration.js"
 import { OSMContext } from "./engine/environment/OSMContext.js"
 import { PathOverlay } from "./engine/debug/PathOverlay.js"
 
@@ -271,7 +272,7 @@ async function init() {
     window.objectMap = objectMap
   }
   
-  window.addEventListener("resize", () => engine.resize())
+  window.addEventListener("resize", () => { engine.resize(); if (arPassthrough.enabled) arFov?.apply() })
   
   const arEnv = buildEnvironment(scene)
 
@@ -336,6 +337,17 @@ async function init() {
       BABYLON.Quaternion.RotationYawPitchRollToRef(e.y, -e.x, -e.z, q)
     })
   }
+  // FOV-Kalibrierung der AR-Kamera an das reale Kamerabild (Pitch-Mismatch):
+  // Auto-Schätzung aus den Video-Maßen + Feinjustier-Slider (per Gerät gemerkt).
+  const arFov = _playerCam
+    ? new ArFovCalibration({
+        camera: _playerCam,
+        getVideo: () => arPassthrough.video,
+        getCanvas: () => canvas,
+        parent: arRoot
+      })
+    : null
+
   async function _ensureOrientationPermission() {
     const D = window.DeviceOrientationEvent
     if (D && typeof D.requestPermission === "function") {
@@ -354,8 +366,11 @@ async function init() {
         if (!_toast) _toast = new Toast()
         _toast.show(err?.message || "Kamera nicht verfügbar", { title: "AR" })
       })
+      arFov?.show()   // FOV an Kamerabild angleichen + Kalibrier-Slider einblenden
     } else {
       arPassthrough.disable()
+      arFov?.reset()  // XR/Skybox: virtuelle Kamera auf Default-FOV
+      arFov?.hide()
     }
     try { editorUI?.setArModeToggle?.(ar) } catch {}   // Editor-Checkbox synchron
   }
