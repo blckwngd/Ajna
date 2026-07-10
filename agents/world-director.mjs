@@ -100,6 +100,13 @@ const FLY_WANDER    = parseFloat(process.env.WD_FLY_WANDER    || '0.6')  // rad/
 // und in kleinerem Areal als Flieger.
 const ROAM_SPEED    = parseFloat(process.env.WD_ROAM_SPEED    || '1.0')  // m/s
 const ROAM_AREA_M   = parseFloat(process.env.WD_ROAM_AREA_M   || '80')   // Radius Streif-Areal
+// Flieger-Ausrichtung: Wegen invertNorthSouth (Nord=-Z) zeigt der Körper mit der
+// bisherigen Yaw-Formel bei Kurven falsch herum (rückwärts). Flieger nutzen daher
+// die gespiegelte Yaw (π/2 − heading). WD_FLY_YAW_OFFSET = π addieren, falls ein
+// Modell dann rückwärts zeigt. WD_FLY_BANK_MAX = Roll-Amplitude in Kurven (rad;
+// Vorzeichen umkehren, falls es in die falsche Richtung kippt).
+const FLY_YAW_OFFSET = parseFloat(process.env.WD_FLY_YAW_OFFSET || '0')
+const FLY_BANK_MAX   = parseFloat(process.env.WD_FLY_BANK_MAX   || '0.5')  // ~30° max. Schräglage
 
 // ── Interest-Areas: Welt dort bevölkern, wo Spieler sind (folgt echtem GPS) ──
 // Der Director fragt periodisch die (anonymisierten) Interessensbereiche ab und
@@ -668,21 +675,28 @@ async function advanceRoamer(c) {
     const p = destPoint(c.lat, c.lon, c.heading, c.speed * dt)
     c.lat = p.lat; c.lon = p.lon
 
-    let altitude, wantAnim
+    let altitude, wantAnim, yaw, roll = 0
     if (c.flying) {
       c.altPhase = wrapPi(c.altPhase + dt * 0.3)
       altitude = Math.max(6, c.altBase + Math.sin(c.altPhase) * 6)   // sanfte Höhenwelle
       // Kräftige Kurve/nah am Rand → flap (FlapFlight), sonst gleiten (GlideFlight).
       wantAnim = (Math.abs(turn) > maxTurn * 0.5 || edge > 0.5) ? 'fly' : 'glide'
+      // Yaw = echte Bewegungsrichtung als Babylon-Root-Yaw. Wegen invertNorthSouth
+      // (Nord=-Z) ist das π − heading (fixt die Kurven-Handedness; die alte Formel
+      // h−π/2 lief mit falscher Drehrichtung). Banking: proportional zur Drehrate
+      // in die Kurve rollen.
+      yaw = wrapPi(Math.PI - c.heading + FLY_YAW_OFFSET)
+      roll = clamp(turn / maxTurn, -1, 1) * FLY_BANK_MAX
     } else {
-      altitude = c.altBase          // Boden-Tier bleibt auf seiner Höhe
+      altitude = c.altBase                // Boden-Tier bleibt auf seiner Höhe
       wantAnim = 'walk'
+      yaw = HEADING_TO_YAW(c.heading)     // Boden/NPC-Konvention unverändert
     }
     if (wantAnim !== c.anim) { c.anim = wantAnim; await ajna.setAnimation(c.id, wantAnim) }
 
     await ajna.updateObject(c.id, {
       lat: c.lat, lon: c.lon, altitude,
-      rotation: { x: 0, y: HEADING_TO_YAW(c.heading), z: 0 }
+      rotation: { x: 0, y: yaw, z: roll }
     })
   } catch (err) {
     console.warn(`[director] Roam "${c.id}" fehlgeschlagen: ${err?.message || err}`)
