@@ -729,7 +729,12 @@ export class GameObject {
 
   dispose() {
     this.components.forEach(c => c.dispose())
-    this.root.dispose()
+    // dispose(doNotRecurse=false, disposeMaterialAndTextures=true): gibt beim
+    // Despawn AUCH Materialien + Texturen frei. Sonst leaken sie (jedes Objekt
+    // lädt bislang eine eigene GLTF-Kopie) → RAM wächst bei ständigem
+    // Reconcile-Despawn/Respawn unbegrenzt. (Bei künftigem Instancing mit
+    // geteilten Texturen hier wieder auf false stellen.)
+    this.root.dispose(false, true)
   }
 
 }
