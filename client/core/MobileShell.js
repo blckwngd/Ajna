@@ -361,6 +361,9 @@ export class MobileShell {
     const user = this.ajna.currentUser()
     const loggedIn = !!user
     const displayName = user?.username || user?.email || user?.id || ''
+    // AR-FOV-Kalibrierfaktor (per Gerät): vom AR-Client, sonst aus localStorage.
+    const arFovFactor = window.arFovCalibration?.factor
+      ?? (parseFloat(localStorage.getItem('ajna.ar.fov_factor')) || 1)
 
     root.innerHTML = `
       <section class="settings-section">
@@ -408,6 +411,19 @@ export class MobileShell {
           <input type="checkbox" data-field="wand-audio" ${WandAudioFeedback.isEnabled() ? 'checked' : ''}>
           Audio-Hinweise (Name/Aktion vorlesen)
         </label>
+      </section>
+
+      <section class="settings-section">
+        <h3>AR-Ansicht</h3>
+        <label class="meta" style="display:flex;align-items:center;gap:10px">
+          <span style="white-space:nowrap">Blickfeld (FOV)</span>
+          <input type="range" data-field="ar-fov" min="0.5" max="2.0" step="0.02" value="${arFovFactor}" style="flex:1">
+          <span class="meta" data-role="ar-fov-val" style="min-width:40px;text-align:right">${arFovFactor.toFixed(2)}×</span>
+        </label>
+        <div class="meta" style="margin-top:6px">
+          Gleicht das Bodengitter an das Kamerabild an, falls es beim Neigen zu stark kippt.
+          Am besten in der AR-Ansicht justieren (dort erscheint derselbe Regler live). Pro Gerät gespeichert.
+        </div>
       </section>
 
       <!-- Geräte: nur Verbinden + Status + Tür zu den geräte-spezifischen
@@ -732,6 +748,18 @@ export class MobileShell {
 
     const audioToggle = root.querySelector('[data-field="wand-audio"]')
     audioToggle?.addEventListener('change', () => WandAudioFeedback.setEnabled(audioToggle.checked))
+
+    // AR-FOV-Kalibrierung: live über den AR-Client anwenden (falls initialisiert),
+    // sonst nur persistieren, damit es beim nächsten AR-Start greift.
+    const fovSlider = root.querySelector('[data-field="ar-fov"]')
+    const fovVal = root.querySelector('[data-role="ar-fov-val"]')
+    fovSlider?.addEventListener('input', () => {
+      const f = parseFloat(fovSlider.value)
+      if (!Number.isFinite(f)) return
+      if (fovVal) fovVal.textContent = f.toFixed(2) + '×'
+      if (window.arFovCalibration?.setFactor) window.arFovCalibration.setFactor(f)
+      else { try { localStorage.setItem('ajna.ar.fov_factor', String(f)) } catch {} }
+    })
 
     const shareToggle = root.querySelector('[data-field="share-location"]')
     shareToggle?.addEventListener('change', () => this.interestArea?.onToggle(shareToggle.checked))

@@ -347,6 +347,7 @@ async function init() {
         parent: arRoot
       })
     : null
+  window.arFovCalibration = arFov   // für den Regler im Einstellungs-Menü (MobileShell)
 
   async function _ensureOrientationPermission() {
     const D = window.DeviceOrientationEvent
