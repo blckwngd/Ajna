@@ -103,6 +103,12 @@ const FLY_WANDER    = parseFloat(process.env.WD_FLY_WANDER    || '0.6')  // rad/
 // und in kleinerem Areal als Flieger.
 const ROAM_SPEED    = parseFloat(process.env.WD_ROAM_SPEED    || '1.0')  // m/s
 const ROAM_AREA_M   = parseFloat(process.env.WD_ROAM_AREA_M   || '80')   // Radius Streif-Areal
+// Streif-/Rast-Rhythmus (nur Boden-Tiere mit Idle-Animation): abwechselnd
+// umherstreifen und stehen bleiben → ruhigere Szene. Zufällige Dauern (s).
+const ROAM_MOVE_MIN = parseFloat(process.env.WD_ROAM_MOVE_MIN || '8')
+const ROAM_MOVE_MAX = parseFloat(process.env.WD_ROAM_MOVE_MAX || '22')
+const ROAM_REST_MIN = parseFloat(process.env.WD_ROAM_REST_MIN || '4')
+const ROAM_REST_MAX = parseFloat(process.env.WD_ROAM_REST_MAX || '14')
 // Flieger-Ausrichtung: Wegen invertNorthSouth (Nord=-Z) zeigt der Körper mit der
 // bisherigen Yaw-Formel bei Kurven falsch herum (rückwärts). Flieger nutzen daher
 // die gespiegelte Yaw (π/2 − heading). WD_FLY_YAW_OFFSET = π addieren, falls ein
@@ -270,6 +276,9 @@ const MODEL_POOL = {
 // Vögel wirken in der Luft natürlicher → leichte Flughöhe, auch wenn der
 // Archetyp (animal) sonst am Boden ist.
 const FLYING_MODELS = new Set(['Flamingo.glb', 'Stork.glb', 'Parrot.glb'])
+// Modelle mit brauchbarer Idle-/Ruhe-Animation → dürfen beim Streifen Pausen
+// einlegen (sonst wirkt die Szene unruhig). Horse/Vögel/CesiumMan haben keine.
+const IDLE_MODELS = new Set(['Soldier.glb', 'RobotExpressive.glb', 'MawGooey.glb', 'Slime.glb', 'Fox.glb', 'AIMonster.glb', 'Dragon.glb'])
 
 function targetCount(archetype) {
   const env = process.env[`WD_COUNT_${archetype.toUpperCase()}`]
@@ -566,6 +575,12 @@ function isFlyer(obj) {
   return !!(model && FLYING_MODELS.has(model))
 }
 
+// Hat das Objekt-Modell eine Idle-Animation (→ darf pausieren)?
+function hasIdle(obj) {
+  const model = (obj.appearance?.gltf || '').split('/').pop()
+  return !!(model && IDLE_MODELS.has(model))
+}
+
 // Controller für freies Umherstreifen (Position + Richtung), als Kreis-Areal um
 // den Spawn. `flying`=true → Flieger (hoch, Höhenwelle, fly/glide-Animation);
 // false → Boden-Tier (Bodenhöhe, walk-Animation). Kein Overpass nötig.
@@ -586,6 +601,10 @@ function makeRoamer(obj, flying) {
     altBase: alt,
     altPhase: Math.random() * Math.PI * 2,
     anim: null,
+    // Pausen nur für Boden-Tiere mit Idle-Animation.
+    canPause: !flying && hasIdle(obj),
+    paused: false,
+    phaseUntil: Date.now() + randInt(ROAM_MOVE_MIN, ROAM_MOVE_MAX) * 1000,
     lastTickAt: Date.now(),
     busy: false
   }
@@ -638,10 +657,11 @@ async function advanceFor(c) {
       rotation: { x: 0, y: HEADING_TO_YAW(step.headingRad), z: 0 }
     })
     if (step.done) {
-      c.fsm = 'idle'; c.path = null; c.nextPlanAt = now + PAUSE_MS
+      const pauseMs = PAUSE_MS + randInt(0, 15) * 1000   // 10–25 s, gestreut (nicht im Gleichschritt)
+      c.fsm = 'idle'; c.path = null; c.nextPlanAt = now + pauseMs
       await ajna.setAnimation(c.id, 'idle')
       await ajna.updateObject(c.id, { state: { ...c.baseState } })   // walk_path entfernen
-      console.log(`[director] ⏸ ${c.archetype} "${c.id}" angekommen — Pause ${(PAUSE_MS / 1000) | 0} s`)
+      console.log(`[director] ⏸ ${c.archetype} "${c.id}" angekommen — Pause ${(pauseMs / 1000) | 0} s`)
     }
   } catch (err) {
     console.warn(`[director] tick "${c.id}" fehlgeschlagen: ${err?.message || err}`)
@@ -657,6 +677,17 @@ async function advanceRoamer(c) {
     const now = Date.now()
     const dt = Math.min(1, (now - c.lastTickAt) / 1000)
     c.lastTickAt = now
+
+    // Streif-/Rast-Rhythmus (nur idle-fähige Boden-Tiere): Phase abwechseln.
+    if (c.canPause && now >= c.phaseUntil) {
+      c.paused = !c.paused
+      const [lo, hi] = c.paused ? [ROAM_REST_MIN, ROAM_REST_MAX] : [ROAM_MOVE_MIN, ROAM_MOVE_MAX]
+      c.phaseUntil = now + randInt(lo, hi) * 1000
+      const wantAnim = c.paused ? 'idle' : 'walk'
+      if (wantAnim !== c.anim) { c.anim = wantAnim; await ajna.setAnimation(c.id, wantAnim) }
+      if (c.paused) console.log(`[director] ⏸ ${c.archetype} "${c.id}" rastet`)
+    }
+    if (c.paused) return   // steht still (idle) — keine Positions-/Rotations-Updates (spart Last)
 
     // Wunschrichtung: aktuelle Richtung + sanftes zufälliges Wandern.
     let desired = c.heading + (Math.random() - 0.5) * FLY_WANDER * dt * 2
