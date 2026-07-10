@@ -614,6 +614,7 @@ export class MobileShell {
   }
 
   _uwbSettingsHtml() {
+    const showAnchors = (() => { try { return localStorage.getItem('ajna.debug.show_uwb_anchors') === '1' } catch { return false } })()
     return `
       <section class="settings-section">
         <div class="meta" style="margin-bottom:10px">${this.uwbConnected ? 'verbunden' : 'nicht verbunden'}</div>
@@ -633,6 +634,10 @@ export class MobileShell {
           <input class="settings-input" data-field="uwb-anchor-node" type="text" inputmode="numeric" placeholder="Node-ID" style="width:96px">
           <button class="settings-btn secondary" data-action="uwb-anchor-add" style="flex:1">Anker hier anlegen</button>
         </div>
+        <label class="meta" style="display:flex;align-items:center;gap:8px;margin-top:8px">
+          <input type="checkbox" data-field="uwb-anchors-show" ${showAnchors ? 'checked' : ''}>
+          Anker anzeigen (3D-Marker mit Höhe + Karte, Debug)
+        </label>
         <button class="settings-btn secondary" data-action="uwb-net-share" style="width:100%;margin-top:6px">Netz teilen (Rechte)</button>
         <details style="margin-top:8px">
           <summary class="meta">Neues UWB-Netz veröffentlichen</summary>
@@ -809,6 +814,14 @@ export class MobileShell {
     root.querySelector('[data-action="uwb-net-share"]')?.addEventListener('click', () => this._shareUwbNetwork(setStatus))
     root.querySelector('[data-action="uwb-anchor-add"]')?.addEventListener('click', () => this._addUwbAnchor(root, setStatus))
     root.querySelector('[data-action="uwb-net-create"]')?.addEventListener('click', () => this._createUwbNetwork(root, setStatus))
+
+    // Anker-Debug-Anzeige (3D + Karte) umschalten → Overlay & Karte hören auf das Event.
+    const anchorsShow = root.querySelector('[data-field="uwb-anchors-show"]')
+    anchorsShow?.addEventListener('change', () => {
+      const on = anchorsShow.checked
+      try { localStorage.setItem('ajna.debug.show_uwb_anchors', on ? '1' : '0') } catch {}
+      window.dispatchEvent(new CustomEvent('ajna:uwb-anchors', { detail: on }))
+    })
   }
 
   // Refresh only the network <select> + PAN display in place (keeps the status

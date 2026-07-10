@@ -55,6 +55,7 @@ import { buildEnvironment } from "./engine/environment/EnvironmentBuilder.js"
 import { sunPosition } from "./core/solarPosition.js"
 import { ArPassthrough } from "./core/ArPassthrough.js"
 import { ArFovCalibration } from "./core/ArFovCalibration.js"
+import { UwbAnchorOverlay } from "./core/UwbAnchorOverlay.js"
 import { OSMContext } from "./engine/environment/OSMContext.js"
 import { PathOverlay } from "./engine/debug/PathOverlay.js"
 
@@ -910,6 +911,15 @@ async function init() {
   // weicht (Modelle tauschen sich danach unauffällig an Ort und Stelle ein).
   await syncSceneObjects(scene, world, geo, ajnaManager.getObjectList())
 
+  // UWB-Anker-Debug-Overlay: 3D-Marker (Beacon + Höhen-Pfeiler + Label) an der
+  // echten Anker-Position. Umschaltbar (Einstellungen). refresh() ist strukturell
+  // gegated (Signatur), daher pro onObjectsChanged günstig.
+  const uwbAnchors = new UwbAnchorOverlay({ scene, geo, ajna: ajnaManager })
+  window.uwbAnchorOverlay = uwbAnchors
+  ajnaManager.onObjectsChanged(() => uwbAnchors.refresh())
+  uwbAnchors.refresh()
+  window.addEventListener('ajna:uwb-anchors', e => uwbAnchors.setVisible(!!e.detail))
+
   // Re-Capping bei Kamerabewegung: die "nächsten X je Agent" hängen von der
   // Kameraposition ab. syncSceneObjects feuert sonst nur bei Datenänderung —
   // beim Laufen/Fliegen würde die Auswahl veralten. Daher ~alle 1.5 s prüfen,
@@ -1353,7 +1363,9 @@ async function syncSceneObjects(scene, world, geo, objects) {
   // Getragene Objekte (im Inventar) gehören nicht in die Welt, dann der
   // Agent-Filter: aus der vollen Objekt-Liste nur das behalten, was gemäß
   // User-Setting sichtbar sein soll. Default = alles sichtbar.
-  const worldObjects = objects.filter(o => !o.carried_by)
+  // UWB-Anker sind Infrastruktur — nicht als Spielobjekte rendern (das übernimmt
+  // das UwbAnchorOverlay als umschaltbares Debug-Overlay mit 3D-Höhen-Marker).
+  const worldObjects = objects.filter(o => !o.carried_by && (o.type || '').toLowerCase() !== 'uwb_anchor')
   const filteredObjects = _agentFilters
     ? worldObjects.filter(o => _agentFilters.matches(o))
     : worldObjects

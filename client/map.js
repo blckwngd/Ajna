@@ -124,7 +124,10 @@ function mapUpdateMarkers(objects) {
 
   // Getragene Objekte (im Inventar) gehören nicht in die Welt-Ansicht, dann der
   // Agent-Filter: nur Objekte, die der Spieler sehen will (Default = alle).
-  const inWorld = objects.filter(o => !o.carried_by)
+  // UWB-Anker (Infrastruktur) nur bei aktivem Debug-Flag zeigen (Einstellungen).
+  const showAnchors = (() => { try { return localStorage.getItem('ajna.debug.show_uwb_anchors') === '1' } catch { return false } })()
+  const inWorld = objects.filter(o => !o.carried_by &&
+    ((o.type || '').toLowerCase() !== 'uwb_anchor' || showAnchors))
   const filtered = agentFilters ? inWorld.filter(o => agentFilters.matches(o)) : inWorld
   const bounds = window.map.getBounds().pad(VIEWPORT_PAD)
   const keep = new Set()   // ids, die einen Marker haben SOLLEN
@@ -234,7 +237,8 @@ const MARKER_TYPES = {
   dragon: { emoji: '🐉', cls: 'map-marker-dragon' },
   item:   { emoji: '💎', cls: 'map-marker-item' },
   hint:   { emoji: '💡', cls: 'map-marker-hint' },
-  wifi:   { emoji: '📶', cls: 'map-marker-wifi' }
+  wifi:   { emoji: '📶', cls: 'map-marker-wifi' },
+  uwb_anchor: { emoji: '⚓', cls: 'map-marker-anchor' }
 }
 
 function markerIconFor(obj) {
@@ -244,10 +248,14 @@ function markerIconFor(obj) {
   // Heuristik: WLAN-Verschlüsselungssymbol bzw. das Typ-Emoji.
   const emoji = emojiOf(obj)
     || (type === 'wifi' ? encStyleOf(obj).symbol : (def ? def.emoji : '❌'))
+  // UWB-Anker: Node-ID + Höhe statt Name (3D-Höhe auch auf der 2D-Karte sichtbar).
+  const html = type === 'uwb_anchor'
+    ? `⚓ #${obj.state?.uwb?.nodeId ?? '?'} · ${(obj.altitude ?? 0).toFixed(1)}m`
+    : `${emoji} ${obj.name}`
   return window.L.divIcon({
     className: def ? `map-marker ${def.cls}` : 'map-marker',
     iconSize: [28, 28],
-    html: `${emoji} ${obj.name}`
+    html
   })
 }
 
@@ -278,8 +286,15 @@ function makeMarker(obj) {
 function popupHtml(id) {
   const o = ajna.getObjectById(id)
   const name = o?.name || 'unnamed'
-  const lat = Number.isFinite(o?.lat) ? o.lat.toFixed(5) : '?'
-  const lon = Number.isFinite(o?.lon) ? o.lon.toFixed(5) : '?'
+  const lat = Number.isFinite(o?.lat) ? o.lat.toFixed(6) : '?'
+  const lon = Number.isFinite(o?.lon) ? o.lon.toFixed(6) : '?'
+  if ((o?.type || '').toLowerCase() === 'uwb_anchor') {
+    const u = o.state?.uwb || {}, l = u.local || {}
+    return `<strong>⚓ UWB-Anker #${u.nodeId ?? '?'}</strong>`
+      + `<br>${lat}, ${lon} · ${(o.altitude ?? 0).toFixed(2)} m`
+      + `<br>lokal: ${l.x ?? '?'}, ${l.y ?? '?'}, ${l.z ?? '?'} mm`
+      + (u.network != null ? `<br>Netz: ${u.network}` : '')
+  }
   return `<strong>${name}</strong><br>${lat}, ${lon}`
 }
 
@@ -709,6 +724,9 @@ async function init() {
   ajna.onObjectsChanged(throttleLatest(objects => {
     mapUpdateMarkers(objects)
   }, 250))
+
+  // UWB-Anker-Debug-Sichtbarkeit umgeschaltet (Einstellungen) → Marker neu rendern.
+  window.addEventListener('ajna:uwb-anchors', () => mapUpdateMarkers(ajna.getObjectList()))
 
   // Manifeste selbst aktuell halten: Erst-Load (deckt persistierte Session ab, wo
   // onAuthChanged nicht feuert) + Auth-Wechsel + periodisch. window.agentFilters
