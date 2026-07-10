@@ -473,8 +473,19 @@ export class EditorUI {
       this.setStatus('Objekt gelöscht')
     })
 
+    // Objekt-Liste NUR neu bauen, wenn sich die Liste STRUKTURELL ändert (Objekt
+    // dazu/weg/umbenannt) — NICHT bei jedem Positions-Update. renderObjectList
+    // macht ein volles innerHTML über ALLE Objekte (mit poi/ais/wigle 100+, ~1 s);
+    // der Director tickt alle 500 ms → ungedrosselt hängte das beide Ansichten.
+    // Live-Koordinaten in der Liste aktualisieren sich damit bei Struktur-Änderung
+    // bzw. über den ↻-Button. Debounce bündelt Reconcile-Schwünge.
     this.ajna.onObjectsChanged(() => {
-      this.renderObjectList()
+      const all = this.ajna.getObjectList?.() || []
+      const sig = all.map(o => `${o.id}:${o.name || ''}`).join('|')
+      if (sig === this._listSig) return
+      this._listSig = sig
+      clearTimeout(this._listRenderTimer)
+      this._listRenderTimer = setTimeout(() => this.renderObjectList(), 300)
     })
 
     // Auth-State auch dann nachziehen, wenn der Wechsel nicht via diese
