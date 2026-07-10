@@ -1559,6 +1559,7 @@ function setupHoverSystem(scene, engine, canvas) {
   })
 
   // ---- Pointer-Hover über Mesh → Tooltip an Cursor-Position ----
+  let _hoverPickAt = 0
   scene.onPointerObservable.add(eventData => {
     if (eventData.type !== BABYLON.PointerEventTypes.POINTERMOVE) return
 
@@ -1578,7 +1579,15 @@ function setupHoverSystem(scene, engine, canvas) {
       return
     }
 
-    const pickInfo = scene.pick(scene.pointerX, scene.pointerY)
+    // Drosseln: ein voller Raycast pro pointermove (60-120 Hz) sättigt den
+    // Main-Thread (Haupt-FPS-Killer im Profil). Der Tooltip braucht keine 60 Hz.
+    const now = performance.now()
+    if (now - _hoverPickAt < 100) return
+    _hoverPickAt = now
+
+    // Nur Objekt-Meshes testen (Skybox/Boden/Schatten/Wand/Player überspringen) —
+    // deutlich weniger Kandidaten pro Raycast.
+    const pickInfo = scene.pick(scene.pointerX, scene.pointerY, m => !!m.metadata?.gameObject)
     const go = pickInfo?.hit ? pickInfo.pickedMesh?.metadata?.gameObject : null
 
     // Nur "echte" Objekte mit Namen (Player-Mesh hat keinen .metadata.gameObject)
