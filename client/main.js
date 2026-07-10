@@ -318,6 +318,13 @@ async function init() {
   const _debugCam = player.getComponent(DebugCameraComponent)
   const _playerCam = player.getComponent(CameraComponent)?.camera
   let _compassActive = false
+  // AR-Nord-Offset (Grad→rad), pro Gerät. Korrigiert einen Heading-Frame-Versatz
+  // zwischen Geräte-Kompass und Daten-Nordframe (manche Geräte zeigen die Welt um
+  // 180° gedreht — Süd erscheint als Nord). Live über das Einstellungs-Feld.
+  let _arNorthRad = (parseFloat(localStorage.getItem('ajna.ar.north_offset')) || 0) * Math.PI / 180
+  window.addEventListener('ajna:ar-north', ev => {
+    _arNorthRad = (parseFloat(ev.detail) || 0) * Math.PI / 180
+  })
   if (_playerCam) {
     // Kompass-Input EINMAL einrichten: die Player-Kamera bekommt ausschließlich
     // Babylons DeviceOrientation-Input (kein Maus/Touch/Tastatur). Bewusst NICHT
@@ -335,7 +342,8 @@ async function init() {
       const q = _playerCam.rotationQuaternion
       if (!_compassActive || !q) return
       const e = q.toEulerAngles()
-      BABYLON.Quaternion.RotationYawPitchRollToRef(e.y, -e.x, -e.z, q)
+      // + _arNorthRad korrigiert den Kompass↔Daten-Nord-Versatz (z. B. 180°).
+      BABYLON.Quaternion.RotationYawPitchRollToRef(e.y + _arNorthRad, -e.x, -e.z, q)
     })
   }
   // FOV-Kalibrierung der AR-Kamera an das reale Kamerabild (Pitch-Mismatch):

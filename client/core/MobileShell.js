@@ -359,6 +359,7 @@ export class MobileShell {
     // AR-FOV-Kalibrierfaktor (per Gerät): vom AR-Client, sonst aus localStorage.
     const arFovFactor = window.arFovCalibration?.factor
       ?? (parseFloat(localStorage.getItem('ajna.ar.fov_factor')) || 1)
+    const arNorth = (() => { try { return parseFloat(localStorage.getItem('ajna.ar.north_offset')) || 0 } catch { return 0 } })()
 
     root.innerHTML = `
       <section class="settings-section">
@@ -418,6 +419,14 @@ export class MobileShell {
         <div class="meta" style="margin-top:6px">
           Gleicht das Bodengitter an das Kamerabild an, falls es beim Neigen zu stark kippt.
           Am besten in der AR-Ansicht justieren (dort erscheint derselbe Regler live). Pro Gerät gespeichert.
+        </div>
+        <label class="meta" style="display:flex;align-items:center;gap:10px;margin-top:12px">
+          <span style="white-space:nowrap">Nord-Offset (°)</span>
+          <input type="number" data-field="ar-north" value="${arNorth}" step="1" style="width:80px">
+          <button type="button" class="settings-btn-inline" data-action="ar-north-flip" style="width:auto;padding:2px 10px">↺ 180°</button>
+        </label>
+        <div class="meta" style="margin-top:6px">
+          Falls Objekte im AR spiegelverkehrt liegen (Süd erscheint als Nord): auf 180 setzen (oder Button). Pro Gerät gespeichert.
         </div>
       </section>
 
@@ -760,6 +769,17 @@ export class MobileShell {
       if (window.arFovCalibration?.setFactor) window.arFovCalibration.setFactor(f)
       else { try { localStorage.setItem('ajna.ar.fov_factor', String(f)) } catch {} }
     })
+
+    // AR-Nord-Offset: korrigiert einen Kompass↔Daten-Heading-Versatz (z. B. 180°).
+    const northInput = root.querySelector('[data-field="ar-north"]')
+    const applyNorth = (deg) => {
+      const d = ((Math.round(Number(deg) || 0) % 360) + 360) % 360
+      if (northInput) northInput.value = d
+      try { localStorage.setItem('ajna.ar.north_offset', String(d)) } catch {}
+      window.dispatchEvent(new CustomEvent('ajna:ar-north', { detail: d }))
+    }
+    northInput?.addEventListener('change', () => applyNorth(northInput.value))
+    root.querySelector('[data-action="ar-north-flip"]')?.addEventListener('click', () => applyNorth((parseFloat(northInput?.value) || 0) + 180))
 
     const shareToggle = root.querySelector('[data-field="share-location"]')
     shareToggle?.addEventListener('change', () => this.interestArea?.onToggle(shareToggle.checked))
