@@ -294,6 +294,7 @@ function popupHtml(id) {
       + `<br>${lat}, ${lon} · ${(o.altitude ?? 0).toFixed(2)} m`
       + `<br>lokal: ${l.x ?? '?'}, ${l.y ?? '?'}, ${l.z ?? '?'} mm`
       + (u.network != null ? `<br>Netz: ${u.network}` : '')
+      + `<br><button type="button" onclick="window.__ajnaEditObj&&window.__ajnaEditObj('${id}')" style="margin-top:6px;cursor:pointer">✏️ Bearbeiten</button>`
   }
   return `<strong>${name}</strong><br>${lat}, ${lon}`
 }
@@ -660,6 +661,9 @@ async function init() {
       else if (err) toast.show('Speichern fehlgeschlagen', { title: 'Editor' })
     }
   })
+
+  // Editier-Hilfe aus dem Karten-Popup (z. B. „Bearbeiten" bei UWB-Ankern).
+  window.__ajnaEditObj = (oid) => { const o = ajna.getObjectById(oid); if (o) editorUI?.fillEditor(o) }
 
   // Marker-Klick-Aktionen verdrahten, sobald die EditorUI als Sink für
   // "Bearbeiten" zur Verfügung steht.

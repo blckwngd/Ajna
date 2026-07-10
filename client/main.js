@@ -742,6 +742,14 @@ async function init() {
     const rawPick = scene.pick(scene.pointerX, scene.pointerY)
     if (rawPick?.pickedMesh?.metadata?.isActionButton) return
 
+    // UWB-Anker-Beacon angetippt (Debug-Overlay sichtbar)? → Editor öffnen
+    // (präzise Position/Node-ID/mm-Koords bearbeiten).
+    const anchorMesh = scene.pick(scene.pointerX, scene.pointerY, m => !!m.metadata?.uwbAnchorId)?.pickedMesh
+    if (anchorMesh?.metadata?.uwbAnchorId) {
+      const rec = ajnaManager.getObjectById(anchorMesh.metadata.uwbAnchorId)
+      if (rec) { editorUI?.fillEditor(rec); return }
+    }
+
     // Nur GameObject-Meshes — GUI-Panel selbst aussortieren, sonst klickt
     // ein Button im Menü auf "sein eigenes" Objekt-Mesh und öffnet erneut.
     const pickInfo = scene.pick(scene.pointerX, scene.pointerY,

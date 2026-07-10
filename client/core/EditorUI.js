@@ -5,6 +5,11 @@ import { SPAWN_ARCHETYPES } from './SpawnHere.js'
 
 const EXT_MODELS_KEY = 'ajna_allow_ext_models'
 
+// Komma-tolerantes Zahlen-Parsing: mobile Tastaturen liefern „0,95" (Komma). Die
+// Felder sind text/inputmode=decimal (keine step/format-Validierung mehr) — hier
+// wird jede gültige Zahl akzeptiert, Komma wie Punkt.
+const parseNum = v => parseFloat(String(v ?? '').replace(',', '.'))
+
 // Objekt-Typen fürs Editor-Dropdown. Aktionen werden — wo vorhanden — aus den
 // SpawnHere-Archetypen abgeleitet, damit „Neuer NPC" dieselben Default-Aktionen
 // bekommt wie ein per SpawnHere erzeugter. emoji/portable sind sinnvolle
@@ -149,21 +154,21 @@ export class EditorUI {
               <label for="name">Name</label><input id="name" name="name" type="text" required>
               <label for="type">Typ</label>
               <select id="type" name="type"></select>
-              <label for="lat">Lat</label><input id="lat" name="lat" type="number" step="0.000001" required>
-              <label for="lon">Lon</label><input id="lon" name="lon" type="number" step="0.000001" required>
-              <label for="altitude">Alt</label><input id="altitude" name="altitude" type="number" step="0.1" value="0">
+              <label for="lat">Lat</label><input id="lat" name="lat" type="text" inputmode="decimal" required>
+              <label for="lon">Lon</label><input id="lon" name="lon" type="text" inputmode="decimal" required>
+              <label for="altitude">Alt</label><input id="altitude" name="altitude" type="text" inputmode="decimal" value="0">
               <label for="altitude_ref">Höhe</label>
               <select id="altitude_ref" name="altitude_ref">
                 <option value="ground">über Boden (AGL)</option>
                 <option value="msl">über Normalnull (AMSL)</option>
               </select>
               <label for="scale">Größe</label>
-              <input id="scale" name="scale" type="number" step="any" min="0.01" value="1" style="justify-self:start;width:90px">
+              <input id="scale" name="scale" type="text" inputmode="decimal" value="1" style="justify-self:start;width:90px">
               <label for="rotX">Rotation (°)</label>
               <span class="ed-rot-cell">
-                <input id="rotX" name="rotX" type="number" step="any" value="0" title="X — Neigung">
-                <input id="rotY" name="rotY" type="number" step="any" value="0" title="Y — Drehung (Kompass)">
-                <input id="rotZ" name="rotZ" type="number" step="any" value="0" title="Z — Roll">
+                <input id="rotX" name="rotX" type="text" inputmode="decimal" value="0" title="X — Neigung">
+                <input id="rotY" name="rotY" type="text" inputmode="decimal" value="0" title="Y — Drehung (Kompass)">
+                <input id="rotZ" name="rotZ" type="text" inputmode="decimal" value="0" title="Z — Roll">
               </span>
               <label for="emoji">Symbol</label>
               <input id="emoji" name="emoji" type="text" maxlength="8" placeholder="z. B. 💡" style="justify-self:start;width:90px">
@@ -178,6 +183,21 @@ export class EditorUI {
               <input id="gltfUrl" name="gltfUrl" type="text" placeholder="https://…/modell.glb">
               <label for="portable">Aufnehmbar</label>
               <input id="portable" name="portable" type="checkbox" style="width:auto;justify-self:start;">
+            </div>
+            <div id="anchorFields" class="ed-anchor" hidden>
+              <div class="ed-full-label">UWB-Anker (präzise Position)</div>
+              <div class="ed-grid">
+                <label for="uwbNode">Node-ID</label>
+                <input id="uwbNode" name="uwbNode" type="text" inputmode="numeric" style="justify-self:start;width:90px">
+                <label for="uwbLocalX">Lokal (mm)</label>
+                <span class="ed-rot-cell">
+                  <input id="uwbLocalX" name="uwbLocalX" type="text" inputmode="decimal" value="0" title="x (mm)">
+                  <input id="uwbLocalY" name="uwbLocalY" type="text" inputmode="decimal" value="0" title="y (mm)">
+                  <input id="uwbLocalZ" name="uwbLocalZ" type="text" inputmode="decimal" value="0" title="z (mm)">
+                </span>
+                <label for="uwbNetwork">Netz</label>
+                <input id="uwbNetwork" name="uwbNetwork" type="text" placeholder="z. B. 0x89AB" style="justify-self:start">
+              </div>
             </div>
             <label for="stateJson" class="ed-full-label">State (JSON)</label>
             <textarea id="stateJson" name="stateJson" rows="4" class="ed-json" spellcheck="false"></textarea>
@@ -222,6 +242,7 @@ export class EditorUI {
     }
     // Explizite Referenz statt form.type (robuster; das Modal liegt jetzt im body-Host).
     this.typeSelect = this.editorOverlay?.querySelector('#type')
+    this.anchorFields = this.editorOverlay?.querySelector('#anchorFields')   // UWB-Anker-Sektion
     this._populateTypeSelect()
     this._populateModelSelect()
     this._wireEditorModal()
@@ -436,14 +457,20 @@ export class EditorUI {
       }
       state.altitude_ref = this.editorForm.altitude_ref?.value === 'msl' ? 'msl' : 'ground'
       state.portable = !!this.editorForm.portable?.checked
+      this._mergeAnchorFields(state)   // UWB-Anker: Node-ID + mm-Lokalkoords + Netz in state.uwb
 
-      const d2r = d => (parseFloat(d) || 0) * Math.PI / 180
+      const d2r = d => (parseNum(d) || 0) * Math.PI / 180
+      const lat = parseNum(this.editorForm.lat.value)
+      const lon = parseNum(this.editorForm.lon.value)
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        this.setStatus('Lat/Lon müssen gültige Zahlen sein')
+        return
+      }
       const data = {
         name: this.editorForm.name.value || `obj-${Date.now()}`,
         type: this.typeSelect?.value || 'default',
-        lat: parseFloat(this.editorForm.lat.value),
-        lon: parseFloat(this.editorForm.lon.value),
-        altitude: parseFloat(this.editorForm.altitude.value),
+        lat, lon,
+        altitude: parseNum(this.editorForm.altitude.value) || 0,
         rotation: { x: d2r(this.editorForm.rotX.value), y: d2r(this.editorForm.rotY.value), z: d2r(this.editorForm.rotZ.value) },
         appearance: this._appearanceFromForm(),
         state
@@ -678,6 +705,37 @@ export class EditorUI {
     f.stateJson.value = JSON.stringify(state, null, 2)
   }
 
+  // UWB-Anker-Sektion (Node-ID + mm-Lokalkoords + Netz) je nach Typ ein-/ausblenden.
+  _updateAnchorSectionVisible() {
+    const isAnchor = (this.typeSelect?.value || '').toLowerCase() === 'uwb_anchor'
+    if (this.anchorFields) this.anchorFields.hidden = !isAnchor
+  }
+  _fillAnchorFields(obj) {
+    const u = obj?.state?.uwb || {}, l = u.local || {}, f = this.editorForm
+    if (f.uwbNode)    f.uwbNode.value    = u.nodeId ?? ''
+    if (f.uwbLocalX)  f.uwbLocalX.value  = l.x ?? 0
+    if (f.uwbLocalY)  f.uwbLocalY.value  = l.y ?? 0
+    if (f.uwbLocalZ)  f.uwbLocalZ.value  = l.z ?? 0
+    if (f.uwbNetwork) f.uwbNetwork.value = u.network ?? ''
+  }
+  // Anker-Felder in state.uwb übernehmen (nur wenn Typ uwb_anchor). Erhält übrige
+  // state.uwb-Felder (aus dem State-JSON).
+  _mergeAnchorFields(state) {
+    if ((this.typeSelect?.value || '').toLowerCase() !== 'uwb_anchor') return
+    const f = this.editorForm
+    const nodeId = parseInt(String(f.uwbNode?.value ?? '').trim(), 10)
+    const uwb = { ...(state.uwb || {}) }
+    if (Number.isFinite(nodeId)) uwb.nodeId = nodeId
+    uwb.local = {
+      x: parseNum(f.uwbLocalX?.value) || 0,
+      y: parseNum(f.uwbLocalY?.value) || 0,
+      z: parseNum(f.uwbLocalZ?.value) || 0
+    }
+    const net = String(f.uwbNetwork?.value ?? '').trim()
+    if (net) uwb.network = net; else delete uwb.network
+    state.uwb = uwb
+  }
+
   // Modell-Feld aus einem gltf-Wert füllen: lokales Modell → Dropdown, sonst
   // (externe URL / nicht-Standard-Pfad) → „Externe URL…" + URL-Feld.
   _setModelField(gltf) {
@@ -711,6 +769,7 @@ export class EditorUI {
     // ein Umtypisieren eines bestehenden Objekts dessen State nicht überschreibt.
     this.typeSelect?.addEventListener('change', () => {
       if (!this.editorForm.objectId.value) this._applyTypeDefaults(this.typeSelect.value)
+      this._updateAnchorSectionVisible()
     })
   }
 
@@ -735,8 +794,8 @@ export class EditorUI {
     if (f.colorOn.checked) ap.color = f.color.value
     else delete ap.color
     // Größe (Skalar; wirkt über GameObject.#normalizeModelSize)
-    const scale = parseFloat(f.scale.value)
-    if (Number.isFinite(scale) && Math.abs(scale - 1) > 1e-6) ap.scale = scale
+    const scale = parseNum(f.scale.value)
+    if (Number.isFinite(scale) && scale > 0 && Math.abs(scale - 1) > 1e-6) ap.scale = scale
     else delete ap.scale
     return ap
   }
@@ -747,9 +806,11 @@ export class EditorUI {
     f.objectId.value = obj.id
     f.name.value = obj.name || ''
     this._setTypeField(obj.type)
-    f.lat.value = (obj.lat ?? 0).toFixed(6)
-    f.lon.value = (obj.lon ?? 0).toFixed(6)
-    f.altitude.value = (obj.altitude ?? 0).toFixed(2)
+    // UWB-Anker brauchen mehr Nachkommastellen (cm-Genauigkeit ≈ 8 Stellen).
+    const isAnchor = (obj.type || '').toLowerCase() === 'uwb_anchor'
+    f.lat.value = (obj.lat ?? 0).toFixed(isAnchor ? 8 : 6)
+    f.lon.value = (obj.lon ?? 0).toFixed(isAnchor ? 8 : 6)
+    f.altitude.value = (obj.altitude ?? 0).toFixed(isAnchor ? 3 : 2)
     f.altitude_ref.value = obj.state?.altitude_ref === 'msl' ? 'msl' : 'ground'
     if (f.portable) f.portable.checked = !!obj.state?.portable
     const ap = obj.appearance || {}
@@ -764,8 +825,10 @@ export class EditorUI {
     f.rotZ.value = rad2deg(obj.rotation?.z)
     this._setModelField(typeof ap.gltf === 'string' ? ap.gltf : '')
     f.stateJson.value = JSON.stringify(obj.state || {}, null, 2)   // voller State, editierbar
+    this._fillAnchorFields(obj)
+    this._updateAnchorSectionVisible()
     this._editingAppearance = { ...ap }
-    if (this.editorTitle) this.editorTitle.textContent = 'Objekt bearbeiten'
+    if (this.editorTitle) this.editorTitle.textContent = isAnchor ? 'UWB-Anker bearbeiten' : 'Objekt bearbeiten'
     this._openEditor()
   }
 
@@ -793,6 +856,8 @@ export class EditorUI {
     f.rotX.value = 0; f.rotY.value = 0; f.rotZ.value = 0
     this._setModelField('')
     f.stateJson.value = '{}'
+    this._fillAnchorFields({})
+    this._updateAnchorSectionVisible()
     this._editingAppearance = {}
     if (this.editorTitle) this.editorTitle.textContent = 'Neues Objekt'
     this._openEditor()
