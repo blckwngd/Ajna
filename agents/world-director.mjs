@@ -88,8 +88,11 @@ const GRAPH_RADIUS_M = Math.min(2000, RADIUS_M + WAY_RADIUS_M)
 // Welche Archetypen laufen auf Straßen? (npc/enemy). Fliegende Wesen (dragon +
 // Vogel-Modelle) bekommen stattdessen freien Flug (siehe makeFlyer/advanceFlyer).
 const STREET_ARCHETYPES = new Set(['npc', 'enemy'])
-// Modell-Yaw vs. Bewegungsrichtung — wie in client/agent.js (Modell zeigt +Z).
-const HEADING_TO_YAW = h => h - Math.PI / 2
+// Modell-Yaw = Bewegungsrichtung als Babylon-Root-Yaw. Wegen invertNorthSouth
+// (Nord=-Z) ist das π − heading (die alte Formel heading − π/2 war falsch-händig
+// → Figuren drehten in Kurven falsch herum, vgl. Flieger-Fix). Gilt für
+// Boden-Roamer (advanceRoamer) UND Straßen-NPCs (advanceFor).
+const HEADING_TO_YAW = h => Math.PI - h
 
 // ── Freiflug (Drachen/Vögel): sanftes Umherfliegen in einem Areal ──────────
 const FLY_AREA_M    = parseFloat(process.env.WD_FLY_AREA_M    || '150')  // Radius Flug-Areal um Spawn (m)
