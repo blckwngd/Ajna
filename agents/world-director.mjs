@@ -96,6 +96,10 @@ const FLY_AREA_M    = parseFloat(process.env.WD_FLY_AREA_M    || '150')  // Radi
 const FLY_SPEED     = parseFloat(process.env.WD_FLY_SPEED     || '7')    // m/s
 const FLY_TURN_RATE = parseFloat(process.env.WD_FLY_TURN_RATE || '0.7')  // rad/s max. Drehrate → weiche Kurven
 const FLY_WANDER    = parseFloat(process.env.WD_FLY_WANDER    || '0.6')  // rad/s Wander-Amplitude
+// Boden-Tiere (Fox/Horse …) streifen frei umher (kein Overpass nötig) — langsamer
+// und in kleinerem Areal als Flieger.
+const ROAM_SPEED    = parseFloat(process.env.WD_ROAM_SPEED    || '1.0')  // m/s
+const ROAM_AREA_M   = parseFloat(process.env.WD_ROAM_AREA_M   || '80')   // Radius Streif-Areal
 
 // ── Interest-Areas: Welt dort bevölkern, wo Spieler sind (folgt echtem GPS) ──
 // Der Director fragt periodisch die (anonymisierten) Interessensbereiche ab und
@@ -552,19 +556,23 @@ function isFlyer(obj) {
   return !!(model && FLYING_MODELS.has(model))
 }
 
-// Controller für freien Flug: Position + Richtung + Höhen-Phase. Das Flug-Areal
-// ist ein Kreis (FLY_AREA_M) um den Spawn.
-function makeFlyer(obj) {
-  const alt = Number.isFinite(obj.altitude) && obj.altitude > 3 ? obj.altitude : randInt(30, 70)
+// Controller für freies Umherstreifen (Position + Richtung), als Kreis-Areal um
+// den Spawn. `flying`=true → Flieger (hoch, Höhenwelle, fly/glide-Animation);
+// false → Boden-Tier (Bodenhöhe, walk-Animation). Kein Overpass nötig.
+function makeRoamer(obj, flying) {
+  const alt = flying
+    ? (Number.isFinite(obj.altitude) && obj.altitude > 3 ? obj.altitude : randInt(30, 70))
+    : (Number.isFinite(obj.altitude) ? obj.altitude : 0)
   return {
     id: obj.id,
     archetype: obj.state?.archetype,
-    kind: 'fly',
+    kind: 'roam',
+    flying,
     lat: obj.lat, lon: obj.lon,
     homeLat: obj.lat, homeLon: obj.lon,
-    areaR: FLY_AREA_M,
+    areaR: flying ? FLY_AREA_M : ROAM_AREA_M,
     heading: Math.random() * Math.PI * 2,
-    speed: FLY_SPEED,
+    speed: flying ? FLY_SPEED : ROAM_SPEED,
     altBase: alt,
     altPhase: Math.random() * Math.PI * 2,
     anim: null,
@@ -633,7 +641,7 @@ async function advanceFor(c) {
 
 // Ein Tick freien Flugs: Wander + Randlenkung Richtung Zentrum (mit der Distanz
 // stärker), begrenzte Drehrate → weiche Kurven statt 180°-Sprung am Rand.
-async function advanceFlyer(c) {
+async function advanceRoamer(c) {
   c.busy = true
   try {
     const now = Date.now()
@@ -656,15 +664,20 @@ async function advanceFlyer(c) {
     const turn = clamp(angleDiff(desired, c.heading), -maxTurn, maxTurn)
     c.heading = wrapPi(c.heading + turn)
 
-    // Vorwärts + sanfte Höhenwelle.
+    // Vorwärts.
     const p = destPoint(c.lat, c.lon, c.heading, c.speed * dt)
     c.lat = p.lat; c.lon = p.lon
-    c.altPhase = wrapPi(c.altPhase + dt * 0.3)
-    const altitude = Math.max(6, c.altBase + Math.sin(c.altPhase) * 6)
 
-    // Animation: kräftige Kurve oder nah am Rand → flap (FlapFlight), sonst
-    // gleiten (GlideFlight). Nur bei Wechsel schreiben (spart Realtime-Updates).
-    const wantAnim = (Math.abs(turn) > maxTurn * 0.5 || edge > 0.5) ? 'fly' : 'glide'
+    let altitude, wantAnim
+    if (c.flying) {
+      c.altPhase = wrapPi(c.altPhase + dt * 0.3)
+      altitude = Math.max(6, c.altBase + Math.sin(c.altPhase) * 6)   // sanfte Höhenwelle
+      // Kräftige Kurve/nah am Rand → flap (FlapFlight), sonst gleiten (GlideFlight).
+      wantAnim = (Math.abs(turn) > maxTurn * 0.5 || edge > 0.5) ? 'fly' : 'glide'
+    } else {
+      altitude = c.altBase          // Boden-Tier bleibt auf seiner Höhe
+      wantAnim = 'walk'
+    }
     if (wantAnim !== c.anim) { c.anim = wantAnim; await ajna.setAnimation(c.id, wantAnim) }
 
     await ajna.updateObject(c.id, {
@@ -672,7 +685,7 @@ async function advanceFlyer(c) {
       rotation: { x: 0, y: HEADING_TO_YAW(c.heading), z: 0 }
     })
   } catch (err) {
-    console.warn(`[director] Flug "${c.id}" fehlgeschlagen: ${err?.message || err}`)
+    console.warn(`[director] Roam "${c.id}" fehlgeschlagen: ${err?.message || err}`)
   } finally { c.busy = false }
 }
 
@@ -680,18 +693,23 @@ function tick() {
   const now = Date.now()
   for (const c of controllers) {
     if (c.busy) continue
-    if (c.kind === 'fly') { advanceFlyer(c); continue }
+    if (c.kind === 'roam') { advanceRoamer(c); continue }
     if (c.fsm === 'walking') advanceFor(c)
     else if (c.fsm === 'idle' && now >= c.nextPlanAt) planFor(c)
   }
 }
 
-// Passenden Controller für ein Objekt: Flieger → Freiflug, Straßen-Archetyp →
-// Wegenetz, sonst keiner (statisch).
+// Passenden Controller für ein Objekt: Flieger → Freiflug, Boden-Tier → freies
+// Umherstreifen, Straßen-Archetyp (npc/enemy) → Wegenetz, sonst keiner (statisch:
+// item/hint/diamond). `mode` nur fürs Logging.
 function controllerFor(obj) {
-  if (isFlyer(obj)) return makeFlyer(obj)
+  if (isFlyer(obj)) return makeRoamer(obj, true)
+  if (obj.state?.archetype === 'animal') return makeRoamer(obj, false)   // Fox/Horse: freies Streifen
   if (STREET_ARCHETYPES.has(obj.state?.archetype)) return makeController(obj)
   return null
+}
+function controllerMode(c) {
+  return c.kind === 'roam' ? (c.flying ? 'flug' : 'streift') : 'straße'
 }
 
 // Controller-Liste an `managed` angleichen: bestehende behalten (Zustand!),
@@ -701,12 +719,20 @@ function syncControllers() {
   if (!AUTONOMY) { controllers = []; return }
   const keep = new Map(controllers.map(c => [c.id, c]))
   const next = []
+  const added = []
   managed.forEach((obj, i) => {
     if (keep.has(obj.id)) { next.push(keep.get(obj.id)); return }
     const c = controllerFor(obj)
-    if (c) { c.nextPlanAt = Date.now() + i * 200; next.push(c) }   // Planung staffeln
+    if (c) { c.nextPlanAt = Date.now() + i * 200; next.push(c); added.push(c) }   // Planung staffeln
   })
   controllers = next
+  if (added.length) {
+    const byMode = {}
+    for (const c of added) { const m = controllerMode(c); byMode[m] = (byMode[m] || 0) + 1 }
+    const summary = Object.entries(byMode).map(([m, n]) => `${n}× ${m}`).join(', ')
+    const statisch = managed.length - controllers.length
+    console.log(`[director] → +${added.length} angesteuert (${summary})${statisch ? `, ${statisch} statisch` : ''} · ${controllers.length} aktiv`)
+  }
 }
 syncControllers()
 
@@ -737,11 +763,20 @@ async function fetchCenters() {
 }
 
 let reconcileBusy = false
+let _lastCentersKey = null
 async function reconcile() {
   if (reconcileBusy) return
   reconcileBusy = true
   try {
     const centers = await fetchCenters()
+    // Bereichs-Übergang protokollieren (nur bei Änderung — kein Spam).
+    const centersKey = centers.map(c => `${c.lat.toFixed(4)},${c.lon.toFixed(4)}`).sort().join(' | ')
+    if (centersKey !== _lastCentersKey) {
+      const isFallback = centers.length === 1 &&
+        Math.abs(centers[0].lat - CENTER_LAT) < 1e-4 && Math.abs(centers[0].lon - CENTER_LON) < 1e-4
+      console.log(`[director] ⇄ Interessensbereich${centers.length > 1 ? 'e' : ''}: ${centers.length} @ [${centersKey}]${isFallback ? ' (Fallback-Zentrum — keine aktiven Spieler)' : ''}`)
+      _lastCentersKey = centersKey
+    }
     // 1) Despawn: verwaltete Objekte weit von ALLEN aktiven Zentren.
     let removed = 0
     if (!KEEP_OUTSIDE) {
@@ -751,7 +786,14 @@ async function reconcile() {
           await ajna.deleteObject(obj.id)
           const i = managed.indexOf(obj); if (i >= 0) managed.splice(i, 1)
           removed++
-        } catch (err) { console.warn(`[director] despawn ${obj.id}: ${err?.message || err}`) }
+        } catch (err) {
+          // Schon serverseitig weg (404) → nur lokal aus managed entfernen, kein
+          // Fehler (sonst würde derselbe Zombie jeden Reconcile erneut scheitern).
+          const i = managed.indexOf(obj); if (i >= 0) managed.splice(i, 1)
+          if (!/(not|wasn.?t)\s*found|404/i.test(err?.message || '')) {
+            console.warn(`[director] despawn ${obj.id}: ${err?.message || err}`)
+          } else { removed++ }
+        }
       }
     }
     // 2) Spawn: pro Zentrum bis zum Soll-Bestand auffüllen.

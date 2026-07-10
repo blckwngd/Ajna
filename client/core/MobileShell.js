@@ -87,6 +87,7 @@ export class MobileShell {
     // Bereich, damit Agents Daten in der Nähe liefern. Schalter siehe Settings.
     this.interestArea = new InterestArea({
       ajna: this.ajna,
+      positionSource: this.positionSource,   // Event-getriebenes Publishing
       getPosition: () => this.positionSource?.getWorldPosition?.() || window.ajnaGeo?.position || null,
       getSources: () => enabledSourcesFrom(window.agentFilters)
     })

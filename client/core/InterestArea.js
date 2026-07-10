@@ -13,6 +13,7 @@
 
 const STORAGE_KEY = 'ajna.share_location'
 const PUBLISH_INTERVAL_MS = 60_000
+const PUBLISH_MOVE_M = 60   // Positions-Delta ab dem sofort neu publiziert wird
 const BBOX_HALF_M = 250    // → 500 m Kantenlänge
 const FUZZ_GRID_M = 100    // Zentrum auf dieses Raster snappen
 
@@ -22,12 +23,35 @@ export class InterestArea {
    * @param {import('./AjnaManager.js').AjnaManager} opts.ajna
    * @param {() => ({lat:number, lon:number}|null)} opts.getPosition
    * @param {() => string[]} [opts.getSources]  eingeblendete Agent-Quellen
+   * @param {{onPosition?: (cb:(p:any)=>void)=>(()=>void)}} [opts.positionSource]
+   *   Optional: Positionsquelle mit onPosition-Event. Damit publisht die Area
+   *   EVENT-getrieben — beim Erst-Fix, bei größerer Positionsänderung und beim
+   *   Wechsel Dummy↔Live (source-Feld) — statt nur alle 60 s.
    */
-  constructor({ ajna, getPosition, getSources }) {
+  constructor({ ajna, getPosition, getSources, positionSource = null }) {
     this.ajna = ajna
     this.getPosition = getPosition
     this.getSources = getSources || (() => [])
     this._timer = null
+    this._pubPos = null      // Position des letzten erfolgreichen Publishs
+    this._pubSource = null   // dessen Quelle (gps/dummy/uwb) — für Toggle-Erkennung
+    this._posUnsub = null
+    if (positionSource?.onPosition) {
+      this._posUnsub = positionSource.onPosition(p => this._onPositionEvent(p))
+    }
+  }
+
+  // Positions-Event: publisht sofort bei Erst-Fix, größerer Bewegung
+  // (> PUBLISH_MOVE_M) oder Quellenwechsel (Dummy↔Live). Sonst hält der
+  // 60-s-Timer die Area (TTL) am Leben.
+  _onPositionEvent(p) {
+    if (!InterestArea.isEnabled()) return
+    if (!p || !Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return
+    const src = p.source || 'gps'
+    const moved = this._pubPos ? distM(this._pubPos.lat, this._pubPos.lon, p.lat, p.lon) : Infinity
+    if (!this._pubPos || moved > PUBLISH_MOVE_M || src !== this._pubSource) {
+      this._tick()
+    }
   }
 
   static isEnabled() { try { return localStorage.getItem(STORAGE_KEY) === '1' } catch { return false } }
@@ -41,6 +65,7 @@ export class InterestArea {
 
   stop() {
     if (this._timer) { clearInterval(this._timer); this._timer = null }
+    if (this._posUnsub) { this._posUnsub(); this._posUnsub = null }
   }
 
   /** Vom Einstellungen-Schalter aufgerufen. */
@@ -65,6 +90,8 @@ export class InterestArea {
     const sources = this.getSources() || []
     try {
       await this.ajna.publishInterestArea(bbox, sources)
+      this._pubPos = pos
+      this._pubSource = p.source || 'gps'
       return this._note({ ok: true, reason: 'published', pos, bbox, sources })
     } catch (err) {
       return this._note({ ok: false, reason: 'publish-failed', error: err?.message || String(err), pos, bbox, sources })
@@ -92,6 +119,13 @@ export class InterestArea {
       await this.ajna.deleteInterestArea()
     } catch { /* egal */ }
   }
+}
+
+// Grobe Distanz in Metern (Äquirektangular — für Schwellwert genau genug).
+function distM(aLat, aLon, bLat, bLon) {
+  const dLat = (bLat - aLat) * 111320
+  const dLon = (bLon - aLon) * 111320 * Math.cos(aLat * Math.PI / 180)
+  return Math.hypot(dLat, dLon)
 }
 
 // Unscharfe BBOX: Zentrum aufs Raster snappen, 500-m-Box drumherum.

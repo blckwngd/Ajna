@@ -565,6 +565,7 @@ async function init() {
   if (!document.querySelector('.shell-tabbar')) {
     const interestArea = new InterestArea({
       ajna,
+      positionSource: _hub.positionSource,   // Event-getriebenes Publishing
       getPosition: () => _hub.positionSource?.getWorldPosition?.() || null,
       getSources: () => enabledSources()
     })

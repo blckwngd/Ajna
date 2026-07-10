@@ -443,6 +443,7 @@ async function init() {
   // dynamisch. Position aus der geteilten GPS/UWB-Quelle, Quellen aus dem Filter.
   const interestArea = new InterestArea({
     ajna: ajnaManager,
+    positionSource,   // Event-getriebenes Publishing (Erst-Fix / große Änderung / Dummy↔Live)
     getPosition: () => positionSource?.getWorldPosition?.() || null,
     getSources: () => agentFilters.getSources().map(s => s.source).filter(src => {
       const sel = agentFilters.getSelection(src)
