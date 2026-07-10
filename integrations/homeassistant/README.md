@@ -43,6 +43,23 @@ TLS (Port 8883) nutzen.
    Blueprints → Import). Eine Automation daraus anlegen; `command_topic` =
    `ajna/ha/home/+/+/set`.
 
+## Virtuelles Testgerät (empfohlen zum Experimentieren)
+
+Damit du nicht an echten Lichtern testest: eine **virtuelle Lampe**, die nur
+interne Helfer umschaltet — schaltet NICHTS Echtes.
+
+- **Schnell (An/Aus):** Einstellungen → Geräte & Dienste → **Helfer** → *Helfer
+  erstellen* → **Umschalter**, Name „Ajna Test-Lampe" → `input_boolean.ajna_test_lampe`.
+  Die Domain `input_boolean` ist bereits im Statestream-`include` → der Gateway
+  sieht das Gerät sofort.
+- **Volle Lampe mit Dimmen:** `virtual-test-device.yaml` in `configuration.yaml`
+  einbinden (template-`light` + Helfer) → `light.ajna_test_lampe` mit An/Aus **und
+  Helligkeit** (zum Testen von ±20 %). Domain `light` ist ebenfalls schon inkludiert.
+
+Danach: von Ajna aus schalten/dimmen → nur der Helfer/die virtuelle Lampe ändert
+sich, die Familie bleibt im Dunkeln verschont. Für den Umstieg auf echte Geräte
+später einfach deren Entitäten ins Statestream-`include` aufnehmen.
+
 ## 3. Verifikation (ohne Gateway)
 
 **Zustand sehen** (HA publisht):

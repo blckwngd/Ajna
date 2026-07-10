@@ -1,0 +1,46 @@
+# Virtuelles Testgerät für die Ajna ↔ HA-Anbindung — schaltet NICHTS Echtes.
+#
+# Zum gefahrlosen Experimentieren: eine virtuelle Lampe, die nur interne Helfer
+# umschaltet (keine echten Lichter). Erscheint als `light.ajna_test_lampe` mit
+# An/Aus UND Helligkeit (zum Testen des Dimmens ±20 %).
+#
+# Einbau: Inhalt in HAs `configuration.yaml` einfügen (oder per `!include`),
+# dann Entwicklerwerkzeuge → YAML → „Alle YAML-Konfigurationen neu laden"
+# (bzw. HA neu starten). Danach taucht `light.ajna_test_lampe` auf.
+#
+# Warum sichtbar für Ajna? Die Domains `light` und `input_boolean` stehen bereits
+# im `include` von mqtt_statestream.yaml → der Zustand wird automatisch an den
+# Ajna-Broker publiziert, der Gateway sieht das Gerät ohne weitere Config.
+
+# 1) Zustands-Speicher (Helfer). Könnte man auch per UI anlegen
+#    (Einstellungen → Geräte & Dienste → Helfer).
+input_boolean:
+  ajna_test_lampe:
+    name: Ajna Test-Lampe
+
+input_number:
+  ajna_test_helligkeit:
+    name: Ajna Test-Helligkeit
+    min: 0
+    max: 255
+    step: 1
+    mode: slider
+
+# 2) Virtuelle Lampe auf den Helfern — volle `light`-Entity mit Helligkeit.
+light:
+  - platform: template
+    lights:
+      ajna_test_lampe:
+        friendly_name: "Ajna Test-Lampe"
+        value_template: "{{ is_state('input_boolean.ajna_test_lampe', 'on') }}"
+        level_template: "{{ states('input_number.ajna_test_helligkeit') | int(0) }}"
+        turn_on:
+          - service: input_boolean.turn_on
+            target: { entity_id: input_boolean.ajna_test_lampe }
+        turn_off:
+          - service: input_boolean.turn_off
+            target: { entity_id: input_boolean.ajna_test_lampe }
+        set_level:
+          - service: input_number.set_value
+            target: { entity_id: input_number.ajna_test_helligkeit }
+            data: { value: "{{ brightness }}" }
