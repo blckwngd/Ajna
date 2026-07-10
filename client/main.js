@@ -874,7 +874,22 @@ async function init() {
   // gelieferten Objekt-Liste. PositionSmoother hält die Bewegung flüssig.
   ajnaManager.onObjectsChanged(throttleLatest(objects => {
     syncSceneObjects(scene, world, geo, objects)
-  }, 250))
+  }, 1000))
+
+  // Fast-Path für den HÄUFIGEN Fall: reine Transform-Updates (Position/Rotation/
+  // Animation) eines bereits gerenderten Objekts gehen DIREKT in dessen Smoother —
+  // ohne den vollen syncSceneObjects-Reconcile (O(N) über alle Objekte: Filter +
+  // Budget-Culling + applyData). Der Director schreibt ~32 solcher Updates/s; ein
+  // voller Reconcile pro Update sättigte den Main-Thread ('objects/*' handler bis
+  // 1147ms). Strukturelle Änderungen (neu/gelöscht/Appearance/getragen) übernimmt
+  // der gedrosselte Reconcile oben (jetzt 1s statt 250ms, da Transforms hier laufen).
+  ajnaManager.onObjectEvent((rec, action) => {
+    if (action !== 'update' || rec.carried_by) return
+    const go = objectMap.get(rec.id)
+    if (go && go._appearanceSig === JSON.stringify(rec.appearance ?? null)) {
+      try { go.applyData(rec, geo) } catch { /* Reconcile fängt es */ }
+    }
+  })
   // Erstes Reconcile awaiten → Objekt-Platzhalter stehen, bevor der Ladescreen
   // weicht (Modelle tauschen sich danach unauffällig an Ort und Stelle ein).
   await syncSceneObjects(scene, world, geo, ajnaManager.getObjectList())
