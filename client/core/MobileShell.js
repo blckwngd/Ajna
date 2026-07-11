@@ -375,6 +375,7 @@ export class MobileShell {
       ?? (parseFloat(localStorage.getItem('ajna.ar.fov_factor')) || 1)
     const arNorth = (() => { try { return parseFloat(localStorage.getItem('ajna.ar.north_offset')) || 0 } catch { return 0 } })()
     const arFovSlider = (() => { try { return localStorage.getItem('ajna.ar.fov_slider') === '1' } catch { return false } })()
+    const arCompass = (() => { try { return localStorage.getItem('ajna.ar.compass_indicator') !== '0' } catch { return true } })()
 
     root.innerHTML = `
       <section class="settings-section">
@@ -446,6 +447,14 @@ export class MobileShell {
         </label>
         <div class="meta" style="margin-top:6px">
           Falls Objekte im AR spiegelverkehrt liegen (Süd erscheint als Nord): auf 180 setzen (oder Button). Pro Gerät gespeichert.
+        </div>
+        <label class="meta" style="display:flex;align-items:center;gap:8px;margin-top:12px">
+          <input type="checkbox" data-field="ar-compass" ${arCompass ? 'checked' : ''}>
+          Kompass-Indikator im AR anzeigen
+        </label>
+        <div class="meta" style="margin-top:6px">
+          Zeigt oben Heading + Kalibrier-Güte (Ampel). Grün+stabil, aber Welt verdreht → Nord-Offset;
+          rot/zappelig → Kompass kalibrieren (Gerät in liegender 8 bewegen).
         </div>
       </section>
 
@@ -819,6 +828,15 @@ export class MobileShell {
       try { localStorage.setItem('ajna.ar.fov_slider', on ? '1' : '0') } catch {}
       if (window.arFovCalibration?.setSliderVisible) window.arFovCalibration.setSliderVisible(on)
       else window.dispatchEvent(new CustomEvent('ajna:ar-fov-slider', { detail: on }))
+    })
+
+    // Kompass-Kalibrier-/Drift-Indikator in AR ein-/ausblenden (Default an).
+    const compassToggle = root.querySelector('[data-field="ar-compass"]')
+    compassToggle?.addEventListener('change', () => {
+      const on = compassToggle.checked
+      try { localStorage.setItem('ajna.ar.compass_indicator', on ? '1' : '0') } catch {}
+      if (window.arCompass?.setVisible) window.arCompass.setVisible(on)
+      else window.dispatchEvent(new CustomEvent('ajna:ar-compass', { detail: on }))
     })
 
     // AR-Nord-Offset: korrigiert einen Kompass↔Daten-Heading-Versatz (z. B. 180°).

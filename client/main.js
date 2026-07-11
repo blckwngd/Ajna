@@ -55,6 +55,7 @@ import { buildEnvironment } from "./engine/environment/EnvironmentBuilder.js"
 import { sunPosition } from "./core/solarPosition.js"
 import { ArPassthrough } from "./core/ArPassthrough.js"
 import { ArFovCalibration } from "./core/ArFovCalibration.js"
+import { CompassCalibration } from "./core/CompassCalibration.js"
 import { UwbAnchorOverlay } from "./core/UwbAnchorOverlay.js"
 import { OSMContext } from "./engine/environment/OSMContext.js"
 import { PathOverlay } from "./engine/debug/PathOverlay.js"
@@ -360,10 +361,21 @@ async function init() {
   // Einstellungs-Toggle „Live-Regler in AR anzeigen": schaltet den Slider live an/aus.
   window.addEventListener('ajna:ar-fov-slider', ev => arFov?.setSliderVisible(!!ev.detail))
 
+  // Kompass-Kalibrier-/Drift-Indikator (liest Geräte-Kompass mit, bewertet Güte).
+  const compass = new CompassCalibration({ parent: arRoot })
+  window.arCompass = compass
+  window.addEventListener('ajna:ar-compass', ev => compass.setVisible(!!ev.detail))
+
   async function _ensureOrientationPermission() {
     const D = window.DeviceOrientationEvent
     if (D && typeof D.requestPermission === "function") {
       try { await D.requestPermission() } catch {}
+    }
+    // Der Kompass-Drift-Indikator nutzt zusätzlich devicemotion (Gyro) — auf iOS
+    // eigene Permission (dieselbe Nutzergeste deckt beide ab).
+    const M = window.DeviceMotionEvent
+    if (M && typeof M.requestPermission === "function") {
+      try { await M.requestPermission() } catch {}
     }
   }
   // Auf den Kamerawechsel reagieren: Player-Modus = AR (GPS-fix + Kompass +
@@ -379,9 +391,11 @@ async function init() {
         _toast.show(err?.message || "Kamera nicht verfügbar", { title: "AR" })
       })
       arFov?.activate()   // FOV an Kamerabild angleichen; Live-Slider nur wenn in Einstellungen aktiviert
+      compass.activate()  // Kompass-Güte-Indikator (nur wenn in Einstellungen aktiviert)
     } else {
       arPassthrough.disable()
       arFov?.deactivate() // XR/Skybox: virtuelle Kamera auf Default-FOV, Slider aus
+      compass.deactivate()
     }
     try { editorUI?.setArModeToggle?.(ar) } catch {}   // Editor-Checkbox synchron
   }
