@@ -917,6 +917,7 @@ async function init() {
   // Drosselt sich selbst (pickWithRay ist O(meshes)); Reticle zeigt den Fokuspunkt.
   let _auraGO = null
   let _auraTick = 0
+  const AURA_MAX_RANGE_M = 100   // Callouts nur für Objekte in Reichweite (Welt = Meter)
   scene.onBeforeRenderObservable.add(() => {
     const inXR = _xrExperience?.baseExperience?.state === BABYLON.WebXRState.IN_XR
     if (inXR || !_compassActive) {
@@ -937,6 +938,11 @@ async function init() {
       next = pickGameObjectTolerant(vp.x + vp.width / 2, vp.y + vp.height / 2)
     }
     if (next && !next.name) next = null
+    // Reichweite: nur Objekte innerhalb AURA_MAX_RANGE_M fokussieren.
+    if (next) {
+      const c = objectWorldCenter(next.root)
+      if (!c || BABYLON.Vector3.Distance(cam.globalPosition, c) > AURA_MAX_RANGE_M) next = null
+    }
     if (next === _auraGO) return
     if (_auraGO) setHighlight(_auraGO, false)
     _auraGO = next
