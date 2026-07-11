@@ -357,6 +357,8 @@ async function init() {
       })
     : null
   window.arFovCalibration = arFov   // für den Regler im Einstellungs-Menü (MobileShell)
+  // Einstellungs-Toggle „Live-Regler in AR anzeigen": schaltet den Slider live an/aus.
+  window.addEventListener('ajna:ar-fov-slider', ev => arFov?.setSliderVisible(!!ev.detail))
 
   async function _ensureOrientationPermission() {
     const D = window.DeviceOrientationEvent
@@ -376,11 +378,10 @@ async function init() {
         if (!_toast) _toast = new Toast()
         _toast.show(err?.message || "Kamera nicht verfügbar", { title: "AR" })
       })
-      arFov?.show()   // FOV an Kamerabild angleichen + Kalibrier-Slider einblenden
+      arFov?.activate()   // FOV an Kamerabild angleichen; Live-Slider nur wenn in Einstellungen aktiviert
     } else {
       arPassthrough.disable()
-      arFov?.reset()  // XR/Skybox: virtuelle Kamera auf Default-FOV
-      arFov?.hide()
+      arFov?.deactivate() // XR/Skybox: virtuelle Kamera auf Default-FOV, Slider aus
     }
     try { editorUI?.setArModeToggle?.(ar) } catch {}   // Editor-Checkbox synchron
   }

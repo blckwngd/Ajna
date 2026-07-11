@@ -69,16 +69,28 @@ export class ArFovCalibration {
     this.apply()
   }
 
-  // Slider einblenden (nur bei aktivem Kamera-Passthrough). Bindet einmalig den
-  // loadedmetadata-Handler des Videos, damit das FOV neu berechnet wird, sobald
-  // die echten Maße da sind.
-  show() {
-    if (!this._el) this._build()
-    this._el.style.display = 'flex'
+  // AR-Modus aktivieren: FOV anwenden (IMMER) + Video binden. Der Live-Regler
+  // erscheint NUR, wenn er in den Einstellungen aktiviert wurde (Default aus →
+  // saubere AR-Ansicht, Regler sonst nur in den Einstellungen).
+  activate() {
+    this._active = true
     this._bindVideo()
     this.apply()
+    if (ArFovCalibration.sliderEnabled()) this._showSlider(); else this._hideSlider()
   }
-  hide() { if (this._el) this._el.style.display = 'none' }
+  deactivate() { this._active = false; this.reset(); this._hideSlider() }
+
+  static sliderEnabled() { try { return localStorage.getItem('ajna.ar.fov_slider') === '1' } catch { return false } }
+  static setSliderEnabled(on) { try { localStorage.setItem('ajna.ar.fov_slider', on ? '1' : '0') } catch {} }
+
+  // Vom Einstellungs-Toggle: Live-Regler in AR an/aus (wirkt sofort, wenn AR aktiv).
+  setSliderVisible(on) {
+    ArFovCalibration.setSliderEnabled(on)
+    if (this._active) { on ? this._showSlider() : this._hideSlider() }
+  }
+
+  _showSlider() { if (!this._el) this._build(); this._el.style.display = 'flex'; this._bindVideo(); this.apply() }
+  _hideSlider() { if (this._el) this._el.style.display = 'none' }
 
   _bindVideo() {
     const v = this.getVideo?.()

@@ -360,6 +360,7 @@ export class MobileShell {
     const arFovFactor = window.arFovCalibration?.factor
       ?? (parseFloat(localStorage.getItem('ajna.ar.fov_factor')) || 1)
     const arNorth = (() => { try { return parseFloat(localStorage.getItem('ajna.ar.north_offset')) || 0 } catch { return 0 } })()
+    const arFovSlider = (() => { try { return localStorage.getItem('ajna.ar.fov_slider') === '1' } catch { return false } })()
 
     root.innerHTML = `
       <section class="settings-section">
@@ -418,8 +419,12 @@ export class MobileShell {
         </label>
         <div class="meta" style="margin-top:6px">
           Gleicht das Bodengitter an das Kamerabild an, falls es beim Neigen zu stark kippt.
-          Am besten in der AR-Ansicht justieren (dort erscheint derselbe Regler live). Pro Gerät gespeichert.
+          Hier justieren, oder unten den Live-Regler in der AR-Ansicht einschalten. Pro Gerät gespeichert.
         </div>
+        <label class="meta" style="display:flex;align-items:center;gap:8px;margin-top:10px">
+          <input type="checkbox" data-field="ar-fov-slider" ${arFovSlider ? 'checked' : ''}>
+          FOV-Regler in der AR-Ansicht einblenden
+        </label>
         <label class="meta" style="display:flex;align-items:center;gap:10px;margin-top:12px">
           <span style="white-space:nowrap">Nord-Offset (°)</span>
           <input type="number" data-field="ar-north" value="${arNorth}" step="1" style="width:80px">
@@ -768,6 +773,15 @@ export class MobileShell {
       if (fovVal) fovVal.textContent = f.toFixed(2) + '×'
       if (window.arFovCalibration?.setFactor) window.arFovCalibration.setFactor(f)
       else { try { localStorage.setItem('ajna.ar.fov_factor', String(f)) } catch {} }
+    })
+
+    // Live-FOV-Regler in AR ein-/ausblenden (Default aus → saubere AR-Ansicht).
+    const fovSliderToggle = root.querySelector('[data-field="ar-fov-slider"]')
+    fovSliderToggle?.addEventListener('change', () => {
+      const on = fovSliderToggle.checked
+      try { localStorage.setItem('ajna.ar.fov_slider', on ? '1' : '0') } catch {}
+      if (window.arFovCalibration?.setSliderVisible) window.arFovCalibration.setSliderVisible(on)
+      else window.dispatchEvent(new CustomEvent('ajna:ar-fov-slider', { detail: on }))
     })
 
     // AR-Nord-Offset: korrigiert einen Kompass↔Daten-Heading-Versatz (z. B. 180°).
