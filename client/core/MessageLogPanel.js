@@ -8,6 +8,7 @@
 // (MessageLog/localStorage), das Fenster ist nur die Ansicht.
 
 import { messageLog, CATS } from './MessageLog.js'
+import { makeDraggable } from './draggable.js'
 
 const FILTER_KEY = 'ajna.msglog.filter'   // 'player' | 'all'
 const STYLE_ID = 'ajna-msglog-style'
@@ -28,6 +29,7 @@ export class MessageLogPanel {
 
   destroy() {
     try { this._unsub?.() } catch {}
+    try { this._dragCleanup?.() } catch {}
     this._launcher?.remove()
     this._overlay?.remove()
     this._launcher = this._overlay = null
@@ -52,10 +54,11 @@ export class MessageLogPanel {
     btn.type = 'button'
     btn.setAttribute('aria-label', 'Verlauf')
     btn.innerHTML = '<span class="mlg-ico">💬</span><span class="mlg-badge" hidden>0</span>'
-    btn.addEventListener('click', () => this.toggle())
     this.parent.appendChild(btn)
     this._launcher = btn
     this._badge = btn.querySelector('.mlg-badge')
+    // Verschiebbar (Position gemerkt); Tap ohne Bewegung öffnet/schließt.
+    this._dragCleanup = makeDraggable(btn, { key: 'ajna.msglog.pos', onClick: () => this.toggle() })
   }
 
   _updateBadge() {
@@ -151,7 +154,7 @@ export class MessageLogPanel {
   _injectStyles() {
     if (document.getElementById(STYLE_ID)) return
     const css = `
-    .ajna-msglog-launcher{position:fixed;right:14px;bottom:calc(var(--tabbar-height,0px) + var(--safe-bottom,env(safe-area-inset-bottom,0px)) + 16px);z-index:5500;
+    .ajna-msglog-launcher{position:fixed;right:18px;bottom:calc(var(--tabbar-height,0px) + var(--safe-bottom,env(safe-area-inset-bottom,0px)) + 80px);z-index:5500;
       width:48px;height:48px;border-radius:50%;border:1px solid #3a3a44;background:rgba(24,24,30,.92);color:#eaeaea;
       font-size:22px;line-height:1;cursor:pointer;box-shadow:0 6px 22px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center}
     .ajna-msglog-launcher .mlg-badge{position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;padding:0 4px;border-radius:9px;

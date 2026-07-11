@@ -15,6 +15,7 @@
 // und injiziert eigenes CSS. Der Host reicht nur Callbacks herein.
 
 import { emojiOf } from './Appearance.js'
+import { makeDraggable } from './draggable.js'
 
 export const DRAG_MIME = 'application/x-ajna-inventory-item'
 
@@ -67,8 +68,9 @@ export class InventoryUI {
     this.fab.type = 'button'
     this.fab.title = 'Inventar'
     this.fab.textContent = '🎒'
-    this.fab.addEventListener('click', () => this.toggle())
     this.container.appendChild(this.fab)
+    // Verschiebbar (Position gemerkt); Tap ohne Bewegung öffnet/schließt.
+    this._dragCleanup = makeDraggable(this.fab, { key: 'ajna.inv.pos', onClick: () => this.toggle() })
 
     // Overlay-Fenster
     this.root = document.createElement('div')
@@ -223,7 +225,7 @@ export class InventoryUI {
     catch (err) { alert('Löschen fehlgeschlagen: ' + (err?.message || err)) }
   }
 
-  dispose() { try { this._unsub?.() } catch {} ; this.root?.remove(); this.fab?.remove() }
+  dispose() { try { this._unsub?.() } catch {} ; try { this._dragCleanup?.() } catch {} ; this.root?.remove(); this.fab?.remove() }
 
   // ── CSS ──────────────────────────────────────────────────────────────
   _injectStyles() {
