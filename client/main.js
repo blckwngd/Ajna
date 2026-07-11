@@ -372,6 +372,9 @@ async function init() {
   const objectAura = new ObjectAura({ parent: arRoot, getMe: () => ajnaManager.currentUser?.() })
   window.arAura = objectAura
   window.addEventListener('ajna:ar-aura', ev => objectAura.setVisible(!!ev.detail))
+  // Callout-Reichweite (Meter), pro Gerät + live über das Einstellungs-Slider.
+  let _auraRangeM = (() => { const v = parseFloat(localStorage.getItem('ajna.ar.aura_range')); return Number.isFinite(v) && v > 0 ? v : 100 })()
+  window.addEventListener('ajna:ar-aura-range', ev => { const v = parseFloat(ev.detail); if (Number.isFinite(v) && v > 0) _auraRangeM = v })
 
   async function _ensureOrientationPermission() {
     const D = window.DeviceOrientationEvent
@@ -917,7 +920,6 @@ async function init() {
   // Drosselt sich selbst (pickWithRay ist O(meshes)); Reticle zeigt den Fokuspunkt.
   let _auraGO = null
   let _auraTick = 0
-  const AURA_MAX_RANGE_M = 100   // Callouts nur für Objekte in Reichweite (Welt = Meter)
   scene.onBeforeRenderObservable.add(() => {
     const inXR = _xrExperience?.baseExperience?.state === BABYLON.WebXRState.IN_XR
     if (inXR || !_compassActive) {
@@ -938,10 +940,10 @@ async function init() {
       next = pickGameObjectTolerant(vp.x + vp.width / 2, vp.y + vp.height / 2)
     }
     if (next && !next.name) next = null
-    // Reichweite: nur Objekte innerhalb AURA_MAX_RANGE_M fokussieren.
+    // Reichweite: nur Objekte innerhalb _auraRangeM (Meter) fokussieren.
     if (next) {
       const c = objectWorldCenter(next.root)
-      if (!c || BABYLON.Vector3.Distance(cam.globalPosition, c) > AURA_MAX_RANGE_M) next = null
+      if (!c || BABYLON.Vector3.Distance(cam.globalPosition, c) > _auraRangeM) next = null
     }
     if (next === _auraGO) return
     if (_auraGO) setHighlight(_auraGO, false)

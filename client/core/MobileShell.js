@@ -377,6 +377,7 @@ export class MobileShell {
     const arFovSlider = (() => { try { return localStorage.getItem('ajna.ar.fov_slider') === '1' } catch { return false } })()
     const arCompass = (() => { try { return localStorage.getItem('ajna.ar.compass_indicator') !== '0' } catch { return true } })()
     const arAura = (() => { try { return localStorage.getItem('ajna.ar.aura') !== '0' } catch { return true } })()
+    const arAuraRange = (() => { try { const v = parseFloat(localStorage.getItem('ajna.ar.aura_range')); return Number.isFinite(v) && v > 0 ? v : 100 } catch { return 100 } })()
 
     root.innerHTML = `
       <section class="settings-section">
@@ -464,6 +465,14 @@ export class MobileShell {
         <div class="meta" style="margin-top:6px">
           Zielst du mit dem Reticle auf ein Objekt, erscheint eine schwebende Info-Karte
           (Typ, Name, Eigentümer …). Aktionen bleiben im Tap-Menü.
+        </div>
+        <label class="meta" style="display:flex;align-items:center;gap:10px;margin-top:8px">
+          <span style="white-space:nowrap">Reichweite</span>
+          <input type="range" data-field="ar-aura-range" min="10" max="500" step="10" value="${arAuraRange}" style="flex:1">
+          <span class="meta" data-role="ar-aura-range-val" style="min-width:46px;text-align:right">${arAuraRange} m</span>
+        </label>
+        <div class="meta" style="margin-top:6px">
+          Nur Objekte innerhalb dieser Distanz zeigen einen Call-Out — kleiner = weniger visuelles Rauschen.
         </div>
       </section>
 
@@ -855,6 +864,17 @@ export class MobileShell {
       try { localStorage.setItem('ajna.ar.aura', on ? '1' : '0') } catch {}
       if (window.arAura?.setVisible) window.arAura.setVisible(on)
       else window.dispatchEvent(new CustomEvent('ajna:ar-aura', { detail: on }))
+    })
+
+    // Callout-Reichweite (Meter) — steuert das visuelle Rauschen der Umgebung.
+    const auraRange = root.querySelector('[data-field="ar-aura-range"]')
+    const auraRangeVal = root.querySelector('[data-role="ar-aura-range-val"]')
+    auraRange?.addEventListener('input', () => {
+      const v = parseInt(auraRange.value, 10)
+      if (!Number.isFinite(v)) return
+      if (auraRangeVal) auraRangeVal.textContent = v + ' m'
+      try { localStorage.setItem('ajna.ar.aura_range', String(v)) } catch {}
+      window.dispatchEvent(new CustomEvent('ajna:ar-aura-range', { detail: v }))
     })
 
     // AR-Nord-Offset: korrigiert einen Kompass↔Daten-Heading-Versatz (z. B. 180°).
