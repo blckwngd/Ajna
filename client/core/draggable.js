@@ -1,39 +1,38 @@
 // makeDraggable — einen schwebenden Button per Drag verschiebbar machen und die
-// Position merken (localStorage). Unterscheidet Klick von Drag über einen kleinen
-// Bewegungs-Schwellwert, damit der normale Klick (Toggle) erhalten bleibt:
-//   • kaum bewegt  → onClick() (wie ein normaler Tap)
-//   • gezogen      → neue Position, gemerkt
+// Position merken (localStorage). Tap und Drag werden sauber getrennt:
+//   • Tap  → natives click-Event löst onClick() aus (auf Mobil zuverlässig)
+//   • Drag → Pointer-Events verschieben; der darauf folgende click wird geschluckt
 //
-// Bewusst über eine Callback-Seam (onClick) statt eines eigenen click-Listeners,
-// sonst würde nach einem Klick sowohl der native click ALS AUCH onClick feuern.
-// Der Aufrufer entfernt daher seinen eigenen click-Handler.
+// WICHTIG (Mobil/Android-WebView): KEIN setPointerCapture. Damit wurde bei kurzem
+// Antippen die pointerup-Sequenz nicht sauber beendet — es öffnete erst nach
+// langem Druck. Touch-Pointer haben ohnehin implizites Capture; fürs Verschieben
+// mit der Maus genügen window-Listener. Der Aufrufer entfernt seinen eigenen
+// click-Handler und übergibt onClick hier.
 
-const THRESH = 6   // px, ab hier ist es ein Drag statt eines Klicks
+const THRESH = 6   // px, ab hier ist es ein Drag statt eines Taps
 
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v))
 
 /**
  * @param {HTMLElement} el
  * @param {{ key: string, onClick?: () => void }} opts  key = localStorage-Schlüssel für {left,top}
- * @returns {() => void} cleanup (entfernt den resize-Listener)
+ * @returns {() => void} cleanup (entfernt alle Listener)
  */
 export function makeDraggable(el, { key, onClick } = {}) {
   if (!el) return () => {}
-  el.style.touchAction = 'none'   // Browser-Scroll beim Ziehen unterdrücken
+  el.style.touchAction = 'none'   // Browser-Scroll/Gesten beim Ziehen unterdrücken
 
   const applySaved = () => {
     let p = null
     try { p = JSON.parse(localStorage.getItem(key) || 'null') } catch {}
     if (!p || !Number.isFinite(p.left) || !Number.isFinite(p.top)) return
     const w = el.offsetWidth || 48, h = el.offsetHeight || 48
-    // In den Sichtbereich clampen (Fenstergröße/Orientierung kann sich ändern).
     el.style.left = clamp(p.left, 4, window.innerWidth - w - 4) + 'px'
     el.style.top = clamp(p.top, 4, window.innerHeight - h - 4) + 'px'
     el.style.right = 'auto'
     el.style.bottom = 'auto'
   }
-  // Nach dem Layout anwenden (offsetWidth muss stehen).
-  requestAnimationFrame(applySaved)
+  requestAnimationFrame(applySaved)   // nach dem Layout (offsetWidth muss stehen)
 
   let startX = 0, startY = 0, origL = 0, origT = 0, moved = false, dragging = false
 
@@ -49,17 +48,17 @@ export function makeDraggable(el, { key, onClick } = {}) {
     el.style.bottom = 'auto'
     e.preventDefault()
   }
-  const onUp = (e) => {
+  const onUp = () => {
     if (!dragging) return
     dragging = false
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onUp)
     window.removeEventListener('pointercancel', onUp)
-    try { el.releasePointerCapture?.(e.pointerId) } catch {}
     if (moved) {
+      // Position merken. `moved` bleibt true, bis der folgende click geschluckt
+      // wurde bzw. der nächste pointerdown es zurücksetzt (Selbstheilung, falls
+      // nach einem Touch-Drag gar kein click kommt).
       try { localStorage.setItem(key, JSON.stringify({ left: parseFloat(el.style.left), top: parseFloat(el.style.top) })) } catch {}
-    } else {
-      onClick?.()   // war nur ein Tap
     }
   }
   const onDown = (e) => {
@@ -68,16 +67,23 @@ export function makeDraggable(el, { key, onClick } = {}) {
     startX = e.clientX; startY = e.clientY
     const r = el.getBoundingClientRect()
     origL = r.left; origT = r.top
-    try { el.setPointerCapture?.(e.pointerId) } catch {}
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onUp)
+    // KEIN preventDefault hier — sonst bliebe der native click (Tap) aus.
   }
+  const onClickH = (e) => {
+    if (moved) { e.preventDefault(); e.stopPropagation(); moved = false; return }  // war ein Drag
+    onClick?.()
+  }
+
   el.addEventListener('pointerdown', onDown)
+  el.addEventListener('click', onClickH)
   window.addEventListener('resize', applySaved)
 
   return () => {
     el.removeEventListener('pointerdown', onDown)
+    el.removeEventListener('click', onClickH)
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onUp)
     window.removeEventListener('pointercancel', onUp)
