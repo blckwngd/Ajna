@@ -290,8 +290,10 @@ export class UwbManager {
   _rememberDevice(role, address, name) {
     if (!address) return
     const d = this._loadDevices()
+    const isNew = d[role]?.address !== address
     d[role] = { address, name: name || d[role]?.name || null, ts: Date.now() }
     this._saveDevices(d)
+    if (isNew) this.notify(`Gerät gemerkt „${role}": ${name || 'Tag'} (${address}) – verbindet künftig automatisch`)
   }
   /** Forget a remembered tag (user action). */
   forgetDevice(role = 'viewer') {
@@ -305,15 +307,19 @@ export class UwbManager {
    * @returns {Promise<boolean>} whether a reconnect was attempted successfully.
    */
   async autoReconnect(role = 'viewer') {
-    if (!UwbManager.autoConnectEnabled()) return false
-    if (this.isConnected(role)) return false
+    if (!UwbManager.autoConnectEnabled()) { this.notify(`Auto-Reconnect „${role}": deaktiviert (Einstellung aus)`); return false }
+    if (this.isConnected(role)) { this.notify(`Auto-Reconnect „${role}": bereits verbunden`); return false }
     const dev = this.rememberedDevice(role)
-    if (!dev?.address) return false
-    if (!(await UwbManager.isAvailable())) return false
+    if (!dev?.address) { this.notify(`Auto-Reconnect „${role}": kein Gerät gemerkt – einmal manuell „UWB verbinden"`); return false }
+    if (!(await UwbManager.isAvailable())) { this.notify(`Auto-Reconnect „${role}": nur in der App (Capacitor) verfügbar`); return false }
+    this.notify(`Auto-Reconnect „${role}": verbinde ${dev.name || 'Tag'} (${dev.address}) …`)
     try {
       await this.connect({ role, address: dev.address, name: dev.name || undefined })
+      // Verbindungserfolg/-fehler bestätigt der Status-Callback (_onStatus); kann
+      // ein paar Sekunden dauern (BLE-Scan/GATT).
       return true
     } catch (e) {
+      this.notify(`Auto-Reconnect „${role}" fehlgeschlagen: ${e?.message || e}`)
       console.warn(LOG, 'auto-reconnect failed', role, e?.message || e)
       return false
     }

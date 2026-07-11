@@ -16,6 +16,8 @@ import { UwbManager } from './UwbManager.js'
 import { WandAudioFeedback } from './WandAudioFeedback.js'
 import { PermissionDialog } from './PermissionDialog.js'
 import { InterestArea } from './InterestArea.js'
+import { messageLog, CATS } from './MessageLog.js'
+import { MessageLogPanel } from './MessageLogPanel.js'
 
 // Eingeblendete Agent-Quellen (für den Interest-Area-Publish): alles, was im
 // Agent-Filter nicht explizit deaktiviert ist.
@@ -48,8 +50,7 @@ export class MobileShell {
     this.activeTab = 'map'
     this._unsubs = []
     this._debugTimer = null
-    this._log = []            // rolling debug-event log (newest first), capped
-    this._logMax = 80
+    this._logPanel = null     // Chat-/Verlaufsfenster (schwebender Auslöser)
     this.wand = null          // shared WandManager (from AccessoryHub)
     this.wandConnected = false
     this.uwb = null           // shared UwbManager (from AccessoryHub)
@@ -64,8 +65,14 @@ export class MobileShell {
     this._wireAccessories()
     this._wireArHint()
     this._renderSettings()
+    // Chat-/Verlaufsfenster: schwebender Auslöser (💬) in jeder View. Der Verlauf
+    // selbst ist persistent (MessageLog); hier nur die Ansicht.
+    this._logPanel = new MessageLogPanel()
+    // Debug-Protokoll in den Einstellungen live aus dem geteilten Store speisen
+    // (so tauchen auch UWB-/Auto-Reconnect-Schritte dort auf).
     this._unsubs.push(
-      this.ajna.onAuthChanged(() => this._renderSettings())
+      this.ajna.onAuthChanged(() => this._renderSettings()),
+      messageLog.onChange(() => this._refreshDebugLog())
     )
     // Wenn die Filter-Manifeste sich aendern (z. B. neuer Agent), kann der
     // Settings-Tab das spaeter anzeigen — heute noch nicht ausgewertet.
@@ -173,13 +180,19 @@ export class MobileShell {
     }
   }
 
-  // Append a line to the rolling log (newest first) and refresh the viewer if open.
-  _logEvent(line) {
-    const t = new Date().toTimeString().slice(0, 8)
-    this._log.unshift(`${t}  ${line}`)
-    if (this._log.length > this._logMax) this._log.length = this._logMax
+  // Technische Events landen als 'debug' im geteilten Store; die onChange-
+  // Subscription (init) frischt den <pre> auf.
+  _logEvent(line) { messageLog.push(line, 'debug') }
+
+  // Debug-<pre>: ALLE Kategorien, neueste zuerst (mit Uhrzeit + Icon).
+  _debugLogText() {
+    return messageLog.entries().slice().reverse()
+      .map(e => `${new Date(e.t).toTimeString().slice(0, 8)}  ${CATS[e.cat]?.icon || ''} ${e.text}`)
+      .join('\n')
+  }
+  _refreshDebugLog() {
     const el = document.querySelector('[data-role="debug-log"]')
-    if (el) el.textContent = this._log.join('\n')
+    if (el) el.textContent = this._debugLogText()
   }
 
   destroy() {
@@ -188,6 +201,7 @@ export class MobileShell {
     if (this._debugTimer) clearInterval(this._debugTimer)
     this._debugTimer = null
     this._selPopup?.remove(); this._selPopup = null
+    this._logPanel?.destroy(); this._logPanel = null
   }
 
   // ───────────────────────────────────────────────────────────────────
@@ -510,7 +524,7 @@ export class MobileShell {
           <div style="display:flex;justify-content:flex-end;margin:6px 0">
             <button class="settings-btn secondary" data-action="debug-log-clear" style="width:auto;padding:2px 10px">Leeren</button>
           </div>
-          <pre data-role="debug-log" style="max-height:240px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:11px ui-monospace,Menlo,Consolas,monospace;background:rgba(0,0,0,0.25);padding:8px;border-radius:6px;margin:0">${escapeHtml(this._log.join('\n'))}</pre>
+          <pre data-role="debug-log" style="max-height:240px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:11px ui-monospace,Menlo,Consolas,monospace;background:rgba(0,0,0,0.25);padding:8px;border-radius:6px;margin:0">${escapeHtml(this._debugLogText())}</pre>
         </details>
       </section>
     `
@@ -742,11 +756,7 @@ export class MobileShell {
   _wireSettingsEvents(root) {
     const action = sel => root.querySelector(`[data-action="${sel}"]`)
 
-    action('debug-log-clear')?.addEventListener('click', () => {
-      this._log = []
-      const el = root.querySelector('[data-role="debug-log"]')
-      if (el) el.textContent = ''
-    })
+    action('debug-log-clear')?.addEventListener('click', () => messageLog.clear())
 
     action('login')?.addEventListener('click', async () => {
       const email = root.querySelector('[data-field="email"]')?.value?.trim() || ''

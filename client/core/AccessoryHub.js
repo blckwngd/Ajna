@@ -24,6 +24,7 @@ import { GPSProvider } from './GPSProvider.js'
 import { FusedPositionSource } from './FusedPositionSource.js'
 import { PositionFilter } from './PositionFilter.js'
 import { wmm } from './geomag/WorldMagneticModel.js'
+import { messageLog } from './MessageLog.js'
 
 const KEY = '__ajnaAccessoryHub'
 const perfNow = () => (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
@@ -47,7 +48,12 @@ export function getAccessoryHub({ ajna } = {}) {
   // Active PANS network (shared anchor set). null = use every anchor.
   let uwbNetwork = null
   try { uwbNetwork = localStorage.getItem('ajna_uwb_network') || null } catch {}
-  const uwb = new UwbManager({ ajna, mode: uwbMode, network: uwbNetwork })
+  // UWB-Meldungen (inkl. Auto-Reconnect-Schritte) laufen ins geteilte Protokoll,
+  // damit man im Verlauf/Debug-Fenster sieht, wo es ggf. hakt.
+  const uwb = new UwbManager({
+    ajna, mode: uwbMode, network: uwbNetwork,
+    notify: (t) => { console.log('[uwb]', t); messageLog.push(t, 'uwb') }
+  })
   const gps = new GPSProvider()
   // Single position truth: UWB ('viewer' role) overrides GPS when fresh.
   const positionSource = new FusedPositionSource(gps, uwb.roleSource('viewer'))
@@ -55,7 +61,12 @@ export function getAccessoryHub({ ajna } = {}) {
   const audio = new WandAudioFeedback()
   // Typ-bewusste Ansagen (Name+Typ, Aktion+Ergebnis, Erzeugen) für ALLE Views
   // — auch ohne Wand (Gaze/Tap/Spawn nutzen denselben Announcer).
-  const announcer = new Announcer({ audio, ajna })
+  // Spieler-Dialoge/Interaktionen zusätzlich in den Verlauf schreiben (auch wenn
+  // die Audio-Ausgabe aus ist → nachlesbar statt nur kurz gehört).
+  const announcer = new Announcer({
+    audio, ajna,
+    log: (text, cat) => messageLog.push(text, cat)
+  })
 
   // Optional last-resort position getter a view can register (e.g. the map's
   // live window.ajnaGeo position) for when neither UWB nor the hub's own GPS

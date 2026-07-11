@@ -53,6 +53,9 @@ export class Toast {
   }
 
   show(text, { title, timeout = 2000 } = {}) {
+    // Kurzlebige Toasts zusätzlich in den persistenten Verlauf (Chat-/Debug-
+    // Fenster), damit Hinweise/Fehler später nachvollziehbar bleiben.
+    try { window.ajnaLog?.push(title ? `${title}: ${text}` : text, 'system') } catch {}
     const el = document.createElement('div')
     el.className = 'ajna-toast'
     if (title) {

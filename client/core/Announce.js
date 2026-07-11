@@ -72,9 +72,12 @@ export function announceCreateText(record) {
  * gemacht und auf 100 Zeichen gekürzt (forSpeech).
  */
 export class Announcer {
-  constructor({ audio, ajna }) {
+  constructor({ audio, ajna, log = null }) {
     this.audio = audio
     this.ajna = ajna
+    // Optionale Verlaufs-Seam: (text, cat) → MessageLog. Wird auch geschrieben,
+    // wenn die Audio-Ausgabe aus ist, damit der Spieler es nachlesen kann.
+    this.log = typeof log === 'function' ? log : null
     this._lastTargetId = null
   }
 
@@ -99,23 +102,29 @@ export class Announcer {
 
   /** Objekt gesperrt/gewählt (Knopf 2). null = Auswahl aufgehoben. */
   selected(recordOrId) {
-    if (!this._on()) return
     const rec = this._rec(recordOrId)
     const text = rec ? forSpeech(`${announceTargetText(rec)} gewählt`) : 'Auswahl aufgehoben'
-    if (text) this.audio.speak(text)
+    if (!text) return
+    this.log?.(text, 'interact')
+    if (this._on()) this.audio.speak(text)
   }
 
   /** Interaktion (Trigger oder eingehende Reaktion) — Antwort wird gesprochen. */
   interaction(recordOrId, action) {
-    if (!this._on()) return
-    const text = forSpeech(announceInteractionText(this._rec(recordOrId), action))
-    if (text) this.audio.speak(text)
+    const raw = announceInteractionText(this._rec(recordOrId), action)
+    if (!raw) return
+    // talk/examine = Dialog; alles andere = Aktion (nur fürs Verlaufs-Label).
+    const a = String(action || '').toLowerCase()
+    const cat = /^(talk|sprechen|examine|lesen|read)$/.test(a) ? 'dialog' : 'interact'
+    this.log?.(forSpeech(raw, 400), cat)     // längerer Text zum Nachlesen
+    if (this._on()) this.audio.speak(forSpeech(raw))
   }
 
   /** Neues Objekt erzeugt. */
   created(record) {
-    if (!this._on()) return
     const text = forSpeech(announceCreateText(record))
-    if (text) this.audio.announce(text)     // eingereiht (nicht abwürgen)
+    if (!text) return
+    this.log?.(text, 'system')
+    if (this._on()) this.audio.announce(text)     // eingereiht (nicht abwürgen)
   }
 }
