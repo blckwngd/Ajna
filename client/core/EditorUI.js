@@ -24,7 +24,7 @@ const EDITOR_TYPES = [
   { key: 'item',    label: 'Gegenstand',  emoji: '📦', portable: true },
   { key: 'diamond', label: 'Diamant',     emoji: '💎', portable: true, actions: [{ key: 'collect', label: 'Einsammeln' }] },
   { key: 'hint',    label: 'Hinweis',     emoji: '💡', actions: [{ key: 'examine', label: 'Untersuchen' }] },
-  { key: 'call',    label: 'Auftrag',     emoji: '📣' },
+  { key: 'call',    label: 'Auftrag',     emoji: '📣', actions: [{ key: 'accept', label: 'Annehmen' }, { key: 'complete', label: 'Erledigt' }] },
 ]
 
 export class EditorUI {

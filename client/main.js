@@ -945,18 +945,20 @@ async function init() {
       const c = objectWorldCenter(next.root)
       if (!c || BABYLON.Vector3.Distance(cam.globalPosition, c) > _auraRangeM) next = null
     }
-    if (next === _auraGO) return
-    if (_auraGO) setHighlight(_auraGO, false)
-    _auraGO = next
-    if (_auraGO) {
-      setHighlight(_auraGO, true)
-      const record = ajnaManager.objectMap.get(_auraGO.id) || null
-      objectAura.setTarget(record)
-      _announcer?.target(record || _auraGO.id)
-    } else {
-      objectAura.setTarget(null)
-      _announcer?.target(null)
+    // Fokuswechsel: Highlight + Zielansage nur bei Wechsel umschalten.
+    if (next !== _auraGO) {
+      if (_auraGO) setHighlight(_auraGO, false)
+      _auraGO = next
+      if (_auraGO) {
+        setHighlight(_auraGO, true)
+        _announcer?.target(ajnaManager.objectMap.get(_auraGO.id) || _auraGO.id)
+      } else {
+        _announcer?.target(null)
+      }
     }
+    // Aura JEDEN Tick mit dem Live-Record speisen (Signatur-Dedup in setTarget
+    // verhindert Rebuilds) → Status-Wechsel am fokussierten Call wird sofort sichtbar.
+    objectAura.setTarget(_auraGO ? (ajnaManager.objectMap.get(_auraGO.id) || null) : null)
   })
 
   // EditorUI-Backend-Load und GPS-Fix parallelisieren — bei realem GPS

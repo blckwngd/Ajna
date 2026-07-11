@@ -21,7 +21,7 @@ export class ObjectAura {
     this._active = false     // AR-Modus an?
     this._card = null
     this._reticle = null
-    this._lastId = null
+    this._lastSig = null
   }
 
   static enabled() { try { return localStorage.getItem(FLAG_KEY) !== '0' } catch { return true } }
@@ -41,12 +41,14 @@ export class ObjectAura {
     if (on) this._showReticle(); else this._hideAll()
   }
 
-  /** Fokussiertes Objekt setzen (null → Karte ausblenden). */
+  /** Fokussiertes Objekt setzen (null → Karte ausblenden). Kann pro Frame mit dem
+   *  Live-Record aufgerufen werden — die Signatur (id + Call-Status) verhindert
+   *  unnötige Rebuilds, lässt aber Status-Wechsel (offen→erledigt) sofort durch. */
   setTarget(record) {
     if (!this._active || !ObjectAura.enabled()) return
-    const id = record?.id || null
-    if (id === this._lastId) return       // kein Neuaufbau bei gleichem Fokus
-    this._lastId = id
+    const sig = record ? `${record.id}:${record.state?.call?.status || ''}` : null
+    if (sig === this._lastSig) return
+    this._lastSig = sig
     if (!record) { this._hideCard(); return }
     this._renderCard(record)
   }
@@ -69,7 +71,7 @@ export class ObjectAura {
   _hideAll() {
     this._hideCard()
     if (this._reticle) this._reticle.style.display = 'none'
-    this._lastId = null
+    this._lastSig = null
   }
 
   _ensureCard() {
