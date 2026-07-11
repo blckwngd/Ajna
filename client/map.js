@@ -238,7 +238,8 @@ const MARKER_TYPES = {
   item:   { emoji: '💎', cls: 'map-marker-item' },
   hint:   { emoji: '💡', cls: 'map-marker-hint' },
   wifi:   { emoji: '📶', cls: 'map-marker-wifi' },
-  uwb_anchor: { emoji: '⚓', cls: 'map-marker-anchor' }
+  uwb_anchor: { emoji: '⚓', cls: 'map-marker-anchor' },
+  call:   { emoji: '📣', cls: 'map-marker-call' }
 }
 
 function markerIconFor(obj) {

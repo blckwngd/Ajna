@@ -19,7 +19,7 @@ const pick = arr => arr[Math.floor(Math.random() * arr.length)]
 // Sprechende Typ-Labels (auch für TTS-Ansagen genutzt, siehe Announcer).
 export const TYPE_LABEL = {
   npc: 'NPC', enemy: 'Monster', animal: 'Tier',
-  dragon: 'Drache', item: 'Gegenstand', hint: 'Hinweis'
+  dragon: 'Drache', item: 'Gegenstand', hint: 'Hinweis', call: 'Auftrag'
 }
 
 // Namens-Pools je Typ. Tiere sind hier NICHT gelistet — ihr Name wird aus dem

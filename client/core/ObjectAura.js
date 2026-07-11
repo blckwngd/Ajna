@@ -112,6 +112,14 @@ export class ObjectAura {
     const me = this.getMe?.()
     if (me?.id && record?.owner && me.id === record.owner) chips.push({ t: 'Deins', c: '#5b8dd6' })
     if (record?.state?.portable) chips.push({ t: '🎒 tragbar', c: '#6fae7a' })
+    // Auftrag (Call): Belohnung + Status prominent.
+    const call = record?.type === 'call' ? (record.state?.call || {}) : null
+    if (call) {
+      if (Number.isFinite(call.reward)) chips.push({ t: `🎁 ${call.reward}`, c: '#e6b23a' })
+      const st = { open: ['offen', '#54c26b'], claimed: ['angenommen', '#e6b23a'], done: ['erledigt', '#8a8f99'] }
+      const [w, c] = st[call.status] || ['offen', '#54c26b']
+      chips.push({ t: w, c })
+    }
     if (Number.isFinite(record?.reputation)) chips.push({ t: `⭐ ${record.reputation}`, c: '#e6b23a' })
     const faction = record?.expand?.group?.name || record?.state?.faction
     if (faction) chips.push({ t: `🛡️ ${faction}`, c: '#c79be0' })
@@ -130,8 +138,8 @@ export class ObjectAura {
       el.appendChild(row)
     }
 
-    // Notiz/Beschreibung (gekürzt), falls vorhanden.
-    const note = record?.description || record?.state?.note
+    // Notiz/Beschreibung (gekürzt), falls vorhanden — bei Calls der Auftragstext.
+    const note = call?.task || record?.description || record?.state?.note
     if (note) {
       const n = document.createElement('div')
       n.style.cssText = 'font-size:12px;opacity:.85;margin-top:7px;line-height:1.3'

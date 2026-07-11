@@ -24,6 +24,7 @@ const EDITOR_TYPES = [
   { key: 'item',    label: 'Gegenstand',  emoji: '📦', portable: true },
   { key: 'diamond', label: 'Diamant',     emoji: '💎', portable: true, actions: [{ key: 'collect', label: 'Einsammeln' }] },
   { key: 'hint',    label: 'Hinweis',     emoji: '💡', actions: [{ key: 'examine', label: 'Untersuchen' }] },
+  { key: 'call',    label: 'Auftrag',     emoji: '📣' },
 ]
 
 export class EditorUI {
@@ -199,6 +200,15 @@ export class EditorUI {
                 <input id="uwbNetwork" name="uwbNetwork" type="text" placeholder="z. B. 0x89AB" style="justify-self:start">
               </div>
             </div>
+            <div id="callFields" class="ed-anchor" hidden>
+              <div class="ed-full-label">Auftrag (Call)</div>
+              <div class="ed-grid">
+                <label for="callTask">Aufgabe</label>
+                <textarea id="callTask" name="callTask" rows="2" placeholder="Was ist zu tun?" style="grid-column:2;resize:vertical"></textarea>
+                <label for="callReward">Belohnung</label>
+                <input id="callReward" name="callReward" type="text" inputmode="numeric" placeholder="z. B. 10" style="justify-self:start;width:90px">
+              </div>
+            </div>
             <label for="stateJson" class="ed-full-label">State (JSON)</label>
             <textarea id="stateJson" name="stateJson" rows="4" class="ed-json" spellcheck="false"></textarea>
             <div class="ed-buttons">
@@ -243,6 +253,7 @@ export class EditorUI {
     // Explizite Referenz statt form.type (robuster; das Modal liegt jetzt im body-Host).
     this.typeSelect = this.editorOverlay?.querySelector('#type')
     this.anchorFields = this.editorOverlay?.querySelector('#anchorFields')   // UWB-Anker-Sektion
+    this.callFields = this.editorOverlay?.querySelector('#callFields')        // Auftrag-/Call-Sektion
     this._populateTypeSelect()
     this._populateModelSelect()
     this._wireEditorModal()
@@ -458,6 +469,7 @@ export class EditorUI {
       state.altitude_ref = this.editorForm.altitude_ref?.value === 'msl' ? 'msl' : 'ground'
       state.portable = !!this.editorForm.portable?.checked
       this._mergeAnchorFields(state)   // UWB-Anker: Node-ID + mm-Lokalkoords + Netz in state.uwb
+      this._mergeCallFields(state)     // Auftrag: Aufgabe + Belohnung + Status in state.call
 
       const d2r = d => (parseNum(d) || 0) * Math.PI / 180
       const lat = parseNum(this.editorForm.lat.value)
@@ -736,6 +748,29 @@ export class EditorUI {
     state.uwb = uwb
   }
 
+  // Auftrag-/Call-Sektion (Aufgabe + Belohnung) je nach Typ ein-/ausblenden.
+  _updateCallSectionVisible() {
+    const isCall = (this.typeSelect?.value || '').toLowerCase() === 'call'
+    if (this.callFields) this.callFields.hidden = !isCall
+  }
+  _fillCallFields(obj) {
+    const c = obj?.state?.call || {}, f = this.editorForm
+    if (f.callTask)   f.callTask.value   = c.task ?? ''
+    if (f.callReward) f.callReward.value = c.reward ?? ''
+  }
+  // Call-Felder in state.call übernehmen (nur Typ call). Status defaultet auf
+  // 'open'; vorhandener Status/Claimant (aus dem State-JSON) bleibt erhalten.
+  _mergeCallFields(state) {
+    if ((this.typeSelect?.value || '').toLowerCase() !== 'call') return
+    const f = this.editorForm
+    const call = { ...(state.call || {}) }
+    call.task = String(f.callTask?.value ?? '').trim()
+    const reward = parseInt(String(f.callReward?.value ?? '').trim(), 10)
+    if (Number.isFinite(reward)) call.reward = reward; else delete call.reward
+    if (!call.status) call.status = 'open'
+    state.call = call
+  }
+
   // Modell-Feld aus einem gltf-Wert füllen: lokales Modell → Dropdown, sonst
   // (externe URL / nicht-Standard-Pfad) → „Externe URL…" + URL-Feld.
   _setModelField(gltf) {
@@ -770,6 +805,7 @@ export class EditorUI {
     this.typeSelect?.addEventListener('change', () => {
       if (!this.editorForm.objectId.value) this._applyTypeDefaults(this.typeSelect.value)
       this._updateAnchorSectionVisible()
+      this._updateCallSectionVisible()
     })
   }
 
@@ -827,8 +863,11 @@ export class EditorUI {
     f.stateJson.value = JSON.stringify(obj.state || {}, null, 2)   // voller State, editierbar
     this._fillAnchorFields(obj)
     this._updateAnchorSectionVisible()
+    this._fillCallFields(obj)
+    this._updateCallSectionVisible()
     this._editingAppearance = { ...ap }
-    if (this.editorTitle) this.editorTitle.textContent = isAnchor ? 'UWB-Anker bearbeiten' : 'Objekt bearbeiten'
+    const isCall = (obj.type || '').toLowerCase() === 'call'
+    if (this.editorTitle) this.editorTitle.textContent = isAnchor ? 'UWB-Anker bearbeiten' : isCall ? 'Auftrag bearbeiten' : 'Objekt bearbeiten'
     this._openEditor()
   }
 
@@ -858,6 +897,8 @@ export class EditorUI {
     f.stateJson.value = '{}'
     this._fillAnchorFields({})
     this._updateAnchorSectionVisible()
+    this._fillCallFields({})
+    this._updateCallSectionVisible()
     this._editingAppearance = {}
     if (this.editorTitle) this.editorTitle.textContent = 'Neues Objekt'
     this._openEditor()
