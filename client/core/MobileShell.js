@@ -376,6 +376,7 @@ export class MobileShell {
     const arNorth = (() => { try { return parseFloat(localStorage.getItem('ajna.ar.north_offset')) || 0 } catch { return 0 } })()
     const arFovSlider = (() => { try { return localStorage.getItem('ajna.ar.fov_slider') === '1' } catch { return false } })()
     const arCompass = (() => { try { return localStorage.getItem('ajna.ar.compass_indicator') !== '0' } catch { return true } })()
+    const arAura = (() => { try { return localStorage.getItem('ajna.ar.aura') !== '0' } catch { return true } })()
 
     root.innerHTML = `
       <section class="settings-section">
@@ -455,6 +456,14 @@ export class MobileShell {
         <div class="meta" style="margin-top:6px">
           Zeigt oben Heading + Kalibrier-Güte (Ampel). Grün+stabil, aber Welt verdreht → Nord-Offset;
           rot/zappelig → Kompass kalibrieren (Gerät in liegender 8 bewegen).
+        </div>
+        <label class="meta" style="display:flex;align-items:center;gap:8px;margin-top:12px">
+          <input type="checkbox" data-field="ar-aura" ${arAura ? 'checked' : ''}>
+          Objekt-Aura anzeigen (Call-Out beim Anvisieren)
+        </label>
+        <div class="meta" style="margin-top:6px">
+          Zielst du mit dem Reticle auf ein Objekt, erscheint eine schwebende Info-Karte
+          (Typ, Name, Eigentümer …). Aktionen bleiben im Tap-Menü.
         </div>
       </section>
 
@@ -837,6 +846,15 @@ export class MobileShell {
       try { localStorage.setItem('ajna.ar.compass_indicator', on ? '1' : '0') } catch {}
       if (window.arCompass?.setVisible) window.arCompass.setVisible(on)
       else window.dispatchEvent(new CustomEvent('ajna:ar-compass', { detail: on }))
+    })
+
+    // Objekt-Aura (Call-Out) in AR ein-/ausblenden (Default an).
+    const auraToggle = root.querySelector('[data-field="ar-aura"]')
+    auraToggle?.addEventListener('change', () => {
+      const on = auraToggle.checked
+      try { localStorage.setItem('ajna.ar.aura', on ? '1' : '0') } catch {}
+      if (window.arAura?.setVisible) window.arAura.setVisible(on)
+      else window.dispatchEvent(new CustomEvent('ajna:ar-aura', { detail: on }))
     })
 
     // AR-Nord-Offset: korrigiert einen Kompass↔Daten-Heading-Versatz (z. B. 180°).

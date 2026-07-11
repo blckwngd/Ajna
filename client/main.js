@@ -56,6 +56,7 @@ import { sunPosition } from "./core/solarPosition.js"
 import { ArPassthrough } from "./core/ArPassthrough.js"
 import { ArFovCalibration } from "./core/ArFovCalibration.js"
 import { CompassCalibration } from "./core/CompassCalibration.js"
+import { ObjectAura } from "./core/ObjectAura.js"
 import { UwbAnchorOverlay } from "./core/UwbAnchorOverlay.js"
 import { OSMContext } from "./engine/environment/OSMContext.js"
 import { PathOverlay } from "./engine/debug/PathOverlay.js"
@@ -366,6 +367,12 @@ async function init() {
   window.arCompass = compass
   window.addEventListener('ajna:ar-compass', ev => compass.setVisible(!!ev.detail))
 
+  // Objekt-Aura („Call-Out") — schwebende Identität/Metadaten des fokussierten
+  // Objekts in der AR (D-Raum-Vorbild). Fokus liefert der Gaze-Loop unten.
+  const objectAura = new ObjectAura({ parent: arRoot, getMe: () => ajnaManager.currentUser?.() })
+  window.arAura = objectAura
+  window.addEventListener('ajna:ar-aura', ev => objectAura.setVisible(!!ev.detail))
+
   async function _ensureOrientationPermission() {
     const D = window.DeviceOrientationEvent
     if (D && typeof D.requestPermission === "function") {
@@ -392,10 +399,12 @@ async function init() {
       })
       arFov?.activate()   // FOV an Kamerabild angleichen; Live-Slider nur wenn in Einstellungen aktiviert
       compass.activate()  // Kompass-Güte-Indikator (nur wenn in Einstellungen aktiviert)
+      objectAura.activate() // Fokus-Reticle + Call-Out-Karte (nur wenn eingeschaltet)
     } else {
       arPassthrough.disable()
       arFov?.deactivate() // XR/Skybox: virtuelle Kamera auf Default-FOV, Slider aus
       compass.deactivate()
+      objectAura.deactivate()
     }
     try { editorUI?.setArModeToggle?.(ar) } catch {}   // Editor-Checkbox synchron
   }
@@ -899,6 +908,38 @@ async function init() {
     } else {
       _announcer?.target(null)
       inWorldMenu.hide()
+    }
+  })
+
+  // Magic-Window-AR (Handy, KEIN immersives XR): Fokus per Kamera-Forward-Ray →
+  // Objekt-Aura (Call-Out) + Zielansage. Getrennt vom Tap (der öffnet Aktionen).
+  // Immersives XR nutzt oben das In-World-Menü; darum hier auf !inXR beschränkt.
+  // Drosselt sich selbst (pickWithRay ist O(meshes)); Reticle zeigt den Fokuspunkt.
+  let _auraGO = null
+  let _auraTick = 0
+  scene.onBeforeRenderObservable.add(() => {
+    const inXR = _xrExperience?.baseExperience?.state === BABYLON.WebXRState.IN_XR
+    if (inXR || !_compassActive) {
+      if (_auraGO) { setHighlight(_auraGO, false); _auraGO = null; objectAura.setTarget(null); _announcer?.target(null) }
+      return
+    }
+    if (++_auraTick % 10 !== 0) return
+    const cam = scene.activeCamera
+    if (!cam) return
+    const pickInfo = scene.pickWithRay(cam.getForwardRay(100), m => !!m.metadata?.gameObject)
+    const next = (pickInfo?.hit && pickInfo.pickedMesh?.metadata?.gameObject?.name)
+      ? pickInfo.pickedMesh.metadata.gameObject : null
+    if (next === _auraGO) return
+    if (_auraGO) setHighlight(_auraGO, false)
+    _auraGO = next
+    if (_auraGO) {
+      setHighlight(_auraGO, true)
+      const record = ajnaManager.objectMap.get(_auraGO.id) || null
+      objectAura.setTarget(record)
+      _announcer?.target(record || _auraGO.id)
+    } else {
+      objectAura.setTarget(null)
+      _announcer?.target(null)
     }
   })
 
