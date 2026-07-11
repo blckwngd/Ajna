@@ -19,6 +19,12 @@ import { solvePositionFromRanges } from './UwbMultilateration.js'
 const LOG = '[uwb]'
 const EARTH_R = 6378137 // metres, matches GeoTransformer
 
+// Remembered BLE devices per role → gesture-free reconnect by address on boot.
+// Native BLE (Capacitor plugin) may reconnect by stored address without a user
+// gesture (unlike Web-Bluetooth), so a once-paired tag comes back on its own.
+const DEV_KEY  = 'ajna.uwb.devices'      // JSON { [role]: { address, name, ts } }
+const AUTO_KEY = 'ajna.uwb.autoconnect'  // '0' disables auto-reconnect; default on
+
 // Normalize a PANS network id to a comparable form. Ids come from JSON, the UI,
 // or DRTLS (decimal or hex string); compare as trimmed strings so "0x89AB",
 // "0X89AB" and a number all unify. Empty/nullish → null ("all anchors").
@@ -140,6 +146,10 @@ export class UwbManager {
     await this._ensurePlugin()
     this.refreshAnchors()
     if (!this._nodes.has(role)) this._nodes.set(role, { connected: false, address: null, lastWorld: null })
+    // Remember which name we dialled so we can persist {address,name} once the
+    // status event confirms the connection (the status carries the address).
+    if (!this._pendingConnect) this._pendingConnect = new Map()
+    this._pendingConnect.set(role, { name, address })
     await this.Uwb.connect(address ? { role, address } : { role, name })
     this.notify(`Verbinde UWB-Knoten „${role}" …`)
   }
@@ -251,8 +261,62 @@ export class UwbManager {
     const node = this._node(role)
     node.connected = !!e?.connected
     node.address = e?.address || null
+    // Persist the tag on a successful connect so it reconnects on its own next
+    // session (name from the dial we made, address from the plugin's status).
+    if (node.connected && node.address) {
+      const nm = e?.name || this._pendingConnect?.get(role)?.name || null
+      this._rememberDevice(role, node.address, nm)
+    }
     this.notify(node.connected ? `UWB „${role}" verbunden` : `UWB „${role}" getrennt`)
     this._statusCbs.forEach(cb => { try { cb(node.connected, node.address, role) } catch {} })
+  }
+
+  // ── remembered devices + gesture-free auto-reconnect ────────────────
+
+  static autoConnectEnabled() { try { return localStorage.getItem(AUTO_KEY) !== '0' } catch { return true } }
+  static setAutoConnect(on) { try { localStorage.setItem(AUTO_KEY, on ? '1' : '0') } catch {} }
+
+  _loadDevices() { try { return JSON.parse(localStorage.getItem(DEV_KEY)) || {} } catch { return {} } }
+  _saveDevices(d) { try { localStorage.setItem(DEV_KEY, JSON.stringify(d)) } catch {} }
+
+  /** All remembered tags as [{ role, address, name, ts }]. */
+  rememberedDevices() {
+    const d = this._loadDevices()
+    return Object.entries(d).map(([role, v]) => ({ role, ...v }))
+  }
+  /** Remembered tag for a role, or null. */
+  rememberedDevice(role = 'viewer') { return this._loadDevices()[role] || null }
+
+  _rememberDevice(role, address, name) {
+    if (!address) return
+    const d = this._loadDevices()
+    d[role] = { address, name: name || d[role]?.name || null, ts: Date.now() }
+    this._saveDevices(d)
+  }
+  /** Forget a remembered tag (user action). */
+  forgetDevice(role = 'viewer') {
+    const d = this._loadDevices()
+    if (d[role]) { delete d[role]; this._saveDevices(d) }
+  }
+
+  /**
+   * Silently reconnect a remembered tag by address — no scan, no user gesture.
+   * No-op if disabled, not native, already connected, or nothing remembered.
+   * @returns {Promise<boolean>} whether a reconnect was attempted successfully.
+   */
+  async autoReconnect(role = 'viewer') {
+    if (!UwbManager.autoConnectEnabled()) return false
+    if (this.isConnected(role)) return false
+    const dev = this.rememberedDevice(role)
+    if (!dev?.address) return false
+    if (!(await UwbManager.isAvailable())) return false
+    try {
+      await this.connect({ role, address: dev.address, name: dev.name || undefined })
+      return true
+    } catch (e) {
+      console.warn(LOG, 'auto-reconnect failed', role, e?.message || e)
+      return false
+    }
   }
 
   _onPosition(e) {

@@ -178,6 +178,13 @@ export function getAccessoryHub({ ajna } = {}) {
     } catch (e) { console.warn('[hub] declination failed', e?.message || e) }
   })
 
+  // Reconnect a previously paired UWB tag on boot — native BLE by stored address,
+  // no scan and no user gesture. Fires only if a device was remembered from an
+  // earlier successful connect and the user hasn't disabled it (default on). This
+  // is the "läuft einfach" case: no per-session tapping. Fire-and-forget; a
+  // missing/out-of-range tag just fails silently and stays reconnectable manually.
+  uwb.autoReconnect('viewer').catch(() => {})
+
   const hub = {
     ajna, wand, uwb, audio, announcer, gps, positionSource, originFilter,
     sttEngine, voiceObject, voiceLight,

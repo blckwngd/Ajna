@@ -624,9 +624,27 @@ export class MobileShell {
 
   _uwbSettingsHtml() {
     const showAnchors = (() => { try { return localStorage.getItem('ajna.debug.show_uwb_anchors') === '1' } catch { return false } })()
+    const autoConnect = UwbManager.autoConnectEnabled()
+    const devices = this.uwb?.rememberedDevices?.() || []
+    const devHtml = devices.length
+      ? devices.map(d => `
+          <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
+            <span class="meta" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+              ${escapeHtml(d.name || d.role)} <span style="opacity:.55">· ${escapeHtml(d.address || '?')}</span>
+            </span>
+            <button class="settings-btn-inline" data-action="uwb-forget" data-role="${escapeHtml(d.role)}" style="width:auto;padding:2px 8px">vergessen</button>
+          </div>`).join('')
+      : '<div class="meta" style="opacity:.6;margin-top:4px">Noch kein Gerät gemerkt – einmal „UWB verbinden".</div>'
     return `
       <section class="settings-section">
         <div class="meta" style="margin-bottom:10px">${this.uwbConnected ? 'verbunden' : 'nicht verbunden'}</div>
+        <label class="meta" style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" data-field="uwb-autoconnect" ${autoConnect ? 'checked' : ''}>
+          Bekanntes Gerät beim Start automatisch verbinden
+        </label>
+        <div class="meta" style="margin-top:8px;font-weight:600">Bekannte Geräte</div>
+        ${devHtml}
+        <hr style="border:none;border-top:1px solid rgba(128,128,128,.25);margin:12px 0">
         <label class="meta" style="display:block">UWB-Modell
           <select class="settings-input" data-field="uwb-model" style="margin-top:4px">
             <option value="onboard">A – Onboard-Engine</option>
@@ -700,6 +718,15 @@ export class MobileShell {
 
   // UWB-Konfiguration/Aktionen im Modal verdrahten.
   _wireUwbModal(root) {
+    // Auto-Reconnect an/aus (Default an) + gemerkte Geräte vergessen.
+    const autoToggle = root.querySelector('[data-field="uwb-autoconnect"]')
+    autoToggle?.addEventListener('change', () => UwbManager.setAutoConnect(autoToggle.checked))
+    root.querySelectorAll('[data-action="uwb-forget"]').forEach(btn =>
+      btn.addEventListener('click', () => {
+        this.uwb?.forgetDevice(btn.dataset.role || 'viewer')
+        this._refreshDeviceModal()
+      }))
+
     const uwbModelSel = root.querySelector('[data-field="uwb-model"]')
     if (uwbModelSel) {
       uwbModelSel.value = this.uwb?.model || (localStorage.getItem('ajna_uwb_model') === 'ranging' ? 'ranging' : 'onboard')
@@ -948,7 +975,11 @@ export class MobileShell {
     if (this.uwbConnected) { await this.uwb.disconnect('viewer'); this.uwbConnected = false; this._renderSettings(); return }
     try {
       setStatus('Verbinde …')
-      await this.uwb.connect({ role: 'viewer', name: 'DW' })
+      // Gemerktes Gerät → direkt per Adresse (kein Scan), sonst per Name suchen.
+      const dev = this.uwb.rememberedDevice?.('viewer')
+      await this.uwb.connect(dev?.address
+        ? { role: 'viewer', address: dev.address, name: dev.name || 'DW' }
+        : { role: 'viewer', name: 'DW' })
     } catch (err) {
       setStatus(err?.message || 'Verbindung fehlgeschlagen')
     }
