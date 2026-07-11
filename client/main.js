@@ -926,9 +926,17 @@ async function init() {
     if (++_auraTick % 10 !== 0) return
     const cam = scene.activeCamera
     if (!cam) return
-    const pickInfo = scene.pickWithRay(cam.getForwardRay(100), m => !!m.metadata?.gameObject)
-    const next = (pickInfo?.hit && pickInfo.pickedMesh?.metadata?.gameObject?.name)
-      ? pickInfo.pickedMesh.metadata.gameObject : null
+    // Fokus: erst exakter Forward-Ray, dann DERSELBE tolerante Screen-Pick wie
+    // beim Tap — um die Bildmitte (Reticle). So greift unscharfes Zielen genauso
+    // (gleiche TOUCH_TOLERANCE_CSS, gleiche „näher gewinnt"-Logik).
+    const pick = scene.pickWithRay(cam.getForwardRay(100), m => !!m.metadata?.gameObject)
+    let next = (pick?.hit && pick.pickedMesh?.metadata?.gameObject?.name)
+      ? pick.pickedMesh.metadata.gameObject : null
+    if (!next) {
+      const vp = cam.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight())
+      next = pickGameObjectTolerant(vp.x + vp.width / 2, vp.y + vp.height / 2)
+    }
+    if (next && !next.name) next = null
     if (next === _auraGO) return
     if (_auraGO) setHighlight(_auraGO, false)
     _auraGO = next
