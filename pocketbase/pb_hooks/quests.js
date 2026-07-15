@@ -181,9 +181,20 @@ function resolveSwap(app, call, callData, completerId, extraRequireIds) {
 
   const rewardIds = idList(callData.rewardItems)
   if (!rewardIds.length) return { ok: false, code: 409, error: "call has no escrowed reward" }
+
+  // Wiederholbare Aufträge zahlen pro Durchlauf nur einen Teil des Vorrats aus.
+  // Damit begrenzt der Treuhand-Vorrat die Wiederholungen von selbst — es kann
+  // nie mehr herausgegeben werden, als der Aussteller hinterlegt hat.
+  const repeatable = callData.repeatable === true
+  const perRun = repeatable ? Math.max(1, Number(callData.rewardPerRun) || 1) : rewardIds.length
+  if (rewardIds.length < perRun) {
+    return { ok: false, code: 409, error: "reward pool exhausted: needs " + perRun + " per run, " + rewardIds.length + " left" }
+  }
+
+  const payIds = rewardIds.slice(0, perRun)
   const rewards = []
-  for (let i = 0; i < rewardIds.length; i++) {
-    const id = rewardIds[i]
+  for (let i = 0; i < payIds.length; i++) {
+    const id = payIds[i]
     let item
     try { item = app.findRecordById("objects", id) }
     catch (err) { return { ok: false, code: 409, error: "reward item no longer exists: " + id } }
@@ -197,13 +208,20 @@ function resolveSwap(app, call, callData, completerId, extraRequireIds) {
     rewards.push({ rec: item, state: ist })
   }
 
-  return { ok: true, issuer: issuer, rewards: rewards, required: required }
+  return {
+    ok: true, issuer: issuer, rewards: rewards, required: required,
+    remainingRewards: rewardIds.slice(perRun), repeatable: repeatable, perRun: perRun
+  }
 }
 
 /**
  * Führt den Tausch ATOMAR aus: Belohnung → Spieler, geforderte Items →
- * Aussteller, Treuhand lösen, Auftrag auf "done". Gibt die bewegten Objekt-IDs
- * zurück (Aufrufer baut damit den Permission-Cache neu).
+ * Aussteller, Treuhand lösen. Gibt die bewegten Objekt-IDs zurück (Aufrufer
+ * baut damit den Permission-Cache neu).
+ *
+ * Danach entscheidet der Vorrat über den Status: ein wiederholbarer Auftrag geht
+ * zurück auf "open", solange noch genug Belohnung gebunden ist — sonst "done"
+ * (erschöpft). Einmalige Aufträge sind nach dem Durchlauf immer "done".
  */
 function executeSwap(app, call, callState, callData, swap, completerId) {
   const moved = []
@@ -222,9 +240,16 @@ function executeSwap(app, call, callState, callData, swap, completerId) {
       txApp.save(swap.required[i])
       moved.push(swap.required[i].id)
     }
-    callData.status = "done"
-    callData.completedBy = completerId
+    callData.rewardItems = swap.remainingRewards
+    callData.completions = (Number(callData.completions) || 0) + 1
+    callData.completedBy = completerId          // zuletzt abgeschlossen von
     delete callData.pendingBy
+    if (swap.repeatable && swap.remainingRewards.length >= swap.perRun) {
+      callData.status = "open"                  // zurück in den Umlauf
+      delete callData.claimedBy
+    } else {
+      callData.status = "done"                  // einmalig bzw. Vorrat leer
+    }
     callState.call = callData
     call.set("state", callState)
     txApp.save(call)

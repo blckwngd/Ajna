@@ -328,7 +328,8 @@ routerAdd("POST", "/api/objects/{id}/place", (e) => {
 // Body: { rewardItems: [objectId, …],
 //         requiresItems?: [objectId, …],                     // konkrete Instanzen
 //         requires?: [{ match: {type?,name?,tag?}, count? }], // Gattung + Anzahl
-//         verify?: "items" | "agent" }
+//         verify?: "items" | "agent",
+//         repeatable?: bool, rewardPerRun?: number }          // mehrfach spielbar
 // Bindet die Belohnung treuhänderisch. Nur der Aussteller (owner).
 //
 // verify: "items" (Default) — Server entscheidet deterministisch.
@@ -357,6 +358,15 @@ routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
     }
     const specCheck = validateSpecs(specs)
     if (!specCheck.ok) return e.json(400, { error: specCheck.error })
+
+    // Wiederholbar: pro Durchlauf wird nur ein Teil des Vorrats ausgezahlt.
+    // Der Vorrat begrenzt damit die Wiederholungen — es kann nie mehr
+    // herausgegeben werden, als hinterlegt wurde.
+    const repeatable = body.repeatable === true
+    const perRun = repeatable ? Math.max(1, Number(body.rewardPerRun) || 1) : 0
+    if (repeatable && perRun > rewardIds.length) {
+      return e.json(400, { error: "rewardPerRun (" + perRun + ") exceeds the escrowed reward pool (" + rewardIds.length + ")" })
+    }
 
     // Jede Belohnung muss im Inventar des Ausstellers liegen und frei sein.
     const rewards = []
@@ -401,6 +411,8 @@ routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
       } else delete c.requires
       // Wer entscheidet über den Abschluss? Nur "agent" weicht vom Default ab.
       c.verify = (String(body.verify || "") === "agent") ? "agent" : "items"
+      if (repeatable) { c.repeatable = true; c.rewardPerRun = perRun }
+      else { delete c.repeatable; delete c.rewardPerRun }
       if (!c.status) c.status = "open"
       cs.call = c
       call.set("state", cs)
@@ -508,7 +520,13 @@ routerAdd("POST", "/api/objects/{id}/quest/complete", (e) => {
     for (let i = 0; i < moved.length; i++) {
       try { recomputeForObject(moved[i]) } catch (_) {}   // Eigentum gewechselt
     }
-    return e.json(200, { ok: true, id: callId, status: "done", rewardItems: c.rewardItems || [], requiresItems: c.requiresItems || [] })
+    // Status NICHT hart "done": ein wiederholbarer Auftrag steht danach wieder
+    // auf "open", solange der Vorrat reicht — executeSwap hat c.status gesetzt.
+    return e.json(200, {
+      ok: true, id: callId, status: c.status,
+      rewardsLeft: (c.rewardItems || []).length, completions: c.completions || 1,
+      repeatable: c.repeatable === true
+    })
   } catch (err) {
     console.log("[quest.complete] error: " + (err && err.message ? err.message : err))
     return e.json(500, { error: "" + (err && err.message ? err.message : err) })
@@ -563,7 +581,11 @@ routerAdd("POST", "/api/objects/{id}/quest/approve", (e) => {
     for (let i = 0; i < moved.length; i++) {
       try { recomputeForObject(moved[i]) } catch (_) {}
     }
-    return e.json(200, { ok: true, id: callId, status: "done", completedBy: completerId, collected: swap.required.length })
+    return e.json(200, {
+      ok: true, id: callId, status: c.status, completedBy: completerId,
+      collected: swap.required.length, rewardsLeft: (c.rewardItems || []).length,
+      repeatable: c.repeatable === true
+    })
   } catch (err) {
     console.log("[quest.approve] error: " + (err && err.message ? err.message : err))
     return e.json(500, { error: "" + (err && err.message ? err.message : err) })

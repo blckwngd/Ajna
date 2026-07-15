@@ -211,6 +211,13 @@ export class EditorUI {
                   <option value="items">Server prüft (geforderte Items)</option>
                   <option value="agent">Agent entscheidet (eigene Logik)</option>
                 </select>
+                <label for="callRepeatable">Wiederholbar</label>
+                <span class="ed-rot-cell" style="align-items:center">
+                  <input id="callRepeatable" name="callRepeatable" type="checkbox" style="width:auto;justify-self:start">
+                  <input id="callRewardPerRun" name="callRewardPerRun" type="text" inputmode="numeric" value="1"
+                         title="Belohnungen pro Durchlauf" style="width:52px">
+                  <span class="meta" style="opacity:.7;font-size:11px">pro Durchlauf</span>
+                </span>
               </div>
               <div class="ed-full-label" style="font-weight:normal">Geforderte Gegenstände — Gattung + Anzahl (leer = nichts abgeben)</div>
               <div data-role="call-requires" class="ed-json" style="max-height:120px;overflow:auto;padding:6px"></div>
@@ -781,6 +788,8 @@ export class EditorUI {
     const c = obj?.state?.call || {}, f = this.editorForm
     if (f.callTask) f.callTask.value = c.task ?? ''
     if (f.callVerify) f.callVerify.value = c.verify === 'agent' ? 'agent' : 'items'
+    if (f.callRepeatable) f.callRepeatable.checked = c.repeatable === true
+    if (f.callRewardPerRun) f.callRewardPerRun.value = c.rewardPerRun ?? 1
     this._renderRequires(obj)
     this._renderRewardPicker(obj)
 
@@ -946,9 +955,15 @@ export class EditorUI {
         if (!rewardItems.length) { say('Mindestens ein Item als Belohnung wählen — Belohnungen werden nicht erzeugt.'); return }
         const verify = this.editorForm?.callVerify?.value === 'agent' ? 'agent' : 'items'
         const requires = this._collectRequires()
-        const res = await this.ajna.publishQuest(id, { rewardItems, requires, verify })
+        const repeatable = !!this.editorForm?.callRepeatable?.checked
+        const perRun = parseInt(this.editorForm?.callRewardPerRun?.value, 10)
+        const rewardPerRun = Number.isFinite(perRun) && perRun > 0 ? perRun : 1
+        const res = await this.ajna.publishQuest(id, { rewardItems, requires, verify, repeatable, rewardPerRun })
         const reqTxt = requires.length ? ` · ${requires.reduce((n, r) => n + (r.count || 1), 0)} gefordert` : ''
-        say(`Veröffentlicht: ${res?.rewardItems?.length ?? rewardItems.length} Item(s) gebunden${reqTxt}`
+        const repTxt = repeatable
+          ? ` · wiederholbar: ${Math.floor(rewardItems.length / rewardPerRun)}× (${rewardPerRun} pro Durchlauf)`
+          : ''
+        say(`Veröffentlicht: ${res?.rewardItems?.length ?? rewardItems.length} Item(s) gebunden${reqTxt}${repTxt}`
           + (verify === 'agent' ? ' · Abschluss entscheidet der Agent.' : ' · Server prüft den Abschluss.'))
       }
       // Ansicht + State-JSON nachziehen (Realtime kann minimal nachlaufen).

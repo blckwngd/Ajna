@@ -1,12 +1,24 @@
 // Minimaler Toast-Notifier — zentriert am unteren Bildschirmrand.
-// Mehrere Toasts stapeln sich übereinander; jeder verschwindet nach
-// `timeout` ms automatisch.
+// Mehrere Toasts stapeln sich untereinander (neuester unten, ältere rutschen
+// nach oben); jeder verschwindet nach `timeout` ms automatisch.
+
+const MAX_VISIBLE = 4        // mehr würde den Bildschirm zulaufen lassen
+const DEFAULT_TIMEOUT = 5000
+
 export class Toast {
   constructor() {
     this._injectStyles()
-    this.container = document.createElement('div')
-    this.container.className = 'ajna-toast-container'
-    document.body.appendChild(this.container)
+    // EIN Container für alle Instanzen: AR- und Karten-Bundle laufen in der
+    // Mobile-Shell in derselben Seite und hatten je einen eigenen Container an
+    // identischer Position — die Toasts lagen übereinander und sahen aus, als
+    // würden sie einander überschreiben.
+    let c = document.querySelector('.ajna-toast-container')
+    if (!c) {
+      c = document.createElement('div')
+      c.className = 'ajna-toast-container'
+      document.body.appendChild(c)
+    }
+    this.container = c
   }
 
   _injectStyles() {
@@ -52,7 +64,7 @@ export class Toast {
     document.head.appendChild(style)
   }
 
-  show(text, { title, timeout = 2000 } = {}) {
+  show(text, { title, timeout = DEFAULT_TIMEOUT } = {}) {
     // Kurzlebige Toasts zusätzlich in den persistenten Verlauf (Chat-/Debug-
     // Fenster), damit Hinweise/Fehler später nachvollziehbar bleiben.
     try { window.ajnaLog?.push(title ? `${title}: ${text}` : text, 'system') } catch {}
@@ -66,6 +78,11 @@ export class Toast {
     }
     el.appendChild(document.createTextNode(text))
     this.container.appendChild(el)
+
+    // Bei einem Schwall (z. B. Auftrags-Abschluss) die ältesten wegnehmen,
+    // statt den Bildschirm vollaufen zu lassen.
+    const all = this.container.querySelectorAll('.ajna-toast')
+    for (let i = 0; i < all.length - MAX_VISIBLE; i++) all[i].remove()
 
     // Fade-in
     requestAnimationFrame(() => el.classList.add('show'))

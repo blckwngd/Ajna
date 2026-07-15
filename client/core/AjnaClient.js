@@ -324,11 +324,17 @@ export class AjnaClient {
    *     Der Server sucht sie beim Abschluss im Inventar des Spielers.
    *   • `requiresItems` — konkrete Instanzen („bring mir GENAU dieses Objekt").
    *
+   * `repeatable` macht den Auftrag mehrfach spielbar: pro Durchlauf werden nur
+   * `rewardPerRun` Gegenstände aus dem hinterlegten Vorrat ausgezahlt, danach
+   * geht er zurück auf „offen" — bis der Vorrat erschöpft ist. Der Vorrat
+   * begrenzt die Wiederholungen also von selbst (nichts wird erzeugt).
+   *
    * @param {string} callId
    * @param {{rewardItems: string[], requires?: Array<{match:{type?:string,name?:string,tag?:string},count?:number}>,
-   *          requiresItems?: string[], verify?: 'items'|'agent'}} opts
+   *          requiresItems?: string[], verify?: 'items'|'agent',
+   *          repeatable?: boolean, rewardPerRun?: number}} opts
    */
-  async publishQuest(callId, { rewardItems = [], requires = [], requiresItems = [], verify = 'items' } = {}) {
+  async publishQuest(callId, { rewardItems = [], requires = [], requiresItems = [], verify = 'items', repeatable = false, rewardPerRun = 1 } = {}) {
     const raw = this._toRaw(callId)
     return this.pb.send(`/api/objects/${raw}/quest/publish`, {
       method: 'POST',
@@ -336,7 +342,9 @@ export class AjnaClient {
         rewardItems: rewardItems.map(id => this._toRaw(id)),
         requiresItems: requiresItems.map(id => this._toRaw(id)),
         requires,
-        verify
+        verify,
+        repeatable,
+        rewardPerRun
       }
     })
   }

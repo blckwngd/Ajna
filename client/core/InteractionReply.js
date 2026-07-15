@@ -79,9 +79,15 @@ export function callExamineText(record) {
   const rewards = Array.isArray(c.rewardItems) ? c.rewardItems.length : 0
   const req = describeRequires(c)
   if (req.length) parts.push('Gefordert: ' + req.join(', '))
-  parts.push(rewards
-    ? `Belohnung: ${rewards} Gegenstand${rewards > 1 ? '/Gegenstände' : ''}`
-    : 'Noch keine Belohnung hinterlegt')
+  if (c.repeatable) {
+    // Der hinterlegte Vorrat sagt, wie oft der Auftrag noch spielbar ist.
+    const perRun = Math.max(1, Number(c.rewardPerRun) || 1)
+    parts.push(`Belohnung: ${perRun} pro Durchlauf · wiederholbar, noch ${Math.floor(rewards / perRun)}× möglich`)
+  } else {
+    parts.push(rewards
+      ? `Belohnung: ${rewards} Gegenstand${rewards > 1 ? '/Gegenstände' : ''}`
+      : 'Noch keine Belohnung hinterlegt')
+  }
   parts.push('Status: ' + (CALL_STATUS_TEXT[c.status] || 'offen'))
   return parts.join(' · ')
 }
@@ -165,11 +171,15 @@ export async function applyInteractionSideEffect(ajna, record, action) {
         const res = await (isAccept ? ajna.acceptQuest(record.id) : ajna.completeQuest(record.id))
         // Bei verify:'agent' zahlt der Server nicht sofort aus — der Auftrag geht
         // auf 'pending' und der Aussteller-Agent entscheidet mit eigener Logik.
+        // Ein wiederholbarer Auftrag steht nach dem Durchlauf wieder auf "open" —
+        // dann sagen wir, wie oft er noch geht, statt "erledigt" zu behaupten.
         const msg = isAccept
           ? `Auftrag „${nm}" angenommen`
           : res?.status === 'pending'
             ? `Auftrag „${nm}": Abschluss eingereicht — wird geprüft`
-            : `Auftrag „${nm}" erledigt — Belohnung erhalten`
+            : res?.status === 'open'
+              ? `Auftrag „${nm}": Belohnung erhalten — noch ${res.rewardsLeft ?? '?'} im Vorrat`
+              : `Auftrag „${nm}" erledigt — Belohnung erhalten`
         try { window.ajnaLog?.push(msg, 'interact') } catch {}
         return { handled: true, ok: true, status: res?.status, message: msg }
       } catch (err) {

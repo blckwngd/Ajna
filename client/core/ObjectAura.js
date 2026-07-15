@@ -121,6 +121,11 @@ export class ObjectAura {
       // Belohnung = treuhänderisch gebundene Items des Ausstellers (nie gemünzt).
       const rewards = Array.isArray(call.rewardItems) ? call.rewardItems.length : 0
       if (rewards) chips.push({ t: `🎁 ${rewards}`, c: '#e6b23a' })
+      // Wiederholbar: der Vorrat sagt, wie oft noch.
+      if (call.repeatable) {
+        const perRun = Math.max(1, Number(call.rewardPerRun) || 1)
+        chips.push({ t: `🔁 noch ${Math.floor(rewards / perRun)}×`, c: '#6fae7a' })
+      }
       // Forderungen lesbar statt nur gezählt („📥 3× Wolfsfell").
       for (const r of describeRequires(call).slice(0, 3)) chips.push({ t: `📥 ${r}`, c: '#5b8dd6' })
       const st = {
