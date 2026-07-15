@@ -318,16 +318,24 @@ export class AjnaClient {
    *     auf 'pending', du bekommst ihn über onQuestPending() und entscheidest
    *     per approveQuest()/rejectQuest().
    *
+   * Forderungen an den Spieler gehen auf zwei Arten:
+   *   • `requires`      — Gattung + Anzahl, z. B.
+   *     `[{ match: { name: 'Wolfsfell' }, count: 3 }]` („bring mir 3 Wolfsfelle").
+   *     Der Server sucht sie beim Abschluss im Inventar des Spielers.
+   *   • `requiresItems` — konkrete Instanzen („bring mir GENAU dieses Objekt").
+   *
    * @param {string} callId
-   * @param {{rewardItems: string[], requiresItems?: string[], verify?: 'items'|'agent'}} opts
+   * @param {{rewardItems: string[], requires?: Array<{match:{type?:string,name?:string,tag?:string},count?:number}>,
+   *          requiresItems?: string[], verify?: 'items'|'agent'}} opts
    */
-  async publishQuest(callId, { rewardItems = [], requiresItems = [], verify = 'items' } = {}) {
+  async publishQuest(callId, { rewardItems = [], requires = [], requiresItems = [], verify = 'items' } = {}) {
     const raw = this._toRaw(callId)
     return this.pb.send(`/api/objects/${raw}/quest/publish`, {
       method: 'POST',
       body: {
         rewardItems: rewardItems.map(id => this._toRaw(id)),
         requiresItems: requiresItems.map(id => this._toRaw(id)),
+        requires,
         verify
       }
     })
@@ -358,12 +366,19 @@ export class AjnaClient {
    * Für Agents (verify: 'agent'): Abschluss freigeben, nachdem die EIGENE
    * Bedingung erfüllt ist. Der Server prüft weiter die Deckung und tauscht
    * atomar — freigeben kannst du also nur deine eigene hinterlegte Treuhand.
+   * Über `requiresItems` bestimmst du dabei SELBST, welche Gegenstände
+   * eingezogen werden — damit lassen sich Mengen-/Gattungs-/Sonderregeln
+   * komplett agent-seitig abbilden. Der Server prüft nur, dass sie dem Spieler
+   * gehören (und dass die Belohnung gedeckt ist).
+   *
    * @param {string} callId
-   * @param {{user?: string}} [opts] Completer; sonst pendingBy/claimedBy.
+   * @param {{user?: string, requiresItems?: string[]}} [opts] Completer; sonst pendingBy/claimedBy.
    */
-  async approveQuest(callId, { user } = {}) {
+  async approveQuest(callId, { user, requiresItems = [] } = {}) {
     const raw = this._toRaw(callId)
-    const body = user ? { user: this._toRaw(user) } : {}
+    const body = {}
+    if (user) body.user = this._toRaw(user)
+    if (requiresItems.length) body.requiresItems = requiresItems.map(id => this._toRaw(id))
     return this.pb.send(`/api/objects/${raw}/quest/approve`, { method: 'POST', body })
   }
 

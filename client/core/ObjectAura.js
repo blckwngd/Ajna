@@ -10,6 +10,7 @@
 
 import { emojiOf } from './Appearance.js'
 import { TYPE_LABEL } from './SpawnHere.js'
+import { describeRequires } from './InteractionReply.js'
 
 const FLAG_KEY = 'ajna.ar.aura'   // '0' blendet aus; Default an
 
@@ -119,9 +120,9 @@ export class ObjectAura {
     if (call) {
       // Belohnung = treuhänderisch gebundene Items des Ausstellers (nie gemünzt).
       const rewards = Array.isArray(call.rewardItems) ? call.rewardItems.length : 0
-      const requires = Array.isArray(call.requiresItems) ? call.requiresItems.length : 0
       if (rewards) chips.push({ t: `🎁 ${rewards}`, c: '#e6b23a' })
-      if (requires) chips.push({ t: `📥 ${requires}`, c: '#5b8dd6' })
+      // Forderungen lesbar statt nur gezählt („📥 3× Wolfsfell").
+      for (const r of describeRequires(call).slice(0, 3)) chips.push({ t: `📥 ${r}`, c: '#5b8dd6' })
       const st = {
         open: ['offen', '#54c26b'], claimed: ['angenommen', '#e6b23a'],
         pending: ['wird geprüft', '#5b8dd6'],

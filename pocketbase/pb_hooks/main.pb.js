@@ -325,7 +325,9 @@ routerAdd("POST", "/api/objects/{id}/place", (e) => {
 // =====================================================================
 
 // POST /api/objects/{id}/quest/publish
-// Body: { rewardItems: [objectId, …], requiresItems?: [objectId, …],
+// Body: { rewardItems: [objectId, …],
+//         requiresItems?: [objectId, …],                     // konkrete Instanzen
+//         requires?: [{ match: {type?,name?,tag?}, count? }], // Gattung + Anzahl
 //         verify?: "items" | "agent" }
 // Bindet die Belohnung treuhänderisch. Nur der Aussteller (owner).
 //
@@ -334,7 +336,7 @@ routerAdd("POST", "/api/objects/{id}/place", (e) => {
 //                             Logik (siehe quest/approve).
 routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
   try {
-    const { parseState, escrowCallOf, callDataOf, idList } = require(`${__hooks}/quests.js`)
+    const { parseState, escrowCallOf, callDataOf, idList, validateSpecs } = require(`${__hooks}/quests.js`)
     const callId = e.request.pathValue("id")
     const info = e.requestInfo()
     const user = info.auth
@@ -349,9 +351,12 @@ routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
     const body = info.body || {}
     const rewardIds = idList(body.rewardItems)
     const requireIds = idList(body.requiresItems)
+    const specs = Array.isArray(body.requires) ? body.requires : []
     if (!rewardIds.length) {
       return e.json(400, { error: "rewardItems must list at least one item you own — rewards are never minted" })
     }
+    const specCheck = validateSpecs(specs)
+    if (!specCheck.ok) return e.json(400, { error: specCheck.error })
 
     // Jede Belohnung muss im Inventar des Ausstellers liegen und frei sein.
     const rewards = []
@@ -380,7 +385,20 @@ routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
       const cs = parseState(call)
       const c = callDataOf(cs)
       c.rewardItems = rewardIds
-      if (requireIds.length) c.requiresItems = requireIds
+      if (requireIds.length) c.requiresItems = requireIds; else delete c.requiresItems
+      // Gattungs-Forderungen („3× Wolfsfell") — normalisiert ablegen.
+      if (specs.length) {
+        const norm = []
+        for (let i = 0; i < specs.length; i++) {
+          const m = specs[i].match || {}
+          const entry = { match: {}, count: Number(specs[i].count == null ? 1 : specs[i].count) || 1 }
+          if (m.type) entry.match.type = String(m.type)
+          if (m.name) entry.match.name = String(m.name)
+          if (m.tag) entry.match.tag = String(m.tag)
+          norm.push(entry)
+        }
+        c.requires = norm
+      } else delete c.requires
       // Wer entscheidet über den Abschluss? Nur "agent" weicht vom Default ab.
       c.verify = (String(body.verify || "") === "agent") ? "agent" : "items"
       if (!c.status) c.status = "open"
@@ -499,16 +517,20 @@ routerAdd("POST", "/api/objects/{id}/quest/complete", (e) => {
 
 
 // POST /api/objects/{id}/quest/approve — NUR der Aussteller (Agent).
-// Body: { user?: "<completerId>" }  (sonst pendingBy, sonst claimedBy)
+// Body: { user?: "<completerId>",           (sonst pendingBy, sonst claimedBy)
+//         requiresItems?: [objectId, …] }   zusätzlich einzuziehende Instanzen
 //
 // Der Agent hat seine EIGENE Bedingung geprüft (Monster erlegt, Ort erreicht,
-// beliebige Logik) und gibt hier frei. Der Server prüft weiterhin die Deckung
-// und führt den Tausch atomar aus — ein Agent kann also nur die von IHM
+// beliebige Logik) und gibt hier frei. Über `requiresItems` kann er dabei selbst
+// bestimmen, WELCHE Gegenstände eingezogen werden — so lassen sich Mengen-/
+// Gattungs-/Sonderregeln komplett agent-seitig abbilden. Der Server prüft
+// weiterhin, dass diese Items dem Spieler gehören und dass die Belohnung gedeckt
+// ist, und führt den Tausch atomar aus: ein Agent kann also nur die von IHM
 // hinterlegte Treuhand freigeben, niemals etwas erzeugen.
 routerAdd("POST", "/api/objects/{id}/quest/approve", (e) => {
   try {
     const { recomputeForObject } = require(`${__hooks}/permissions.js`)
-    const { parseState, callDataOf, resolveSwap, executeSwap } = require(`${__hooks}/quests.js`)
+    const { parseState, callDataOf, idList, resolveSwap, executeSwap } = require(`${__hooks}/quests.js`)
     const callId = e.request.pathValue("id")
     const info = e.requestInfo()
     const user = info.auth
@@ -533,14 +555,15 @@ routerAdd("POST", "/api/objects/{id}/quest/approve", (e) => {
       return e.json(409, { error: "no completer to approve — pass 'user' or wait for a claim/completion request" })
     }
 
-    const swap = resolveSwap($app, call, c, completerId)
+    // Der Agent darf zusätzlich konkrete Instanzen benennen (eigene Logik).
+    const swap = resolveSwap($app, call, c, completerId, idList(body.requiresItems))
     if (!swap.ok) return e.json(swap.code, { error: swap.error })
 
     const moved = executeSwap($app, call, st, c, swap, completerId)
     for (let i = 0; i < moved.length; i++) {
       try { recomputeForObject(moved[i]) } catch (_) {}
     }
-    return e.json(200, { ok: true, id: callId, status: "done", completedBy: completerId })
+    return e.json(200, { ok: true, id: callId, status: "done", completedBy: completerId, collected: swap.required.length })
   } catch (err) {
     console.log("[quest.approve] error: " + (err && err.message ? err.message : err))
     return e.json(500, { error: "" + (err && err.message ? err.message : err) })

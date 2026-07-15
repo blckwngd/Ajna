@@ -40,9 +40,30 @@ export function talkResponse(record) {
   return record?.state?.dialog || randomOf(GENERIC_TALK)
 }
 
+import { TYPE_LABEL } from './SpawnHere.js'
+
 const CALL_STATUS_TEXT = {
   open: 'offen', claimed: 'angenommen', pending: 'wird geprüft',
   done: 'erledigt', cancelled: 'abgebrochen'
+}
+
+/**
+ * Forderungen eines Auftrags lesbar: ["3× Wolfsfell", "1× Tier"] — aus den
+ * Gattungs-Angaben (state.call.requires) plus evtl. konkret benannten Instanzen.
+ * @returns {string[]}
+ */
+export function describeRequires(call) {
+  const out = []
+  const specs = Array.isArray(call?.requires) ? call.requires : []
+  for (const s of specs) {
+    const m = (s && s.match) || {}
+    const what = m.name || (m.tag ? '#' + m.tag : '') || TYPE_LABEL[m.type] || m.type || 'Gegenstand'
+    const n = Number(s?.count) || 1
+    out.push(`${n > 1 ? n + '× ' : ''}${what}`)
+  }
+  const inst = Array.isArray(call?.requiresItems) ? call.requiresItems.length : 0
+  if (inst) out.push(`${inst}× ein bestimmtes Objekt`)
+  return out
 }
 
 /**
@@ -56,8 +77,8 @@ export function callExamineText(record) {
   const parts = []
   parts.push(c.task ? String(c.task) : 'Ein Auftrag ohne Beschreibung.')
   const rewards = Array.isArray(c.rewardItems) ? c.rewardItems.length : 0
-  const requires = Array.isArray(c.requiresItems) ? c.requiresItems.length : 0
-  if (requires) parts.push(`Gefordert: ${requires} Gegenstand${requires > 1 ? '/Gegenstände' : ''}`)
+  const req = describeRequires(c)
+  if (req.length) parts.push('Gefordert: ' + req.join(', '))
   parts.push(rewards
     ? `Belohnung: ${rewards} Gegenstand${rewards > 1 ? '/Gegenstände' : ''}`
     : 'Noch keine Belohnung hinterlegt')

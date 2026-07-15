@@ -212,6 +212,9 @@ export class EditorUI {
                   <option value="agent">Agent entscheidet (eigene Logik)</option>
                 </select>
               </div>
+              <div class="ed-full-label" style="font-weight:normal">Geforderte Gegenstände — Gattung + Anzahl (leer = nichts abgeben)</div>
+              <div data-role="call-requires" class="ed-json" style="max-height:120px;overflow:auto;padding:6px"></div>
+              <button type="button" class="ed-btn" data-action="call-req-add" style="margin-top:4px;justify-self:start;padding:2px 10px">+ Forderung</button>
               <div class="ed-full-label" style="font-weight:normal">Belohnung aus deinem Inventar (wird treuhänderisch gebunden)</div>
               <div data-role="call-reward-picker" class="ed-json" style="max-height:132px;overflow:auto;padding:6px"></div>
               <div class="ed-full-label" data-role="call-reward-info" style="opacity:.75;font-weight:normal"></div>
@@ -520,6 +523,8 @@ export class EditorUI {
       ?.addEventListener('click', () => this._publishCall(false))
     this.editorOverlay?.querySelector('[data-action="call-cancel"]')
       ?.addEventListener('click', () => this._publishCall(true))
+    this.editorOverlay?.querySelector('[data-action="call-req-add"]')
+      ?.addEventListener('click', () => this._addRequireRow())
 
     this.editorDeleteBtn.addEventListener('click', async () => {
       const id = this.editorForm.objectId.value
@@ -776,6 +781,7 @@ export class EditorUI {
     const c = obj?.state?.call || {}, f = this.editorForm
     if (f.callTask) f.callTask.value = c.task ?? ''
     if (f.callVerify) f.callVerify.value = c.verify === 'agent' ? 'agent' : 'items'
+    this._renderRequires(obj)
     this._renderRewardPicker(obj)
 
     // Belohnungen sind KEINE Zahl, sondern treuhänderisch gebundene Items aus
@@ -791,6 +797,95 @@ export class EditorUI {
     }
     const st = this.editorOverlay?.querySelector('[data-role="call-status"]')
     if (st) st.textContent = ''
+  }
+
+  // Forderungs-Builder: „bring mir 3× Wolfsfell". Bewusst GATTUNG statt Instanz —
+  // beim Posten weiß man nicht, welches konkrete Fell der Spieler später trägt.
+  // Der Server löst die Gattung beim Abschluss im Inventar des Spielers auf.
+  _renderRequires(obj) {
+    const host = this.editorOverlay?.querySelector('[data-role="call-requires"]')
+    if (!host) return
+    host.innerHTML = ''
+    const specs = Array.isArray(obj?.state?.call?.requires) ? obj.state.call.requires : []
+    for (const s of specs) host.appendChild(this._requireRow(s))
+    if (!specs.length) this._setRequiresHint(host)
+  }
+
+  _setRequiresHint(host) {
+    const d = document.createElement('div')
+    d.dataset.role = 'req-hint'
+    d.style.cssText = 'opacity:.6;font-size:12px'
+    d.textContent = 'Keine Forderung — der Auftrag ist eine reine Belohnung (wer ihn abschließt, bekommt sie).'
+    host.appendChild(d)
+  }
+
+  _requireRow(spec) {
+    const m = (spec && spec.match) || {}
+    const row = document.createElement('div')
+    row.className = 'req-row'
+    row.style.cssText = 'display:flex;gap:4px;align-items:center;margin-bottom:4px'
+
+    const type = document.createElement('select')
+    type.dataset.role = 'req-type'
+    type.style.cssText = 'width:96px'
+    type.appendChild(new Option('Typ egal', ''))
+    for (const t of EDITOR_TYPES) {
+      if (t.key === 'default' || t.key === 'call') continue
+      type.appendChild(new Option(t.label, t.key))
+    }
+    if (m.type && ![...type.options].some(o => o.value === m.type)) type.appendChild(new Option(m.type, m.type))
+    type.value = m.type || ''
+
+    const mk = (role, ph, w, val) => {
+      const i = document.createElement('input')
+      i.type = 'text'; i.dataset.role = role; i.placeholder = ph
+      i.style.cssText = `width:${w}`; i.value = val || ''
+      return i
+    }
+    const name = mk('req-name', 'Name', '1px;flex:1;min-width:64px', m.name)
+    const tag = mk('req-tag', 'Tag', '68px', m.tag)
+    const count = mk('req-count', 'n', '40px', String(spec?.count ?? 1))
+    count.inputMode = 'numeric'
+    count.title = 'Anzahl'
+
+    const del = document.createElement('button')
+    del.type = 'button'; del.textContent = '×'; del.title = 'Forderung entfernen'
+    del.style.cssText = 'padding:0 7px;cursor:pointer'
+    del.addEventListener('click', () => {
+      const host = row.parentElement
+      row.remove()
+      if (host && !host.querySelector('.req-row')) this._setRequiresHint(host)
+    })
+
+    row.append(type, name, tag, count, del)
+    return row
+  }
+
+  _addRequireRow() {
+    const host = this.editorOverlay?.querySelector('[data-role="call-requires"]')
+    if (!host) return
+    host.querySelector('[data-role="req-hint"]')?.remove()
+    host.appendChild(this._requireRow(null))
+  }
+
+  // Zeilen → requires-Array. Leere Zeilen (nichts ausgefüllt) fallen raus: eine
+  // Forderung ohne Merkmal würde ALLES treffen — das lehnt der Server auch ab.
+  _collectRequires() {
+    const rows = [...(this.editorOverlay?.querySelectorAll('[data-role="call-requires"] .req-row') || [])]
+    const out = []
+    for (const r of rows) {
+      const match = {}
+      const type = r.querySelector('[data-role="req-type"]')?.value?.trim()
+      const name = r.querySelector('[data-role="req-name"]')?.value?.trim()
+      const tag = r.querySelector('[data-role="req-tag"]')?.value?.trim()
+      if (type) match.type = type
+      if (name) match.name = name
+      if (tag) match.tag = tag
+      if (!Object.keys(match).length) continue
+      const n = parseInt(r.querySelector('[data-role="req-count"]')?.value, 10)
+      out.push({ match, count: Number.isFinite(n) && n > 0 ? n : 1 })
+    }
+    return out
   }
 
   // Belohnungs-Picker: die eigenen getragenen Items (carried_by = ich) zum
@@ -850,8 +945,10 @@ export class EditorUI {
           .filter(cb => cb.checked).map(cb => cb.value)
         if (!rewardItems.length) { say('Mindestens ein Item als Belohnung wählen — Belohnungen werden nicht erzeugt.'); return }
         const verify = this.editorForm?.callVerify?.value === 'agent' ? 'agent' : 'items'
-        const res = await this.ajna.publishQuest(id, { rewardItems, verify })
-        say(`Veröffentlicht: ${res?.rewardItems?.length ?? rewardItems.length} Item(s) gebunden`
+        const requires = this._collectRequires()
+        const res = await this.ajna.publishQuest(id, { rewardItems, requires, verify })
+        const reqTxt = requires.length ? ` · ${requires.reduce((n, r) => n + (r.count || 1), 0)} gefordert` : ''
+        say(`Veröffentlicht: ${res?.rewardItems?.length ?? rewardItems.length} Item(s) gebunden${reqTxt}`
           + (verify === 'agent' ? ' · Abschluss entscheidet der Agent.' : ' · Server prüft den Abschluss.'))
       }
       // Ansicht + State-JSON nachziehen (Realtime kann minimal nachlaufen).

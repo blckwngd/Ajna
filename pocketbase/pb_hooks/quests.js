@@ -58,9 +58,61 @@ function idList(value) {
 }
 
 /**
+ * Passt ein Item auf eine Gattungs-Angabe? Alle gesetzten Felder müssen passen
+ * (UND). Mindestens eines muss gesetzt sein — sonst würde die Angabe ALLES
+ * treffen; das lehnt publish ab.
+ */
+function specMatches(rec, state, m) {
+  if (!m || typeof m !== "object") return false
+  if (m.type && String(rec.get("type") || "") !== String(m.type)) return false
+  if (m.name && String(rec.get("name") || "").toLowerCase() !== String(m.name).toLowerCase()) return false
+  if (m.tag) {
+    const tags = Array.isArray(state.tags) ? state.tags : []
+    let hit = false
+    for (let i = 0; i < tags.length; i++) {
+      if (String(tags[i]).toLowerCase() === String(m.tag).toLowerCase()) { hit = true; break }
+    }
+    if (!hit) return false
+  }
+  return true
+}
+
+/** Lesbare Beschreibung einer Gattungs-Angabe (für Fehlermeldungen). */
+function describeSpec(spec) {
+  const m = (spec && spec.match) || {}
+  const bits = []
+  if (m.name) bits.push('"' + m.name + '"')
+  if (m.type) bits.push("type=" + m.type)
+  if (m.tag) bits.push("#" + m.tag)
+  return (spec && spec.count > 1 ? spec.count + "× " : "") + (bits.join(" ") || "?")
+}
+
+/** Gültigkeit einer Gattungs-Angabe (publish prüft damit vorab). */
+function validateSpecs(specs) {
+  if (!Array.isArray(specs)) return { ok: false, error: "requires must be an array" }
+  for (let i = 0; i < specs.length; i++) {
+    const s = specs[i]
+    const m = (s && s.match) || null
+    if (!m || typeof m !== "object" || (!m.type && !m.name && !m.tag)) {
+      return { ok: false, error: "each requires[] entry needs match.type, match.name or match.tag — an empty match would accept anything" }
+    }
+    const c = Number(s.count == null ? 1 : s.count)
+    if (!isFinite(c) || c < 1 || c > 99) return { ok: false, error: "requires[].count must be between 1 and 99" }
+  }
+  return { ok: true }
+}
+
+/**
  * Prüft, ob ein Tausch JETZT zulässig ist, und lädt die beteiligten Records.
  * Deterministisch und server-seitig: geforderte Items im Inventar des Spielers,
  * Belohnung noch gedeckt UND an genau diesen Auftrag gebunden.
+ *
+ * Forderungen können auf zwei Arten kommen:
+ *   • `requiresItems` — konkrete Instanzen („bring mir GENAU dieses Objekt")
+ *   • `requires`      — Gattung + Anzahl („bring mir 3× Wolfsfell"); der Server
+ *                       sucht passende Items im Inventar des Spielers.
+ * `extraRequireIds` erlaubt einem Agent, beim Freigeben zusätzlich konkrete
+ * Instanzen zu benennen (eigene Logik, s. quest/approve).
  *
  * Bewusst KEINE Aussage über inhaltliche Quest-Bedingungen (Monster erlegt,
  * Ort erreicht …) — die kennt nur der Agent (verify: "agent").
@@ -68,22 +120,60 @@ function idList(value) {
  * @returns {{ok:true, issuer:string, rewards:Array, required:Array}}
  *        | {ok:false, code:number, error:string}
  */
-function resolveSwap(app, call, callData, completerId) {
+function resolveSwap(app, call, callData, completerId, extraRequireIds) {
   const issuer = call.get("owner")
   if (!completerId) return { ok: false, code: 409, error: "no completer assigned to this call" }
   if (completerId === issuer) return { ok: false, code: 409, error: "the issuer cannot complete their own call" }
 
-  const requireIds = idList(callData.requiresItems)
   const required = []
+  const used = {}   // verhindert, dass dasselbe Item zwei Forderungen erfüllt
+
+  // 1) Konkret benannte Instanzen (aus dem Auftrag + optional vom Agent).
+  const requireIds = idList(callData.requiresItems).concat(idList(extraRequireIds))
   for (let i = 0; i < requireIds.length; i++) {
     const id = requireIds[i]
+    if (used[id]) continue
     let item
     try { item = app.findRecordById("objects", id) }
     catch (err) { return { ok: false, code: 409, error: "required item missing: " + id } }
     if (item.get("carried_by") !== completerId) {
       return { ok: false, code: 409, error: "required item is not in the completer's inventory: " + id }
     }
+    // Ein selbst als Belohnung verpfändetes Item darf nicht eingezogen werden —
+    // sonst bräche der Spieler sein eigenes Versprechen an einen anderen Auftrag.
+    const bound = escrowCallOf(parseState(item))
+    if (bound) return { ok: false, code: 409, error: "required item is escrowed to another call: " + id }
+    used[id] = true
     required.push(item)
+  }
+
+  // 2) Gattungs-Forderungen im Inventar des Spielers auflösen.
+  const specs = Array.isArray(callData.requires) ? callData.requires : []
+  if (specs.length) {
+    let inv = []
+    try {
+      inv = app.findRecordsByFilter("objects", "carried_by = {:u}", "", 500, 0, { u: completerId }) || []
+    } catch (err) { inv = [] }
+    for (let i = 0; i < specs.length; i++) {
+      const spec = specs[i]
+      const want = Number(spec && spec.count == null ? 1 : spec.count) || 1
+      const found = []
+      for (let j = 0; j < inv.length && found.length < want; j++) {
+        const rec = inv[j]
+        if (!rec || used[rec.id]) continue
+        const st = parseState(rec)
+        if (escrowCallOf(st)) continue           // gebundene Items sind tabu
+        if (!specMatches(rec, st, spec.match)) continue
+        found.push(rec)
+      }
+      if (found.length < want) {
+        return {
+          ok: false, code: 409,
+          error: "missing required items: needs " + describeSpec(spec) + ", found " + found.length + " in inventory"
+        }
+      }
+      for (let j = 0; j < found.length; j++) { used[found[j].id] = true; required.push(found[j]) }
+    }
   }
 
   const rewardIds = idList(callData.rewardItems)
@@ -139,4 +229,8 @@ function executeSwap(app, call, callState, callData, swap, completerId) {
   return moved
 }
 
-module.exports = { parseState, escrowCallOf, callDataOf, idList, resolveSwap, executeSwap }
+module.exports = {
+  parseState, escrowCallOf, callDataOf, idList,
+  specMatches, describeSpec, validateSpecs,
+  resolveSwap, executeSwap
+}
