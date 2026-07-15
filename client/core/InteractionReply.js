@@ -40,12 +40,38 @@ export function talkResponse(record) {
   return record?.state?.dialog || randomOf(GENERIC_TALK)
 }
 
+const CALL_STATUS_TEXT = {
+  open: 'offen', claimed: 'angenommen', pending: 'wird geprüft',
+  done: 'erledigt', cancelled: 'abgebrochen'
+}
+
+/**
+ * Untersuchen-Text für einen Auftrag: die AUFGABE ist der Inhalt — ohne das
+ * bekäme der Spieler sie nie zu sehen. Dazu Belohnung/Forderung/Status, soweit
+ * vorhanden. Wird von Toast (interactionReply) UND Ansage (Announce) genutzt,
+ * damit beide dasselbe sagen.
+ */
+export function callExamineText(record) {
+  const c = record?.state?.call || {}
+  const parts = []
+  parts.push(c.task ? String(c.task) : 'Ein Auftrag ohne Beschreibung.')
+  const rewards = Array.isArray(c.rewardItems) ? c.rewardItems.length : 0
+  const requires = Array.isArray(c.requiresItems) ? c.requiresItems.length : 0
+  if (requires) parts.push(`Gefordert: ${requires} Gegenstand${requires > 1 ? '/Gegenstände' : ''}`)
+  parts.push(rewards
+    ? `Belohnung: ${rewards} Gegenstand${rewards > 1 ? '/Gegenstände' : ''}`
+    : 'Noch keine Belohnung hinterlegt')
+  parts.push('Status: ' + (CALL_STATUS_TEXT[c.status] || 'offen'))
+  return parts.join(' · ')
+}
+
 export function interactionReply(record, action, name) {
   const label = name || record?.name || record?.id || 'das Objekt'
   switch (String(action || '').toLowerCase()) {
     case 'examine':
     case 'read':
     case 'lesen':
+      if (record?.type === 'call') return callExamineText(record)
       return record?.description || record?.state?.hint || record?.state?.dialog
           || `Nichts Besonderes an ${label}.`
     case 'talk':

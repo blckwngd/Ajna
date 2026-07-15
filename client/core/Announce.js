@@ -11,7 +11,7 @@
 //   Erzeugen:    "Neues Objekt erzeugt: Monster Grimmroth"
 
 import { TYPE_LABEL } from './SpawnHere.js'
-import { talkResponse } from './InteractionReply.js'
+import { talkResponse, callExamineText } from './InteractionReply.js'
 
 const typeLabel = record => TYPE_LABEL[record?.type] || record?.type || 'Objekt'
 const nameOf = record => record?.name || record?.id || 'Objekt'
@@ -45,6 +45,8 @@ export function announceInteractionText(record, action) {
   const name = nameOf(record)
   switch (String(action || '').toLowerCase()) {
     case 'examine': case 'lesen': case 'read':
+      // Auftrag: die Aufgabe vorlesen — sonst hört der Spieler sie nie.
+      if (record?.type === 'call') return callExamineText(record)
       return record?.description || record?.state?.hint || record?.state?.dialog || `Ein ${t}.`
     case 'talk': case 'sprechen':
       return talkResponse(record)

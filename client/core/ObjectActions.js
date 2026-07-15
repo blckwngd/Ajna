@@ -54,6 +54,11 @@ export class ObjectActions {
     // wenn das Objekt schon getragen wird. Server prüft die Rechte final.
     const collectible = !record.carried_by && (isOwner || !!record.state?.portable)
 
+    // Aufträge: nur anbieten, was gerade wirklich möglich ist.
+    const shownActions = record.type === 'call'
+      ? this._callActions(record, actions, me, isOwner)
+      : actions
+
     const items = [
       { label: 'Bearbeiten',     onClick: () => this.editorUI?.fillEditor?.(record) },
       isOwner && { label: 'Berechtigungen', onClick: () => this.permissionDialog?.open(record) },
@@ -61,7 +66,7 @@ export class ObjectActions {
       isOwner && { label: 'Löschen', danger: true, onClick: () => this._confirmDelete(record) },
       { separator: true },
       { sectionLabel: 'Interaktionen' },
-      ...actions.map(a => ({
+      ...shownActions.map(a => ({
         label: a.label || a.key,
         onClick: () => this._triggerAction(record, a.key)
       }))
@@ -78,6 +83,32 @@ export class ObjectActions {
       title,
       items
     })
+  }
+
+  /**
+   * Auftrags-Aktionen nach Status filtern — nur zeigen, was gerade geht:
+   *   • „Annehmen"  nur solange der Auftrag offen ist (und nicht dein eigener:
+   *     den eigenen darf man laut Server nicht abschließen — Sackgasse).
+   *   • „Erledigt"  nur wenn DU ihn angenommen hast (sonst antwortet der Server
+   *     mit 403 — ein Knopf, der immer scheitert, gehört nicht ins Menü).
+   *   • bei 'pending' (Agent prüft), 'done', 'cancelled' ist nichts zu tun.
+   * „Untersuchen" wird immer ergänzt: sonst bekäme der Spieler die Aufgabe nie
+   * zu Gesicht (die Beschreibung steht in state.call.task).
+   */
+  _callActions(record, actions, me, isOwner) {
+    const c = record.state?.call || {}
+    const status = c.status || 'open'
+    const claimedByMe = !!me && c.claimedBy === me.id
+    const out = actions.filter(a => {
+      const k = String(a?.key || '').toLowerCase()
+      if (k === 'accept' || k === 'annehmen') return status === 'open' && !isOwner
+      if (k === 'complete' || k === 'erledigt' || k === 'erledigen') return status === 'claimed' && claimedByMe
+      return true
+    })
+    if (!out.some(a => /^(examine|lesen|read)$/i.test(String(a?.key || '')))) {
+      out.unshift({ key: 'examine', label: 'Untersuchen' })
+    }
+    return out
   }
 
   // Ruft die serverseitige Route auf, die nach Permission-Check ein

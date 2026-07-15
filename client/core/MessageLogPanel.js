@@ -38,7 +38,15 @@ export class MessageLogPanel {
   _visible(entry) { return this._filter === 'all' || CATS[entry.cat]?.player }
 
   _onLog(entry) {
-    if (entry === null) { if (this._open) this._renderList(); return }   // clear
+    // Leeren (auch aus dem Debug-Protokoll heraus, also evtl. bei geschlossenem
+    // Fenster): Zähler MUSS mit zurückgesetzt werden, sonst zeigt er Ungelesenes
+    // zu einem leeren Verlauf an.
+    if (entry === null) {
+      this._unread = 0
+      this._updateBadge()
+      if (this._open) this._renderList()
+      return
+    }
     if (this._open) {
       if (this._visible(entry)) this._appendRow(entry)
     } else if (this._visible(entry)) {
@@ -159,6 +167,9 @@ export class MessageLogPanel {
       font-size:22px;line-height:1;cursor:pointer;box-shadow:0 6px 22px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center}
     .ajna-msglog-launcher .mlg-badge{position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;padding:0 4px;border-radius:9px;
       background:#e0533b;color:#fff;font:600 11px system-ui,sans-serif;display:flex;align-items:center;justify-content:center}
+    /* Höhere Spezifität als die Basisregel — sonst überstimmt display:flex das
+       hidden-Attribut und der Zähler bliebe mit veralteter Zahl stehen. */
+    .ajna-msglog-launcher .mlg-badge[hidden]{display:none}
     .ajna-msglog-overlay{position:fixed;inset:0;z-index:6100;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center}
     .ajna-msglog{width:100%;max-width:560px;max-height:min(70vh,560px);display:flex;flex-direction:column;
       background:rgba(18,18,22,.98);color:#eaeaea;border:1px solid #34343e;border-bottom:none;border-radius:14px 14px 0 0;
