@@ -1001,19 +1001,35 @@ export class EditorUI {
   }
   // Call-Felder in state.call übernehmen (nur Typ call).
   //
-  // Aus dem Formular kommt AUSSCHLIESSLICH `task`. Alles andere (rewardItems,
-  // requiresItems, verify, status, claimedBy …) gehört dem Server — daran hängt
-  // die Treuhand. Deshalb ziehen wir diese Felder aus dem GECACHTEN Record nach
-  // und lassen das (nach einem publish veraltete) State-JSON-Feld sie nicht
-  // überschreiben: sonst verwaist die Treuhand (Items gebunden, Auftrag kennt
-  // sie nicht mehr).
+  // Zwei Sorten Felder, sauber getrennt:
+  //   • TREUHAND/LEBENSZYKLUS (rewardItems, requiresItems, status, claimedBy …)
+  //     gehören dem SERVER — daran hängt die Deckung. Die ziehen wir aus dem
+  //     gecachten Record nach, damit ein „Speichern" mit veraltetem State-JSON
+  //     sie nicht überschreibt (sonst verwaist die Treuhand).
+  //   • KONFIGURATION (task, verify, repeatable, rewardPerRun, requires) kommt
+  //     aus dem FORMULAR. Vorher zog dieser Merge alles aus dem Record — damit
+  //     verwarf „Speichern" stillschweigend die Eingaben, und „Wiederholbar"
+  //     wirkte nur über „Veröffentlichen".
   _mergeCallFields(state) {
     if ((this.typeSelect?.value || '').toLowerCase() !== 'call') return
     const f = this.editorForm
     const id = f.objectId?.value
-    const live = (id && this.ajna?.getObjectById?.(id)?.state?.call) || null
-    const call = live ? { ...(state.call || {}), ...live } : { ...(state.call || {}) }
+    const owned = (id && this.ajna?.getObjectById?.(id)?.state?.call) || state.call || {}
+
+    const call = {}
+    for (const k of ['rewardItems', 'requiresItems', 'status', 'claimedBy', 'completedBy', 'pendingBy', 'completions']) {
+      if (owned[k] !== undefined) call[k] = owned[k]
+    }
+
     call.task = String(f.callTask?.value ?? '').trim()
+    call.verify = f.callVerify?.value === 'agent' ? 'agent' : 'items'
+    if (f.callRepeatable?.checked) {
+      const n = parseInt(f.callRewardPerRun?.value, 10)
+      call.repeatable = true
+      call.rewardPerRun = Number.isFinite(n) && n > 0 ? n : 1
+    }
+    const requires = this._collectRequires()
+    if (requires.length) call.requires = requires
     if (!call.status) call.status = 'open'
     state.call = call
   }
