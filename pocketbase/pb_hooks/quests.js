@@ -123,7 +123,10 @@ function validateSpecs(specs) {
 function resolveSwap(app, call, callData, completerId, extraRequireIds) {
   const issuer = call.get("owner")
   if (!completerId) return { ok: false, code: 409, error: "no completer assigned to this call" }
-  if (completerId === issuer) return { ok: false, code: 409, error: "the issuer cannot complete their own call" }
+  // Der Aussteller DARF seinen eigenen Auftrag abschließen — praktisch zum
+  // Durchspielen/Testen und harmlos: Belohnung und geforderte Items wandern
+  // dann von ihm zu ihm (No-Op), die Treuhand wird gelöst. Es lässt sich damit
+  // nichts gewinnen, was ihm nicht ohnehin gehört.
 
   const required = []
   const used = {}   // verhindert, dass dasselbe Item zwei Forderungen erfüllt

@@ -615,7 +615,12 @@ async function init() {
     permissionDialog,
     // Tap-Menü-Interaktion → gleiches Feedback wie der XR-/Wand-Pfad
     // (Reply-Toast + Highlight-Puls + TTS-Ansage).
-    onInteract: (record, key) => _showInteractFeedback(record.id, key)
+    onInteract: (record, key) => _showInteractFeedback(record.id, key),
+    // Server hat die Wirkung abgelehnt → Grund zeigen statt Erfolg vortäuschen.
+    onInteractError: (record, key, message) => {
+      if (!_toast) _toast = new Toast()
+      _toast.show(message || 'Aktion nicht möglich', { title: record?.name || 'Aktion' })
+    }
   })
 
   // In-World-Menü für den XR-Modus. Sichtbar nur, wenn ein Objekt

@@ -19,7 +19,7 @@ const FALLBACK_ACTIONS = [
 ]
 
 export class ObjectActions {
-  constructor({ ajna, editorUI, contextMenu, permissionDialog, onInteract }) {
+  constructor({ ajna, editorUI, contextMenu, permissionDialog, onInteract, onInteractError }) {
     this.ajna = ajna
     this.editorUI = editorUI
     this.contextMenu = contextMenu
@@ -27,6 +27,9 @@ export class ObjectActions {
     // Erfolgs-Callback nach einer Interaktion (record, actionKey) — die View
     // verdrahtet hier ihr sicht-/hörbares Feedback (Toast/Highlight/TTS).
     this.onInteract = onInteract || null
+    // Fehler-Callback (record, actionKey, message), wenn der Server die Wirkung
+    // ablehnt — sonst würde der Erfolgs-Toast lügen. Ohne Callback: alert().
+    this.onInteractError = onInteractError || null
   }
 
   // record = PocketBase-Record. x/y = Viewport-Pixelposition (für Menü).
@@ -56,7 +59,7 @@ export class ObjectActions {
 
     // Aufträge: nur anbieten, was gerade wirklich möglich ist.
     const shownActions = record.type === 'call'
-      ? this._callActions(record, actions, me, isOwner)
+      ? this._callActions(record, actions, me)
       : actions
 
     const items = [
@@ -87,21 +90,22 @@ export class ObjectActions {
 
   /**
    * Auftrags-Aktionen nach Status filtern — nur zeigen, was gerade geht:
-   *   • „Annehmen"  nur solange der Auftrag offen ist (und nicht dein eigener:
-   *     den eigenen darf man laut Server nicht abschließen — Sackgasse).
+   *   • „Annehmen"  nur solange der Auftrag offen ist. Auch der Aussteller darf
+   *     das: seinen eigenen Auftrag durchzuspielen ist erlaubt (No-Op-Tausch)
+   *     und beim Testen praktisch.
    *   • „Erledigt"  nur wenn DU ihn angenommen hast (sonst antwortet der Server
    *     mit 403 — ein Knopf, der immer scheitert, gehört nicht ins Menü).
    *   • bei 'pending' (Agent prüft), 'done', 'cancelled' ist nichts zu tun.
    * „Untersuchen" wird immer ergänzt: sonst bekäme der Spieler die Aufgabe nie
    * zu Gesicht (die Beschreibung steht in state.call.task).
    */
-  _callActions(record, actions, me, isOwner) {
+  _callActions(record, actions, me) {
     const c = record.state?.call || {}
     const status = c.status || 'open'
     const claimedByMe = !!me && c.claimedBy === me.id
     const out = actions.filter(a => {
       const k = String(a?.key || '').toLowerCase()
-      if (k === 'accept' || k === 'annehmen') return status === 'open' && !isOwner
+      if (k === 'accept' || k === 'annehmen') return status === 'open'
       if (k === 'complete' || k === 'erledigt' || k === 'erledigen') return status === 'claimed' && claimedByMe
       return true
     })
@@ -118,11 +122,20 @@ export class ObjectActions {
     try {
       const res = await this.ajna.interact(record.id, actionKey)
       console.log('[interact]', actionKey, '→', res)
-      // Sicht-/hörbares Feedback (Reply-Toast, Highlight-Puls, TTS-Ansage) —
-      // BEVOR eine evtl. Nebenwirkung den Record entfernt.
+      // ZUERST die Nebenwirkung (Einsammeln → Inventar, Auftrag → annehmen/
+      // abschließen), DANN das Feedback: der Reply-Text leitet sich nur aus dem
+      // Aktions-Key ab und würde sonst Erfolg melden, obwohl der Server ablehnt.
+      // (Früher lief das Feedback zuerst, weil „Einsammeln" das Objekt löschte —
+      // seit dem Inventar-Umbau setzt es nur carried_by, der Record bleibt.)
+      const effect = await applyInteractionSideEffect(this.ajna, record, actionKey)
+      if (effect?.handled && !effect.ok) {
+        try { this.onInteractError?.(record, actionKey, effect.error) }
+        catch (e) { console.warn('[interact] error feedback', e) }
+        if (!this.onInteractError) alert(`Aktion nicht möglich: ${effect.error}`)
+        return
+      }
+      // Sicht-/hörbares Feedback (Reply-Toast, Highlight-Puls, TTS-Ansage).
       try { this.onInteract?.(record, actionKey) } catch (e) { console.warn('[interact] feedback', e) }
-      // Nebenwirkung (z. B. „Einsammeln" → Objekt löschen, falls berechtigt).
-      await applyInteractionSideEffect(this.ajna, record, actionKey)
     } catch (err) {
       // Der interact-Hook antwortet mit { error: "…" } (nicht PB-Standard
       // { message }), deshalb response.error zuerst prüfen — sonst zeigt das

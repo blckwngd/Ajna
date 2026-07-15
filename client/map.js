@@ -13,7 +13,7 @@ import { Toast } from "./core/Toast.js"
 import { PositionSmoother } from "./core/PositionSmoother.js"
 import { encStyleOf } from "./core/wifiStyle.js"
 import { shapeOf, emojiOf, colorOf, radiusOf } from "./core/Appearance.js"
-import { interactionReply } from "./core/InteractionReply.js"
+import { interactionReply, describeRequires } from "./core/InteractionReply.js"
 import { spawnRandomAndEdit } from "./core/SpawnHere.js"
 import { InterestArea } from "./core/InterestArea.js"
 import { InterestAreaDebug } from "./core/InterestAreaDebug.js"
@@ -284,6 +284,36 @@ function makeMarker(obj) {
 
 // Popup-Inhalt aus dem AjnaManager-Cache (frische Position). Als Funktion an
 // bindPopup übergeben → beim Öffnen ausgewertet, nie pro Reconcile neu gebaut.
+// Namen/Beschreibungen sind Nutzertext und landen als HTML im Popup — escapen.
+const escHtml = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+
+const CALL_STATUS_TEXT = {
+  open: 'offen', claimed: 'angenommen', pending: 'wird geprüft',
+  done: 'erledigt', cancelled: 'abgebrochen'
+}
+
+/**
+ * Inhaltszeile fürs Popup: die BESCHREIBUNG des Objekts bzw. bei Aufträgen die
+ * Aufgabe (+ Forderung/Belohnung/Status). Koordinaten sagen dem Spieler nichts —
+ * die zeigen wir nur, wenn es sonst nichts zu sagen gibt.
+ * @returns {string} HTML oder '' wenn keine Beschreibung vorhanden
+ */
+function popupDetail(o) {
+  if ((o?.type || '').toLowerCase() === 'call') {
+    const c = o.state?.call || {}
+    const bits = [escHtml(c.task || 'Auftrag ohne Beschreibung')]
+    const req = describeRequires(c)
+    if (req.length) bits.push('Gefordert: ' + escHtml(req.join(', ')))
+    const rw = Array.isArray(c.rewardItems) ? c.rewardItems.length : 0
+    if (rw) bits.push(`Belohnung: ${rw} Gegenstand${rw > 1 ? '/Gegenstände' : ''}`)
+    bits.push('Status: ' + (CALL_STATUS_TEXT[c.status] || 'offen'))
+    return bits.join('<br>')
+  }
+  const d = o?.description || o?.state?.note || o?.state?.hint
+  return d ? escHtml(String(d)) : ''
+}
+
 function popupHtml(id) {
   const o = ajna.getObjectById(id)
   const name = o?.name || 'unnamed'
@@ -297,7 +327,8 @@ function popupHtml(id) {
       + (u.network != null ? `<br>Netz: ${u.network}` : '')
       + `<br><button type="button" onclick="window.__ajnaEditObj&&window.__ajnaEditObj('${id}')" style="margin-top:6px;cursor:pointer">✏️ Bearbeiten</button>`
   }
-  return `<strong>${name}</strong><br>${lat}, ${lon}`
+  const detail = popupDetail(o)
+  return `<strong>${escHtml(name)}</strong><br>${detail || `${lat}, ${lon}`}`
 }
 
 function addMarker(obj) {
@@ -675,7 +706,10 @@ async function init() {
     permissionDialog,
     // Tap-Menü-Interaktion → sofort Reply-Toast + Puls + TTS (wie Echo-Pfad).
     onInteract: (record, key) =>
-      handleMarkerInteract(record.id, { action: key, source: ajna.currentUser()?.id })
+      handleMarkerInteract(record.id, { action: key, source: ajna.currentUser()?.id }),
+    // Server hat die Wirkung abgelehnt → Grund zeigen statt Erfolg vortäuschen.
+    onInteractError: (record, key, message) =>
+      toast.show(message || 'Aktion nicht möglich', { title: record?.name || 'Aktion' })
   })
 
   // ── Inventar: Fenster + Platzieren (Tipp-Modus & Drag&Drop) ──

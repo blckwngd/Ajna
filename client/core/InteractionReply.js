@@ -126,17 +126,28 @@ export function isCollectAction(action) {
 }
 
 /**
- * Nebenwirkung einer Interaktion ausführen (z. B. "Einsammeln" → Objekt löschen).
- * Fehler (z. B. 403 mangels Rechten) werden geschluckt — die Aktion bleibt dann
- * folgenlos, was der Spieler über das ausbleibende Verschwinden sieht.
- * @returns {Promise<boolean>} true, wenn das Objekt entfernt wurde.
+ * Nebenwirkung einer Interaktion ausführen (Einsammeln → Inventar, Auftrag →
+ * annehmen/abschließen).
+ *
+ * Rückgabe sagt dem Aufrufer, ob er Erfolg melden darf:
+ *   { handled: true,  ok: false, error } → der Server hat abgelehnt: KEINE
+ *     Erfolgsmeldung zeigen, sondern den Grund.
+ *   { handled: true,  ok: true, status? } → Wirkung ist eingetreten.
+ *   { handled: false, ok: true }          → Aktion hat keine Nebenwirkung
+ *     (talk/examine/…): normales Reply-Feedback.
+ *
+ * @returns {Promise<{handled:boolean, ok:boolean, error?:string, status?:string}>}
  */
 export async function applyInteractionSideEffect(ajna, record, action) {
   if (isCollectAction(action) && record?.id) {
     // Aufnehmen = ins Inventar (carried_by), nicht mehr löschen. Der Server
-    // prüft die Rechte (Owner oder portable); bei 403 bleibt es folgenlos.
-    try { await ajna.pickup(record.id); return true }
-    catch (err) { console.warn('[interact] Einsammeln (Inventar) fehlgeschlagen:', err?.message || err) }
+    // prüft die Rechte (Owner oder portable).
+    try { await ajna.pickup(record.id); return { handled: true, ok: true } }
+    catch (err) {
+      const detail = err?.response?.error || err?.message || String(err)
+      console.warn('[interact] Einsammeln (Inventar) fehlgeschlagen:', detail)
+      return { handled: true, ok: false, error: detail }
+    }
   }
 
   // Auftrag (Call): Lebenszyklus offen → angenommen → erledigt läuft über die
@@ -160,16 +171,17 @@ export async function applyInteractionSideEffect(ajna, record, action) {
             ? `Auftrag „${nm}": Abschluss eingereicht — wird geprüft`
             : `Auftrag „${nm}" erledigt — Belohnung erhalten`
         try { window.ajnaLog?.push(msg, 'interact') } catch {}
-        return true
+        return { handled: true, ok: true, status: res?.status, message: msg }
       } catch (err) {
         // Der Server lehnt begründet ab (Belohnung nicht mehr gedeckt, fremd
         // beansprucht, gefordertes Item fehlt …) — das gehört sichtbar in den
-        // Verlauf, nicht nur in die Konsole.
-        const detail = err?.response?.error || err?.message || err
+        // Verlauf UND in die Rückmeldung, nicht nur in die Konsole.
+        const detail = String(err?.response?.error || err?.message || err)
         console.warn('[quest] ' + a + ' fehlgeschlagen:', detail)
         try { window.ajnaLog?.push(`Auftrag „${nm}" nicht möglich: ${detail}`, 'system') } catch {}
+        return { handled: true, ok: false, error: detail }
       }
     }
   }
-  return false
+  return { handled: false, ok: true }
 }
