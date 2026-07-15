@@ -215,6 +215,16 @@ routerAdd("POST", "/api/objects/{id}/pickup", (e) => {
       return e.json(409, { error: "object already carried by someone else" })
     }
 
+    // Treuhand: gebundene Quest-Belohnung ist unantastbar, bis der Auftrag
+    // abgeschlossen oder abgebrochen wird.
+    {
+      const { parseState, escrowCallOf } = require(`${__hooks}/quests.js`)
+      const bound = escrowCallOf(parseState(obj))
+      if (bound) {
+        return e.json(409, { error: "object is escrowed as a quest reward (call " + bound + ")" })
+      }
+    }
+
     const isOwner = obj.get("owner") === user.id
     let ownerChanged = false
     if (!isOwner) {
@@ -274,6 +284,16 @@ routerAdd("POST", "/api/objects/{id}/place", (e) => {
       return e.json(403, { error: "you can only place an object you carry" })
     }
 
+    // Treuhand: an einen Auftrag gebundene Belohnung darf NICHT aus dem
+    // Inventar verschwinden — sonst wäre das Belohnungsversprechen ungedeckt.
+    {
+      const { parseState, escrowCallOf } = require(`${__hooks}/quests.js`)
+      const bound = escrowCallOf(parseState(obj))
+      if (bound) {
+        return e.json(409, { error: "object is escrowed as a quest reward (call " + bound + ") — cancel the call first" })
+      }
+    }
+
     const body = info.body || {}
     const lat = Number(body.lat), lon = Number(body.lon)
     if (!isFinite(lat) || !isFinite(lon)) {
@@ -289,6 +309,271 @@ routerAdd("POST", "/api/objects/{id}/place", (e) => {
     return e.json(200, { ok: true, id: obj.id })
   } catch (err) {
     console.log("[place] error: " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err) })
+  }
+})
+
+
+// =====================================================================
+// QUESTS / HANDEL — gedeckte Belohnungen
+//
+// Ein Auftrag (`type: "call"`) zahlt NUR Objekte aus, die der Aussteller
+// besitzt und die beim Posten treuhänderisch gebunden wurden. Nichts wird
+// erzeugt. Der Abschluss ist ein atomarer Tausch:
+//   requiresItems (Spieler → Aussteller)  ↔  rewardItems (Aussteller → Spieler)
+// Clientseitig ginge das nicht: nur der Server darf fremden Besitz bewegen.
+// =====================================================================
+
+// POST /api/objects/{id}/quest/publish
+// Body: { rewardItems: [objectId, …], requiresItems?: [objectId, …] }
+// Bindet die Belohnung treuhänderisch. Nur der Aussteller (owner).
+routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
+  try {
+    const { parseState, escrowCallOf, callDataOf, idList } = require(`${__hooks}/quests.js`)
+    const callId = e.request.pathValue("id")
+    const info = e.requestInfo()
+    const user = info.auth
+    if (!user) return e.json(401, { error: "authentication required" })
+
+    let call
+    try { call = $app.findRecordById("objects", callId) }
+    catch (err) { return e.json(404, { error: "call not found" }) }
+    if (call.get("type") !== "call") return e.json(400, { error: "object is not a call" })
+    if (call.get("owner") !== user.id) return e.json(403, { error: "only the issuer may publish this call" })
+
+    const body = info.body || {}
+    const rewardIds = idList(body.rewardItems)
+    const requireIds = idList(body.requiresItems)
+    if (!rewardIds.length) {
+      return e.json(400, { error: "rewardItems must list at least one item you own — rewards are never minted" })
+    }
+
+    // Jede Belohnung muss im Inventar des Ausstellers liegen und frei sein.
+    const rewards = []
+    for (let i = 0; i < rewardIds.length; i++) {
+      const id = rewardIds[i]
+      let item
+      try { item = $app.findRecordById("objects", id) }
+      catch (err) { return e.json(404, { error: "reward item not found: " + id }) }
+      if (item.get("carried_by") !== user.id) {
+        return e.json(409, { error: "reward item is not in your inventory: " + id })
+      }
+      const st = parseState(item)
+      const bound = escrowCallOf(st)
+      if (bound && bound !== callId) {
+        return e.json(409, { error: "reward item already escrowed to another call: " + id })
+      }
+      rewards.push({ rec: item, state: st })
+    }
+
+    $app.runInTransaction((txApp) => {
+      for (let i = 0; i < rewards.length; i++) {
+        rewards[i].state.escrow = { call: callId }
+        rewards[i].rec.set("state", rewards[i].state)
+        txApp.save(rewards[i].rec)
+      }
+      const cs = parseState(call)
+      const c = callDataOf(cs)
+      c.rewardItems = rewardIds
+      if (requireIds.length) c.requiresItems = requireIds
+      if (!c.status) c.status = "open"
+      cs.call = c
+      call.set("state", cs)
+      txApp.save(call)
+    })
+
+    return e.json(200, { ok: true, id: callId, rewardItems: rewardIds, requiresItems: requireIds })
+  } catch (err) {
+    console.log("[quest.publish] error: " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err) })
+  }
+})
+
+
+// POST /api/objects/{id}/quest/accept — Auftrag annehmen (jeder mit view-Recht).
+routerAdd("POST", "/api/objects/{id}/quest/accept", (e) => {
+  try {
+    const { resolveEffective } = require(`${__hooks}/permissions.js`)
+    const { parseState, callDataOf } = require(`${__hooks}/quests.js`)
+    const callId = e.request.pathValue("id")
+    const info = e.requestInfo()
+    const user = info.auth
+    if (!user) return e.json(401, { error: "authentication required" })
+
+    let call
+    try { call = $app.findRecordById("objects", callId) }
+    catch (err) { return e.json(404, { error: "call not found" }) }
+    if (call.get("type") !== "call") return e.json(400, { error: "object is not a call" })
+
+    const eff = resolveEffective(user, call)
+    if ((eff.rights || []).indexOf("view") === -1) {
+      return e.json(403, { error: "not allowed to see this call" })
+    }
+
+    const st = parseState(call)
+    const c = callDataOf(st)
+    if (c.status === "done") return e.json(409, { error: "call already completed" })
+    if (c.claimedBy && c.claimedBy !== user.id) {
+      return e.json(409, { error: "call already claimed by someone else" })
+    }
+
+    c.status = "claimed"
+    c.claimedBy = user.id
+    st.call = c
+    call.set("state", st)
+    $app.save(call)
+    return e.json(200, { ok: true, id: callId, status: c.status })
+  } catch (err) {
+    console.log("[quest.accept] error: " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err) })
+  }
+})
+
+
+// POST /api/objects/{id}/quest/complete — atomarer Tausch, dann Auftrag erledigt.
+routerAdd("POST", "/api/objects/{id}/quest/complete", (e) => {
+  try {
+    const { resolveEffective, recomputeForObject } = require(`${__hooks}/permissions.js`)
+    const { parseState, escrowCallOf, callDataOf, idList } = require(`${__hooks}/quests.js`)
+    const callId = e.request.pathValue("id")
+    const info = e.requestInfo()
+    const user = info.auth
+    if (!user) return e.json(401, { error: "authentication required" })
+
+    let call
+    try { call = $app.findRecordById("objects", callId) }
+    catch (err) { return e.json(404, { error: "call not found" }) }
+    if (call.get("type") !== "call") return e.json(400, { error: "object is not a call" })
+
+    const eff = resolveEffective(user, call)
+    if ((eff.rights || []).indexOf("view") === -1) {
+      return e.json(403, { error: "not allowed to see this call" })
+    }
+
+    const st = parseState(call)
+    const c = callDataOf(st)
+    const issuer = call.get("owner")
+    if (c.status === "done") return e.json(409, { error: "call already completed" })
+    if (c.claimedBy && c.claimedBy !== user.id) {
+      return e.json(403, { error: "call is claimed by someone else" })
+    }
+    if (issuer === user.id) {
+      return e.json(409, { error: "the issuer cannot complete their own call" })
+    }
+
+    // Geforderte Items müssen im Inventar des Spielers liegen.
+    const requireIds = idList(c.requiresItems)
+    const required = []
+    for (let i = 0; i < requireIds.length; i++) {
+      const id = requireIds[i]
+      let item
+      try { item = $app.findRecordById("objects", id) }
+      catch (err) { return e.json(409, { error: "required item missing: " + id }) }
+      if (item.get("carried_by") !== user.id) {
+        return e.json(409, { error: "required item is not in your inventory: " + id })
+      }
+      required.push(item)
+    }
+
+    // Belohnung muss noch gedeckt UND gebunden sein (sonst: Versprechen verletzt).
+    const rewardIds = idList(c.rewardItems)
+    if (!rewardIds.length) return e.json(409, { error: "call has no escrowed reward" })
+    const rewards = []
+    for (let i = 0; i < rewardIds.length; i++) {
+      const id = rewardIds[i]
+      let item
+      try { item = $app.findRecordById("objects", id) }
+      catch (err) { return e.json(409, { error: "reward item no longer exists: " + id }) }
+      const ist = parseState(item)
+      if (escrowCallOf(ist) !== callId) {
+        return e.json(409, { error: "reward item is no longer escrowed to this call: " + id })
+      }
+      if (item.get("carried_by") !== issuer) {
+        return e.json(409, { error: "reward item is no longer held by the issuer: " + id })
+      }
+      rewards.push({ rec: item, state: ist })
+    }
+
+    const moved = []
+    $app.runInTransaction((txApp) => {
+      // Belohnung → Spieler (Besitz + Eigentum), Treuhand lösen.
+      for (let i = 0; i < rewards.length; i++) {
+        delete rewards[i].state.escrow
+        rewards[i].rec.set("state", rewards[i].state)
+        rewards[i].rec.set("carried_by", user.id)
+        rewards[i].rec.set("owner", user.id)
+        txApp.save(rewards[i].rec)
+        moved.push(rewards[i].rec.id)
+      }
+      // Geforderte Items → Aussteller.
+      for (let i = 0; i < required.length; i++) {
+        required[i].set("carried_by", issuer)
+        required[i].set("owner", issuer)
+        txApp.save(required[i])
+        moved.push(required[i].id)
+      }
+      c.status = "done"
+      c.completedBy = user.id
+      st.call = c
+      call.set("state", st)
+      txApp.save(call)
+    })
+
+    // Eigentum hat gewechselt → Permission-Cache der bewegten Objekte neu bauen.
+    for (let i = 0; i < moved.length; i++) {
+      try { recomputeForObject(moved[i]) } catch (_) {}
+    }
+    return e.json(200, { ok: true, id: callId, status: "done", rewardItems: rewardIds, requiresItems: requireIds })
+  } catch (err) {
+    console.log("[quest.complete] error: " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err) })
+  }
+})
+
+
+// POST /api/objects/{id}/quest/cancel — Aussteller bricht ab, Treuhand wird frei.
+routerAdd("POST", "/api/objects/{id}/quest/cancel", (e) => {
+  try {
+    const { parseState, escrowCallOf, callDataOf, idList } = require(`${__hooks}/quests.js`)
+    const callId = e.request.pathValue("id")
+    const info = e.requestInfo()
+    const user = info.auth
+    if (!user) return e.json(401, { error: "authentication required" })
+
+    let call
+    try { call = $app.findRecordById("objects", callId) }
+    catch (err) { return e.json(404, { error: "call not found" }) }
+    if (call.get("type") !== "call") return e.json(400, { error: "object is not a call" })
+    if (call.get("owner") !== user.id) return e.json(403, { error: "only the issuer may cancel this call" })
+
+    const st = parseState(call)
+    const c = callDataOf(st)
+    if (c.status === "done") return e.json(409, { error: "call already completed" })
+
+    const rewardIds = idList(c.rewardItems)
+    const rewards = []
+    for (let i = 0; i < rewardIds.length; i++) {
+      let item
+      try { item = $app.findRecordById("objects", rewardIds[i]) } catch (err) { continue }
+      const ist = parseState(item)
+      if (escrowCallOf(ist) === callId) rewards.push({ rec: item, state: ist })
+    }
+
+    $app.runInTransaction((txApp) => {
+      for (let i = 0; i < rewards.length; i++) {
+        delete rewards[i].state.escrow
+        rewards[i].rec.set("state", rewards[i].state)
+        txApp.save(rewards[i].rec)
+      }
+      c.status = "cancelled"
+      st.call = c
+      call.set("state", st)
+      txApp.save(call)
+    })
+
+    return e.json(200, { ok: true, id: callId, status: "cancelled", released: rewards.length })
+  } catch (err) {
+    console.log("[quest.cancel] error: " + (err && err.message ? err.message : err))
     return e.json(500, { error: "" + (err && err.message ? err.message : err) })
   }
 })

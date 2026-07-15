@@ -299,6 +299,50 @@ export class AjnaClient {
   }
 
   // ===================================================================
+  //  Quests / Handel (server-autoritativ, gedeckte Belohnungen)
+  // ===================================================================
+  //
+  // Ein Auftrag ist ein Objekt `type: "call"`. Belohnungen werden NIE erzeugt:
+  // sie sind echte Objekte aus dem Inventar des Ausstellers, die beim Posten
+  // treuhänderisch gebunden werden. Der Abschluss ist ein atomarer Tausch
+  // (requiresItems ↔ rewardItems) — deshalb läuft alles über Server-Routen.
+
+  /**
+   * Auftrag veröffentlichen und die Belohnung treuhänderisch binden.
+   * Nur der Aussteller; jedes Reward-Item muss in SEINEM Inventar liegen.
+   * @param {string} callId
+   * @param {{rewardItems: string[], requiresItems?: string[]}} opts
+   */
+  async publishQuest(callId, { rewardItems = [], requiresItems = [] } = {}) {
+    const raw = this._toRaw(callId)
+    return this.pb.send(`/api/objects/${raw}/quest/publish`, {
+      method: 'POST',
+      body: { rewardItems: rewardItems.map(id => this._toRaw(id)), requiresItems: requiresItems.map(id => this._toRaw(id)) }
+    })
+  }
+
+  /** Auftrag annehmen (jeder mit view-Recht; hält ihn für dich reserviert). */
+  async acceptQuest(callId) {
+    const raw = this._toRaw(callId)
+    return this.pb.send(`/api/objects/${raw}/quest/accept`, { method: 'POST', body: {} })
+  }
+
+  /**
+   * Auftrag abschließen: geforderte Items gehen an den Aussteller, die
+   * hinterlegte Belohnung an dich — atomar und serverseitig geprüft.
+   */
+  async completeQuest(callId) {
+    const raw = this._toRaw(callId)
+    return this.pb.send(`/api/objects/${raw}/quest/complete`, { method: 'POST', body: {} })
+  }
+
+  /** Auftrag abbrechen (nur Aussteller) — gibt die Treuhand wieder frei. */
+  async cancelQuest(callId) {
+    const raw = this._toRaw(callId)
+    return this.pb.send(`/api/objects/${raw}/quest/cancel`, { method: 'POST', body: {} })
+  }
+
+  // ===================================================================
   //  Subscriptions
   // ===================================================================
 

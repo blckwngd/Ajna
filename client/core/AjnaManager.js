@@ -443,6 +443,31 @@ export class AjnaManager {
     return this._clientFor(compositeId).place(compositeId, pos)
   }
 
+  // ── Quests / Handel (gedeckte Belohnungen, server-autoritativ) ───────
+  // Auftrag + Belohnungs-Items müssen auf DEMSELBEN Server liegen — der
+  // Tausch ist eine Server-Transaktion. Der Client wird über den Auftrag
+  // bestimmt; Reward-IDs reicht der AjnaClient roh durch.
+
+  /** Auftrag veröffentlichen + Belohnung treuhänderisch binden (nur Aussteller). */
+  async publishQuest(compositeId, opts) {
+    return this._clientFor(compositeId).publishQuest(compositeId, opts)
+  }
+
+  /** Auftrag annehmen (reserviert ihn für dich). */
+  async acceptQuest(compositeId) {
+    return this._clientFor(compositeId).acceptQuest(compositeId)
+  }
+
+  /** Auftrag abschließen: atomarer Tausch geforderte Items ↔ Belohnung. */
+  async completeQuest(compositeId) {
+    return this._clientFor(compositeId).completeQuest(compositeId)
+  }
+
+  /** Auftrag abbrechen (nur Aussteller) — Treuhand wird frei. */
+  async cancelQuest(compositeId) {
+    return this._clientFor(compositeId).cancelQuest(compositeId)
+  }
+
   /**
    * Objekte im Inventar des angemeldeten Users (carried_by = eigener User),
    * server-übergreifend. carried_by ist die User-ID auf dem jeweiligen Server.

@@ -117,8 +117,15 @@ export class ObjectAura {
     // Auftrag (Call): Belohnung + Status prominent.
     const call = record?.type === 'call' ? (record.state?.call || {}) : null
     if (call) {
-      if (Number.isFinite(call.reward)) chips.push({ t: `🎁 ${call.reward}`, c: '#e6b23a' })
-      const st = { open: ['offen', '#54c26b'], claimed: ['angenommen', '#e6b23a'], done: ['erledigt', '#8a8f99'] }
+      // Belohnung = treuhänderisch gebundene Items des Ausstellers (nie gemünzt).
+      const rewards = Array.isArray(call.rewardItems) ? call.rewardItems.length : 0
+      const requires = Array.isArray(call.requiresItems) ? call.requiresItems.length : 0
+      if (rewards) chips.push({ t: `🎁 ${rewards}`, c: '#e6b23a' })
+      if (requires) chips.push({ t: `📥 ${requires}`, c: '#5b8dd6' })
+      const st = {
+        open: ['offen', '#54c26b'], claimed: ['angenommen', '#e6b23a'],
+        done: ['erledigt', '#8a8f99'], cancelled: ['abgebrochen', '#8a8f99']
+      }
       const [w, c] = st[call.status] || ['offen', '#54c26b']
       chips.push({ t: w, c })
     }

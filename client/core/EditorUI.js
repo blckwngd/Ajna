@@ -205,9 +205,8 @@ export class EditorUI {
               <div class="ed-grid">
                 <label for="callTask">Aufgabe</label>
                 <textarea id="callTask" name="callTask" rows="2" placeholder="Was ist zu tun?" style="grid-column:2;resize:vertical"></textarea>
-                <label for="callReward">Belohnung</label>
-                <input id="callReward" name="callReward" type="text" inputmode="numeric" placeholder="z. B. 10" style="justify-self:start;width:90px">
               </div>
+              <div class="ed-full-label" data-role="call-reward-info" style="opacity:.75;font-weight:normal"></div>
             </div>
             <label for="stateJson" class="ed-full-label">State (JSON)</label>
             <textarea id="stateJson" name="stateJson" rows="4" class="ed-json" spellcheck="false"></textarea>
@@ -755,18 +754,27 @@ export class EditorUI {
   }
   _fillCallFields(obj) {
     const c = obj?.state?.call || {}, f = this.editorForm
-    if (f.callTask)   f.callTask.value   = c.task ?? ''
-    if (f.callReward) f.callReward.value = c.reward ?? ''
+    if (f.callTask) f.callTask.value = c.task ?? ''
+    // Belohnungen sind KEINE Zahl, sondern treuhänderisch gebundene Items aus
+    // dem Inventar des Ausstellers (server-autoritativ via quest/publish).
+    // Hier nur der Ist-Zustand; das Setzen läuft über ajna.publishQuest().
+    const info = this.editorOverlay?.querySelector('[data-role="call-reward-info"]')
+    if (info) {
+      const n = Array.isArray(c.rewardItems) ? c.rewardItems.length : 0
+      const req = Array.isArray(c.requiresItems) ? c.requiresItems.length : 0
+      info.textContent = n
+        ? `Belohnung: ${n} hinterlegte(s) Item(s)${req ? `, gefordert: ${req}` : ''} · Status: ${c.status || 'open'}`
+        : 'Noch keine Belohnung hinterlegt — Belohnungen sind echte Items aus deinem Inventar (via publishQuest).'
+    }
   }
   // Call-Felder in state.call übernehmen (nur Typ call). Status defaultet auf
-  // 'open'; vorhandener Status/Claimant (aus dem State-JSON) bleibt erhalten.
+  // 'open'. rewardItems/requiresItems werden hier NICHT angefasst — die setzt
+  // ausschließlich der Server (quest/publish), weil daran die Treuhand hängt.
   _mergeCallFields(state) {
     if ((this.typeSelect?.value || '').toLowerCase() !== 'call') return
     const f = this.editorForm
     const call = { ...(state.call || {}) }
     call.task = String(f.callTask?.value ?? '').trim()
-    const reward = parseInt(String(f.callReward?.value ?? '').trim(), 10)
-    if (Number.isFinite(reward)) call.reward = reward; else delete call.reward
     if (!call.status) call.status = 'open'
     state.call = call
   }

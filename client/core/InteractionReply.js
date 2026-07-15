@@ -92,37 +92,32 @@ export async function applyInteractionSideEffect(ajna, record, action) {
     catch (err) { console.warn('[interact] Einsammeln (Inventar) fehlgeschlagen:', err?.message || err) }
   }
 
-  // Auftrag (Call): Lebenszyklus offen → angenommen → erledigt. Der Server macht
-  // beim interact nur den Broadcast; den Status schreiben wir hier (soweit der
-  // User Bearbeitungsrecht hat — sonst 403, folgenlos). Die authoritative
-  // Reputations-Gutschrift kommt mit Increment 3 (Server-Hook).
+  // Auftrag (Call): Lebenszyklus offen → angenommen → erledigt läuft über die
+  // SERVER-Routen. Wichtig: Belohnungen sind echte, treuhänderisch gebundene
+  // Items aus dem Inventar des Ausstellers — der Abschluss ist ein atomarer
+  // Tausch, den nur der Server ausführen darf (fremder Besitz). Deshalb hier
+  // KEIN eigener State-Write mehr.
   if (record?.type === 'call' && record?.id) {
     const a = String(action || '').toLowerCase()
-    const call = { ...(record.state?.call || {}) }
-    let changed = false
-    if ((a === 'accept' || a === 'annehmen') && call.status !== 'done') {
-      const client = ajna.clients?.get(record._origin) || ajna.defaultClient
-      call.status = 'claimed'
-      call.claimedBy = client?.currentUser?.()?.id || call.claimedBy || null
-      changed = true
-    } else if (a === 'complete' || a === 'erledigt' || a === 'erledigen') {
-      call.status = 'done'
-      changed = true
-    }
-    if (changed) {
+    const isAccept = a === 'accept' || a === 'annehmen'
+    const isComplete = a === 'complete' || a === 'erledigt' || a === 'erledigen'
+    if (isAccept || isComplete) {
+      const nm = record.name || record.id
       try {
-        await ajna.updateObject(record.id, { state: { ...(record.state || {}), call } })
-        const nm = record.name || record.id
-        if (call.status === 'done') {
-          const rw = Number.isFinite(call.reward) ? ` (+${call.reward})` : ''
-          try { window.ajnaLog?.push(`Auftrag „${nm}" erledigt${rw}`, 'interact') } catch {}
-        } else {
-          try { window.ajnaLog?.push(`Auftrag „${nm}" angenommen`, 'interact') } catch {}
-        }
+        await (isAccept ? ajna.acceptQuest(record.id) : ajna.completeQuest(record.id))
+        try {
+          window.ajnaLog?.push(
+            isAccept ? `Auftrag „${nm}" angenommen` : `Auftrag „${nm}" erledigt — Belohnung erhalten`,
+            'interact')
+        } catch {}
         return true
       } catch (err) {
+        // Der Server lehnt begründet ab (Belohnung nicht mehr gedeckt, fremd
+        // beansprucht, gefordertes Item fehlt …) — das gehört sichtbar in den
+        // Verlauf, nicht nur in die Konsole.
         const detail = err?.response?.error || err?.message || err
-        console.warn('[call] Status-Update fehlgeschlagen (evtl. kein Bearbeitungsrecht):', detail)
+        console.warn('[quest] ' + a + ' fehlgeschlagen:', detail)
+        try { window.ajnaLog?.push(`Auftrag „${nm}" nicht möglich: ${detail}`, 'system') } catch {}
       }
     }
   }
