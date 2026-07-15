@@ -34,10 +34,36 @@ function parseState(rec) {
   return state
 }
 
-/** Call-ID, an die ein Item treuhänderisch gebunden ist — sonst null. */
+/** Call-ID aus der Markierung am Item — sagt NICHTS über deren Gültigkeit. */
 function escrowCallOf(state) {
   const esc = state && state.escrow
   return (esc && typeof esc === "object" && esc.call) ? String(esc.call) : null
+}
+
+/**
+ * Wie escrowCallOf, aber SELBSTHEILEND: liefert die Call-ID nur, wenn die
+ * Bindung noch wirklich gilt. Eine Markierung allein reicht nicht — sie kann
+ * auf drei Wegen verwaisen:
+ *   • der Auftrag wurde gelöscht,
+ *   • er ist erledigt/abgebrochen,
+ *   • er führt das Item nicht mehr als Belohnung (neu veröffentlicht).
+ * Ohne diese Prüfung blieben solche Items für immer gesperrt — weder ablegbar
+ * noch als Belohnung wiederverwendbar.
+ *
+ * @returns {string|null} Call-ID bei gültiger Bindung, sonst null
+ */
+function activeEscrowOf(app, rec, state) {
+  const id = escrowCallOf(state)
+  if (!id) return null
+  let call
+  try { call = app.findRecordById("objects", id) }
+  catch (err) { return null }                       // Auftrag gelöscht → frei
+  if (call.get("type") !== "call") return null
+  const c = callDataOf(parseState(call))
+  if (c.status === "done" || c.status === "cancelled") return null   // beendet → frei
+  const ids = idList(c.rewardItems)
+  for (let i = 0; i < ids.length; i++) if (ids[i] === rec.id) return id
+  return null                                        // nicht mehr gelistet → frei
 }
 
 /** `state.call` als Objekt (nie null). */
@@ -144,7 +170,7 @@ function resolveSwap(app, call, callData, completerId, extraRequireIds) {
     }
     // Ein selbst als Belohnung verpfändetes Item darf nicht eingezogen werden —
     // sonst bräche der Spieler sein eigenes Versprechen an einen anderen Auftrag.
-    const bound = escrowCallOf(parseState(item))
+    const bound = activeEscrowOf(app, item, parseState(item))
     if (bound) return { ok: false, code: 409, error: "required item is escrowed to another call: " + id }
     used[id] = true
     required.push(item)
@@ -165,7 +191,7 @@ function resolveSwap(app, call, callData, completerId, extraRequireIds) {
         const rec = inv[j]
         if (!rec || used[rec.id]) continue
         const st = parseState(rec)
-        if (escrowCallOf(st)) continue           // gebundene Items sind tabu
+        if (activeEscrowOf(app, rec, st)) continue   // gebundene Items sind tabu
         if (!specMatches(rec, st, spec.match)) continue
         found.push(rec)
       }
@@ -248,7 +274,19 @@ function executeSwap(app, call, callState, callData, swap, completerId) {
       callData.status = "open"                  // zurück in den Umlauf
       delete callData.claimedBy
     } else {
-      callData.status = "done"                  // einmalig bzw. Vorrat leer
+      callData.status = "done"                  // einmalig bzw. Vorrat zu klein
+      // Reste freigeben: bei perRun=2 und Vorrat 3 bliebe sonst 1 Item ewig
+      // gebunden, obwohl der Auftrag erledigt ist.
+      for (let i = 0; i < swap.remainingRewards.length; i++) {
+        try {
+          const left = txApp.findRecordById("objects", swap.remainingRewards[i])
+          const lst = parseState(left)
+          delete lst.escrow
+          left.set("state", lst)
+          txApp.save(left)
+        } catch (err) { /* schon weg → egal */ }
+      }
+      callData.rewardItems = []
     }
     callState.call = callData
     call.set("state", callState)
@@ -258,7 +296,7 @@ function executeSwap(app, call, callState, callData, swap, completerId) {
 }
 
 module.exports = {
-  parseState, escrowCallOf, callDataOf, idList,
+  parseState, escrowCallOf, activeEscrowOf, callDataOf, idList,
   specMatches, describeSpec, validateSpecs,
   resolveSwap, executeSwap
 }

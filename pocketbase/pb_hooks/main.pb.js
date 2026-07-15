@@ -216,10 +216,11 @@ routerAdd("POST", "/api/objects/{id}/pickup", (e) => {
     }
 
     // Treuhand: gebundene Quest-Belohnung ist unantastbar, bis der Auftrag
-    // abgeschlossen oder abgebrochen wird.
+    // abgeschlossen oder abgebrochen wird. activeEscrowOf ignoriert Bindungen an
+    // gelöschte/beendete Aufträge — sonst blieben Items ewig gesperrt.
     {
-      const { parseState, escrowCallOf } = require(`${__hooks}/quests.js`)
-      const bound = escrowCallOf(parseState(obj))
+      const { parseState, activeEscrowOf } = require(`${__hooks}/quests.js`)
+      const bound = activeEscrowOf($app, obj, parseState(obj))
       if (bound) {
         return e.json(409, { error: "object is escrowed as a quest reward (call " + bound + ")" })
       }
@@ -287,8 +288,8 @@ routerAdd("POST", "/api/objects/{id}/place", (e) => {
     // Treuhand: an einen Auftrag gebundene Belohnung darf NICHT aus dem
     // Inventar verschwinden — sonst wäre das Belohnungsversprechen ungedeckt.
     {
-      const { parseState, escrowCallOf } = require(`${__hooks}/quests.js`)
-      const bound = escrowCallOf(parseState(obj))
+      const { parseState, activeEscrowOf } = require(`${__hooks}/quests.js`)
+      const bound = activeEscrowOf($app, obj, parseState(obj))
       if (bound) {
         return e.json(409, { error: "object is escrowed as a quest reward (call " + bound + ") — cancel the call first" })
       }
@@ -337,7 +338,7 @@ routerAdd("POST", "/api/objects/{id}/place", (e) => {
 //                             Logik (siehe quest/approve).
 routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
   try {
-    const { parseState, escrowCallOf, callDataOf, idList, validateSpecs } = require(`${__hooks}/quests.js`)
+    const { parseState, activeEscrowOf, callDataOf, idList, validateSpecs } = require(`${__hooks}/quests.js`)
     const callId = e.request.pathValue("id")
     const info = e.requestInfo()
     const user = info.auth
@@ -379,7 +380,7 @@ routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
         return e.json(409, { error: "reward item is not in your inventory: " + id })
       }
       const st = parseState(item)
-      const bound = escrowCallOf(st)
+      const bound = activeEscrowOf($app, item, st)
       if (bound && bound !== callId) {
         return e.json(409, { error: "reward item already escrowed to another call: " + id })
       }
@@ -419,7 +420,10 @@ routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
       txApp.save(call)
     })
 
-    return e.json(200, { ok: true, id: callId, rewardItems: rewardIds, requiresItems: requireIds })
+    // Den GESPEICHERTEN Stand zurückgeben: der Client soll seine Ansicht daraus
+    // auffrischen und nicht aus dem Cache, der per Realtime noch nachhinkt.
+    const saved = callDataOf(parseState($app.findRecordById("objects", callId)))
+    return e.json(200, { ok: true, id: callId, call: saved, rewardItems: rewardIds, requiresItems: requireIds })
   } catch (err) {
     console.log("[quest.publish] error: " + (err && err.message ? err.message : err))
     return e.json(500, { error: "" + (err && err.message ? err.message : err) })
@@ -672,7 +676,8 @@ routerAdd("POST", "/api/objects/{id}/quest/cancel", (e) => {
       txApp.save(call)
     })
 
-    return e.json(200, { ok: true, id: callId, status: "cancelled", released: rewards.length })
+    const saved = callDataOf(parseState($app.findRecordById("objects", callId)))
+    return e.json(200, { ok: true, id: callId, status: "cancelled", released: rewards.length, call: saved })
   } catch (err) {
     console.log("[quest.cancel] error: " + (err && err.message ? err.message : err))
     return e.json(500, { error: "" + (err && err.message ? err.message : err) })

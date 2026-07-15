@@ -897,6 +897,24 @@ export class EditorUI {
     return out
   }
 
+  /**
+   * Ist das Item WIRKLICH noch an einen anderen Auftrag gebunden? Die Markierung
+   * am Item allein genügt nicht — sie verwaist, wenn der Auftrag gelöscht bzw.
+   * erledigt/abgebrochen wurde oder das Item nicht mehr als Belohnung führt.
+   * Spiegelt activeEscrowOf aus den Server-Hooks; ohne das zeigte der Picker
+   * längst freie Items dauerhaft als „an anderen Auftrag gebunden".
+   */
+  _boundToOtherCall(rec, callId) {
+    const boundTo = rec?.state?.escrow?.call || null
+    if (!boundTo || boundTo === callId) return false
+    const other = this.ajna?.getObjectById?.(boundTo)
+    if (!other || (other.type || '').toLowerCase() !== 'call') return false   // Auftrag weg → frei
+    const c = other.state?.call || {}
+    if (c.status === 'done' || c.status === 'cancelled') return false          // beendet → frei
+    const listed = Array.isArray(c.rewardItems) && c.rewardItems.indexOf(rec.id) !== -1
+    return listed                                                             // nicht gelistet → frei
+  }
+
   // Belohnungs-Picker: die eigenen getragenen Items (carried_by = ich) zum
   // Ankreuzen. Bereits für DIESEN Auftrag gebundene Items sind vorausgewählt;
   // an einen ANDEREN Auftrag gebundene sind gesperrt (der Server würde sie
@@ -917,8 +935,7 @@ export class EditorUI {
       return
     }
     for (const rec of items) {
-      const boundTo = rec?.state?.escrow?.call || null
-      const lockedElsewhere = boundTo && boundTo !== callId
+      const lockedElsewhere = this._boundToOtherCall(rec, callId)
       const row = document.createElement('label')
       row.style.cssText = 'display:flex;align-items:center;gap:7px;padding:2px 0;font-size:12px'
         + (lockedElsewhere ? ';opacity:.45' : '')
@@ -945,9 +962,11 @@ export class EditorUI {
     const say = t => { if (status) status.textContent = t }
     const id = this.editorForm?.objectId?.value
     if (!id) { say('Auftrag zuerst speichern — die Treuhand hängt am gespeicherten Objekt.'); return }
+    let resCall = null
     try {
       if (cancel) {
         const res = await this.ajna.cancelQuest(id)
+        resCall = res?.call || null
         say(`Abgebrochen — ${res?.released ?? 0} Item(s) wieder frei.`)
       } else {
         const rewardItems = [...(this.editorOverlay?.querySelectorAll('[data-role="reward-item"]') || [])]
@@ -959,6 +978,7 @@ export class EditorUI {
         const perRun = parseInt(this.editorForm?.callRewardPerRun?.value, 10)
         const rewardPerRun = Number.isFinite(perRun) && perRun > 0 ? perRun : 1
         const res = await this.ajna.publishQuest(id, { rewardItems, requires, verify, repeatable, rewardPerRun })
+        resCall = res?.call || null
         const reqTxt = requires.length ? ` · ${requires.reduce((n, r) => n + (r.count || 1), 0)} gefordert` : ''
         const repTxt = repeatable
           ? ` · wiederholbar: ${Math.floor(rewardItems.length / rewardPerRun)}× (${rewardPerRun} pro Durchlauf)`
@@ -966,13 +986,14 @@ export class EditorUI {
         say(`Veröffentlicht: ${res?.rewardItems?.length ?? rewardItems.length} Item(s) gebunden${reqTxt}${repTxt}`
           + (verify === 'agent' ? ' · Abschluss entscheidet der Agent.' : ' · Server prüft den Abschluss.'))
       }
-      // Ansicht + State-JSON nachziehen (Realtime kann minimal nachlaufen).
+      // Ansicht aus der SERVER-ANTWORT auffrischen, nicht aus dem Cache: der
+      // hinkt per Realtime kurz nach, und ein Neubefüllen daraus setzte die
+      // gerade getätigte Eingabe wieder zurück (z. B. den „Wiederholbar"-Haken).
       const fresh = this.ajna.getObjectById?.(id)
-      if (fresh) {
-        this._fillCallFields(fresh)
-        if (this.editorForm?.stateJson) {
-          this.editorForm.stateJson.value = JSON.stringify(fresh.state || {}, null, 2)
-        }
+      const merged = { ...(fresh || { id }), state: { ...(fresh?.state || {}), call: resCall || {} } }
+      this._fillCallFields(merged)
+      if (this.editorForm?.stateJson) {
+        this.editorForm.stateJson.value = JSON.stringify(merged.state, null, 2)
       }
     } catch (err) {
       say(err?.response?.error || err?.message || 'Aktion fehlgeschlagen')
