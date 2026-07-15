@@ -468,6 +468,28 @@ export class AjnaManager {
     return this._clientFor(compositeId).cancelQuest(compositeId)
   }
 
+  /** Für Agents: Abschluss freigeben (nach eigener Bedingungsprüfung). */
+  async approveQuest(compositeId, opts) {
+    return this._clientFor(compositeId).approveQuest(compositeId, opts)
+  }
+
+  /** Für Agents: Abschluss ablehnen — Auftrag geht zurück in den Umlauf. */
+  async rejectQuest(compositeId, opts) {
+    return this._clientFor(compositeId).rejectQuest(compositeId, opts)
+  }
+
+  /**
+   * Für Agents: anstehende Abschluss-Prüfungen eigener Aufträge — über ALLE
+   * verbundenen Server. Gibt ein gemeinsames unsubscribe zurück.
+   */
+  onQuestPending(callback) {
+    const offs = []
+    this.clients.forEach(client => {
+      try { offs.push(client.onQuestPending(callback)) } catch {}
+    })
+    return () => offs.forEach(off => { try { off() } catch {} })
+  }
+
   /**
    * Objekte im Inventar des angemeldeten Users (carried_by = eigener User),
    * server-übergreifend. carried_by ist die User-ID auf dem jeweiligen Server.

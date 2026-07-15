@@ -325,8 +325,13 @@ routerAdd("POST", "/api/objects/{id}/place", (e) => {
 // =====================================================================
 
 // POST /api/objects/{id}/quest/publish
-// Body: { rewardItems: [objectId, …], requiresItems?: [objectId, …] }
+// Body: { rewardItems: [objectId, …], requiresItems?: [objectId, …],
+//         verify?: "items" | "agent" }
 // Bindet die Belohnung treuhänderisch. Nur der Aussteller (owner).
+//
+// verify: "items" (Default) — Server entscheidet deterministisch.
+// verify: "agent"           — der Aussteller-Agent entscheidet mit eigener
+//                             Logik (siehe quest/approve).
 routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
   try {
     const { parseState, escrowCallOf, callDataOf, idList } = require(`${__hooks}/quests.js`)
@@ -376,6 +381,8 @@ routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
       const c = callDataOf(cs)
       c.rewardItems = rewardIds
       if (requireIds.length) c.requiresItems = requireIds
+      // Wer entscheidet über den Abschluss? Nur "agent" weicht vom Default ab.
+      c.verify = (String(body.verify || "") === "agent") ? "agent" : "items"
       if (!c.status) c.status = "open"
       cs.call = c
       call.set("state", cs)
@@ -430,11 +437,18 @@ routerAdd("POST", "/api/objects/{id}/quest/accept", (e) => {
 })
 
 
-// POST /api/objects/{id}/quest/complete — atomarer Tausch, dann Auftrag erledigt.
+// POST /api/objects/{id}/quest/complete — Abschluss anfordern.
+//
+// verify: "items" (Default) → Server prüft deterministisch (geforderte Items +
+//   gedeckte Treuhand) und tauscht sofort atomar.
+// verify: "agent" → Server zahlt NICHT aus. Er prüft nur die harten
+//   Voraussetzungen, setzt den Auftrag auf "pending" und überlässt die
+//   inhaltliche Entscheidung dem Aussteller-Agent (Monster erlegt? Ort
+//   erreicht? …). Der ruft danach quest/approve bzw. quest/reject.
 routerAdd("POST", "/api/objects/{id}/quest/complete", (e) => {
   try {
     const { resolveEffective, recomputeForObject } = require(`${__hooks}/permissions.js`)
-    const { parseState, escrowCallOf, callDataOf, idList } = require(`${__hooks}/quests.js`)
+    const { parseState, callDataOf, resolveSwap, executeSwap } = require(`${__hooks}/quests.js`)
     const callId = e.request.pathValue("id")
     const info = e.requestInfo()
     const user = info.auth
@@ -452,80 +466,122 @@ routerAdd("POST", "/api/objects/{id}/quest/complete", (e) => {
 
     const st = parseState(call)
     const c = callDataOf(st)
-    const issuer = call.get("owner")
     if (c.status === "done") return e.json(409, { error: "call already completed" })
+    if (c.status === "cancelled") return e.json(409, { error: "call was cancelled" })
     if (c.claimedBy && c.claimedBy !== user.id) {
       return e.json(403, { error: "call is claimed by someone else" })
     }
-    if (issuer === user.id) {
-      return e.json(409, { error: "the issuer cannot complete their own call" })
-    }
 
-    // Geforderte Items müssen im Inventar des Spielers liegen.
-    const requireIds = idList(c.requiresItems)
-    const required = []
-    for (let i = 0; i < requireIds.length; i++) {
-      const id = requireIds[i]
-      let item
-      try { item = $app.findRecordById("objects", id) }
-      catch (err) { return e.json(409, { error: "required item missing: " + id }) }
-      if (item.get("carried_by") !== user.id) {
-        return e.json(409, { error: "required item is not in your inventory: " + id })
-      }
-      required.push(item)
-    }
+    // Harte Voraussetzungen gelten in BEIDEN Modi — ein Agent soll nicht über
+    // eine ungedeckte Belohnung entscheiden müssen.
+    const swap = resolveSwap($app, call, c, user.id)
+    if (!swap.ok) return e.json(swap.code, { error: swap.error })
 
-    // Belohnung muss noch gedeckt UND gebunden sein (sonst: Versprechen verletzt).
-    const rewardIds = idList(c.rewardItems)
-    if (!rewardIds.length) return e.json(409, { error: "call has no escrowed reward" })
-    const rewards = []
-    for (let i = 0; i < rewardIds.length; i++) {
-      const id = rewardIds[i]
-      let item
-      try { item = $app.findRecordById("objects", id) }
-      catch (err) { return e.json(409, { error: "reward item no longer exists: " + id }) }
-      const ist = parseState(item)
-      if (escrowCallOf(ist) !== callId) {
-        return e.json(409, { error: "reward item is no longer escrowed to this call: " + id })
-      }
-      if (item.get("carried_by") !== issuer) {
-        return e.json(409, { error: "reward item is no longer held by the issuer: " + id })
-      }
-      rewards.push({ rec: item, state: ist })
-    }
-
-    const moved = []
-    $app.runInTransaction((txApp) => {
-      // Belohnung → Spieler (Besitz + Eigentum), Treuhand lösen.
-      for (let i = 0; i < rewards.length; i++) {
-        delete rewards[i].state.escrow
-        rewards[i].rec.set("state", rewards[i].state)
-        rewards[i].rec.set("carried_by", user.id)
-        rewards[i].rec.set("owner", user.id)
-        txApp.save(rewards[i].rec)
-        moved.push(rewards[i].rec.id)
-      }
-      // Geforderte Items → Aussteller.
-      for (let i = 0; i < required.length; i++) {
-        required[i].set("carried_by", issuer)
-        required[i].set("owner", issuer)
-        txApp.save(required[i])
-        moved.push(required[i].id)
-      }
-      c.status = "done"
-      c.completedBy = user.id
+    if (c.verify === "agent") {
+      c.status = "pending"
+      c.pendingBy = user.id
       st.call = c
       call.set("state", st)
-      txApp.save(call)
-    })
+      $app.save(call)   // Realtime-Update → der Aussteller-Agent sieht "pending"
+      return e.json(202, { ok: true, id: callId, status: "pending", message: "awaiting issuer verification" })
+    }
 
-    // Eigentum hat gewechselt → Permission-Cache der bewegten Objekte neu bauen.
+    const moved = executeSwap($app, call, st, c, swap, user.id)
+    for (let i = 0; i < moved.length; i++) {
+      try { recomputeForObject(moved[i]) } catch (_) {}   // Eigentum gewechselt
+    }
+    return e.json(200, { ok: true, id: callId, status: "done", rewardItems: c.rewardItems || [], requiresItems: c.requiresItems || [] })
+  } catch (err) {
+    console.log("[quest.complete] error: " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err) })
+  }
+})
+
+
+// POST /api/objects/{id}/quest/approve — NUR der Aussteller (Agent).
+// Body: { user?: "<completerId>" }  (sonst pendingBy, sonst claimedBy)
+//
+// Der Agent hat seine EIGENE Bedingung geprüft (Monster erlegt, Ort erreicht,
+// beliebige Logik) und gibt hier frei. Der Server prüft weiterhin die Deckung
+// und führt den Tausch atomar aus — ein Agent kann also nur die von IHM
+// hinterlegte Treuhand freigeben, niemals etwas erzeugen.
+routerAdd("POST", "/api/objects/{id}/quest/approve", (e) => {
+  try {
+    const { recomputeForObject } = require(`${__hooks}/permissions.js`)
+    const { parseState, callDataOf, resolveSwap, executeSwap } = require(`${__hooks}/quests.js`)
+    const callId = e.request.pathValue("id")
+    const info = e.requestInfo()
+    const user = info.auth
+    if (!user) return e.json(401, { error: "authentication required" })
+
+    let call
+    try { call = $app.findRecordById("objects", callId) }
+    catch (err) { return e.json(404, { error: "call not found" }) }
+    if (call.get("type") !== "call") return e.json(400, { error: "object is not a call" })
+    if (call.get("owner") !== user.id) {
+      return e.json(403, { error: "only the issuer may approve this call" })
+    }
+
+    const st = parseState(call)
+    const c = callDataOf(st)
+    if (c.status === "done") return e.json(409, { error: "call already completed" })
+    if (c.status === "cancelled") return e.json(409, { error: "call was cancelled" })
+
+    const body = info.body || {}
+    const completerId = String(body.user || c.pendingBy || c.claimedBy || "").trim()
+    if (!completerId) {
+      return e.json(409, { error: "no completer to approve — pass 'user' or wait for a claim/completion request" })
+    }
+
+    const swap = resolveSwap($app, call, c, completerId)
+    if (!swap.ok) return e.json(swap.code, { error: swap.error })
+
+    const moved = executeSwap($app, call, st, c, swap, completerId)
     for (let i = 0; i < moved.length; i++) {
       try { recomputeForObject(moved[i]) } catch (_) {}
     }
-    return e.json(200, { ok: true, id: callId, status: "done", rewardItems: rewardIds, requiresItems: requireIds })
+    return e.json(200, { ok: true, id: callId, status: "done", completedBy: completerId })
   } catch (err) {
-    console.log("[quest.complete] error: " + (err && err.message ? err.message : err))
+    console.log("[quest.approve] error: " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err) })
+  }
+})
+
+
+// POST /api/objects/{id}/quest/reject — NUR der Aussteller (Agent).
+// Body: { reason?: "…" }  → Auftrag geht zurück in den Umlauf, Treuhand bleibt.
+routerAdd("POST", "/api/objects/{id}/quest/reject", (e) => {
+  try {
+    const { parseState, callDataOf } = require(`${__hooks}/quests.js`)
+    const callId = e.request.pathValue("id")
+    const info = e.requestInfo()
+    const user = info.auth
+    if (!user) return e.json(401, { error: "authentication required" })
+
+    let call
+    try { call = $app.findRecordById("objects", callId) }
+    catch (err) { return e.json(404, { error: "call not found" }) }
+    if (call.get("type") !== "call") return e.json(400, { error: "object is not a call" })
+    if (call.get("owner") !== user.id) {
+      return e.json(403, { error: "only the issuer may reject this call" })
+    }
+
+    const st = parseState(call)
+    const c = callDataOf(st)
+    if (c.status === "done") return e.json(409, { error: "call already completed" })
+
+    const body = info.body || {}
+    const reason = body.reason ? String(body.reason).slice(0, 500) : null
+    // Zurück in den Umlauf: bleibt beim Beanspruchenden, wenn es einen gibt.
+    c.status = c.claimedBy ? "claimed" : "open"
+    delete c.pendingBy
+    if (reason) c.rejectReason = reason; else delete c.rejectReason
+    st.call = c
+    call.set("state", st)
+    $app.save(call)
+    return e.json(200, { ok: true, id: callId, status: c.status, reason: reason })
+  } catch (err) {
+    console.log("[quest.reject] error: " + (err && err.message ? err.message : err))
     return e.json(500, { error: "" + (err && err.message ? err.message : err) })
   }
 })

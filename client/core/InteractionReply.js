@@ -104,12 +104,15 @@ export async function applyInteractionSideEffect(ajna, record, action) {
     if (isAccept || isComplete) {
       const nm = record.name || record.id
       try {
-        await (isAccept ? ajna.acceptQuest(record.id) : ajna.completeQuest(record.id))
-        try {
-          window.ajnaLog?.push(
-            isAccept ? `Auftrag „${nm}" angenommen` : `Auftrag „${nm}" erledigt — Belohnung erhalten`,
-            'interact')
-        } catch {}
+        const res = await (isAccept ? ajna.acceptQuest(record.id) : ajna.completeQuest(record.id))
+        // Bei verify:'agent' zahlt der Server nicht sofort aus — der Auftrag geht
+        // auf 'pending' und der Aussteller-Agent entscheidet mit eigener Logik.
+        const msg = isAccept
+          ? `Auftrag „${nm}" angenommen`
+          : res?.status === 'pending'
+            ? `Auftrag „${nm}": Abschluss eingereicht — wird geprüft`
+            : `Auftrag „${nm}" erledigt — Belohnung erhalten`
+        try { window.ajnaLog?.push(msg, 'interact') } catch {}
         return true
       } catch (err) {
         // Der Server lehnt begründet ab (Belohnung nicht mehr gedeckt, fremd

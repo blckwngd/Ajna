@@ -310,14 +310,26 @@ export class AjnaClient {
   /**
    * Auftrag veröffentlichen und die Belohnung treuhänderisch binden.
    * Nur der Aussteller; jedes Reward-Item muss in SEINEM Inventar liegen.
+   *
+   * `verify` bestimmt, WER über den Abschluss entscheidet:
+   *   • 'items' (Default) — der Server, deterministisch (geforderte Items da?).
+   *   • 'agent'           — DU als Aussteller mit eigener Logik (Monster erlegt,
+   *     Ort erreicht, …). Der Spieler löst completeQuest() aus, der Auftrag geht
+   *     auf 'pending', du bekommst ihn über onQuestPending() und entscheidest
+   *     per approveQuest()/rejectQuest().
+   *
    * @param {string} callId
-   * @param {{rewardItems: string[], requiresItems?: string[]}} opts
+   * @param {{rewardItems: string[], requiresItems?: string[], verify?: 'items'|'agent'}} opts
    */
-  async publishQuest(callId, { rewardItems = [], requiresItems = [] } = {}) {
+  async publishQuest(callId, { rewardItems = [], requiresItems = [], verify = 'items' } = {}) {
     const raw = this._toRaw(callId)
     return this.pb.send(`/api/objects/${raw}/quest/publish`, {
       method: 'POST',
-      body: { rewardItems: rewardItems.map(id => this._toRaw(id)), requiresItems: requiresItems.map(id => this._toRaw(id)) }
+      body: {
+        rewardItems: rewardItems.map(id => this._toRaw(id)),
+        requiresItems: requiresItems.map(id => this._toRaw(id)),
+        verify
+      }
     })
   }
 
@@ -340,6 +352,45 @@ export class AjnaClient {
   async cancelQuest(callId) {
     const raw = this._toRaw(callId)
     return this.pb.send(`/api/objects/${raw}/quest/cancel`, { method: 'POST', body: {} })
+  }
+
+  /**
+   * Für Agents (verify: 'agent'): Abschluss freigeben, nachdem die EIGENE
+   * Bedingung erfüllt ist. Der Server prüft weiter die Deckung und tauscht
+   * atomar — freigeben kannst du also nur deine eigene hinterlegte Treuhand.
+   * @param {string} callId
+   * @param {{user?: string}} [opts] Completer; sonst pendingBy/claimedBy.
+   */
+  async approveQuest(callId, { user } = {}) {
+    const raw = this._toRaw(callId)
+    const body = user ? { user: this._toRaw(user) } : {}
+    return this.pb.send(`/api/objects/${raw}/quest/approve`, { method: 'POST', body })
+  }
+
+  /** Für Agents: Abschluss ablehnen — Auftrag geht zurück in den Umlauf. */
+  async rejectQuest(callId, { reason } = {}) {
+    const raw = this._toRaw(callId)
+    return this.pb.send(`/api/objects/${raw}/quest/reject`, { method: 'POST', body: reason ? { reason } : {} })
+  }
+
+  /**
+   * Für Agents: feuert, wenn zu einem EIGENEN Auftrag eine Abschluss-Prüfung
+   * ansteht (Status 'pending'). Hier gehört die freie Agent-Logik hin — prüfe
+   * was immer du willst (Monster erlegt, Spieler am Ort, Uhrzeit …) und rufe
+   * dann approveQuest() oder rejectQuest().
+   *
+   * @param {(call: object, ctx: {completer: string|null}) => void} callback
+   * @returns {() => void} unsubscribe
+   */
+  onQuestPending(callback) {
+    return this.onObjectEvent((record, action) => {
+      if (action === 'delete' || record?.type !== 'call') return
+      const c = record.state?.call
+      if (!c || c.status !== 'pending') return
+      if (record.owner !== this.currentUser()?.id) return   // nur eigene Aufträge
+      try { callback(record, { completer: c.pendingBy || c.claimedBy || null }) }
+      catch (err) { console.warn('[quest] onQuestPending handler:', err?.message || err) }
+    })
   }
 
   // ===================================================================

@@ -124,6 +124,7 @@ export class ObjectAura {
       if (requires) chips.push({ t: `📥 ${requires}`, c: '#5b8dd6' })
       const st = {
         open: ['offen', '#54c26b'], claimed: ['angenommen', '#e6b23a'],
+        pending: ['wird geprüft', '#5b8dd6'],
         done: ['erledigt', '#8a8f99'], cancelled: ['abgebrochen', '#8a8f99']
       }
       const [w, c] = st[call.status] || ['offen', '#54c26b']
