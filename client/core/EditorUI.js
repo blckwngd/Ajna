@@ -2,6 +2,7 @@ import { injectServerBadgeStyles, renderServerBadge } from './ServerBadge.js'
 import { LOCAL_MODELS } from './localModels.js'
 import { randomHexColor } from './randomColor.js'
 import { SPAWN_ARCHETYPES } from './SpawnHere.js'
+import { emojiOf } from './Appearance.js'
 
 const EXT_MODELS_KEY = 'ajna_allow_ext_models'
 
@@ -205,8 +206,20 @@ export class EditorUI {
               <div class="ed-grid">
                 <label for="callTask">Aufgabe</label>
                 <textarea id="callTask" name="callTask" rows="2" placeholder="Was ist zu tun?" style="grid-column:2;resize:vertical"></textarea>
+                <label for="callVerify">Prüfung</label>
+                <select id="callVerify" name="callVerify" style="justify-self:start">
+                  <option value="items">Server prüft (geforderte Items)</option>
+                  <option value="agent">Agent entscheidet (eigene Logik)</option>
+                </select>
               </div>
+              <div class="ed-full-label" style="font-weight:normal">Belohnung aus deinem Inventar (wird treuhänderisch gebunden)</div>
+              <div data-role="call-reward-picker" class="ed-json" style="max-height:132px;overflow:auto;padding:6px"></div>
               <div class="ed-full-label" data-role="call-reward-info" style="opacity:.75;font-weight:normal"></div>
+              <div class="ed-buttons">
+                <button type="button" class="ed-btn" data-action="call-publish">Veröffentlichen (Treuhand binden)</button>
+                <button type="button" class="ed-btn" data-action="call-cancel">Auftrag abbrechen</button>
+              </div>
+              <div class="ed-full-label" data-role="call-status" style="opacity:.8;font-weight:normal"></div>
             </div>
             <label for="stateJson" class="ed-full-label">State (JSON)</label>
             <textarea id="stateJson" name="stateJson" rows="4" class="ed-json" spellcheck="false"></textarea>
@@ -501,6 +514,13 @@ export class EditorUI {
       this.onSaved?.(obj)   // Host zeigt eine kurze Bestätigung (Toast)
     })
 
+    // Auftrag veröffentlichen/abbrechen — läuft über die Server-Routen, weil
+    // daran die Treuhand hängt (Belohnungen sind gedeckte Items, keine Zahl).
+    this.editorOverlay?.querySelector('[data-action="call-publish"]')
+      ?.addEventListener('click', () => this._publishCall(false))
+    this.editorOverlay?.querySelector('[data-action="call-cancel"]')
+      ?.addEventListener('click', () => this._publishCall(true))
+
     this.editorDeleteBtn.addEventListener('click', async () => {
       const id = this.editorForm.objectId.value
       if (!id) return
@@ -755,25 +775,111 @@ export class EditorUI {
   _fillCallFields(obj) {
     const c = obj?.state?.call || {}, f = this.editorForm
     if (f.callTask) f.callTask.value = c.task ?? ''
+    if (f.callVerify) f.callVerify.value = c.verify === 'agent' ? 'agent' : 'items'
+    this._renderRewardPicker(obj)
+
     // Belohnungen sind KEINE Zahl, sondern treuhänderisch gebundene Items aus
-    // dem Inventar des Ausstellers (server-autoritativ via quest/publish).
-    // Hier nur der Ist-Zustand; das Setzen läuft über ajna.publishQuest().
+    // dem Inventar des Ausstellers. Gesetzt werden sie ausschließlich vom Server
+    // (quest/publish) — hier nur Auswahl + Ist-Zustand.
     const info = this.editorOverlay?.querySelector('[data-role="call-reward-info"]')
     if (info) {
       const n = Array.isArray(c.rewardItems) ? c.rewardItems.length : 0
       const req = Array.isArray(c.requiresItems) ? c.requiresItems.length : 0
       info.textContent = n
-        ? `Belohnung: ${n} hinterlegte(s) Item(s)${req ? `, gefordert: ${req}` : ''} · Status: ${c.status || 'open'}`
-        : 'Noch keine Belohnung hinterlegt — Belohnungen sind echte Items aus deinem Inventar (via publishQuest).'
+        ? `Hinterlegt: ${n} Item(s)${req ? `, gefordert: ${req}` : ''} · Status: ${c.status || 'open'}`
+        : 'Noch nichts hinterlegt — ohne gebundene Belohnung ist der Auftrag nicht abschließbar.'
+    }
+    const st = this.editorOverlay?.querySelector('[data-role="call-status"]')
+    if (st) st.textContent = ''
+  }
+
+  // Belohnungs-Picker: die eigenen getragenen Items (carried_by = ich) zum
+  // Ankreuzen. Bereits für DIESEN Auftrag gebundene Items sind vorausgewählt;
+  // an einen ANDEREN Auftrag gebundene sind gesperrt (der Server würde sie
+  // ohnehin ablehnen — das hier ist nur die ehrliche Vorschau).
+  _renderRewardPicker(obj) {
+    const host = this.editorOverlay?.querySelector('[data-role="call-reward-picker"]')
+    if (!host) return
+    host.innerHTML = ''
+    const callId = obj?.id || null
+    const chosen = new Set(Array.isArray(obj?.state?.call?.rewardItems) ? obj.state.call.rewardItems : [])
+    const items = this.ajna?.inventoryItems?.() || []
+
+    if (!items.length) {
+      const d = document.createElement('div')
+      d.style.cssText = 'opacity:.6;font-size:12px'
+      d.textContent = 'Dein Inventar ist leer — sammle erst Objekte ein, die du als Belohnung hinterlegen kannst.'
+      host.appendChild(d)
+      return
+    }
+    for (const rec of items) {
+      const boundTo = rec?.state?.escrow?.call || null
+      const lockedElsewhere = boundTo && boundTo !== callId
+      const row = document.createElement('label')
+      row.style.cssText = 'display:flex;align-items:center;gap:7px;padding:2px 0;font-size:12px'
+        + (lockedElsewhere ? ';opacity:.45' : '')
+      const cb = document.createElement('input')
+      cb.type = 'checkbox'
+      cb.value = rec.id
+      cb.dataset.role = 'reward-item'
+      cb.checked = chosen.has(rec.id)
+      cb.disabled = !!lockedElsewhere
+      cb.style.width = 'auto'
+      const txt = document.createElement('span')
+      let emoji = ''
+      try { emoji = emojiOf(rec) || '' } catch {}
+      txt.textContent = `${emoji ? emoji + ' ' : ''}${rec.name || rec.id}`
+        + (lockedElsewhere ? '  (an anderen Auftrag gebunden)' : '')
+      row.append(cb, txt)
+      host.appendChild(row)
     }
   }
-  // Call-Felder in state.call übernehmen (nur Typ call). Status defaultet auf
-  // 'open'. rewardItems/requiresItems werden hier NICHT angefasst — die setzt
-  // ausschließlich der Server (quest/publish), weil daran die Treuhand hängt.
+
+  // „Veröffentlichen" / „Abbrechen" — beides server-autoritativ (Treuhand).
+  async _publishCall(cancel = false) {
+    const status = this.editorOverlay?.querySelector('[data-role="call-status"]')
+    const say = t => { if (status) status.textContent = t }
+    const id = this.editorForm?.objectId?.value
+    if (!id) { say('Auftrag zuerst speichern — die Treuhand hängt am gespeicherten Objekt.'); return }
+    try {
+      if (cancel) {
+        const res = await this.ajna.cancelQuest(id)
+        say(`Abgebrochen — ${res?.released ?? 0} Item(s) wieder frei.`)
+      } else {
+        const rewardItems = [...(this.editorOverlay?.querySelectorAll('[data-role="reward-item"]') || [])]
+          .filter(cb => cb.checked).map(cb => cb.value)
+        if (!rewardItems.length) { say('Mindestens ein Item als Belohnung wählen — Belohnungen werden nicht erzeugt.'); return }
+        const verify = this.editorForm?.callVerify?.value === 'agent' ? 'agent' : 'items'
+        const res = await this.ajna.publishQuest(id, { rewardItems, verify })
+        say(`Veröffentlicht: ${res?.rewardItems?.length ?? rewardItems.length} Item(s) gebunden`
+          + (verify === 'agent' ? ' · Abschluss entscheidet der Agent.' : ' · Server prüft den Abschluss.'))
+      }
+      // Ansicht + State-JSON nachziehen (Realtime kann minimal nachlaufen).
+      const fresh = this.ajna.getObjectById?.(id)
+      if (fresh) {
+        this._fillCallFields(fresh)
+        if (this.editorForm?.stateJson) {
+          this.editorForm.stateJson.value = JSON.stringify(fresh.state || {}, null, 2)
+        }
+      }
+    } catch (err) {
+      say(err?.response?.error || err?.message || 'Aktion fehlgeschlagen')
+    }
+  }
+  // Call-Felder in state.call übernehmen (nur Typ call).
+  //
+  // Aus dem Formular kommt AUSSCHLIESSLICH `task`. Alles andere (rewardItems,
+  // requiresItems, verify, status, claimedBy …) gehört dem Server — daran hängt
+  // die Treuhand. Deshalb ziehen wir diese Felder aus dem GECACHTEN Record nach
+  // und lassen das (nach einem publish veraltete) State-JSON-Feld sie nicht
+  // überschreiben: sonst verwaist die Treuhand (Items gebunden, Auftrag kennt
+  // sie nicht mehr).
   _mergeCallFields(state) {
     if ((this.typeSelect?.value || '').toLowerCase() !== 'call') return
     const f = this.editorForm
-    const call = { ...(state.call || {}) }
+    const id = f.objectId?.value
+    const live = (id && this.ajna?.getObjectById?.(id)?.state?.call) || null
+    const call = live ? { ...(state.call || {}), ...live } : { ...(state.call || {}) }
     call.task = String(f.callTask?.value ?? '').trim()
     if (!call.status) call.status = 'open'
     state.call = call
