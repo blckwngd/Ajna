@@ -414,7 +414,13 @@ routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
       c.verify = (String(body.verify || "") === "agent") ? "agent" : "items"
       if (repeatable) { c.repeatable = true; c.rewardPerRun = perRun }
       else { delete c.repeatable; delete c.rewardPerRun }
-      if (!c.status) c.status = "open"
+      // Veröffentlichen heißt: der Aussteller bietet den Auftrag (neu) an →
+      // Lebenszyklus zurücksetzen. Sonst bliebe ein bereits erledigter Auftrag
+      // für immer "done" und ließe sich mit frischer Belohnung nicht wiederbeleben.
+      c.status = "open"
+      delete c.claimedBy
+      delete c.completedBy
+      delete c.pendingBy
       cs.call = c
       call.set("state", cs)
       txApp.save(call)
