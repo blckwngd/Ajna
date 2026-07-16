@@ -6,7 +6,7 @@
 // Bringt einen EINGEBETTETEN MQTT-Broker (aedes) mit — HA verbindet sich
 // AUSGEHEND dorthin, kein eingehender Port zu HA. Das Gateway ist die einzige
 // Vertrauensgrenze: Broker-ACL sperrt jeden HA-Client auf seinen Namespace, und
-// nur das Gateway schreibt (gescopt) nach Ajna. Design: docs/homeassistant-mqtt.md.
+// nur das Gateway schreibt (gescopt) nach Ajna. Design: docs/homeassistant.md.
 //
 // Datenfluss:
 //   HA → mqtt_statestream → ajna/ha/<inst>/<domain>/<entity>/state (+ /attributes)
@@ -28,11 +28,13 @@
 //
 // Start:  node agents/homeassistant-gateway.mjs   bzw.   npm run ha-gateway
 
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, mkdirSync, chmodSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { execFileSync } from 'node:child_process'
+import os from 'node:os'
 import net from 'node:net'
 import tls from 'node:tls'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, X509Certificate } from 'node:crypto'
 import { maybeReexecWithSystemCa } from './lib/system-ca.mjs'
 import { EventSource } from 'eventsource'
 if (typeof globalThis.EventSource !== 'function') globalThis.EventSource = EventSource
@@ -67,6 +69,12 @@ const MQTT_GW_PASS = process.env.MQTT_GATEWAY_PASS || randomUUID()   // intern, 
 const MQTT_EXTERNAL_URL = process.env.MQTT_EXTERNAL_URL || ''
 const TLS_CERT = process.env.MQTT_TLS_CERT
 const TLS_KEY  = process.env.MQTT_TLS_KEY
+// Selbst signiertes TLS: wenn keine echten Zertifikate gesetzt sind, kann das
+// Gateway auf Wunsch selbst eins erzeugen (einmalig, dann persistent).
+const TLS_AUTO = /^(1|true|yes|on)$/i.test(process.env.MQTT_TLS_AUTO || '')
+const TLS_DIR  = process.env.MQTT_TLS_DIR || resolve(process.cwd(), '.ha-gateway-tls')
+const TLS_CN   = process.env.MQTT_TLS_CN || os.hostname()
+const TLS_SAN  = (process.env.MQTT_TLS_SAN || '').split(',').map(s => s.trim()).filter(Boolean)
 const HA_LAT   = parseFloat(process.env.HA_LAT || '50.3569')
 const HA_LON   = parseFloat(process.env.HA_LON || '7.5890')
 const BASE = `ajna/ha/${HA_INSTANCE}`
@@ -156,6 +164,53 @@ function topicInNamespace(client, topic) {
   return false
 }
 
+/**
+ * TLS-Material für den eingebetteten Broker beschaffen:
+ *   1. Explizite Dateien (MQTT_TLS_CERT/KEY) — echte Zertifikate, z. B. von
+ *      Let's Encrypt. HA vertraut ihnen automatisch. Bevorzugt.
+ *   2. MQTT_TLS_AUTO=1 ohne Dateien → selbst signiertes Zertifikat, EINMALIG
+ *      erzeugt und in MQTT_TLS_DIR persistiert (bei Neustart wiederverwendet —
+ *      wichtig, weil HA das Zertifikat „pinnt": ein bei jedem Boot neues würde
+ *      das Vertrauen brechen). HA muss es einmalig als vertrauenswürdig
+ *      importieren (oder die Zertifikatsprüfung deaktivieren).
+ *   3. sonst: kein TLS (Klartext).
+ * @returns {{cert:Buffer|string, key:Buffer|string, selfSigned:boolean, certPath?:string}|null}
+ */
+function resolveTlsMaterial() {
+  if (TLS_CERT && TLS_KEY) return { cert: readFileSync(TLS_CERT), key: readFileSync(TLS_KEY), selfSigned: false }
+  if (!TLS_AUTO) return null
+
+  const certPath = resolve(TLS_DIR, 'cert.pem')
+  const keyPath  = resolve(TLS_DIR, 'key.pem')
+  if (existsSync(certPath) && existsSync(keyPath)) {
+    return { cert: readFileSync(certPath), key: readFileSync(keyPath), selfSigned: true, certPath }
+  }
+
+  // Erstmalig erzeugen — über openssl (robust, keine JS-Krypto-Abhängigkeit).
+  // CN = Hostname (überschreibbar via MQTT_TLS_CN); zusätzliche Namen/IPs, unter
+  // denen HA den Broker erreicht, via MQTT_TLS_SAN (CSV) — sie kommen als SAN
+  // ins Zertifikat, sonst schlägt HAs Hostname-Prüfung fehl.
+  const names = [TLS_CN, ...TLS_SAN].filter(Boolean)
+  const san = names.map(n => (net.isIP(n) ? `IP:${n}` : `DNS:${n}`)).join(',')
+  mkdirSync(TLS_DIR, { recursive: true })
+  try {
+    execFileSync('openssl', [
+      'req', '-x509', '-newkey', 'rsa:2048', '-sha256', '-days', '3650', '-nodes',
+      '-keyout', keyPath, '-out', certPath,
+      '-subj', `/CN=${TLS_CN}`,
+      '-addext', `subjectAltName=${san}`,
+    ], { stdio: 'pipe' })
+  } catch (err) {
+    die('Selbst signiertes TLS-Zertifikat fehlgeschlagen (openssl nicht gefunden?). '
+      + 'Entweder openssl installieren, oder eigene Zertifikate über MQTT_TLS_CERT/KEY setzen. '
+      + `Detail: ${err?.stderr?.toString?.() || err?.message || err}`)
+  }
+  try { chmodSync(keyPath, 0o600) } catch { /* Windows/ohne POSIX-Modes egal */ }
+  console.log(`[ha-gateway] Selbst signiertes TLS-Zertifikat erzeugt → ${certPath}`)
+  console.log(`[ha-gateway]   Namen (SAN): ${names.join(', ')} · gültig 10 Jahre`)
+  return { cert: readFileSync(certPath), key: readFileSync(keyPath), selfSigned: true, certPath }
+}
+
 function startEmbeddedBroker() {
   const broker = new Aedes()
   broker.authenticate = (client, username, password, cb) => {
@@ -169,18 +224,28 @@ function startEmbeddedBroker() {
   broker.authorizeSubscribe = (client, sub, cb) =>
     topicInNamespace(client, sub.topic) ? cb(null, sub) : cb(new Error('subscribe denied'))
 
-  const useTls = TLS_CERT && TLS_KEY
+  const tlsMat = resolveTlsMaterial()
+  const useTls = !!tlsMat
   const handler = broker.handle
   const server = useTls
-    ? tls.createServer({ cert: readFileSync(TLS_CERT), key: readFileSync(TLS_KEY) }, handler)
+    ? tls.createServer({ cert: tlsMat.cert, key: tlsMat.key }, handler)
     : net.createServer(handler)
   server.listen(MQTT_PORT, () => {
     console.log(`[ha-gateway] Broker läuft auf ${useTls ? 'mqtts' : 'mqtt'}://0.0.0.0:${MQTT_PORT} (Instanz „${HA_INSTANCE}")`)
-    if (!useTls) console.log('[ha-gateway] Hinweis: ohne TLS — für öffentlich erreichbare Broker MQTT_TLS_CERT/KEY setzen.')
+    if (!useTls) {
+      console.log('[ha-gateway] Hinweis: ohne TLS — für öffentlich erreichbare Broker MQTT_TLS_CERT/KEY setzen oder MQTT_TLS_AUTO=1.')
+    } else if (tlsMat.selfSigned) {
+      try {
+        const fp = new X509Certificate(tlsMat.cert).fingerprint256
+        console.log(`[ha-gateway] TLS selbst signiert — SHA-256-Fingerprint: ${fp}`)
+        console.log('[ha-gateway]   In HAs MQTT-Integration das Zertifikat importieren ODER die Prüfung deaktivieren (dann nur verschlüsselt, nicht authentifiziert).')
+      } catch { /* Fingerprint nur informativ */ }
+    }
   })
   broker.on('clientReady', (c) => console.log(`[ha-gateway] Client verbunden: ${c?.id}`))
   broker.on('clientDisconnect', (c) => console.log(`[ha-gateway] Client getrennt: ${c?.id}`))
-  return `mqtt://127.0.0.1:${MQTT_PORT}`
+  // Passendes Schema für den internen Client zurückgeben — bei TLS mqtts, sonst mqtt.
+  return `${useTls ? 'mqtts' : 'mqtt'}://127.0.0.1:${MQTT_PORT}`
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -199,6 +264,10 @@ const mc = mqtt.connect(brokerUrl, {
   username: MQTT_EXTERNAL_URL ? (process.env.MQTT_GATEWAY_USER || MQTT_GW_USER) : MQTT_GW_USER,
   password: MQTT_EXTERNAL_URL ? (process.env.MQTT_GATEWAY_PASS || MQTT_GW_PASS) : MQTT_GW_PASS,
   reconnectPeriod: 3000,
+  // Loopback zum EIGENEN TLS-Broker: dessen Zertifikat lautet auf den
+  // öffentlichen Hostnamen, nicht auf 127.0.0.1 — für die interne Verbindung
+  // die Prüfung aus (betrifft nur den eingebetteten Broker, nicht MQTT_EXTERNAL_URL).
+  ...((!MQTT_EXTERNAL_URL && brokerUrl.startsWith('mqtts://')) ? { rejectUnauthorized: false } : {}),
 })
 mc.on('connect', () => {
   console.log(`[ha-gateway] mit Broker verbunden (${brokerUrl})`)

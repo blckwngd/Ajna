@@ -1,7 +1,7 @@
 # Home Assistant ↔ Ajna über MQTT — HA-Seite (PoC)
 
 Konfigurations-Artefakte für die **HA-Seite** der MQTT-Anbindung. Design +
-Sicherheitsmodell: [`docs/homeassistant-mqtt.md`](../../docs/homeassistant-mqtt.md).
+Sicherheitsmodell (inkl. TLS): [`docs/homeassistant.md`](../../docs/homeassistant.md).
 
 HA verbindet sich **ausgehend** zu einem Ajna-seitigen MQTT-Broker, **publisht**
 Gerätezustände und **abonniert** Schalt-Kommandos. Kein eingehender Port zu HA,
