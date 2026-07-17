@@ -211,8 +211,12 @@ function resolveTlsMaterial() {
   return { cert: readFileSync(certPath), key: readFileSync(keyPath), selfSigned: true, certPath }
 }
 
-function startEmbeddedBroker() {
-  const broker = new Aedes()
+// aedes 1.x MUSS über die async-Factory entstehen — `new Aedes()` ist die alte
+// 0.x-Schreibweise und liefert einen halb initialisierten Broker: er nimmt
+// Verbindungen an und parst sogar CONNECT (authenticate läuft!), schickt aber
+// nie ein CONNACK. Der Client hängt dann bis zum „connack timeout".
+async function startEmbeddedBroker() {
+  const broker = await Aedes.createBroker()
   broker.authenticate = (client, username, password, cb) => {
     const pass = password ? password.toString() : ''
     if (username === MQTT_GW_USER && pass === MQTT_GW_PASS) { client._ajnaInstance = '*'; return cb(null, true) }
@@ -259,7 +263,7 @@ await ajna.connect()
 warnIfNoDefaults()
 
 // ─── Broker + eigener MQTT-Client ─────────────────────────────────────────
-const brokerUrl = MQTT_EXTERNAL_URL || startEmbeddedBroker()
+const brokerUrl = MQTT_EXTERNAL_URL || await startEmbeddedBroker()
 const mc = mqtt.connect(brokerUrl, {
   username: MQTT_EXTERNAL_URL ? (process.env.MQTT_GATEWAY_USER || MQTT_GW_USER) : MQTT_GW_USER,
   password: MQTT_EXTERNAL_URL ? (process.env.MQTT_GATEWAY_PASS || MQTT_GW_PASS) : MQTT_GW_PASS,
