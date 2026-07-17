@@ -16,6 +16,7 @@ import { UwbManager } from './UwbManager.js'
 import { WandAudioFeedback } from './WandAudioFeedback.js'
 import { PermissionDialog } from './PermissionDialog.js'
 import { InterestArea } from './InterestArea.js'
+import { privacy } from './PrivacyPolicy.js'
 import { messageLog, CATS } from './MessageLog.js'
 import { MessageLogPanel } from './MessageLogPanel.js'
 
@@ -410,12 +411,15 @@ export class MobileShell {
 
       <section class="settings-section">
         <h3>Privatsphäre</h3>
-        <label class="meta" style="display:flex;align-items:center;gap:8px">
-          <input type="checkbox" data-field="share-location" ${InterestArea.isEnabled() ? 'checked' : ''}>
-          Ungefähren Standort für Inhalte in der Nähe teilen
-        </label>
+        <label class="meta">Standort-Freigabe für neue Server</label>
+        <select data-field="privacy-default" style="width:100%;margin-top:4px">
+          ${privacy.LEVELS.map(l => `<option value="${l}" ${privacy.getDefault() === l ? 'selected' : ''}>${privacy.label(l)}</option>`).join('')}
+        </select>
+        <div class="meta" data-role="privacy-hint" style="margin-top:6px"></div>
+        <div class="meta" data-role="privacy-overrides" style="margin-top:6px"></div>
+        <button class="settings-btn secondary" data-action="privacy-apply-all" style="margin-top:6px">Auf alle Server anwenden</button>
         <div class="meta" style="margin-top:6px">
-          Sendet nur einen unscharfen Bereich (~500 m). Aus = es wird nichts übermittelt.
+          Pro Server einstellbar unter „Server". Diese Einstellungen gelten nur auf diesem Gerät.
         </div>
       </section>
 
@@ -888,8 +892,35 @@ export class MobileShell {
     northInput?.addEventListener('change', () => applyNorth(northInput.value))
     root.querySelector('[data-action="ar-north-flip"]')?.addEventListener('click', () => applyNorth((parseFloat(northInput?.value) || 0) + 180))
 
-    const shareToggle = root.querySelector('[data-field="share-location"]')
-    shareToggle?.addEventListener('change', () => this.interestArea?.onToggle(shareToggle.checked))
+    // Privatsphäre: Default für NEUE Server + „auf alle anwenden". Die Anzeige
+    // nennt offen, wie viele Server abweichen — sonst wirkt der Default wie eine
+    // Zusage, die er nicht ist (bestehende Übersteuerungen bleiben unberührt).
+    const privSelect = root.querySelector('[data-field="privacy-default"]')
+    const privHint = root.querySelector('[data-role="privacy-hint"]')
+    const privOverrides = root.querySelector('[data-role="privacy-overrides"]')
+    const renderPrivacy = () => {
+      const lvl = privSelect?.value || privacy.getDefault()
+      if (privHint) privHint.textContent = privacy.LEVEL_INFO[lvl]?.hint || ''
+      const ids = (this.ajna?.getServers?.() || []).map(s => s.id)
+      const n = ids.filter(id => privacy.hasOverride(id)).length
+      if (privOverrides) {
+        privOverrides.textContent = n
+          ? `${n} Server ${n === 1 ? 'hat eine eigene' : 'haben eigene'} Einstellung — der Standard ändert daran nichts.`
+          : 'Alle Server folgen diesem Standard.'
+      }
+    }
+    privSelect?.addEventListener('change', () => {
+      privacy.setDefault(privSelect.value)
+      renderPrivacy()
+    })
+    root.querySelector('[data-action="privacy-apply-all"]')?.addEventListener('click', () => {
+      const lvl = privSelect?.value || privacy.getDefault()
+      const ids = (this.ajna?.getServers?.() || []).map(s => s.id)
+      if (!confirm(`„${privacy.label(lvl)}" für ALLE ${ids.length} Server setzen und eigene Einstellungen verwerfen?`)) return
+      privacy.applyToAll(lvl, ids)
+      renderPrivacy()
+    })
+    renderPrivacy()
 
     const bgToggle = root.querySelector('[data-field="bg-service"]')
     bgToggle?.addEventListener('change', () => {

@@ -1,6 +1,7 @@
 import PocketBase from 'pocketbase'
 import { AjnaClient } from './AjnaClient.js'
 import { ServerRegistry } from './ServerRegistry.js'
+import { privacy } from './PrivacyPolicy.js'
 
 const FALLBACK_SERVER_ID = 'default'
 
@@ -523,13 +524,30 @@ export class AjnaManager {
    * verbundenen Server, damit auch deren Agents (World-Director etc.) um die
    * Position herum bevölkern. Jeder Server anonymisiert für sich.
    */
-  async publishInterestArea(bbox, sources) {
-    return Promise.allSettled(this._presenceTargets().map(c => c.publishInterestArea(bbox, sources)))
+  async publishInterestArea(variants, sources) {
+    // Privatsphäre wird HIER durchgesetzt, am einzigen Fan-out — nicht bei den
+    // Aufrufern. Sonst wäre der nächste vergessene Aufruf ein Datenleck.
+    // `variants` = { fuzzed, exact }; je Server wird die zur Stufe passende
+    // Ausprägung gewählt, „Verborgen" fällt ganz raus.
+    const fuzzed = variants?.fuzzed || variants   // Alt-Aufruf mit blanker BBOX tolerieren
+    const exact = variants?.exact || fuzzed
+    return Promise.allSettled(this._presenceTargets().map(c => {
+      const level = privacy.levelFor(c.id)
+      if (privacy.rank(level) < 1) return Promise.resolve({ skipped: 'off', server: c.id })
+      return c.publishInterestArea(level === 'exact' ? exact : fuzzed, sources)
+    }))
   }
 
   /** Eigenen Interessensbereich entfernen (Opt-out / Logout) — auf allen Servern. */
   async deleteInterestArea() {
     return Promise.allSettled(this._presenceTargets().map(c => c.deleteInterestArea()))
+  }
+
+  /** Nur auf EINEM Server entfernen — z. B. wenn dessen Stufe auf „Verborgen" fällt. */
+  async deleteInterestAreaOn(serverId) {
+    const c = this.clients.get(serverId)
+    if (!c?.isLoggedIn()) return null
+    try { return await c.deleteInterestArea() } catch { return null }
   }
 
   /**

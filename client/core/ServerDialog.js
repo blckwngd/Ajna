@@ -11,6 +11,12 @@
 // Die Dialog-Daten kommen ausschließlich aus AjnaManager.getServers();
 // State-Änderungen (Login, Connect, Add, Remove) feuern via
 // `onServersChanged` ein Re-Render. Kein eigenes State-Caching.
+//
+// Ausnahme: die Standort-Freigabe pro Server kommt aus PrivacyPolicy
+// (gerätelokal, nicht vom Server) — sie steht hier, weil man sie beim Blick auf
+// „welchen Servern bin ich verbunden?" bewertet, nicht in einem Extra-Dialog.
+
+import { privacy } from './PrivacyPolicy.js'
 
 export class ServerDialog {
   /**
@@ -42,6 +48,8 @@ export class ServerDialog {
   }
 
   dispose() {
+    this._privacyUnsub?.()
+    this._privacyUnsub = null
     this.close()
     this._unsubServers?.()
   }
@@ -181,6 +189,14 @@ export class ServerDialog {
         </div>
         <div class="sd-server-url"></div>
         <div class="sd-server-meta"></div>
+        <div class="sd-privacy-row">
+          <label>Standort:</label>
+          <select class="sd-privacy">
+            ${privacy.LEVELS.map(l => `<option value="${l}">${privacy.label(l)}</option>`).join('')}
+          </select>
+          <button class="sd-privacy-reset" title="Wieder dem Standard folgen">↺</button>
+        </div>
+        <div class="sd-privacy-hint"></div>
       </div>
       <div class="sd-server-actions">
         <div class="sd-login-row" style="display:none">
@@ -204,6 +220,24 @@ export class ServerDialog {
 
     row.dataset.serverId = s.id
     this._fillBadges(row.querySelector('.sd-badges'), s)
+
+    // Standort-Freigabe pro Server: man vertraut nicht jedem Server gleich viel.
+    // Ohne eigene Wahl folgt die Zeile dem Profil-Standard; das ↺ nimmt eine
+    // Übersteuerung wieder zurück.
+    const privSelect = row.querySelector('.sd-privacy')
+    const privReset = row.querySelector('.sd-privacy-reset')
+    const privHint = row.querySelector('.sd-privacy-hint')
+    const renderPriv = () => {
+      const lvl = privacy.levelFor(s.id)
+      privSelect.value = lvl
+      const own = privacy.hasOverride(s.id)
+      privReset.style.visibility = own ? 'visible' : 'hidden'
+      privHint.textContent = (own ? '' : 'Folgt dem Standard. ') + (privacy.LEVEL_INFO[lvl]?.hint || '')
+    }
+    privSelect.addEventListener('change', () => { privacy.setLevel(s.id, privSelect.value); renderPriv() })
+    privReset.addEventListener('click', () => { privacy.clearLevel(s.id); renderPriv() })
+    this._privacyUnsub ||= privacy.onChange(() => { if (this._backdrop) this._render() })
+    renderPriv()
 
     const loginRow = row.querySelector('.sd-login-row')
     const actionRow = row.querySelector('.sd-action-row')
@@ -383,6 +417,22 @@ export class ServerDialog {
         margin-bottom: 2px;
       }
       .ajna-sd-dialog .sd-server-meta { font-size: 11px; color: #888; }
+      .ajna-sd-dialog .sd-privacy-row {
+        display: flex; align-items: center; gap: 6px; margin-top: 6px;
+      }
+      .ajna-sd-dialog .sd-privacy-row label { font-size: 11px; color: #888; }
+      .ajna-sd-dialog .sd-privacy {
+        background: #1a1a1a; color: #ddd; border: 1px solid #444;
+        border-radius: 4px; padding: 2px 4px; font-size: 11px;
+      }
+      .ajna-sd-dialog .sd-privacy-reset {
+        background: none; border: none; color: #888; cursor: pointer;
+        font-size: 12px; padding: 0 4px;
+      }
+      .ajna-sd-dialog .sd-privacy-reset:hover { color: #ddd; }
+      .ajna-sd-dialog .sd-privacy-hint {
+        font-size: 10px; color: #777; margin-top: 3px; line-height: 1.35;
+      }
 
       .ajna-sd-dialog .sd-badge {
         display: inline-block;
