@@ -17,6 +17,7 @@
 // „welchen Servern bin ich verbunden?" bewertet, nicht in einem Extra-Dialog.
 
 import { privacy } from './PrivacyPolicy.js'
+import { infoHint, closeInfoHint } from './InfoHint.js'
 
 export class ServerDialog {
   /**
@@ -43,6 +44,9 @@ export class ServerDialog {
   }
 
   close() {
+    // Das Popup hängt an document.body, nicht am Dialog — ohne das bliebe es
+    // nach dem Schließen frei schwebend stehen.
+    closeInfoHint()
     this._backdrop?.remove()
     this._backdrop = null
   }
@@ -103,6 +107,9 @@ export class ServerDialog {
 
   _render() {
     if (!this._backdrop) return
+    // Ein Re-Render ersetzt die Zeilen samt ℹ️-Buttons — ein offenes Popup
+    // gehörte danach zu einem Button, den es nicht mehr gibt.
+    closeInfoHint()
     const list = this._backdrop.querySelector('[data-role="list"]')
     list.innerHTML = ''
 
@@ -196,7 +203,6 @@ export class ServerDialog {
           </select>
           <button class="sd-privacy-reset" title="Wieder dem Standard folgen">↺</button>
         </div>
-        <div class="sd-privacy-hint"></div>
       </div>
       <div class="sd-server-actions">
         <div class="sd-login-row" style="display:none">
@@ -226,13 +232,21 @@ export class ServerDialog {
     // Übersteuerung wieder zurück.
     const privSelect = row.querySelector('.sd-privacy')
     const privReset = row.querySelector('.sd-privacy-reset')
-    const privHint = row.querySelector('.sd-privacy-hint')
+    // Erklärung hinter dem ℹ️ statt als Dauertext: die Stufen brauchen ehrliche,
+    // also lange Sätze — eingeblendet erschlagen sie die Server-Zeile.
+    // Funktion statt fertigem Text: sie wird bei jedem Öffnen neu ausgewertet
+    // und zeigt damit immer die GERADE gewählte Stufe.
+    row.querySelector('.sd-privacy-row').appendChild(infoHint(() => {
+      const lvl = privacy.levelFor(s.id)
+      const prefix = privacy.hasOverride(s.id)
+        ? `Eigene Einstellung für diesen Server.\n\n`
+        : `Folgt dem Standard aus den Einstellungen (↺ ist nur bei einer eigenen Einstellung sichtbar).\n\n`
+      return prefix + (privacy.LEVEL_INFO[lvl]?.hint || '')
+    }, { title: () => `Standort-Freigabe: ${privacy.label(privacy.levelFor(s.id))}` }))
     const renderPriv = () => {
       const lvl = privacy.levelFor(s.id)
       privSelect.value = lvl
-      const own = privacy.hasOverride(s.id)
-      privReset.style.visibility = own ? 'visible' : 'hidden'
-      privHint.textContent = (own ? '' : 'Folgt dem Standard. ') + (privacy.LEVEL_INFO[lvl]?.hint || '')
+      privReset.style.visibility = privacy.hasOverride(s.id) ? 'visible' : 'hidden'
     }
     privSelect.addEventListener('change', () => { privacy.setLevel(s.id, privSelect.value); renderPriv() })
     privReset.addEventListener('click', () => { privacy.clearLevel(s.id); renderPriv() })
@@ -430,9 +444,6 @@ export class ServerDialog {
         font-size: 12px; padding: 0 4px;
       }
       .ajna-sd-dialog .sd-privacy-reset:hover { color: #ddd; }
-      .ajna-sd-dialog .sd-privacy-hint {
-        font-size: 10px; color: #777; margin-top: 3px; line-height: 1.35;
-      }
 
       .ajna-sd-dialog .sd-badge {
         display: inline-block;

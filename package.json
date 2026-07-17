@@ -30,7 +30,8 @@
     "deploy": "bash scripts/deploy.sh",
     "test:quests": "node tests/run-quests.mjs",
     "test:privacy": "node tests/run-privacy.mjs",
-    "test": "npm run test:quests && npm run test:privacy"
+    "test:ui": "node tests/run-ui.mjs",
+    "test": "npm run test:ui && npm run test:quests && npm run test:privacy"
   },
   "dependencies": {
     "@babylonjs/core": "^8.54.3",

@@ -17,6 +17,7 @@ import { WandAudioFeedback } from './WandAudioFeedback.js'
 import { PermissionDialog } from './PermissionDialog.js'
 import { InterestArea } from './InterestArea.js'
 import { ProximityReporter } from './ProximityReporter.js'
+import { infoHint } from './InfoHint.js'
 import { privacy } from './PrivacyPolicy.js'
 import { messageLog, CATS } from './MessageLog.js'
 import { MessageLogPanel } from './MessageLogPanel.js'
@@ -423,16 +424,15 @@ export class MobileShell {
 
       <section class="settings-section">
         <h3>Privatsphäre</h3>
-        <label class="meta">Standort-Freigabe für neue Server</label>
+        <div class="meta" style="display:flex;align-items:center;gap:4px">
+          <span>Standort-Freigabe für neue Server</span>
+          <span data-role="privacy-info"></span>
+        </div>
         <select data-field="privacy-default" style="width:100%;margin-top:4px">
           ${privacy.LEVELS.map(l => `<option value="${l}" ${privacy.getDefault() === l ? 'selected' : ''}>${privacy.label(l)}</option>`).join('')}
         </select>
-        <div class="meta" data-role="privacy-hint" style="margin-top:6px"></div>
         <div class="meta" data-role="privacy-overrides" style="margin-top:6px"></div>
         <button class="settings-btn secondary" data-action="privacy-apply-all" style="margin-top:6px">Auf alle Server anwenden</button>
-        <div class="meta" style="margin-top:6px">
-          Pro Server einstellbar unter „Server". Diese Einstellungen gelten nur auf diesem Gerät.
-        </div>
       </section>
 
       <section class="settings-section">
@@ -908,11 +908,16 @@ export class MobileShell {
     // nennt offen, wie viele Server abweichen — sonst wirkt der Default wie eine
     // Zusage, die er nicht ist (bestehende Übersteuerungen bleiben unberührt).
     const privSelect = root.querySelector('[data-field="privacy-default"]')
-    const privHint = root.querySelector('[data-role="privacy-hint"]')
     const privOverrides = root.querySelector('[data-role="privacy-overrides"]')
+    // Alle vier Stufen hinter dem ℹ️ — hier steht die ganze Leiter, nicht nur
+    // die gewählte Stufe: man wählt sie ja gerade erst aus.
+    root.querySelector('[data-role="privacy-info"]')?.appendChild(infoHint(
+      () => privacy.LEVELS.map(l => `${privacy.label(l)} — ${privacy.LEVEL_INFO[l]?.hint || ''}`).join('\n\n')
+        + '\n\nGilt für Server, die du neu hinzufügst. Pro Server einstellbar unter „Server".'
+        + '\nDie Einstellung liegt nur auf diesem Gerät — kein Server erfährt sie.',
+      { title: 'Standort-Freigabe' }
+    ))
     const renderPrivacy = () => {
-      const lvl = privSelect?.value || privacy.getDefault()
-      if (privHint) privHint.textContent = privacy.LEVEL_INFO[lvl]?.hint || ''
       const ids = (this.ajna?.getServers?.() || []).map(s => s.id)
       const n = ids.filter(id => privacy.hasOverride(id)).length
       if (privOverrides) {
