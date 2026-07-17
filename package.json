@@ -28,7 +28,9 @@
     "mobile:open": "cap open android",
     "android:trust-caddy": "node scripts/android-trust-caddy.mjs",
     "deploy": "bash scripts/deploy.sh",
-    "test:quests": "node tests/run-quests.mjs"
+    "test:quests": "node tests/run-quests.mjs",
+    "test:privacy": "node tests/run-privacy.mjs",
+    "test": "npm run test:quests && npm run test:privacy"
   },
   "dependencies": {
     "@babylonjs/core": "^8.54.3",

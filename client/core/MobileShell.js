@@ -16,6 +16,7 @@ import { UwbManager } from './UwbManager.js'
 import { WandAudioFeedback } from './WandAudioFeedback.js'
 import { PermissionDialog } from './PermissionDialog.js'
 import { InterestArea } from './InterestArea.js'
+import { ProximityReporter } from './ProximityReporter.js'
 import { privacy } from './PrivacyPolicy.js'
 import { messageLog, CATS } from './MessageLog.js'
 import { MessageLogPanel } from './MessageLogPanel.js'
@@ -106,6 +107,17 @@ export class MobileShell {
     window.agentFilters?.startAutoRefresh?.()
     window.agentFilters?.onChange?.(() => this.interestArea?.publishNow?.())
     this._unsubs.push(() => this.interestArea?.stop())
+
+    // Stufe „Nähe": Anwesenheit an nahen Objekten melden — per Objekt-ID, nie
+    // per Koordinate. Ob und an wen etwas rausgeht, entscheidet der Manager.
+    this.proximityReporter = new ProximityReporter({
+      ajna: this.ajna,
+      positionSource: this.positionSource,
+      getPosition: () => this.positionSource?.getWorldPosition?.() || window.ajnaGeo?.position || null
+    })
+    this.proximityReporter.start()
+    window.ajnaProximity = this.proximityReporter   // Debug-Zugriff
+    this._unsubs.push(() => this.proximityReporter?.stop())
     // Apply a persisted manual north-alignment offset (optional calibration).
     const align = parseFloat(localStorage.getItem(ALIGN_KEY) || '0')
     if (Number.isFinite(align)) this.wand.setAlignmentDeg(align)

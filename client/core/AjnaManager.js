@@ -430,6 +430,40 @@ export class AjnaManager {
     return this._clientFor(compositeId).onInteract(compositeId, callback)
   }
 
+  /**
+   * Nähe melden — zweiter Choke-Point neben publishInterestArea. Composite-IDs
+   * werden nach Server sortiert; jeder Server erfährt nur Übergänge bei SEINEN
+   * Objekten.
+   *
+   * Die Stufe gated NUR `enter`, nie `leave`: „ich bin da" verrät etwas, „ich
+   * bin weg" nimmt etwas zurück. Würde man beide gleich behandeln, bliebe beim
+   * Herunterstufen die letzte Anwesenheit ewig stehen — die Sperre haette
+   * genau das Gegenteil dessen bewirkt, wofuer man sie gesetzt hat.
+   * @param {{enter?: string[], leave?: string[]}} moves  Composite-IDs
+   */
+  async reportProximity({ enter = [], leave = [] } = {}) {
+    const byServer = new Map()
+    const bucket = (id, key) => {
+      const sid = this._split(id).serverId
+      if (!sid) return
+      if (key === 'enter' && !privacy.allows(sid, 'proximity')) return
+      if (!byServer.has(sid)) byServer.set(sid, { enter: [], leave: [] })
+      byServer.get(sid)[key].push(id)
+    }
+    for (const id of enter) bucket(id, 'enter')
+    for (const id of leave) bucket(id, 'leave')
+
+    return Promise.allSettled(Array.from(byServer.entries()).map(([sid, moves]) => {
+      const c = this.clients.get(sid)
+      return c?.isLoggedIn() ? c.reportProximity(moves) : Promise.resolve(null)
+    }))
+  }
+
+  /** Für Agents: Näherungs-Auslöser am eigenen Objekt. */
+  async onProximity(compositeId, callback) {
+    return this._clientFor(compositeId).onProximity(compositeId, callback)
+  }
+
   // ===================================================================
   //  Inventar
   // ===================================================================

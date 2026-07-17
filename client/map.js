@@ -16,6 +16,7 @@ import { shapeOf, emojiOf, colorOf, radiusOf } from "./core/Appearance.js"
 import { interactionReply, describeRequires } from "./core/InteractionReply.js"
 import { spawnRandomAndEdit } from "./core/SpawnHere.js"
 import { InterestArea } from "./core/InterestArea.js"
+import { ProximityReporter } from "./core/ProximityReporter.js"
 import { InterestAreaDebug } from "./core/InterestAreaDebug.js"
 import { setupMapGps } from "./core/MapGpsControl.js"
 import { getAccessoryHub } from "./core/AccessoryHub.js"
@@ -621,6 +622,16 @@ async function init() {
     window.ajnaInterestArea = interestArea   // Debug-Zugriff (Konsole + Overlay)
     // Neu publishen, sobald Manifeste geladen/Filter geändert → Quellen aktuell.
     agentFilters.onChange(() => interestArea.publishNow())
+
+    // Stufe „Nähe" — gleiche Eigentümer-Regel wie oben: in der Shell gehört der
+    // Reporter der MobileShell, sonst gäbe es ihn doppelt.
+    const proximityReporter = new ProximityReporter({
+      ajna,
+      positionSource: _hub.positionSource,
+      getPosition: () => _hub.positionSource?.getWorldPosition?.() || null
+    })
+    proximityReporter.start()
+    window.ajnaProximity = proximityReporter
   }
 
   // Debug-Overlay „📡 IA" (oben links): zeigt eigenen + Server-Interessensbereiche

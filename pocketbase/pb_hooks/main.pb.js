@@ -1051,3 +1051,77 @@ routerAdd("GET", "/api/objects/{id}/effective-rights", (e) => {
     return e.json(500, { error: "" + (err && err.message ? err.message : err) })
   }
 })
+
+
+// =====================================================================
+// POST /api/proximity  — "ich bin in der Naehe dieser Objekte"
+//
+// Privatsphaere-Stufe "Naehe": der Client meldet OBJEKT-IDs, nie Koordinaten.
+// Er kennt seine exakte Position, rechnet den Umkreis lokal aus und schickt nur
+// die Uebergaenge (betreten/verlassen). Damit erfaehrt ein Agent, dass jemand
+// bei seinem Objekt steht, ohne dass die Position den Client verlaesst.
+//
+// Body: { enter: [objectId, ...], leave: [objectId, ...] }
+// Broadcast: Topic `proximity:<objectId>`, { state:'enter'|'leave', source, ts }
+//
+// Bewusst EIGENES Topic (nicht `interact:`): bestehende Agents, die auf
+// Interaktionen hoeren, sollen nicht ploetzlich Praesenz-Events verarbeiten,
+// die sie nie abonniert haben.
+//
+// Erlaubt fuer jedes Objekt, das der User SEHEN darf — Naehe ist keine Aktion
+// am Objekt, sondern eine Aussage ueber den Spieler. Ein Objekt, das er nicht
+// sieht, darf ihn aber auch nicht spueren.
+//
+// GRENZE, bewusst: der Client ist die einzige Positionsquelle, also kann er
+// Naehe auch behaupten. Proximity-Trigger sind damit *advisory* — sie eignen
+// sich fuer Belebung (Agent reagiert, wenn jemand kommt), NICHT als Nachweis
+// ("Spieler war an Ort X" als Quest-Bedingung). Wer das braucht, braucht einen
+// zweiten Faktor (UWB-Anker, signierter Sensor-Report).
+// =====================================================================
+routerAdd("POST", "/api/proximity", (e) => {
+  try {
+    const { resolveEffective } = require(`${__hooks}/permissions.js`)
+
+    const info = e.requestInfo()
+    const user = info.auth
+    if (!user) return e.json(401, { error: "auth required" })
+
+    const body = info.body || {}
+    const list = (v) => (Array.isArray(v) ? v.filter(x => typeof x === "string" && x).slice(0, 64) : [])
+    const enter = list(body.enter)
+    const leave = list(body.leave)
+    if (!enter.length && !leave.length) return e.json(200, { ok: true, delivered: 0 })
+
+    const clients = $app.subscriptionsBroker().clients()
+    const ts = new Date().toISOString()
+    let delivered = 0
+    const skipped = []
+
+    const emit = (objectId, state) => {
+      let rec
+      try { rec = $app.findRecordById("objects", objectId) } catch (err) { skipped.push(objectId); return }
+
+      // Sehen-Recht ist die Grenze: unsichtbare Objekte spueren dich nicht.
+      const eff = resolveEffective(user, rec)
+      if ((eff.rights || []).indexOf("view") === -1) { skipped.push(objectId); return }
+
+      const topic = "proximity:" + objectId
+      const message = new SubscriptionMessage({
+        name: topic,
+        data: JSON.stringify({ state: state, source: user.id, ts: ts })
+      })
+      for (const id in clients) {
+        const client = clients[id]
+        if (client.hasSubscription(topic)) { client.send(message); delivered++ }
+      }
+    }
+
+    for (const id of enter) emit(id, "enter")
+    for (const id of leave) emit(id, "leave")
+
+    return e.json(200, { ok: true, delivered: delivered, skipped: skipped.length })
+  } catch (err) {
+    console.log("[proximity] error: " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err) })
+  }
+})

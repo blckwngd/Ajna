@@ -183,6 +183,23 @@ Spieler-Positionen werden nicht persistiert. Objekt-Positionen schon, aber pro O
 
 `users.listRule` / `viewRule` sind privacy-strikt: jeder eingeloggte User sieht nur sich selbst. Direkte User-zu-User-Sichtbarkeit gibt es nur, wenn beide einer Gruppe angehören oder explizit eingeladen wurden (geplantes Friends-System).
 
+### Standort-Freigabe: vier Stufen, pro Server
+
+Man verbindet sich zu mehreren Servern und vertraut ihnen unterschiedlich — ein globaler Schalter wäre zwangsläufig der kleinste gemeinsame Nenner oder ein Leck zum unvertrauenswürdigsten Server. Deshalb gilt die Stufe **pro Server** (`client/core/PrivacyPolicy.js`), Standard ist **Verborgen**:
+
+| Stufe | Was den Server erreicht |
+|---|---|
+| **Verborgen** | nichts |
+| **Gegend** | ein unscharfer Bereich: Zentrum aufs 100-m-Raster gerundet, 500-m-Box darum |
+| **Nähe** | zusätzlich „jemand ist bei Objekt Y" — als Objekt-ID, nie als Koordinate |
+| **Genau** | die exakte Position |
+
+Die Stufen bauen aufeinander auf. Durchgesetzt wird **im Fan-out** (`AjnaManager.publishInterestArea` / `.reportProximity`) — das ist die einzige Stelle, an der Präsenzdaten den Client verlassen, also kann kein künftiger Aufruf daran vorbeilecken. Gespeichert wird gerätelokal: der Standard gilt für *neue* Server und kann schlecht auf einem Server liegen, den man noch nicht kennt; und die Regel, die einen Server begrenzt, gehört nicht auf diesen Server.
+
+Asymmetrie mit Absicht: die Stufe blockiert nur `enter`, nie `leave` — „ich bin da" verrät etwas, „ich bin weg" nimmt etwas zurück. Andernfalls bliebe beim Herunterstufen die letzte Anwesenheit für immer stehen.
+
+**Grenze, offen gesagt:** der Client ist die einzige Positionsquelle, kann Nähe also auch behaupten. Näherungs-Auslöser taugen zur Belebung (ein Agent reagiert, wenn jemand kommt), **nicht als Nachweis** („Spieler war an Ort X" als Quest-Bedingung) — dafür braucht es einen zweiten Faktor wie UWB-Anker oder signierte Sensor-Reports. Und „Genau" nützt heute dem Server selbst: das Agent-Aggregat (`GET /ajnaapi/interest-areas`) rastert weiterhin auf 250 m.
+
 ---
 
 ## Projektstatus

@@ -36,6 +36,7 @@ import { ProfileDialog } from "./core/ProfileDialog.js"
 import { FilterDialog } from "./core/FilterDialog.js"
 import { AgentFilters } from "./core/AgentFilters.js"
 import { InterestArea } from "./core/InterestArea.js"
+import { ProximityReporter } from "./core/ProximityReporter.js"
 import { AjnaGeo } from "./core/AjnaGeo.js"
 import { ObjectActions } from "./core/ObjectActions.js"
 import { InWorldActionMenu } from "./core/InWorldActionMenu.js"
@@ -504,6 +505,16 @@ async function init() {
     })
   })
   interestArea.start()
+
+  // Stufe „Nähe": meldet Agents die Anwesenheit an ihrem Objekt — per Objekt-ID,
+  // nie per Koordinate. Der Manager entscheidet pro Server, ob überhaupt etwas
+  // rausgeht; der Reporter läuft unabhängig davon mit.
+  const proximityReporter = new ProximityReporter({
+    ajna: ajnaManager,
+    positionSource,
+    getPosition: () => positionSource?.getWorldPosition?.() || null
+  })
+  proximityReporter.start()
   // Manifeste selbst aktuell halten (Erst-Load deckt persistierte Session ab, wo
   // onAuthChanged nicht feuert) und die Area neu publishen, sobald die Quellen
   // geladen/geändert sind — sonst ginge sie ohne Quellen raus (Agents sehen sie nicht).

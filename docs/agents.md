@@ -233,6 +233,25 @@ const ajna = new AjnaManager({ pb })
 | `interact(objectId, action, payload?)` | Server-Route, Permission-Check, Broker-Broadcast |
 | `onInteract(objectId, cb)` | Subscribe auf `interact:<id>`. Callback erhält `{ action, source, ts, payload }` |
 
+### Nähe (Näherungs-Auslöser)
+
+| Methode | Beschreibung |
+|---|---|
+| `onProximity(objectId, cb)` | Subscribe auf `proximity:<id>`. Callback erhält `{ state: 'enter'\|'leave', source, ts }` |
+| `reportProximity({enter, leave})` | Client-Seite — Agents brauchen das normalerweise nicht |
+
+```js
+// NPC wacht auf, wenn jemand kommt:
+await ajna.onProximity(TARGET, async ev => {
+  if (ev.state === 'enter') await ajna.setAnimation(TARGET, 'wave')
+  if (ev.state === 'leave') await ajna.setAnimation(TARGET, 'idle')
+})
+```
+
+Der Spieler-Client meldet nur Objekt-**IDs**, nie Koordinaten: er kennt seine Position, rechnet den Umkreis (50 m) selbst aus und schickt ausschließlich die Übergänge. Gemeldet wird nur an Server, für die der Spieler mindestens Stufe „Nähe" gesetzt hat, und nur für Objekte, die er **sehen** darf — ein unsichtbares Objekt spürt ihn nicht.
+
+**Verlass dich nicht darauf als Nachweis.** Der Client ist die einzige Positionsquelle und kann Nähe behaupten. Für Belebung ideal, für „Spieler war nachweislich an Ort X" (z. B. als Quest-Bedingung) ungeeignet — dafür braucht es einen zweiten Faktor (UWB-Anker, signierter Sensor-Report). Ebenso: ein `leave` kann ausbleiben (App gekillt, Netz weg) — wer einen sauberen Zustand braucht, sollte die Anwesenheit nach einer Weile selbst verfallen lassen.
+
 ### Berechtigungen
 
 | Methode | Beschreibung |

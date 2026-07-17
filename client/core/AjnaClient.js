@@ -472,6 +472,39 @@ export class AjnaClient {
   }
 
   // ===================================================================
+  //  Naehe (Privatsphaere-Stufe „Nähe")
+  // ===================================================================
+  // Meldet OBJEKT-IDs, nie Koordinaten — der Client kennt seine Position und
+  // rechnet den Umkreis selbst aus. Siehe POST /api/proximity in main.pb.js.
+
+  /**
+   * Meldet Nähe-Übergänge (betreten/verlassen) für Objekte dieses Servers.
+   * @param {{enter?: string[], leave?: string[]}} moves  rohe Objekt-IDs
+   */
+  async reportProximity({ enter = [], leave = [] } = {}) {
+    if (!enter.length && !leave.length) return { ok: true, delivered: 0 }
+    return this.pb.send('/api/proximity', {
+      method: 'POST',
+      body: { enter: enter.map(id => this._toRaw(id)), leave: leave.map(id => this._toRaw(id)) }
+    })
+  }
+
+  /**
+   * Für Agents: „kommt jemand zu meinem Objekt?" — Näherungs-Auslöser.
+   * @param {string} objectId
+   * @param {(evt: {state:'enter'|'leave', source:string, ts:string}) => void} callback
+   */
+  async onProximity(objectId, callback) {
+    const raw = this._toRaw(objectId)
+    return this.pb.realtime.subscribe(`proximity:${raw}`, msg => {
+      let data
+      try { data = typeof msg === 'string' ? JSON.parse(msg) : msg }
+      catch { data = { state: '?', raw: msg } }
+      callback(data)
+    })
+  }
+
+  // ===================================================================
   //  Inventar-Lifecycle (server-autoritativ)
   // ===================================================================
 
