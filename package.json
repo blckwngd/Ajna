@@ -27,7 +27,8 @@
     "mobile:run": "webpack && node scripts/mobile-run.mjs",
     "mobile:open": "cap open android",
     "android:trust-caddy": "node scripts/android-trust-caddy.mjs",
-    "deploy": "bash scripts/deploy.sh"
+    "deploy": "bash scripts/deploy.sh",
+    "test:quests": "node tests/run-quests.mjs"
   },
   "dependencies": {
     "@babylonjs/core": "^8.54.3",
