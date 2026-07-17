@@ -105,6 +105,13 @@ const ROAM_SPEED    = parseFloat(process.env.WD_ROAM_SPEED    || '1.0')  // m/s
 const ROAM_AREA_M   = parseFloat(process.env.WD_ROAM_AREA_M   || '80')   // Radius Streif-Areal
 // Streif-/Rast-Rhythmus (nur Boden-Tiere mit Idle-Animation): abwechselnd
 // umherstreifen und stehen bleiben → ruhigere Szene. Zufällige Dauern (s).
+// Reaktion auf Interaktionen: spricht ein Spieler eine Figur an, hält sie inne,
+// statt mitten im Gespräch weiterzulaufen — der störendste Bruch der Illusion.
+// Bewusst ORTSFREI: wo der Spieler steht, weiß der Server nicht (Privacy-Modell,
+// die exakte Position bleibt on-device). Also kein „dreht sich zum Spieler",
+// sondern Stehenbleiben + idle für ein paar Sekunden.
+const ATTEND_MS = parseFloat(process.env.WD_ATTEND_S || '6') * 1000
+
 const ROAM_MOVE_MIN = parseFloat(process.env.WD_ROAM_MOVE_MIN || '8')
 const ROAM_MOVE_MAX = parseFloat(process.env.WD_ROAM_MOVE_MAX || '22')
 const ROAM_REST_MIN = parseFloat(process.env.WD_ROAM_REST_MIN || '4')
@@ -564,7 +571,10 @@ function makeController(obj) {
     cursor: { segIdx: 0, segT: 0 },
     nextPlanAt: 0,
     lastTickAt: Date.now(),
-    busy: false
+    busy: false,
+    anim: null,
+    attendUntil: 0,                       // bis wann die Figur einem Spieler zuhört
+    unsubInteract: null
   }
 }
 
@@ -606,7 +616,9 @@ function makeRoamer(obj, flying) {
     paused: false,
     phaseUntil: Date.now() + randInt(ROAM_MOVE_MIN, ROAM_MOVE_MAX) * 1000,
     lastTickAt: Date.now(),
-    busy: false
+    busy: false,
+    attendUntil: 0,                       // bis wann die Figur einem Spieler zuhört
+    unsubInteract: null
   }
 }
 
@@ -649,6 +661,15 @@ async function advanceFor(c) {
     const now = Date.now()
     const dt = Math.min(2, (now - c.lastTickAt) / 1000)   // dt-Cap gegen Sprünge
     c.lastTickAt = now
+
+    // Angesprochen? Stehenbleiben — der Weg bleibt erhalten und wird danach
+    // fortgesetzt (kein Neuplanen, die Figur läuft einfach weiter).
+    if (now < (c.attendUntil || 0)) {
+      if (c.anim !== 'idle') { c.anim = 'idle'; await ajna.setAnimation(c.id, 'idle') }
+      return
+    }
+    if (c.anim === 'idle' && c.fsm === 'walking') { c.anim = 'walk'; await ajna.setAnimation(c.id, 'walk') }
+
     const step = stepAlongPath(c.path, c.cursor, c.speed * dt)
     c.lat = step.lat; c.lon = step.lon
     c.cursor = { segIdx: step.segIdx, segT: step.segT }
@@ -677,6 +698,15 @@ async function advanceRoamer(c) {
     const now = Date.now()
     const dt = Math.min(1, (now - c.lastTickAt) / 1000)
     c.lastTickAt = now
+
+    // Angesprochen? Dann stehenbleiben und zuhören — Vorrang vor allem anderen.
+    // Nur Bodenfiguren: ein Flieger würde sonst mitten in der Luft einfrieren
+    // (und hat gar keine Idle-Animation).
+    if (!c.flying && now < (c.attendUntil || 0)) {
+      if (c.anim !== 'idle') { c.anim = 'idle'; await ajna.setAnimation(c.id, 'idle') }
+      c.phaseUntil = c.attendUntil          // danach frisch entscheiden
+      return
+    }
 
     // Streif-/Rast-Rhythmus (nur idle-fähige Boden-Tiere): Phase abwechseln.
     if (c.canPause && now >= c.phaseUntil) {
@@ -763,6 +793,19 @@ function controllerMode(c) {
 // Controller-Liste an `managed` angleichen: bestehende behalten (Zustand!),
 // neue anlegen, entfernte fallen weg. Idempotent — von reconcile() gerufen.
 let controllers = []
+// Auf Interaktionen mit DIESER Figur hören. Der interact-Hook broadcastet
+// ephemer ({action, source, ts}) — der Kanal lag bisher brach. Fire-and-forget:
+// scheitert das Abo, läuft die Figur einfach ohne Reaktion weiter.
+function attachInteractListener(c) {
+  ajna.onInteract(c.id, (evt) => {
+    const action = evt?.action
+    if (!action || action === 'examine') return   // Untersuchen ist passiv — keine Reaktion
+    c.attendUntil = Date.now() + ATTEND_MS
+    console.log(`[director] 👂 "${c.id}" hält inne (${action})`)
+  }).then(unsub => { c.unsubInteract = unsub })
+    .catch(err => console.warn(`[director] interact-Abo (${c.id}): ${err?.message || err}`))
+}
+
 function syncControllers() {
   if (!AUTONOMY) { controllers = []; return }
   const keep = new Map(controllers.map(c => [c.id, c]))
@@ -773,7 +816,15 @@ function syncControllers() {
     const c = controllerFor(obj)
     if (c) { c.nextPlanAt = Date.now() + i * 200; next.push(c); added.push(c) }   // Planung staffeln
   })
+  // Abos der entfallenen Figuren lösen, sonst sammeln sich Realtime-Subscriptions an.
+  for (const c of keep.values()) {
+    if (!next.includes(c) && c.unsubInteract) {
+      try { c.unsubInteract() } catch { /* schon weg */ }
+      c.unsubInteract = null
+    }
+  }
   controllers = next
+  for (const c of added) attachInteractListener(c)
   if (added.length) {
     const byMode = {}
     for (const c of added) { const m = controllerMode(c); byMode[m] = (byMode[m] || 0) + 1 }
