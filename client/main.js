@@ -57,6 +57,7 @@ import { ArPassthrough } from "./core/ArPassthrough.js"
 import { ArFovCalibration } from "./core/ArFovCalibration.js"
 import { CompassCalibration } from "./core/CompassCalibration.js"
 import { ObjectAura } from "./core/ObjectAura.js"
+import { QuickActions } from "./core/QuickActions.js"
 import { UwbAnchorOverlay } from "./core/UwbAnchorOverlay.js"
 import { OSMContext } from "./engine/environment/OSMContext.js"
 import { PathOverlay } from "./engine/debug/PathOverlay.js"
@@ -623,6 +624,32 @@ async function init() {
     }
   })
 
+  // Quick-Actions: die ersten drei Interaktionen des anvisierten ODER gelockten
+  // Objekts als Knöpfe am rechten Rand (3D + AR). Aktionsliste und Auslösen
+  // kommen aus ObjectActions — dieselbe Quelle wie das Kontextmenü.
+  const quickActions = new QuickActions({
+    parent: arRoot,
+    getActions: (rec) => objectActions.actionsFor(rec),
+    onAction: (rec, key) => objectActions.trigger(rec, key),
+  })
+  // Ein gelocktes Objekt hat Vorrang und bleibt stehen, auch wenn der Blick
+  // weiterwandert — genau dafür ist der Lock da.
+  let _qaLocked = null
+  const _quickFocus = (record) => { if (!_qaLocked) quickActions.setTarget(record || null) }
+
+  // Desktop-3D (Freiflug): Maus-Hover ist dort das „Anvisieren" — der Gaze-Pfad
+  // greift nur in AR/XR. Touch/Drag liefert das Hover-System bewusst nichts.
+  _onHoverFocus = (go) => _quickFocus(go?.id ? (ajnaManager.getObjectById?.(go.id) || null) : null)
+
+  // Fokus-Quellen: Zauberstab-Ziel + Lock. Die Gaze-Pfade (immersives XR und
+  // Handy-AR) speisen weiter unten zusätzlich ein.
+  wand.onTarget((t) => _quickFocus(t?.id ? ajnaManager.getObjectById?.(t.id) : null))
+  wand.onLock((o) => {
+    _qaLocked = o?.id ? (ajnaManager.getObjectById?.(o.id) || null) : null
+    // Beim Entsperren übernimmt wieder der Blick (nächster Gaze-/Ziel-Tick).
+    quickActions.setTarget(_qaLocked)
+  })
+
   // In-World-Menü für den XR-Modus. Sichtbar nur, wenn ein Objekt
   // fokussiert ist (Gaze oder XR-Klick).
   const inWorldMenu = new InWorldActionMenu(scene)
@@ -913,9 +940,11 @@ async function init() {
       _announcer?.target(_gazedGO.id)   // Ansage "<Typ> <Name>" (gegated)
       const record = ajnaManager.objectMap.get(_gazedGO.id)
       if (record) _showInWorldMenuFor(_gazedGO, record)
+      _quickFocus(record || null)
     } else {
       _announcer?.target(null)
       inWorldMenu.hide()
+      _quickFocus(null)
     }
   })
 
@@ -963,7 +992,9 @@ async function init() {
     }
     // Aura JEDEN Tick mit dem Live-Record speisen (Signatur-Dedup in setTarget
     // verhindert Rebuilds) → Status-Wechsel am fokussierten Call wird sofort sichtbar.
-    objectAura.setTarget(_auraGO ? (ajnaManager.objectMap.get(_auraGO.id) || null) : null)
+    const liveRec = _auraGO ? (ajnaManager.objectMap.get(_auraGO.id) || null) : null
+    objectAura.setTarget(liveRec)
+    _quickFocus(liveRec)   // Quick-Actions am rechten Rand (gleiche Dedup-Logik)
   })
 
   // EditorUI-Backend-Load und GPS-Fix parallelisieren — bei realem GPS
@@ -1556,6 +1587,9 @@ function _handleInteractAR(go, data) {
   _showInteractFeedback(go.id, data.action)
 }
 let _arHighlight = null  // wird in init() befüllt — Closure-Bridge auf setHighlight
+// Desktop-3D hat kein Reticle: dort ist der Maus-Hover das „Anvisieren" für die
+// Quick-Actions. Gleiche Closure-Bridge, weil das Hover-System vor ihnen entsteht.
+let _onHoverFocus = null
 let _agentFilters = null // wird in init() gesetzt — Closure-Bridge für syncSceneObjects
 let _announcer = null    // wird in init() gesetzt — geteilter TTS-Announcer (Hub)
 
@@ -1730,8 +1764,10 @@ function setupHoverSystem(scene, engine, canvas) {
     // Nur "echte" Objekte mit Namen (Player-Mesh hat keinen .metadata.gameObject)
     if (!go?.name) {
       tooltip.style.display = 'none'
+      _onHoverFocus?.(null)
       return
     }
+    _onHoverFocus?.(go)
 
     tooltip.textContent = go.name
     const rect = canvas.getBoundingClientRect()

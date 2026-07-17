@@ -18,6 +18,18 @@ const FALLBACK_ACTIONS = [
   { key: 'examine', label: 'Untersuchen' }
 ]
 
+// Beschriftungen für bekannte Aktions-Keys. Greift, wenn ein Record seine
+// Aktionen OHNE `label` liefert (z. B. per API/Agent angelegt) — sonst stünde
+// der rohe Key im Menü („complete").
+const ACTION_LABELS = {
+  examine: 'Untersuchen', lesen: 'Lesen', read: 'Lesen',
+  talk: 'Sprechen', sprechen: 'Sprechen',
+  attack: 'Angreifen', feed: 'Füttern', collect: 'Einsammeln',
+  accept: 'Auftrag annehmen', annehmen: 'Auftrag annehmen',
+  complete: 'Auftrag erledigen', erledigt: 'Auftrag erledigen', erledigen: 'Auftrag erledigen',
+}
+const labelFor = (a) => a?.label || ACTION_LABELS[String(a?.key || '').toLowerCase()] || a?.key || '?'
+
 export class ObjectActions {
   constructor({ ajna, editorUI, contextMenu, permissionDialog, onInteract, onInteractError }) {
     this.ajna = ajna
@@ -32,10 +44,24 @@ export class ObjectActions {
     this.onInteractError = onInteractError || null
   }
 
-  // record = PocketBase-Record. x/y = Viewport-Pixelposition (für Menü).
-  showFor(record, x, y) {
-    if (!record) return
+  /** Eingeloggter User für DIESES Objekt (Multi-Server: Client je `_origin`). */
+  _meFor(record) {
+    const client = this.ajna.clients?.get(record?._origin) || this.ajna.defaultClient
+    return client?.currentUser?.() || null
+  }
 
+  /**
+   * Die aufgelösten, gefilterten und beschrifteten Interaktionen eines Objekts —
+   * exakt die Liste, die auch im Kontextmenü unter „Interaktionen" steht.
+   *
+   * Öffentlich, damit die Quick-Actions in 3D/AR dieselbe Quelle nutzen und
+   * nicht auseinanderlaufen (Auftrags-Status-Filter, Beschriftungen, Fallback).
+   *
+   * @param {object} record
+   * @returns {Array<{key:string,label:string}>}
+   */
+  actionsFor(record) {
+    if (!record) return []
     // Aktions-Quelle: bevorzugt ein Top-Level-`actions`-Feld, sonst die vom
     // Objekt in `state.actions` hinterlegte Liste (so liefern World-Director-
     // Figuren z. B. "Sprechen"/"Füttern"). Fallback: nur "Untersuchen".
@@ -45,22 +71,29 @@ export class ObjectActions {
       : (stateActions && stateActions.length > 0)
         ? stateActions
         : FALLBACK_ACTIONS
+    // Aufträge: nur anbieten, was gerade wirklich möglich ist.
+    const list = record.type === 'call'
+      ? this._callActions(record, actions, this._meFor(record))
+      : actions
+    return list.map(a => ({ key: a.key, label: labelFor(a) }))
+  }
 
-    // Owner-Check: nur Besitzer dürfen Berechtigungen verwalten. Bei
-    // Multi-Server den passenden AjnaClient für record._origin nehmen,
-    // weil der eingeloggte User pro Server unterschiedlich sein kann.
-    const client = this.ajna.clients?.get(record._origin) || this.ajna.defaultClient
-    const me = client?.currentUser?.()
+  /** Interaktion auslösen — öffentlich für Quick-Actions und andere Views. */
+  trigger(record, actionKey) { return this._triggerAction(record, actionKey) }
+
+  // record = PocketBase-Record. x/y = Viewport-Pixelposition (für Menü).
+  showFor(record, x, y) {
+    if (!record) return
+
+    // Owner-Check: nur Besitzer dürfen Berechtigungen verwalten.
+    const me = this._meFor(record)
     const isOwner = !!me && !!record.owner && me.id === record.owner
 
     // Einsammeln: eigene Objekte immer, fremde nur wenn `portable`. Nicht,
     // wenn das Objekt schon getragen wird. Server prüft die Rechte final.
     const collectible = !record.carried_by && (isOwner || !!record.state?.portable)
 
-    // Aufträge: nur anbieten, was gerade wirklich möglich ist.
-    const shownActions = record.type === 'call'
-      ? this._callActions(record, actions, me)
-      : actions
+    const shownActions = this.actionsFor(record)
 
     const items = [
       { label: 'Bearbeiten',     onClick: () => this.editorUI?.fillEditor?.(record) },
@@ -70,7 +103,7 @@ export class ObjectActions {
       { separator: true },
       { sectionLabel: 'Interaktionen' },
       ...shownActions.map(a => ({
-        label: a.label || a.key,
+        label: a.label,
         onClick: () => this._triggerAction(record, a.key)
       }))
     ].filter(Boolean)
