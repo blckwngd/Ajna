@@ -1,26 +1,22 @@
 # Home Assistant ↔ Ajna
 
 Smart-Home-Geräte aus Home Assistant (HA) in Ajna **sichtbar und schaltbar**
-machen. Es gibt **zwei Wege** mit demselben Ergebnis (ein Controller-Objekt,
-Geräte als Spielobjekte, Live-Zustand, Interaktions-Aktionen), aber
-unterschiedlicher Topologie — **nur einer wird gebraucht:**
+machen: ein Controller-Objekt, Geräte als Spielobjekte, Live-Zustand,
+Interaktions-Aktionen.
 
-| | **MQTT-Gateway** (empfohlen) | **Node-Bridge** |
-|---|---|---|
-| Agent | [`agents/homeassistant-gateway.mjs`](../agents/homeassistant-gateway.mjs) | [`agents/homeassistant-bridge.mjs`](../agents/homeassistant-bridge.mjs) |
-| läuft auf | **Ajna-Server** | **HA-Maschine** |
-| HA-Kopplung | MQTT (Statestream + Blueprint), kein Plugin | HA-WebSocket/REST mit Long-Lived Token |
-| Verbindungsrichtung | HA → Ajna-Broker (**ausgehend**) | Agent → HA (localhost) + Agent → Ajna |
-| HA-Token | **keiner** nötig | bleibt auf der HA-Maschine |
-| Vorteil | HA bleibt privat, kein Ajna-Projekt auf dem HA-Host | zwei-Wege-Live-Sync per WebSocket, sofort vollständig |
-| Start | `npm run ha-gateway` | `npm run ha-bridge` |
+Die Kopplung läuft über **MQTT**. HA spricht MQTT nativ (kein Custom-Plugin, kein
+Ajna-Client auf dem HA-Host), und die Verbindungsrichtung passt zur typischen
+Topologie: HA privat, Ajna öffentlich. Das **Ajna-seitige Gateway**
+([`agents/homeassistant-gateway.mjs`](../agents/homeassistant-gateway.mjs),
+Start `npm run ha-gateway`) ist die einzige Vertrauensgrenze und bringt einen
+**eingebetteten MQTT-Broker (aedes)** mit ACL mit. HA-Seiten-Artefakte:
+[`integrations/homeassistant/`](../integrations/homeassistant/).
 
-> Status: Beide sind Node-Agenten (geteilte JS-Lib). Das MQTT-Gateway bringt einen
-> **eingebetteten MQTT-Broker (aedes)** mit ACL mit und ist end-to-end getestet
-> (HA-Client → Discovery → Controller-Menü). HA-Seiten-Artefakte:
-> [`integrations/homeassistant/`](../integrations/homeassistant/).
+> Status: End-to-end getestet (HA-Client → Discovery → Controller-Menü). Der
+> eingebettete Broker ist Klartext **und** per TLS gegen einen echten mqtt-Client
+> verifiziert.
 
-## Gemeinsame Konzepte (beide Wege)
+## Konzept
 
 1. **Controller-Objekt** an `HA_LAT`/`HA_LON`: Sein Kontextmenü (`state.actions`)
    listet die nutzbaren HA-Entitäten.
@@ -36,28 +32,20 @@ unterschiedlicher Topologie — **nur einer wird gebraucht:**
 Steuerbare Domains: `light`, `switch`, `input_boolean`, `fan`, `cover`, `lock`,
 `climate`, `media_player`, `scene`, `script`.
 
-### Berechtigungen (beide Wege)
+### Berechtigungen
 
 Es werden **keine** Rechte hartcodiert. Controller- und Geräte-Objekte entstehen
-mit den **Standardrechten des Gateway-/Bridge-Users** (Server-Hook, aus
+mit den **Standardrechten des Gateway-Users** (Server-Hook, aus
 `users.default_permissions`) und sind danach **pro Objekt frei anpassbar**
 (Kontextmenü → Berechtigungen).
 
 > **Wichtig:** Damit andere Nutzer die Geräte sehen und schalten dürfen, muss das
-> **Profil des Gateway-/Bridge-Users** unter „Standardrechte" der Zielgruppe
-> (Gruppe oder `authenticated`) `view` **und** `interact` = `*` geben. Ohne
-> Default gehören die Objekte nur diesem User und sind für andere unsichtbar —
-> der Agent warnt beim Start entsprechend.
+> **Profil des Gateway-Users** unter „Standardrechte" der Zielgruppe (Gruppe oder
+> `authenticated`) `view` **und** `interact` = `*` geben. Ohne Default gehören die
+> Objekte nur diesem User und sind für andere unsichtbar — der Agent warnt beim
+> Start entsprechend.
 
----
-
-## Weg A — MQTT-Gateway (empfohlen)
-
-Ajna und HA reden über **MQTT** statt über den PocketBase-Client. HA spricht MQTT
-nativ (kein per-Sprache-Client nötig), und die Verbindungsrichtung passt zur
-typischen Topologie (HA privat, Ajna öffentlich).
-
-### Konnektivität — HA verbindet sich zu Ajna (nicht umgekehrt)
+## Konnektivität — HA verbindet sich zu Ajna (nicht umgekehrt)
 
 MQTT-Clients bauen die Verbindung **ausgehend** auf; danach ist sie über dieselbe
 Verbindung **beidseitig** (publish + subscribe).
@@ -69,7 +57,7 @@ Verbindung **beidseitig** (publish + subscribe).
 → **Kein eingehender Port zu HA. Kein Aufruf der HA-API von Ajna.** Kommandos
 laufen über HAs *bestehende ausgehende* Subscription.
 
-### Topic-Design (Namespace pro HA-Instanz)
+## Topic-Design (Namespace pro HA-Instanz)
 
 Basis-Topic je Instanz: `ajna/ha/<instance>` (z. B. `ajna/ha/home`). Der
 Broker-ACL sperrt den HA-Client genau auf `ajna/ha/<instance>/#`. Format wie bei
@@ -87,7 +75,7 @@ ACE → **Gateway** publisht `ajna/ha/home/light/deckenlicht/set` → HA-Automat
 ruft `light.turn_on` → HA-State ändert sich → `…/state` → Gateway zieht das
 Ajna-Objekt nach → alle Clients sehen es.
 
-### HA-Seite — reines MQTT, kein Custom-Plugin
+## HA-Seite — reines MQTT, kein Custom-Plugin
 
 - **Zustand + Entdeckung:** eingebaute **`mqtt_statestream`**-Integration
   ([`mqtt_statestream.yaml`](../integrations/homeassistant/mqtt_statestream.yaml))
@@ -106,7 +94,7 @@ Setup-Schritte + Verifikation:
 > HA-Neustart (dann publisht HA alle States neu). Für sofortige Vollständigkeit
 > beim Gateway-Start später optional retained „Birth"-Nachrichten pro Entität.
 
-### Gateway-Konfiguration (`.env`)
+## Gateway-Konfiguration (`.env`)
 
 | Variable | Default | Zweck |
 |---|---|---|
@@ -124,7 +112,7 @@ die MQTT-Integration auf `<gateway-host>:<MQTT_PORT>` mit `MQTT_HA_USER/PASS`
 zeigen lassen. Beim eingebetteten Broker brauchst du **kein** `mosquitto_passwd`
 — das Gateway authentifiziert `MQTT_HA_USER/PASS` selbst.
 
-### TLS für den Broker
+## TLS für den Broker
 
 Der Broker ist öffentlich erreichbar und HA verbindet sich über das Internet —
 **TLS ist Pflicht** (Verschlüsselung + Server-Authentifizierung). Drei Wege:
@@ -176,7 +164,7 @@ openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
 ```
 Dann `MQTT_TLS_CERT`/`MQTT_TLS_KEY` darauf zeigen lassen (wie Weg 1).
 
-### Sicherheit — mehrschichtig
+## Sicherheit — mehrschichtig
 
 1. **Broker-ACL (Topic-Ebene):** der HA-Client ist **hart auf
    `ajna/ha/<instance>/#` beschränkt**. HA bekommt **keinen** Ajna-Login, keinen
@@ -194,62 +182,3 @@ Dann `MQTT_TLS_CERT`/`MQTT_TLS_KEY` darauf zeigen lassen (wie Weg 1).
 5. **TLS:** verschlüsselt die Verbindung + authentifiziert den Broker (s. o.).
 6. **Mehrere HA-Instanzen isoliert:** je Instanz eigener Namespace + eigene
    Broker-Credentials + `ha_instance`-Tag an den Objekten.
-
----
-
-## Weg B — Node-Bridge
-
-Der Agent läuft **lokal auf der Home-Assistant-Maschine**: spricht HA über
-`localhost` an (der Token verlässt die Maschine nicht) und verbindet sich zum
-Ajna-Server. Ein HA-WebSocket-Abo (`state_changed`) zieht den echten
-Gerätezustand in Echtzeit in die Objekte nach.
-
-### Home-Assistant-Token
-
-In HA: **Profil → Sicherheit → Long-Lived Access Tokens → Token erstellen**. Als
-`HA_TOKEN` in die `.env` legen (nie committen — `.env` ist gitignored).
-
-### Konfiguration (`.env`)
-
-| Variable | Pflicht | Default | Zweck |
-|---|---|---|---|
-| `AJNA_URL` | – | `http://127.0.0.1:8090` | Ajna-Server |
-| `AJNA_USER` / `AJNA_PASS` | ✓ | – | Bridge-User (dedizierter Ajna-Account) |
-| `HA_URL` | – | `http://127.0.0.1:8123` | Home-Assistant-URL |
-| `HA_TOKEN` | ✓ | – | Long-Lived Access Token |
-| `HA_LAT` / `HA_LON` | – | `50.3569` / `7.5890` | Controller-Koordinaten |
-| `HA_DOMAINS` | – | alle steuerbaren | CSV: nur diese Domains (z. B. `light,switch`) |
-| `HA_ENTITIES` | – | – | CSV-Allowlist konkreter `entity_id`s |
-| `HA_REFRESH_S` | – | `300` | Entitätenliste alle N s neu einlesen |
-| `HA_POLL_S` | – | `30` | Zustands-Poll als WS-Fallback |
-
-```dotenv
-AJNA_URL=https://ajna.example.com
-AJNA_USER=ha-bridge@example.com
-AJNA_PASS=…
-HA_URL=http://127.0.0.1:8123
-HA_TOKEN=eyJ…
-HA_LAT=50.44658
-HA_LON=7.59706
-# optional eingrenzen:  HA_DOMAINS=light,switch,cover   HA_ENTITIES=light.deckenlicht
-```
-
-### Starten
-
-Auf der HA-Maschine, im Ajna-Projektverzeichnis: `npm run ha-bridge`. Dauerbetrieb
-am besten unter einem Prozessmanager **auf der HA-Maschine** (nicht im
-Server-PM2, da anderer Host):
-
-```bash
-pm2 start agents/homeassistant-bridge.mjs --name ha-bridge --time && pm2 save
-```
-
-### Grenzen / Ausblick
-
-- Das Controller-**Kontextmenü** wird bei sehr vielen Entitäten lang (es scrollt
-  nicht). Mit `HA_DOMAINS` / `HA_ENTITIES` eingrenzen. Ein durchsuchbarer
-  Entitäten-Picker-Dialog wäre die schönere UX (Client-Erweiterung, offen).
-- Licht: `Heller`/`Dunkler` ändern die Helligkeit relativ um ±20 % (unter 0 % →
-  aus, über 100 % gedeckelt). `climate` ändert die Zieltemperatur um ±0,5 °.
-- Area-/Label-basierte Auswahl (statt Domains/Allowlist) bräuchte die
-  HA-WebSocket-Registry-API — bewusst noch nicht umgesetzt.

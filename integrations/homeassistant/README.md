@@ -7,8 +7,11 @@ HA verbindet sich **ausgehend** zu einem Ajna-seitigen MQTT-Broker, **publisht**
 Gerätezustände und **abonniert** Schalt-Kommandos. Kein eingehender Port zu HA,
 kein Ajna-Login/Token in HA.
 
-Das Ajna-seitige **Gateway** (Node) existiert noch nicht — diesen PoC verifizierst
-du daher mit `mosquitto_sub`/`mosquitto_pub` (spielt „das Gateway").
+Das Ajna-seitige **Gateway** ([`agents/homeassistant-gateway.mjs`](../../agents/homeassistant-gateway.mjs),
+Start `npm run ha-gateway`) bringt einen eingebetteten Broker mit — im Normalbetrieb
+brauchst du Mosquitto also nicht. Diese Artefakte richten die **HA-Seite** ein; die
+`mosquitto_sub`/`mosquitto_pub`-Schritte unten sind eine optionale Broker-Sichtprüfung
+**ohne** laufendes Gateway.
 
 ## Inhalt
 
@@ -20,6 +23,10 @@ du daher mit `mosquitto_sub`/`mosquitto_pub` (spielt „das Gateway").
 | `mosquitto/aclfile.example` | Broker-ACL — sperrt HA auf `ajna/ha/<instance>/#` |
 
 ## 1. Broker (Ajna-Seite)
+
+> Nur nötig, wenn du einen **externen** Broker fahren willst (`MQTT_EXTERNAL_URL`).
+> Standard ist der ins Gateway eingebettete Broker — dann überspring diesen Schritt
+> und leg die HA-Zugangsdaten stattdessen als `MQTT_HA_USER`/`MQTT_HA_PASS` an.
 
 Mosquitto mit den Beispiel-Configs starten und zwei Nutzer anlegen:
 
