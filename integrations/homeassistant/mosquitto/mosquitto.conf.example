@@ -1,16 +1,23 @@
 # Ajna-seitiger MQTT-Broker (Mosquitto). HA verbindet sich AUSGEHEND hierher —
 # kein eingehender Port zu HA nötig.
 #
+# ACHTUNG PFADE: Die /mosquitto/... unten sind die Pfade im offiziellen
+# DOCKER-Image. Bei einer nativen Installation (Debian/Ubuntu: apt install
+# mosquitto) gibt es diesen Ordner NICHT — dort liegt alles unter /etc/mosquitto/
+# (Konfig) bzw. /var/lib/mosquitto/ (Daten). Passe die Pfade an deine
+# Installation an; wichtig ist nur, dass sie zusammenpassen.
+#
 # Benutzer anlegen (Passwort-Datei):
-#   mosquitto_passwd -c /mosquitto/config/passwd ha_home
-#   mosquitto_passwd    /mosquitto/config/passwd ajna_gateway
+#   Docker:  mosquitto_passwd -c /mosquitto/config/passwd ha_home
+#   Debian:  sudo mosquitto_passwd -c /etc/mosquitto/passwd ha_home
+#   (-c legt die Datei NEU an; weitere Benutzer ohne -c anhängen)
 
 persistence true
-persistence_location /mosquitto/data/
+persistence_location /mosquitto/data/          # Debian: /var/lib/mosquitto/
 log_dest stdout
 
 # Öffentlich erreichbar → TLS dringend empfohlen. Zertifikatspfade anpassen und
-# den listener auf 8883 (TLS) stellen. Für einen rein lokalen PoC kann man
+# den listener auf 8883 (TLS) stellen. Für einen rein lokalen Test kann man
 # vorübergehend Port 1883 ohne TLS nutzen.
 listener 8883
 # cafile   /mosquitto/config/certs/ca.crt
@@ -18,5 +25,5 @@ listener 8883
 # keyfile  /mosquitto/config/certs/server.key
 
 allow_anonymous false
-password_file /mosquitto/config/passwd
-acl_file /mosquitto/config/aclfile
+password_file /mosquitto/config/passwd         # Debian: /etc/mosquitto/passwd
+acl_file /mosquitto/config/aclfile             # Debian: /etc/mosquitto/aclfile
