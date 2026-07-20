@@ -47,6 +47,9 @@ brauchst". Ist der Broker öffentlich erreichbar, nutze die **TLS-Variante**
 (Port `8883`); ist das Zertifikat selbst signiert, muss HA ihm einmalig
 vertrauen (in der MQTT-Integration das Zertifikat hochladen).
 
+Fragt HA nach **Protokoll** und **Transport**, wähle **MQTT 3.1.1** und **TCP**.
+(Der Ajna-Broker spricht MQTT 3.1.1 über TCP — nicht MQTT 5, nicht WebSocket.)
+
 ## Schritt 2 — Home Assistant seine Gerätezustände senden lassen
 
 Öffne die Datei [`mqtt_statestream.yaml`](mqtt_statestream.yaml), kopiere ihren
