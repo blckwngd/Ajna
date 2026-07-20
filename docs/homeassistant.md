@@ -115,10 +115,66 @@ zeigen lassen. Beim eingebetteten Broker brauchst du **kein** `mosquitto_passwd`
 ## TLS für den Broker
 
 Der Broker ist öffentlich erreichbar und HA verbindet sich über das Internet —
-**TLS ist Pflicht** (Verschlüsselung + Server-Authentifizierung). Drei Wege:
+**TLS ist Pflicht** (Verschlüsselung + Server-Authentifizierung). Welcher Weg
+passt, hängt davon ab, ob auf dem Host schon etwas Let's-Encrypt-Zertifikate holt.
 
-**1. Echtes Zertifikat (empfohlen bei eigener Domain).** Für den Broker-Hostnamen
-ein Zertifikat besorgen, z. B. per Let's Encrypt:
+**1a. Caddy läuft schon → dessen Zertifikat mitbenutzen (empfohlen).** Wenn Caddy
+den HTTPS-Verkehr macht, holt und **erneuert** es die Let's-Encrypt-Zertifikate
+bereits automatisch — ein zweites Tool (Certbot) würde sich mit Caddy nur um die
+Ports 80/443 streiten. Nimm stattdessen Caddys Zertifikat.
+
+*Wo Caddy ablegt:* in seinem Daten-Verzeichnis unter
+`<data>/certificates/acme-v02.api.letsencrypt.org-directory/<domain>/`. `<data>`
+ist bei der üblichen Debian-/Ubuntu-Installation (apt-Paket → systemd-Dienst als
+User `caddy`) `/var/lib/caddy/.local/share/caddy`:
+
+```
+/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/<domain>/
+  ├─ <domain>.crt   # vollständige Zertifikatskette (PEM)
+  └─ <domain>.key   # privater Schlüssel (PEM)
+```
+Falls unklar, wo genau (anderer Nutzer/`XDG_DATA_HOME` gesetzt):
+```bash
+sudo find /var/lib/caddy /root "$HOME" -path '*caddy/certificates*' -name '*.crt' 2>/dev/null
+```
+`.crt`/`.key` sind direkt verwendbar — als `MQTT_TLS_CERT`/`MQTT_TLS_KEY`
+(eingebetteter Gateway-Broker) bzw. `certfile`/`keyfile` (eigener Mosquitto). Ein
+`cafile` ist nicht nötig: HA vertraut Let's Encrypt öffentlich.
+
+Zwei Stolpersteine:
+
+- **Leserechte.** Caddy legt die Dateien mode `0600`, Eigentümer `caddy` ab —
+  Mosquitto (User `mosquitto`) bzw. das Gateway (PM2-User) können sie so **nicht**
+  lesen. Direkt darauf zeigen scheitert daher meist. Robust ist **kopieren + neu
+  laden** per root-Cron/Timer (täglich; Caddy erneuert ~30 Tage vor Ablauf, ein
+  täglicher Lauf hält Mosquitto also aktuell):
+  ```bash
+  #!/usr/bin/env bash
+  set -euo pipefail
+  DOMAIN=ajna.example.com
+  SRC=/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/$DOMAIN
+  DST=/etc/mosquitto/certs
+  install -d -o mosquitto -g mosquitto -m 750 "$DST"
+  install -o mosquitto -g mosquitto -m 640 "$SRC/$DOMAIN.crt" "$DST/server.crt"
+  install -o mosquitto -g mosquitto -m 640 "$SRC/$DOMAIN.key" "$DST/server.key"
+  systemctl reload mosquitto
+  ```
+  Für den **eingebetteten Gateway-Broker** statt nach `/etc/mosquitto/certs` nach
+  `MQTT_TLS_DIR` kopieren (Eigentümer = PM2-User) und am Ende
+  `pm2 restart homeassistant-gateway` statt `systemctl reload mosquitto`.
+- **Caddy hat nur Zertifikate für Hostnamen mit eigenem Site-Block.** Am
+  einfachsten lässt du HA denselben Hostnamen wie die Web-App ansteuern (nur
+  anderer Port, z. B. `ajna.example.com:8883`) — dann existiert das Zertifikat
+  schon. Für einen eigenen Namen (`mqtt.example.com`) gib Caddy einen Stub-Block,
+  damit es auch dieses Zertifikat holt:
+  ```caddyfile
+  mqtt.example.com {
+      respond 404
+  }
+  ```
+
+**1b. Kein Caddy/keine LE-Automatik → Certbot.** Nur wenn auf 80/443 noch **kein**
+Webserver läuft (sonst Port-Konflikt — dann Weg 1a):
 
 ```bash
 certbot certonly --standalone -d mqtt.example.com
@@ -129,10 +185,11 @@ MQTT_PORT=8883
 MQTT_TLS_CERT=/etc/letsencrypt/live/mqtt.example.com/fullchain.pem
 MQTT_TLS_KEY=/etc/letsencrypt/live/mqtt.example.com/privkey.pem
 ```
-HA vertraut dem automatisch (öffentliche CA). Nach der Zertifikats-Erneuerung das
-Gateway neu starten (es liest die Dateien beim Start).
+HA vertraut dem automatisch (öffentliche CA). Certbot erneuert selbst; hänge das
+Neuladen an die Erneuerung (`certbot ... --deploy-hook "systemctl reload mosquitto"`
+bzw. `pm2 restart homeassistant-gateway`).
 
-**2. Gateway generiert selbst signiert (am einfachsten).** Ohne eigene Domain:
+**2. Gateway generiert selbst signiert (am einfachsten ohne Domain).** Ohne eigene Domain:
 
 ```dotenv
 MQTT_PORT=8883
@@ -162,7 +219,7 @@ openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
   -keyout key.pem -out cert.pem -subj "/CN=mqtt.example.com" \
   -addext "subjectAltName=DNS:mqtt.example.com,IP:192.168.1.10"
 ```
-Dann `MQTT_TLS_CERT`/`MQTT_TLS_KEY` darauf zeigen lassen (wie Weg 1).
+Dann `MQTT_TLS_CERT`/`MQTT_TLS_KEY` darauf zeigen lassen (wie Weg 1a/1b).
 
 ## Sicherheit — mehrschichtig
 

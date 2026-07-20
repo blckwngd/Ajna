@@ -145,7 +145,9 @@ mosquitto_passwd    <pfad-zur-passwd> ajna_gateway
 
 Die mitgelieferte `aclfile` beschränkt `ha_home` fest auf `ajna/ha/home/#` — HA
 kann also nur seinen eigenen Bereich lesen/schreiben. Ist der Broker öffentlich
-erreichbar, richte **TLS** ein (Port `8883`).
+erreichbar, richte **TLS** ein (Port `8883`). Wie du dafür ein Zertifikat bekommst
+— vorhandenes Caddy mitnutzen, Certbot oder selbst signiert — steht in
+[`docs/homeassistant.md`](../../docs/homeassistant.md#tls-für-den-broker).
 
 ---
 
