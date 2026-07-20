@@ -123,15 +123,19 @@ den HTTPS-Verkehr macht, holt und **erneuert** es die Let's-Encrypt-Zertifikate
 bereits automatisch — ein zweites Tool (Certbot) würde sich mit Caddy nur um die
 Ports 80/443 streiten. Nimm stattdessen Caddys Zertifikat.
 
-*Wo Caddy ablegt:* in seinem Daten-Verzeichnis unter
+*Wo Caddy ablegt:* in seinem Daten-Verzeichnis `<data>` unter
 `<data>/certificates/acme-v02.api.letsencrypt.org-directory/<domain>/`. `<data>`
-ist bei der üblichen Debian-/Ubuntu-Installation (apt-Paket → systemd-Dienst als
-User `caddy`) `/var/lib/caddy/.local/share/caddy`:
+hängt davon ab, als welcher Nutzer Caddy läuft:
 
+- **apt-Paket → systemd-Dienst als User `caddy`:** `/var/lib/caddy/.local/share/caddy`
+- **Caddy als root gestartet** (z. B. manuell `caddy start` / eigenes Unit ohne
+  `User=`): `/root/.local/share/caddy`
+
+Beispiel (Caddy als root, Domain `ajna.example.com`):
 ```
-/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/<domain>/
-  ├─ <domain>.crt   # vollständige Zertifikatskette (PEM)
-  └─ <domain>.key   # privater Schlüssel (PEM)
+/root/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/ajna.example.com/
+  ├─ ajna.example.com.crt   # vollständige Zertifikatskette (PEM)
+  └─ ajna.example.com.key   # privater Schlüssel (PEM)
 ```
 Falls unklar, wo genau (anderer Nutzer/`XDG_DATA_HOME` gesetzt):
 ```bash
@@ -152,7 +156,11 @@ Zwei Stolpersteine:
   #!/usr/bin/env bash
   set -euo pipefail
   DOMAIN=ajna.example.com
-  SRC=/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/$DOMAIN
+  # CADDY an den tatsächlichen Datenpfad anpassen:
+  #   /var/lib/caddy/.local/share/caddy   (systemd-Dienst, User caddy)
+  #   /root/.local/share/caddy            (Caddy als root)
+  CADDY=/root/.local/share/caddy
+  SRC=$CADDY/certificates/acme-v02.api.letsencrypt.org-directory/$DOMAIN
   DST=/etc/mosquitto/certs
   install -d -o mosquitto -g mosquitto -m 750 "$DST"
   install -o mosquitto -g mosquitto -m 640 "$SRC/$DOMAIN.crt" "$DST/server.crt"
