@@ -6,8 +6,11 @@
 //
 //   • Straßen   → CreateLineSystem (eine Mesh-Instanz, viele Polylines)
 //   • Gebäude   → CreateLineSystem mit Footprint + Dach + Vertikalen-Kanten;
-//                 Höhe aus OSM-Tag `height` oder `building:levels` (×3.2 m),
-//                 sonst Default 8 m.
+//                 Höhe über client/core/buildingHeight.js — explizite OSM-Höhe,
+//                 sonst Geschosse, sonst geschätzt aus der Gebäudeart
+//                 (`building=church|garage|…`), sonst Default. Dieselbe Quelle
+//                 nutzt die Drachen-Landung, damit er auf dem Dach aufsetzt,
+//                 das man auch sieht.
 //
 // "Simpelstmögliche Darstellung": kein Material-Setup, keine Polygon-
 // Extrusion (das braucht earcut als Dependency), keine Tile-Pyramide.
@@ -17,9 +20,9 @@
 // Bei Fehlern (Auth-401 etc.) wird einmal still ge-warned, kein Reload-
 // Loop. `dispose()` räumt die Meshes auf.
 
+import { buildingHeightM, heightSource } from '../../core/buildingHeight.js'
+
 const DEFAULT_RADIUS_M = 300
-const DEFAULT_BUILDING_HEIGHT_M = 8
-const LEVEL_HEIGHT_M = 3.2
 const STREET_Y = 0.05          // leicht über Ground, gegen Z-Fighting
 const BUILDING_Y_OFFSET = 0.0
 
@@ -98,6 +101,10 @@ export class OSMContext {
 
   _drawBuildings(features) {
     const lines = []
+    // Woher stammen die Höhen? OSM ist je nach Gegend sehr unterschiedlich
+    // getaggt — diese Zeile zeigt beim Laden, ob echte Angaben ankommen oder
+    // fast alles geschätzt wird. Spart die Rätselei „warum sieht das so aus".
+    const srcCount = {}
     for (const f of features) {
       if (!Array.isArray(f.coordinates) || f.coordinates.length < 3) continue
 
@@ -109,7 +116,8 @@ export class OSMContext {
         coords = [...coords, first]
       }
 
-      const height = parseHeight(f.tags) ?? DEFAULT_BUILDING_HEIGHT_M
+      const height = buildingHeightM(f.tags)
+      const src = heightSource(f.tags); srcCount[src] = (srcCount[src] || 0) + 1
       const ground = this._toLocalPoints(coords, BUILDING_Y_OFFSET)
       const roof   = ground.map(p => new BABYLON.Vector3(p.x, height, p.z))
 
@@ -119,6 +127,12 @@ export class OSMContext {
       for (let i = 0; i < ground.length - 1; i++) {
         lines.push([ground[i], roof[i]])
       }
+    }
+    if (Object.keys(srcCount).length) {
+      const legend = { height: 'getaggt', levels: 'Geschosse', type: 'aus Gebäudeart', default: 'Default' }
+      console.log('[osm] Gebäudehöhen: ' +
+        Object.entries(srcCount).sort((a, b) => b[1] - a[1])
+          .map(([k, n]) => `${n}× ${legend[k] || k}`).join(', '))
     }
     if (lines.length === 0) return 0
 
@@ -150,16 +164,3 @@ export class OSMContext {
   }
 }
 
-function parseHeight(tags = {}) {
-  if (tags.height) {
-    // Tags können "12 m", "12.5" oder "12;15" enthalten — wir nehmen
-    // den ersten Float.
-    const h = parseFloat(tags.height)
-    if (Number.isFinite(h) && h > 0) return h
-  }
-  if (tags['building:levels']) {
-    const n = parseFloat(tags['building:levels'])
-    if (Number.isFinite(n) && n > 0) return n * LEVEL_HEIGHT_M
-  }
-  return null
-}

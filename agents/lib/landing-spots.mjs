@@ -12,12 +12,12 @@
 //   • Dach als Kür: nur wenn am Boden nichts Freies gefunden wurde. Höhe aus
 //     OSM (`height` bzw. `building:levels`), sonst konservativer Default.
 
+import { buildingHeightM } from '../../client/core/buildingHeight.js'
+
 const M_PER_DEG_LAT = 111320
 
 export const DEFAULT_MIN_M = 5     // näher nicht — sonst steht er im Spieler
 export const DEFAULT_MAX_M = 20
-const DEFAULT_ROOF_H = 8           // m, wenn OSM nichts hergibt (~2,5 Geschosse)
-const LEVEL_H = 3                  // m pro Geschoss
 
 /** Meter-Offsets → Grad (lokal linearisiert; auf dieser Skala genau genug). */
 function offsetToLatLon(lat, lon, dNorthM, dEastM) {
@@ -53,14 +53,13 @@ export function pointInPolygon(lat, lon, ring) {
   return inside
 }
 
-/** Dachhöhe aus OSM-Tags — `height` gewinnt, sonst Geschosse, sonst Default. */
-export function roofHeight(tags = {}) {
-  const h = parseFloat(tags.height ?? tags['building:height'])
-  if (Number.isFinite(h) && h > 0) return h
-  const lv = parseFloat(tags['building:levels'] ?? tags.levels)
-  if (Number.isFinite(lv) && lv > 0) return lv * LEVEL_H
-  return DEFAULT_ROOF_H
-}
+/**
+ * Dachhöhe aus OSM-Tags. Delegiert an client/core/buildingHeight.js — dieselbe
+ * Quelle, die das 3D-Wireframe zeichnet. Vorher rechnete diese Datei eigenständig
+ * (mit 3,0 m statt 3,2 m pro Geschoss), sodass der Drache knapp neben dem Dach
+ * aufsetzte, das der Spieler sieht.
+ */
+export const roofHeight = buildingHeightM
 
 /** Schwerpunkt eines Rings (ungewichtet — für Dachmitte gut genug). */
 export function centroid(ring) {

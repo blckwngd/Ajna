@@ -37,11 +37,33 @@ check('Punkt weit außerhalb liegt draußen', !pointInPolygon(P.lat + 0.01, P.lo
 check('entartetes Polygon (2 Punkte) → false', !pointInPolygon(P.lat, P.lon, [[0, 0], [1, 1]]))
 check('leeres/undefiniertes Polygon → false', !pointInPolygon(P.lat, P.lon, undefined))
 
-console.log('\n── Dachhöhe aus OSM-Tags')
-check('height gewinnt', roofHeight({ height: '12.5', 'building:levels': '2' }) === 12.5)
-check('Geschosse × 3 m', roofHeight({ 'building:levels': '4' }) === 12)
+console.log('\n── Gebäudehöhe aus OSM-Tags (gemeinsam mit dem 3D-Wireframe)')
+check('height gewinnt vor Geschossen', roofHeight({ height: '12.5', 'building:levels': '2' }) === 12.5)
+check('"12 m" wird gelesen', roofHeight({ height: '12 m' }) === 12)
+check('building:height als Alternative', roofHeight({ 'building:height': '9' }) === 9)
+check('est_height als Alternative', roofHeight({ est_height: '11' }) === 11)
+check('Geschosse × 3,2 m', Math.abs(roofHeight({ 'building:levels': '4' }) - 12.8) < 1e-9)
+check('+ Dachgeschoss zählt weniger', Math.abs(roofHeight({ 'building:levels': '2', 'roof:levels': '1' }) - (2 * 3.2 + 2.5)) < 1e-9)
+check('Unsinn im Tag → fällt zurück', roofHeight({ height: 'ja' }) === 8)
+
+// DER Punkt für die Sichtbarkeit: die meisten OSM-Gebäude haben GAR KEINE
+// Höhenangabe. Ohne Typ-Schätzung wären sie alle exakt gleich hoch.
+console.log('\n── Schätzung aus der Gebäudeart (wenn keine Höhe getaggt ist)')
+check('Kirche überragt deutlich', roofHeight({ building: 'church' }) > 15)
+check('Garage ist niedrig', roofHeight({ building: 'garage' }) <= 3)
+check('Wohnhaus im mittleren Bereich', roofHeight({ building: 'house' }) === 7)
+check('Mehrfamilienhaus höher als Wohnhaus',
+  roofHeight({ building: 'apartments' }) > roofHeight({ building: 'house' }))
+check('Bürogebäude höher als Einzelhandel',
+  roofHeight({ building: 'office' }) > roofHeight({ building: 'retail' }))
+check('unbekannte Art → Default 8 m', roofHeight({ building: 'gibtsnicht' }) === 8)
+check('Groß-/Kleinschreibung egal', roofHeight({ building: 'CHURCH' }) === roofHeight({ building: 'church' }))
 check('ohne Tags → Default 8 m', roofHeight({}) === 8)
-check('Unsinn im Tag → Default', roofHeight({ height: 'ja' }) === 8)
+
+// Und die Kernaussage in einem Satz: die Silhouette differenziert sich.
+const variety = new Set(['church', 'garage', 'house', 'apartments', 'office', 'industrial', 'shed']
+  .map(b => roofHeight({ building: b })))
+check(`7 Gebäudearten → ${variety.size} verschiedene Höhen`, variety.size >= 6)
 
 console.log('\n── Landeplatz: freies Feld')
 const free = findLandingSpot({ ...P, buildings: [], rng: () => 0 })
@@ -65,7 +87,7 @@ console.log('\n── Kür: Dach, wenn ringsum alles verbaut ist')
 const mega = { coordinates: squareAround(P.lat, P.lon, 60), tags: { 'building:levels': '5' } }
 const roof = findLandingSpot({ ...P, buildings: [mega], rng: () => 0 })
 check('weicht aufs Dach aus', roof?.kind === 'roof')
-check('Dachhöhe = 5 Geschosse × 3 m = 15 m', roof?.altitude === 15)
+check('Dachhöhe = 5 Geschosse × 3,2 m = 16 m', Math.abs(roof?.altitude - 16) < 1e-9)
 check('Dachpunkt liegt im Gebäude', pointInPolygon(roof.lat, roof.lon, mega.coordinates))
 
 console.log('\n── Robustheit')
