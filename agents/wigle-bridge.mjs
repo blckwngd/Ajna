@@ -24,6 +24,17 @@
 //   WIGLE_COVERAGE_M   Reichweiten-Basis in m (Default: 50) = 2,4-GHz-Referenz
 //                      und Fallback; 5 GHz ×0,6, 6 GHz ×0,45 davon
 //
+//   Radius je Netz — zwei Stufen:
+//     • Standard: aus dem Frequenzband geschätzt (Band aus channel/frequency,
+//       KEINE extra Abfrage).
+//     • WIGLE_DETAIL_RADIUS=1: EMPIRISCH aus den Einzelsichtungen (network/detail,
+//       robuster Perzentil-Radius). Kostet 1 Abfrage/Netz → hart budgetiert:
+//         WIGLE_DETAIL_MAX          Detail-Abfragen pro Sync (Default: 10)
+//         WIGLE_DETAIL_PCTL         Perzentil der Distanzen 0..1 (Default: 0.9)
+//         WIGLE_DETAIL_MIN_SAMPLES  min. Sichtungen, sonst Band (Default: 4)
+//         WIGLE_DETAIL_CAP_M        Radius-Deckel in m (Default: 250)
+//       Der Bestand wird über mehrere Syncs schrittweise verfeinert (Backfill).
+//
 // Hinweis "Nähe des Nutzers": ohne Server-seitige Spielerpräsenz nutzt der
 // Agent (wie ais-/poi-bridge) ein KONFIGURIERTES Zentrum. Echte Nutzer-Nähe
 // käme erst mit einem Presence-Mechanismus.
@@ -74,6 +85,16 @@ const MAX_AREAS  = parseInt(process.env.WIGLE_MAX_AREAS || '8', 10)    // Quota-
 const POLL_MS      = parseFloat(process.env.WIGLE_POLL_S || '60') * 1000        // Bereichs-Poll (billig, lokal)
 const QUERY_MIN_MS = parseFloat(process.env.WIGLE_QUERY_MIN_S || '300') * 1000  // min. Abstand WiGLE-Abfragen
 
+// Ansatz B (optional): empirischer Empfangsradius aus den Einzelsichtungen
+// (network/detail). EINE WiGLE-Abfrage PRO NETZ → hart budgetiert. Aus (Default)
+// bleibt es bei der bandbasierten Schätzung.
+const DETAIL_ON    = /^(1|true|yes|on)$/i.test(process.env.WIGLE_DETAIL_RADIUS || '')
+const DETAIL_MAX   = parseInt(process.env.WIGLE_DETAIL_MAX || '10', 10)         // Detail-Abfragen pro Sync (Quota!)
+const DETAIL_PCTL  = Math.min(1, Math.max(0, parseFloat(process.env.WIGLE_DETAIL_PCTL || '0.9')))  // Perzentil statt Max
+const DETAIL_MIN   = parseInt(process.env.WIGLE_DETAIL_MIN_SAMPLES || '4', 10)  // darunter nicht vertrauenswürdig
+const DETAIL_CAP_M = parseFloat(process.env.WIGLE_DETAIL_CAP_M || '250')        // Deckel gg. mobile/streuende APs
+const DETAIL_FLOOR_M = 10
+
 // Bei HTTPS ggf. mit --use-system-ca neu starten (Caddys interne CA). Robust
 // gegen altes Node & öffentliche Zerts — siehe agents/lib/system-ca.mjs.
 maybeReexecWithSystemCa(AJNA_URL)
@@ -96,6 +117,9 @@ const AUTH = 'Basic ' + Buffer.from(`${API_NAME}:${API_TOKEN}`).toString('base64
 
 console.log(`[wigle] Zentrum: ${CENTER_LAT.toFixed(4)}, ${CENTER_LON.toFixed(4)} · Radius ${RADIUS_M} m · max ${MAX_NETS}`)
 console.log(`[wigle] Sync-Intervall: ${(INTERVAL_MS / 1000).toFixed(0)} s · Reichweite-Basis (2,4 GHz): ${COVERAGE_M} m, 5 GHz ${Math.round(COVERAGE_M * 0.6)} m, 6 GHz ${Math.round(COVERAGE_M * 0.45)} m`)
+console.log(DETAIL_ON
+  ? `[wigle] Empfangsradius: EMPIRISCH aus Sichtungen (network/detail, max ${DETAIL_MAX} Abfragen/Sync, p${Math.round(DETAIL_PCTL * 100)}, Deckel ${DETAIL_CAP_M} m), Band als Fallback`
+  : `[wigle] Empfangsradius: bandbasiert geschätzt (WIGLE_DETAIL_RADIUS=1 für empirische Verfeinerung)`)
 
 // ─── Ajna-Login + Manifest ───────────────────────────────────────────────
 const ajna = new AjnaManager(AJNA_URL)
@@ -115,14 +139,24 @@ try {
   console.warn('[ajna] manifest-upsert fehlgeschlagen:', err?.message || err)
 }
 
-// ─── In-Memory-Map: netid (BSSID) → { objectId, name } ───────────────────
+// ─── In-Memory-Map: netid (BSSID) → { objectId, name, basis, lat, lon } ──
+// `basis` merkt sich, WORAUS der Radius kommt ('observations'|'band'|'fallback')
+// — damit das Backfill (Ansatz B) nur noch nicht empirisch verfeinerte Netze
+// anfasst. lat/lon dienen dem Detail-Aufruf als Kreismittelpunkt.
 const nets = new Map()
+// Netze, deren network/detail zu wenige Sichtungen (< DETAIL_MIN) hatte: prozess-
+// weit gemerkt, damit das Backfill sie nicht jeden Sync erneut abfragt (sonst
+// verbrennt das Budget an aussichtslosen Netzen). Bei Neustart einmal neu geprüft.
+const detailInsufficient = new Set()
 try {
   await ajna.refreshObjects()
   for (const obj of ajna.getObjects()) {
     if (obj.type !== 'wifi') continue
     const netid = obj.state?.netid
-    if (netid) nets.set(String(netid), { objectId: obj.id, name: obj.name })
+    if (netid) nets.set(String(netid), {
+      objectId: obj.id, name: obj.name,
+      basis: obj.state?.coverage_basis || null, lat: obj.lat, lon: obj.lon
+    })
   }
   console.log(`[ajna] ${nets.size} vorhandene WLANs geladen`)
 } catch (err) {
@@ -162,6 +196,45 @@ const BAND_FACTOR = { '2.4': 1.0, '5': 0.6, '6': 0.45 }
 function coverageRadiusOf(n) {
   const band = bandOf(n)
   return Math.round(COVERAGE_M * (band ? BAND_FACTOR[band] : 1.0))
+}
+
+// Grobe Distanz in Metern (äquirektangular — auf dieser Skala genau genug).
+function distM(aLat, aLon, bLat, bLon) {
+  const dLat = (bLat - aLat) * 111320
+  const dLon = (bLon - aLon) * 111320 * Math.cos(aLat * Math.PI / 180)
+  return Math.hypot(dLat, dLon)
+}
+
+const WIGLE_DETAIL_URL = 'https://api.wigle.net/api/v2/network/detail'
+
+// Ansatz B: empirischer Radius aus den EINZELsichtungen. Jede Sichtung ist ein
+// Ort, an dem das AP tatsächlich empfangen wurde — die Streuung um den
+// Mittelpunkt ist der ehrlichste Reichweiten-Proxy. Bewusst ein RADIUS (Kreis),
+// KEIN Hüllpolygon: WiGLE-Sichtungen folgen Straßen (Wardriving), ein Polygon
+// bildete den Fahrweg ab, nicht das Funkfeld. Robustes Perzentil statt Max, damit
+// ein einzelner Ausreißer (mobiler Hotspot, GPS-Fehler) den Kreis nicht sprengt.
+// EINE WiGLE-Abfrage pro Aufruf → nur mit Budget nutzen.
+// Wirft bei 429 (Tageslimit) weiter, damit der Aufrufer das Budget stoppt.
+async function fetchDetailRadius(netid, centerLat, centerLon) {
+  const r = await fetch(`${WIGLE_DETAIL_URL}?${new URLSearchParams({ netid })}`, {
+    headers: { Authorization: AUTH, Accept: 'application/json' }
+  })
+  if (r.status === 429) throw new Error('429 — WiGLE-Tageslimit')
+  if (!r.ok) throw new Error(`WiGLE detail ${r.status}`)
+  const data = await r.json()
+  if (data && data.success === false) return null
+  const net = Array.isArray(data?.results) ? data.results[0] : data
+  const pts = Array.isArray(net?.locationData) ? net.locationData : []
+  const dists = []
+  for (const p of pts) {
+    const la = Number(p.latitude ?? p.lat), lo = Number(p.longitude ?? p.lon ?? p.long)
+    if (Number.isFinite(la) && Number.isFinite(lo)) dists.push(distM(centerLat, centerLon, la, lo))
+  }
+  if (dists.length < DETAIL_MIN) return null   // zu wenig Daten → Band-Schätzung behalten
+  dists.sort((a, b) => a - b)
+  const idx = Math.min(dists.length - 1, Math.floor(DETAIL_PCTL * (dists.length - 1)))
+  const radius = Math.round(Math.min(DETAIL_CAP_M, Math.max(DETAIL_FLOOR_M, dists[idx])))
+  return { radius, samples: dists.length }
 }
 
 function describeNet(n) {
@@ -242,6 +315,32 @@ async function queryReconcile(centers, fromAreas) {
   const seen = new Set()
   let created = 0, skipped = 0, failed = 0
 
+  // Ansatz-B-Budget: höchstens DETAIL_MAX network/detail-Abfragen pro Sync, damit
+  // ein Erst-Lauf mit hunderten Netzen das Tageslimit nicht sprengt. `detail429`
+  // stoppt weitere Versuche, sobald WiGLE das Limit meldet; `triedDetail`
+  // verhindert, dass dasselbe Netz in einem Sync doppelt abgefragt wird (Anlegen
+  // + Backfill). `refined` zählt die empirisch bestimmten Radien.
+  let detailBudget = DETAIL_ON ? DETAIL_MAX : 0
+  let detail429 = false, refined = 0
+  const triedDetail = new Set()
+
+  // Empirischen Radius holen, solange Budget/Flag es zulassen; sonst Band-Schätzung.
+  async function coverageFor(n, lat, lon) {
+    const netid = String(n.netid)
+    if (detailBudget > 0 && !detail429) {
+      detailBudget--; triedDetail.add(netid)
+      try {
+        const d = await fetchDetailRadius(netid, lat, lon)
+        if (d) { refined++; return { radius: d.radius, basis: 'observations', samples: d.samples } }
+        detailInsufficient.add(netid)   // getestet, aber zu wenige Sichtungen → nicht erneut versuchen
+      } catch (err) {
+        if (String(err.message).startsWith('429')) { detail429 = true; console.warn('[wigle] detail 429 → Rest dieses Syncs Band-Schätzung') }
+        else console.warn(`[wigle] detail ${netid}: ${err.message}`)
+      }
+    }
+    return { radius: coverageRadiusOf(n), basis: bandOf(n) ? 'band' : 'fallback', samples: null }
+  }
+
   for (const n of results) {
     const netid = n.netid
     const lat = n.trilat, lon = n.trilong
@@ -252,6 +351,7 @@ async function queryReconcile(centers, fromAreas) {
     const name = (n.ssid || '').trim() || `WLAN ${netid}`
     const cat = encCategory(n.encryption)
     try {
+      const cov = await coverageFor(n, lat, lon)   // empirisch (Ansatz B) oder Band
       const obj = await ajna.createObject({
         name,
         type: 'wifi',
@@ -275,13 +375,15 @@ async function queryReconcile(centers, fromAreas) {
           encryption: n.encryption || null,
           enc_category: cat,                 // normalisiert → Farbe/Symbol/Filter
           channel: n.channel ?? null,
-          band: bandOf(n),                   // '2.4'|'5'|'6'|null — bestimmt den Radius
+          band: bandOf(n),                   // '2.4'|'5'|'6'|null — Basis der Band-Schätzung
           wifi_type: n.type || null,
           lastupdt: n.lastupdt || null,
-          coverage_radius: coverageRadiusOf(n)  // je Band geschätzt; Client zeichnet den Kreis
+          coverage_radius: cov.radius,       // Client zeichnet daraus den Kreis
+          coverage_basis: cov.basis,         // 'observations'|'band'|'fallback' — woher der Radius kommt
+          coverage_samples: cov.samples      // Anzahl Sichtungen (nur bei 'observations')
         }
       })
-      nets.set(String(netid), { objectId: obj.id, name })
+      nets.set(String(netid), { objectId: obj.id, name, basis: cov.basis, lat, lon })
       created++
       console.log(`[ajna] + ${name} (${netid}) → ${obj.id}`)
     } catch (err) {
@@ -304,7 +406,36 @@ async function queryReconcile(centers, fromAreas) {
     }
   }
 
-  console.log(`[wigle] ${created} neu, ${skipped} bereits vorhanden, ${deleted} entfernt, ${failed} Fehler — Bestand: ${nets.size}`)
+  // Backfill (Ansatz B): vorhandene Netze, die noch keinen empirischen Radius
+  // haben, im verbliebenen Budget nachziehen. So wird der Bestand über mehrere
+  // Syncs vollständig verfeinert — der Erst-Lauf hätte sein Budget sonst nur für
+  // die zuerst angelegten Netze verbraucht, die lange laufenden alten nie.
+  if (DETAIL_ON && !detail429) {
+    for (const [netid, net] of nets) {
+      if (detailBudget <= 0 || detail429) break
+      if (net.basis === 'observations' || triedDetail.has(netid) || detailInsufficient.has(netid)) continue
+      const la = Number(net.lat), lo = Number(net.lon)
+      if (!Number.isFinite(la) || !Number.isFinite(lo)) continue
+      detailBudget--; triedDetail.add(netid)
+      try {
+        const d = await fetchDetailRadius(netid, la, lo)
+        if (!d) { net.basis = 'band'; detailInsufficient.add(netid); continue }   // zu wenige Sichtungen → nicht mehr versuchen
+        const rec = ajna.getObjectById(net.objectId)
+        if (!rec) continue
+        await ajna.updateObject(net.objectId, {
+          state: { ...rec.state, coverage_radius: d.radius, coverage_basis: 'observations', coverage_samples: d.samples }
+        })
+        net.basis = 'observations'; refined++
+        console.log(`[ajna] ~ ${net.name} (${netid}) Radius ${d.radius} m aus ${d.samples} Sichtungen`)
+      } catch (err) {
+        if (String(err.message).startsWith('429')) { detail429 = true; console.warn('[wigle] detail 429 (Backfill) → Stop'); break }
+        console.warn(`[wigle] backfill ${netid}: ${err.message}`)
+      }
+    }
+  }
+
+  const detailNote = DETAIL_ON ? `, ${refined} empirisch (${DETAIL_MAX - detailBudget}/${DETAIL_MAX} Detail-Abfragen)` : ''
+  console.log(`[wigle] ${created} neu, ${skipped} bereits vorhanden, ${deleted} entfernt, ${failed} Fehler${detailNote} — Bestand: ${nets.size}`)
 }
 
 // Demand-getriebene Schleife: Bereiche häufig + billig pollen, WiGLE nur
