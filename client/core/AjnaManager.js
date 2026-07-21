@@ -464,6 +464,24 @@ export class AjnaManager {
     return this._clientFor(compositeId).onProximity(compositeId, callback)
   }
 
+  /**
+   * Kommando an einen Agent eines BESTIMMTEN Servers (Default: Standard-Server).
+   * Objektlos — es gibt keine composite ID, aus der sich der Server ableiten
+   * ließe, also muss er benannt werden.
+   */
+  async sendAgentCommand(source, command, payload, serverId = null) {
+    const c = serverId ? this.clients.get(serverId) : this.defaultClient
+    if (!c) throw new Error(`AjnaManager: unbekannter Server "${serverId}"`)
+    return c.sendAgentCommand(source, command, payload)
+  }
+
+  /** Für Agents: eigene Kommandos abonnieren (Default-Server). */
+  async onAgentCommand(source, callback, serverId = null) {
+    const c = serverId ? this.clients.get(serverId) : this.defaultClient
+    if (!c) throw new Error(`AjnaManager: unbekannter Server "${serverId}"`)
+    return c.onAgentCommand(source, callback)
+  }
+
   // ===================================================================
   //  Inventar
   // ===================================================================

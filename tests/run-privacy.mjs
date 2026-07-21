@@ -15,5 +15,6 @@
 import { runSuites } from './_runner.mjs'
 
 import * as proximity from './privacy/proximity.mjs'
+import * as agentCommand from './privacy/agent-command.mjs'
 
-await runSuites('Privatsphäre', 'ptest', [proximity])
+await runSuites('Privatsphäre', 'ptest', [proximity, agentCommand])

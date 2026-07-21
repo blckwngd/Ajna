@@ -1125,3 +1125,66 @@ routerAdd("POST", "/api/proximity", (e) => {
     return e.json(500, { error: "" + (err && err.message ? err.message : err) })
   }
 })
+
+
+// =====================================================================
+// POST /api/agents/{source}/command  — Kommando an einen Agent
+//
+// Objektloser Befehlskanal. Es gibt Aktionen, die sich an KEIN Objekt haengen
+// lassen — "erzeuge hier ein Monster" hat noch kein Objekt, an dem man
+// interagieren koennte. Ein unsichtbares Traeger-Objekt waere die Alternative,
+// muesste aber aus Rendering, Editor-Listen und Agent-Filtern herausgefiltert
+// und vom Client erst gefunden werden.
+//
+// Body: { command: "<string>", payload: <beliebig> }
+// Broadcast: Topic `agent:<source>`, { command, payload, source: <userId>, ts }
+//
+// BEWUSST NUR TRANSPORT: die Route prueft Authentifizierung und leitet weiter,
+// sie vergibt KEINE Rechte. Was ein Kommando bewirkt, entscheidet allein der
+// Agent — er MUSS validieren und begrenzen (Cooldown, Obergrenze), denn jeder
+// angemeldete Nutzer kann hier senden. `source` im Broadcast ist die vom Server
+// gesetzte User-ID (nicht faelschbar), damit Agents pro Nutzer drosseln koennen.
+// =====================================================================
+routerAdd("POST", "/api/agents/{source}/command", (e) => {
+  try {
+    const info = e.requestInfo()
+    const user = info.auth
+    if (!user) return e.json(401, { error: "auth required" })
+
+    const source = e.request.pathValue("source")
+    if (!source || !/^[A-Za-z0-9_-]{1,64}$/.test(source)) {
+      return e.json(400, { error: "invalid agent source" })
+    }
+
+    const body = info.body || {}
+    const command = body.command
+    if (!command || typeof command !== "string" || command.length > 64) {
+      return e.json(400, { error: "field 'command' (string) is required" })
+    }
+
+    const topic = "agent:" + source
+    const message = new SubscriptionMessage({
+      name: topic,
+      data: JSON.stringify({
+        command: command,
+        payload: body.payload || null,
+        source: user.id,
+        ts: new Date().toISOString()
+      })
+    })
+
+    let delivered = 0
+    const clients = $app.subscriptionsBroker().clients()
+    for (const id in clients) {
+      const client = clients[id]
+      if (client.hasSubscription(topic)) { client.send(message); delivered++ }
+    }
+
+    // delivered === 0 heisst: der Agent laeuft gerade nicht. Kein Fehler, aber
+    // der Client kann es dem Nutzer sagen ("niemand hoert zu").
+    return e.json(200, { ok: true, delivered: delivered })
+  } catch (err) {
+    console.log("[agent-command] error: " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err) })
+  }
+})

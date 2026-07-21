@@ -14,7 +14,7 @@ import { PositionSmoother } from "./core/PositionSmoother.js"
 import { encStyleOf } from "./core/wifiStyle.js"
 import { shapeOf, emojiOf, colorOf, radiusOf } from "./core/Appearance.js"
 import { interactionReply, describeRequires } from "./core/InteractionReply.js"
-import { spawnRandomAndEdit } from "./core/SpawnHere.js"
+import { spawnRandomAndEdit, directorSpawnItems } from "./core/SpawnHere.js"
 import { InterestArea } from "./core/InterestArea.js"
 import { ProximityReporter } from "./core/ProximityReporter.js"
 import { InterestAreaDebug } from "./core/InterestAreaDebug.js"
@@ -805,13 +805,18 @@ async function init() {
           onClick: () => editorUI.startNewObjectAt(lat, lng, 0)
         },
         {
-          label: 'Zufälliges Objekt…',
+          label: 'Zufälliges Objekt (mir gehörend)…',
           disabled: !loggedIn,
           onClick: () => spawnRandomAndEdit({
             ajna, editorUI, announcer: _announcer,
             position: { lat, lon: lng, altitude: 0 }
           }).catch(err => toast.show(err?.message || 'Spawn fehlgeschlagen', { title: 'Spawn' }))
-        }
+        },
+        // Vom World-Director erzeugen lassen → gehört ihm, bewegt sich auch.
+        ...directorSpawnItems({
+          ajna, position: { lat, lon: lng }, enabled: loggedIn,
+          notify: msg => toast.show(msg, { title: 'Spawn' })
+        })
       ]
     })
   })

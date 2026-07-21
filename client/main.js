@@ -44,7 +44,7 @@ import { Toast } from "./core/Toast.js"
 import { interactionReply, isCollectAction } from "./core/InteractionReply.js"
 import { InventoryUI, DRAG_MIME } from "./core/InventoryUI.js"
 import { inventoryDevices } from "./core/inventoryDevices.js"
-import { spawnRandomAndEdit } from "./core/SpawnHere.js"
+import { spawnRandomAndEdit, directorSpawnItems } from "./core/SpawnHere.js"
 import { CameraComponent } from "./engine/components/CameraComponent.js"
 import { DebugCameraComponent } from "./engine/components/DebugCameraComponent.js"
 import { PlayerGPSComponent } from "./engine/components/PlayerGPSComponent.js"
@@ -891,7 +891,7 @@ async function init() {
           onClick: () => editorUI.startNewObjectAt(geoPos.lat, geoPos.lon, geoPos.altitude)
         },
         {
-          label: 'Zufälliges Objekt…',
+          label: 'Zufälliges Objekt (mir gehörend)…',
           disabled: !ajnaManager.isLoggedIn(),
           onClick: () => spawnRandomAndEdit({
             ajna: ajnaManager, editorUI, announcer: _announcer,
@@ -900,7 +900,13 @@ async function init() {
             if (!_toast) _toast = new Toast()
             _toast.show(err?.message || 'Spawn fehlgeschlagen', { title: 'Spawn' })
           })
-        }
+        },
+        // Vom World-Director erzeugen lassen → gehört ihm, bewegt sich auch.
+        ...directorSpawnItems({
+          ajna: ajnaManager, position: { lat: geoPos.lat, lon: geoPos.lon },
+          enabled: ajnaManager.isLoggedIn(),
+          notify: msg => { if (!_toast) _toast = new Toast(); _toast.show(msg, { title: 'Spawn' }) }
+        })
       ]
     })
   })

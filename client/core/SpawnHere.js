@@ -124,3 +124,64 @@ export async function spawnRandomAndEdit({ ajna, editorUI, position, announcer }
   try { editorUI?.fillEditor?.(obj) } catch (err) { console.warn('[spawn] fillEditor:', err?.message || err) }
   return obj
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Spawn durch den World-Director (statt clientseitig)
+// ─────────────────────────────────────────────────────────────────────────
+// Der Unterschied zu spawnRandomHere() oben: DORT legt der Client das Objekt an,
+// es gehört also dem Spieler. Der World-Director kann es dann NICHT bewegen —
+// die updateRule verlangt owner oder `edit`, und ohne `state.director` adoptiert
+// er es ohnehin nie. Ergebnis: ein hübsches, aber regungsloses Monster.
+//
+// Hier schicken wir stattdessen nur ein Kommando mit der ANGEKLICKTEN Position;
+// der Director erzeugt das Objekt selbst. Damit gehört es ihm, trägt die
+// richtigen Flags, bekommt seine ACE — und bewegt sich.
+//
+// Kein Privatsphäre-Thema: übertragen wird eine vom Spieler GEWÄHLTE Stelle,
+// nicht seine gemessene Position. (In der AR-Ansicht liegt eine angetippte
+// Bodenstelle naturgemäß in seiner Nähe — auf der Karte dagegen überall.)
+
+/** Archetypen, die der Director auf Zuruf setzen kann (Reihenfolge = Menüfolge). */
+export const DIRECTOR_SPAWNS = [
+  { archetype: 'enemy',  label: 'Monster' },
+  { archetype: 'animal', label: 'Tier' },
+  { archetype: 'npc',    label: 'NPC' },
+  { archetype: 'dragon', label: 'Drache' },
+  { archetype: 'diamond', label: 'Diamant' },
+]
+
+/**
+ * Kontextmenü-Einträge „<Typ> hier erzeugen" für Karte UND AR — einmal
+ * definiert, damit die beiden Ansichten nicht auseinanderlaufen.
+ *
+ * @param {object} o
+ * @param {object} o.ajna
+ * @param {{lat:number, lon:number}} o.position   angeklickte Stelle
+ * @param {boolean} o.enabled
+ * @param {(msg:string) => void} [o.notify]       Rückmeldung an den Nutzer
+ * @param {string} [o.source]                     Agent-Quelle (Default world-director)
+ */
+export function directorSpawnItems({ ajna, position, enabled = true, notify, source = 'world-director' }) {
+  const send = async (archetype, label) => {
+    try {
+      const res = await ajna.sendAgentCommand(source, 'spawn', {
+        archetype,
+        at: { lat: position.lat, lon: position.lon }
+      })
+      // delivered === 0 → niemand hört zu. Das ist der häufigste Stolperstein
+      // (Director läuft nicht), also klar benennen statt still zu scheitern.
+      if (!res?.delivered) notify?.(`${label}: der World-Director läuft nicht — nichts erzeugt.`)
+      else notify?.(`${label} wird erzeugt…`)
+    } catch (err) {
+      notify?.(err?.message || `${label} konnte nicht angefordert werden`)
+    }
+  }
+  return [
+    ...DIRECTOR_SPAWNS.map(s => ({
+      label: `${s.label} hier erzeugen`,
+      disabled: !enabled,
+      onClick: () => send(s.archetype, s.label)
+    })),
+    { label: 'Zufällig hier erzeugen', disabled: !enabled, onClick: () => send('random', 'Zufälliges Objekt') }
+  ]
+}

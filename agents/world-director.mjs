@@ -330,9 +330,16 @@ function targetCount(archetype) {
 
 // Baut den Spawn-Datensatz für einen Archetyp um ein Zentrum (Interest-Area
 // oder das konfigurierte Fallback-Zentrum).
-function buildSpawn(archetype, center = { lat: CENTER_LAT, lon: CENTER_LON }) {
+// `opts.spreadM = 0` → exakt auf `center` setzen (Spawn auf Zuruf: der Spieler
+// hat eine Stelle angeklickt, die soll nicht verwürfelt werden).
+// `opts.onDemand` markiert solche Objekte: sie zählen NICHT zur Soll-Population
+// und werden nicht wegen Entfernung despawnt (siehe Adopt-on-Boot).
+function buildSpawn(archetype, center = { lat: CENTER_LAT, lon: CENTER_LON }, opts = {}) {
   const arch = ARCHETYPES[archetype]
-  const { lat, lon } = randomPointNear(center.lat, center.lon, RADIUS_M)
+  const spreadM = Number.isFinite(opts.spreadM) ? opts.spreadM : RADIUS_M
+  const { lat, lon } = spreadM > 0
+    ? randomPointNear(center.lat, center.lon, spreadM)
+    : { lat: center.lat, lon: center.lon }
   const pool = MODEL_POOL[archetype] || []
   const model = pool.length ? pick(pool) : null
   // Flughöhe: echter Flieger (Drache) hoch, Vogel-Modelle niedrig, sonst Boden.
@@ -357,6 +364,7 @@ function buildSpawn(archetype, center = { lat: CENTER_LAT, lon: CENTER_LON }) {
     spawn_id: randomUUID(),
     actions: arch.actions          // Menü-Aktionen (Client liest state.actions)
   }
+  if (opts.onDemand) state.on_demand = true   // vom Spieler angefordert, nicht Teil der Soll-Population
   if (archetype === 'npc')  state.dialogs = sample(DIALOG_LINES, 4)   // Reihe zufälliger Antworten
   if (archetype === 'hint') state.hint   = pick(HINT_LINES)
   if (archetype === 'diamond') { state.stackable = true; state.portable = true }   // einsammel-/stapelbar
@@ -502,6 +510,11 @@ try {
     if (obj?.state?.director !== true) continue
     const a = obj.state.archetype
     if (!(a in existingByArch)) continue
+    // Auf Zuruf erzeugte Objekte stehen bewusst dort, wo jemand hingeklickt hat:
+    // NICHT wegen Entfernung despawnen und NICHT zur Soll-Population zählen —
+    // sonst spawnt der Director seine eigene Bevölkerung nicht mehr, sobald ein
+    // Spieler ein paar Monster gesetzt hat.
+    if (obj.state.on_demand === true) { managed.push(obj); continue }
     const dist = haversine(CENTER_LAT, CENTER_LON, obj.lat, obj.lon)
     // Im Interest-Area-Modus NICHT am fixen Zentrum despawnen — das macht
     // reconcile() später relativ zu den aktiven Zentren (Spieler-Positionen).
@@ -518,8 +531,8 @@ try {
 }
 
 // ─── Fehlende Objekte bis zum Soll-Bestand anlegen ───────────────────────
-async function spawnOne(archetype, center) {
-  const data = buildSpawn(archetype, center)
+async function spawnOne(archetype, center, opts = {}) {
+  const data = buildSpawn(archetype, center, opts)
   const obj = await ajna.createObject(data)
   console.log(`[director] + ${archetype.padEnd(6)} "${data.name}" @ ${data.lat.toFixed(5)}, ${data.lon.toFixed(5)} → ${obj.id}`)
   return obj
@@ -1124,6 +1137,72 @@ if (FOLLOW_AREAS && AUTONOMY) {
   reconcile()
   setInterval(() => { reconcile() }, RECONCILE_MS)
 }
+
+// ─── Spawn auf Zuruf ─────────────────────────────────────────────────────
+// Der Spieler klickt auf eine Stelle am Boden und wählt „Monster hier erzeugen".
+// Der Client schickt Archetyp + geklickte Position über den objektlosen
+// Agent-Kanal; der Director legt das Objekt SELBST an.
+//
+// WARUM der Umweg über den Agent: legte der Client das Objekt an, gehörte es dem
+// Spieler — und der Director dürfte es gar nicht bewegen (updateRule verlangt
+// owner oder edit) und würde es mangels `state.director` auch nie adoptieren.
+// So gehört es ihm, trägt die richtigen Flags und bekommt seine ACE.
+//
+// Der Kanal ist reiner Transport: JEDER angemeldete Nutzer kann senden. Also
+// wird HIER validiert und gedrosselt.
+const CMD_COOLDOWN_MS = parseFloat(process.env.WD_CMD_COOLDOWN_S || '3') * 1000
+const CMD_MAX_ON_DEMAND = parseInt(process.env.WD_CMD_MAX || '40', 10)
+const SPAWNABLE = new Set(Object.keys(ARCHETYPES))
+const lastCommandAt = new Map()   // userId → ts (Cooldown pro Nutzer)
+
+function countOnDemand() {
+  return managed.filter(o => o?.state?.on_demand === true).length
+}
+
+async function handleSpawnCommand(evt) {
+  const p = evt?.payload || {}
+  const who = evt?.source || '?'
+
+  let archetype = String(p.archetype || '').toLowerCase()
+  if (archetype === 'random' || !archetype) archetype = pick(Array.from(SPAWNABLE))
+  if (!SPAWNABLE.has(archetype)) {
+    console.warn(`[director] Spawn-Kommando: unbekannter Archetyp "${p.archetype}"`)
+    return
+  }
+  const lat = Number(p.at?.lat), lon = Number(p.at?.lon)
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    console.warn('[director] Spawn-Kommando ohne gültige Position — ignoriert')
+    return
+  }
+
+  const now = Date.now()
+  const last = lastCommandAt.get(who) || 0
+  if (now - last < CMD_COOLDOWN_MS) {
+    console.log(`[director] Spawn-Kommando von ${who} gedrosselt (Cooldown)`)
+    return
+  }
+  if (countOnDemand() >= CMD_MAX_ON_DEMAND) {
+    console.warn(`[director] Spawn-Limit erreicht (${CMD_MAX_ON_DEMAND}) — Kommando ignoriert`)
+    return
+  }
+  lastCommandAt.set(who, now)
+
+  try {
+    const obj = await spawnOne(archetype, { lat, lon }, { spreadM: 0, onDemand: true })
+    await ensureAce(obj.id, actionKeys(archetype))
+    managed.push(obj)
+    syncControllers()          // bewegliche Archetypen bekommen sofort einen Controller
+    console.log(`[director] 🎲 "${archetype}" auf Zuruf erzeugt (${who}) @ ${lat.toFixed(5)}, ${lon.toFixed(5)}`)
+  } catch (err) {
+    console.warn(`[director] Spawn auf Zuruf fehlgeschlagen: ${err?.message || err}`)
+  }
+}
+
+ajna.onAgentCommand(WD_SOURCE || 'world-director', (evt) => {
+  if (evt?.command === 'spawn') handleSpawnCommand(evt)
+  else console.log(`[director] unbekanntes Kommando "${evt?.command}" — ignoriert`)
+}).then(() => console.log(`[director] hört auf Kommandos (agent:${WD_SOURCE || 'world-director'}) · Cooldown ${CMD_COOLDOWN_MS / 1000} s, max ${CMD_MAX_ON_DEMAND} Objekte auf Zuruf`))
+  .catch(err => console.warn(`[director] Kommando-Abo fehlgeschlagen: ${err?.message || err}`))
 
 // ─── Heartbeat hält den Prozess am Leben (+ späterer Online-Status-Anker) ─
 setInterval(() => { publishManifest() }, HEARTBEAT_MS)

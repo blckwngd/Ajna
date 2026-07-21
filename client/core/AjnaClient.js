@@ -472,6 +472,38 @@ export class AjnaClient {
   }
 
   // ===================================================================
+  //  Agent-Kommandos (objektlos)
+  // ===================================================================
+  // Für Aktionen, die an KEINEM Objekt hängen („erzeuge hier ein Monster").
+  // Reiner Transport — der Agent entscheidet, was er annimmt, und drosselt.
+
+  /**
+   * Kommando an einen Agent schicken.
+   * @param {string} source   Agent-Quelle, z. B. 'world-director'
+   * @param {string} command  Kommando-Name, z. B. 'spawn'
+   * @param {any} [payload]
+   * @returns {Promise<{ok:boolean, delivered:number}>} delivered=0 → Agent läuft nicht
+   */
+  async sendAgentCommand(source, command, payload) {
+    return this.pb.send(`/api/agents/${encodeURIComponent(source)}/command`, {
+      method: 'POST', body: { command, payload }
+    })
+  }
+
+  /**
+   * Für Agents: eigene Kommandos abonnieren.
+   * @param {(evt: {command:string, payload:any, source:string, ts:string}) => void} callback
+   */
+  async onAgentCommand(source, callback) {
+    return this.pb.realtime.subscribe(`agent:${source}`, msg => {
+      let data
+      try { data = typeof msg === 'string' ? JSON.parse(msg) : msg }
+      catch { data = { command: '?', raw: msg } }
+      callback(data)
+    })
+  }
+
+  // ===================================================================
   //  Naehe (Privatsphaere-Stufe „Nähe")
   // ===================================================================
   // Meldet OBJEKT-IDs, nie Koordinaten — der Client kennt seine Position und
