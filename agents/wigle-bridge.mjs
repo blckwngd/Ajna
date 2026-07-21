@@ -6,8 +6,8 @@
 // Zentrums ab und legt für jedes ein Ajna-Objekt vom Typ "wifi" an:
 //   • Position = WiGLE-Triangulation (trilat/trilong) → "solider Mittelpunkt"
 //   • description = SSID, Verschlüsselung, Kanal, Typ, BSSID, zuletzt gesehen
-//   • state.coverage_radius = geschätzte Abdeckung in m → Client zeichnet einen
-//     Kreis um den Mittelpunkt
+//   • state.coverage_radius = je Frequenzband geschätzte Reichweite in m → Client
+//     zeichnet einen Kreis um den Mittelpunkt (2,4 GHz weiter als 5/6 GHz)
 //
 // Gebaut wie poi-bridge.mjs: dedizierter Agent-User, periodischer Sync,
 // Cleanup verschwundener Netze. BSSID (netid) ist der stabile Identifier.
@@ -21,7 +21,8 @@
 //   WIGLE_MAX          max. Netze pro Sync (Default: 50; WiGLE-Quota schonen)
 //   WIGLE_INTERVAL_S   Sync-Intervall in s (Default: 3600 — WiGLE hat ein
 //                      tägliches Query-Limit, also sparsam abfragen)
-//   WIGLE_COVERAGE_M   geschätzte Abdeckung pro WLAN in m (Default: 50)
+//   WIGLE_COVERAGE_M   Reichweiten-Basis in m (Default: 50) = 2,4-GHz-Referenz
+//                      und Fallback; 5 GHz ×0,6, 6 GHz ×0,45 davon
 //
 // Hinweis "Nähe des Nutzers": ohne Server-seitige Spielerpräsenz nutzt der
 // Agent (wie ais-/poi-bridge) ein KONFIGURIERTES Zentrum. Echte Nutzer-Nähe
@@ -94,7 +95,7 @@ const WIGLE_URL = 'https://api.wigle.net/api/v2/network/search'
 const AUTH = 'Basic ' + Buffer.from(`${API_NAME}:${API_TOKEN}`).toString('base64')
 
 console.log(`[wigle] Zentrum: ${CENTER_LAT.toFixed(4)}, ${CENTER_LON.toFixed(4)} · Radius ${RADIUS_M} m · max ${MAX_NETS}`)
-console.log(`[wigle] Sync-Intervall: ${(INTERVAL_MS / 1000).toFixed(0)} s · Abdeckung: ${COVERAGE_M} m`)
+console.log(`[wigle] Sync-Intervall: ${(INTERVAL_MS / 1000).toFixed(0)} s · Reichweite-Basis (2,4 GHz): ${COVERAGE_M} m, 5 GHz ${Math.round(COVERAGE_M * 0.6)} m, 6 GHz ${Math.round(COVERAGE_M * 0.45)} m`)
 
 // ─── Ajna-Login + Manifest ───────────────────────────────────────────────
 const ajna = new AjnaManager(AJNA_URL)
@@ -129,6 +130,39 @@ try {
 }
 
 // ─── WiGLE-Helfer ─────────────────────────────────────────────────────────
+
+// Empfangsbereich pro WLAN schätzen (Meter). WiGLE liefert KEINEN Radius, aber
+// das Frequenzband bestimmt die Reichweite am stärksten: 2,4 GHz trägt weiter als
+// 5/6 GHz (längere Welle, weniger Dämpfung). Band aus `frequency` (MHz) bzw.
+// `channel` ableiten — beides kommt aus der bereits getätigten Suche, kostet also
+// KEINE extra WiGLE-Abfrage. Bewusst grob: eine Visualisierungs-Schätzung, keine
+// Funkfeldberechnung. Für den empirischen Streuradius bräuchte es network/detail
+// (eine Abfrage pro Netz → Quota), das ist hier absichtlich NICHT gemacht.
+function bandOf(n) {
+  const f = Number(n.frequency)
+  if (Number.isFinite(f) && f > 0) {
+    if (f >= 2400 && f < 2500) return '2.4'
+    if (f >= 4900 && f < 5900) return '5'
+    if (f >= 5900 && f <= 7200) return '6'
+  }
+  const ch = Number(n.channel)
+  if (Number.isFinite(ch) && ch > 0) {
+    if (ch <= 14) return '2.4'
+    if (ch >= 32) return '5'
+    // 6-GHz-Kanäle beginnen wie 2,4 GHz bei 1 → ohne `frequency` nicht sicher
+    // trennbar; ch<=14 wird dem weit verbreiteteren 2,4-GHz-Band zugeordnet.
+  }
+  return null
+}
+
+// COVERAGE_M ist die 2,4-GHz-Referenz (und der Fallback bei unbekanntem Band).
+// 5/6 GHz reichen anteilig weniger weit. Ein Skalieren von WIGLE_COVERAGE_M
+// verschiebt alle Bänder proportional.
+const BAND_FACTOR = { '2.4': 1.0, '5': 0.6, '6': 0.45 }
+function coverageRadiusOf(n) {
+  const band = bandOf(n)
+  return Math.round(COVERAGE_M * (band ? BAND_FACTOR[band] : 1.0))
+}
 
 function describeNet(n) {
   const ssid = (n.ssid || '').trim() || '(versteckt)'
@@ -241,9 +275,10 @@ async function queryReconcile(centers, fromAreas) {
           encryption: n.encryption || null,
           enc_category: cat,                 // normalisiert → Farbe/Symbol/Filter
           channel: n.channel ?? null,
+          band: bandOf(n),                   // '2.4'|'5'|'6'|null — bestimmt den Radius
           wifi_type: n.type || null,
           lastupdt: n.lastupdt || null,
-          coverage_radius: COVERAGE_M     // Client zeichnet daraus den Kreis
+          coverage_radius: coverageRadiusOf(n)  // je Band geschätzt; Client zeichnet den Kreis
         }
       })
       nets.set(String(netid), { objectId: obj.id, name })
