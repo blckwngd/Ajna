@@ -1094,6 +1094,11 @@ async function reconcile() {
     let removed = 0
     if (!KEEP_OUTSIDE) {
       for (const obj of [...managed]) {
+        // Auf Zuruf gesetzte Objekte NICHT despawnen: sie stehen genau dort, wo
+        // ein Spieler hingeklickt hat — auch wenn das weit außerhalb der gerade
+        // aktiven Interessensbereiche liegt. (Ohne diese Ausnahme löschte der
+        // nächste Reconcile sie Sekunden nach dem Erzeugen wieder.)
+        if (obj.state?.on_demand === true) continue
         if (nearAny(obj.lat, obj.lon, centers, DESPAWN_RADIUS_M)) continue
         try {
           await ajna.deleteObject(obj.id)
@@ -1113,7 +1118,11 @@ async function reconcile() {
     let added = 0
     for (const center of centers) {
       for (const archetype of Object.keys(ARCHETYPES)) {
+        // Auf Zuruf gesetzte Objekte zählen NICHT zum Soll-Bestand — sonst hört
+        // der Director auf, seine eigene Bevölkerung zu spawnen, sobald ein
+        // Spieler ein paar Monster gesetzt hat.
         const have = managed.filter(o => o.state?.archetype === archetype &&
+          o.state?.on_demand !== true &&
           haversine(center.lat, center.lon, o.lat, o.lon) <= RADIUS_M).length
         for (let i = have; i < targetCount(archetype); i++) {
           try {
@@ -1159,6 +1168,46 @@ function countOnDemand() {
   return managed.filter(o => o?.state?.on_demand === true).length
 }
 
+// ─── Wer darf auf Zuruf spawnen? ─────────────────────────────────────────
+// EINE Stelle für diese Entscheidung. Heute nur Drosselung: jeder Angemeldete
+// darf, aber nicht beliebig oft. Später soll die Fähigkeit an ein Spieler-Level
+// oder ein legitimierendes Item gebunden werden — beides gehört HIER hinein,
+// damit der Aufrufer unverändert bleibt und keine zweite Prüfstelle entsteht.
+//
+// VORBEREITET, BEWUSST NICHT GEBAUT (noch nicht benötigt) — was jeweils fehlt:
+//
+//   • LEVEL: `users` hat heute KEIN Level-/XP-Feld (id, email, name,
+//     default_permissions, …). Ein Level-Gate braucht also zuerst ein Feld im
+//     Schema und eine Stelle, die es hochzählt. Danach hier ein Vergleich gegen
+//     einen Schwellwert (z. B. WD_SPAWN_MIN_LEVEL) → reason: 'level'.
+//
+//   • ITEM: Besitz läuft über `carried_by` am Objekt. ACHTUNG, der eigentliche
+//     Knackpunkt: beim Einsammeln geht das EIGENTUM an den Sammler über, und die
+//     listRule zeigt einem Nutzer nur, was ihm gehört oder wofür er `view` hat.
+//     Der Director kann das getragene Item eines Spielers also gar nicht sehen —
+//     eine Agent-seitige Abfrage liefe ins Leere. Ein Item-Gate braucht darum
+//     eine SERVERSEITIGE Prüfung (PB-Hook-Route, die mit Admin-Sicht bzw. im
+//     Namen des Spielers prüft, ob er ein Objekt mit einem Marker wie
+//     state.grants ~ "spawn" trägt) — analog zu resolveEffective im
+//     interact-Hook. → reason: 'item'.
+//
+// `reason` ist schon vorgesehen, damit eine Ablehnung dem Spieler später
+// gemeldet werden kann, statt still zu verpuffen (heute: nur Log).
+async function maySpawnOnDemand(userId) {
+  const now = Date.now()
+  const last = lastCommandAt.get(userId) || 0
+  if (now - last < CMD_COOLDOWN_MS) return { ok: false, reason: 'cooldown' }
+  if (countOnDemand() >= CMD_MAX_ON_DEMAND) return { ok: false, reason: 'limit' }
+  return { ok: true }
+}
+
+const SPAWN_DENIED_TEXT = {
+  cooldown: 'zu schnell hintereinander',
+  limit: `Obergrenze von ${CMD_MAX_ON_DEMAND} Objekten auf Zuruf erreicht`,
+  level: 'Spieler-Level zu niedrig',
+  item: 'kein legitimierendes Item im Inventar',
+}
+
 async function handleSpawnCommand(evt) {
   const p = evt?.payload || {}
   const who = evt?.source || '?'
@@ -1175,17 +1224,12 @@ async function handleSpawnCommand(evt) {
     return
   }
 
-  const now = Date.now()
-  const last = lastCommandAt.get(who) || 0
-  if (now - last < CMD_COOLDOWN_MS) {
-    console.log(`[director] Spawn-Kommando von ${who} gedrosselt (Cooldown)`)
+  const allowed = await maySpawnOnDemand(who)
+  if (!allowed.ok) {
+    console.log(`[director] Spawn-Kommando von ${who} abgelehnt — ${SPAWN_DENIED_TEXT[allowed.reason] || allowed.reason}`)
     return
   }
-  if (countOnDemand() >= CMD_MAX_ON_DEMAND) {
-    console.warn(`[director] Spawn-Limit erreicht (${CMD_MAX_ON_DEMAND}) — Kommando ignoriert`)
-    return
-  }
-  lastCommandAt.set(who, now)
+  lastCommandAt.set(who, Date.now())
 
   try {
     const obj = await spawnOne(archetype, { lat, lon }, { spreadM: 0, onDemand: true })
