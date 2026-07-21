@@ -12,12 +12,11 @@
 //     (siehe server/presence.js).
 //   • Fällt ein Server auf „Verborgen", wird sein Eintrag sofort gelöscht.
 
-import { privacy } from './PrivacyPolicy.js'
+import { privacy, fuzzPoint, FUZZ_GRID_M } from './PrivacyPolicy.js'
 
 const PUBLISH_INTERVAL_MS = 60_000
 const PUBLISH_MOVE_M = 60   // Positions-Delta ab dem sofort neu publiziert wird
-const BBOX_HALF_M = 250    // → 500 m Kantenlänge
-const FUZZ_GRID_M = 100    // Zentrum auf dieses Raster snappen
+const BBOX_HALF_M = 250    // → 500 m Kantenlänge (Raster: FUZZ_GRID_M aus PrivacyPolicy)
 
 export class InterestArea {
   /**
@@ -152,14 +151,12 @@ function exactBbox(lat, lon) {
   return { latMin: lat - dLat, latMax: lat + dLat, lonMin: lon - dLon, lonMax: lon + dLon }
 }
 
-// Unscharfe BBOX: Zentrum aufs Raster snappen, 500-m-Box drumherum.
+// Unscharfe BBOX: Zentrum aufs Raster snappen (fuzzPoint aus PrivacyPolicy — die
+// EINE Vergröberungs-Implementierung), 500-m-Box drumherum.
 function fuzzBbox(lat, lon) {
   const cosLat = Math.cos(lat * Math.PI / 180) || 1e-6
-  const gLat = FUZZ_GRID_M / 111000
-  const gLon = FUZZ_GRID_M / (111000 * cosLat)
-  const cLat = Math.round(lat / gLat) * gLat
-  const cLon = Math.round(lon / gLon) * gLon
+  const c = fuzzPoint(lat, lon, FUZZ_GRID_M)
   const dLat = BBOX_HALF_M / 111000
   const dLon = BBOX_HALF_M / (111000 * cosLat)
-  return { latMin: cLat - dLat, latMax: cLat + dLat, lonMin: cLon - dLon, lonMax: cLon + dLon }
+  return { latMin: c.lat - dLat, latMax: c.lat + dLat, lonMin: c.lon - dLon, lonMax: c.lon + dLon }
 }

@@ -36,6 +36,22 @@ export const LEVEL_INFO = {
   },
 }
 
+// Kanonisches Raster fürs Vergröbern einer Position (~100 m). Liegt HIER und
+// nicht bei den Aufrufern, damit es genau eine Implementierung gibt — sonst
+// driften InterestArea und Interaktions-Payload irgendwann auseinander.
+export const FUZZ_GRID_M = 100
+
+/** Position auf das Raster snappen (Abweichung ≤ ~70 m). */
+export function fuzzPoint(lat, lon, gridM = FUZZ_GRID_M) {
+  const cosLat = Math.cos(lat * Math.PI / 180) || 1e-6
+  const gLat = gridM / 111000
+  const gLon = gridM / (111000 * cosLat)
+  return {
+    lat: Math.round(lat / gLat) * gLat,
+    lon: Math.round(lon / gLon) * gLon
+  }
+}
+
 const DEFAULT_KEY = 'ajna.privacy.default'
 const levelKey = id => `ajna.privacy.level.${id}`
 const LEGACY_KEY = 'ajna.share_location'   // alter Boolean-Schalter „Standort teilen"
@@ -110,6 +126,28 @@ export const privacy = {
 
   /** Teilt überhaupt EIN Server etwas? (lohnt sich Publishing/Timer?) */
   anyEnabled(serverIds = []) { return serverIds.some(id => (RANK[this.levelFor(id)] ?? 0) >= 1) },
+
+  /**
+   * Welche Position darf einer INTERAKTION mitgegeben werden (z. B. „Drache
+   * rufen")? Eine Aktion mit Positions-Payload ist die einzige Stelle, an der
+   * Koordinaten den Client sonst noch verlassen — sie muss darum derselben
+   * Leiter folgen wie der Präsenz-Fan-out, nicht an ihr vorbei.
+   *
+   *   Genau            → exakte Position (`precise: true`)
+   *   Gegend / Nähe    → aufs Raster vergröbert (`precise: false`) — der Agent
+   *                      kommt in die Gegend, nicht zu dir
+   *   Verborgen        → null (Aufrufer meldet „braucht Standort-Freigabe")
+   *
+   * @returns {{lat:number, lon:number, precise:boolean}|null}
+   */
+  positionFor(serverId, pos) {
+    if (!pos || !Number.isFinite(pos.lat) || !Number.isFinite(pos.lon)) return null
+    const level = this.levelFor(serverId)
+    if (RANK[level] < 1) return null                       // Verborgen → gar nichts
+    if (level === 'exact') return { lat: pos.lat, lon: pos.lon, precise: true }
+    const f = fuzzPoint(pos.lat, pos.lon)
+    return { lat: f.lat, lon: f.lon, precise: false }
+  },
 
   onChange(cb) { cbs.add(cb); return () => cbs.delete(cb) },
 }

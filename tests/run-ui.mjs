@@ -41,6 +41,12 @@ globalThis.document = {
 globalThis.window = { innerWidth: 400, innerHeight: 800, addEventListener() {}, removeEventListener() {} }
 globalThis.requestAnimationFrame = fn => setTimeout(fn, 1)
 globalThis.cancelAnimationFrame = id => clearTimeout(id)
+const _store = new Map()
+globalThis.localStorage = {
+  getItem: k => (_store.has(k) ? _store.get(k) : null),
+  setItem: (k, v) => _store.set(k, String(v)),
+  removeItem: k => _store.delete(k),
+}
 
 // ── Prüfungen ────────────────────────────────────────────────────────────
 const { infoHint, closeInfoHint } = await import('../client/core/InfoHint.js')
@@ -103,6 +109,38 @@ btn1._l.click(ev(btn1))
 closeInfoHint()
 check('closeInfoHint() schliesst von aussen', popCount() === 0)
 check('aria-expanded wird zurueckgesetzt', btn1.getAttribute('aria-expanded') === 'false')
+
+// ── Privatsphäre: welche Position darf an eine Interaktion? ──────────────
+// Sicherheitsrelevant: positionFor entscheidet, ob EXAKTE Koordinaten das Gerät
+// verlassen („Drache rufen"). Ein Fehler hier ist ein stilles Datenleck, das man
+// im UI nicht sieht — deshalb fest verdrahtet geprüft.
+console.log('\n── PrivacyPolicy: Position für Interaktionen')
+const { privacy } = await import('../client/core/PrivacyPolicy.js')
+const POS = { lat: 50.446789, lon: 7.597123 }
+
+privacy.setLevel('srvA', 'exact')
+const exact = privacy.positionFor('srvA', POS)
+check('Stufe „Genau" → exakte Koordinaten', exact.lat === POS.lat && exact.lon === POS.lon)
+check('Stufe „Genau" markiert precise=true', exact.precise === true)
+
+for (const lvl of ['area', 'proximity']) {
+  privacy.setLevel('srvB', lvl)
+  const p = privacy.positionFor('srvB', POS)
+  const moved = Math.hypot((p.lat - POS.lat) * 111320, (p.lon - POS.lon) * 111320 * Math.cos(POS.lat * Math.PI / 180))
+  check(`Stufe „${privacy.label(lvl)}" vergröbert (${moved.toFixed(0)} m verschoben, precise=false)`,
+    p.precise === false && (p.lat !== POS.lat || p.lon !== POS.lon) && moved <= 75)
+}
+
+privacy.setLevel('srvC', 'off')
+check('Stufe „Verborgen" → null (keine Koordinaten)', privacy.positionFor('srvC', POS) === null)
+check('ohne Position → null', privacy.positionFor('srvA', null) === null)
+check('unvollständige Position → null', privacy.positionFor('srvA', { lat: 50 }) === null)
+
+// Rasterung muss STABIL sein: zwei Aufrufe derselben Position dürfen nicht
+// unterschiedlich streuen, sonst liesse sich die echte Lage herausmitteln.
+privacy.setLevel('srvD', 'area')
+const f1 = privacy.positionFor('srvD', POS), f2 = privacy.positionFor('srvD', POS)
+check('Vergröberung ist deterministisch (kein Herausmitteln)', f1.lat === f2.lat && f1.lon === f2.lon)
 
 const failed = results.filter(r => !r.ok)
 console.log(`\n${'═'.repeat(60)}`)

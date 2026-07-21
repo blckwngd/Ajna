@@ -715,6 +715,9 @@ async function init() {
     editorUI,
     contextMenu,
     permissionDialog,
+    // Für Aktionen wie „Rufen": exakte Position, die ObjectActions je nach
+    // Privatsphäre-Stufe vergröbert oder gar nicht mitschickt.
+    getPosition: () => _hub?.positionSource?.getWorldPosition?.() || window.ajnaGeo?.position || null,
     // Tap-Menü-Interaktion → sofort Reply-Toast + Puls + TTS (wie Echo-Pfad).
     onInteract: (record, key) =>
       handleMarkerInteract(record.id, { action: key, source: ajna.currentUser()?.id }),

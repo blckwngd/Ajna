@@ -30,7 +30,8 @@
     "test:quests": "node tests/run-quests.mjs",
     "test:privacy": "node tests/run-privacy.mjs",
     "test:ui": "node tests/run-ui.mjs",
-    "test": "npm run test:ui && npm run test:quests && npm run test:privacy"
+    "test:landing": "node tests/run-landing.mjs",
+    "test": "npm run test:ui && npm run test:landing && npm run test:quests && npm run test:privacy"
   },
   "dependencies": {
     "@babylonjs/core": "^8.54.3",

@@ -13,6 +13,7 @@
 
 import { renderServerBadgeText } from './ServerBadge.js'
 import { applyInteractionSideEffect } from './InteractionReply.js'
+import { privacy } from './PrivacyPolicy.js'
 
 const FALLBACK_ACTIONS = [
   { key: 'examine', label: 'Untersuchen' }
@@ -27,15 +28,26 @@ const ACTION_LABELS = {
   attack: 'Angreifen', feed: 'Füttern', collect: 'Einsammeln',
   accept: 'Auftrag annehmen', annehmen: 'Auftrag annehmen',
   complete: 'Auftrag erledigen', erledigt: 'Auftrag erledigen', erledigen: 'Auftrag erledigen',
+  call: 'Rufen', rufen: 'Rufen',
 }
+
+// Aktionen, die dem Agent die eigene Position mitgeben müssen, damit er
+// überhaupt etwas tun kann („komm zu mir"). WIE genau die Position mitgeht,
+// entscheidet allein die Privatsphäre-Stufe (privacy.positionFor) — hier steht
+// nur, WELCHE Aktionen sie brauchen.
+const POSITION_ACTIONS = new Set(['call', 'rufen'])
 const labelFor = (a) => a?.label || ACTION_LABELS[String(a?.key || '').toLowerCase()] || a?.key || '?'
 
 export class ObjectActions {
-  constructor({ ajna, editorUI, contextMenu, permissionDialog, onInteract, onInteractError }) {
+  constructor({ ajna, editorUI, contextMenu, permissionDialog, onInteract, onInteractError, getPosition }) {
     this.ajna = ajna
     this.editorUI = editorUI
     this.contextMenu = contextMenu
     this.permissionDialog = permissionDialog
+    // EXAKTE Position des Spielers (bleibt auf dem Gerät). Nur Aktionen aus
+    // POSITION_ACTIONS bekommen daraus überhaupt etwas mit — und auch dann nur
+    // so genau, wie die Stufe für DIESEN Server es erlaubt.
+    this.getPosition = getPosition || null
     // Erfolgs-Callback nach einer Interaktion (record, actionKey) — die View
     // verdrahtet hier ihr sicht-/hörbares Feedback (Toast/Highlight/TTS).
     this.onInteract = onInteract || null
@@ -153,7 +165,25 @@ export class ObjectActions {
   // interessierten Clients (inkl. dem zugewiesenen Agent) verteilt.
   async _triggerAction(record, actionKey) {
     try {
-      const res = await this.ajna.interact(record.id, actionKey)
+      // Positions-Aktionen („Rufen"): Payload streng nach Stufe. Bei „Verborgen"
+      // gibt es keine Koordinaten — dann die Aktion gar nicht erst senden, sonst
+      // flöge der Drache irgendwohin und der Spieler wüsste nicht, warum.
+      let payload
+      if (POSITION_ACTIONS.has(String(actionKey).toLowerCase())) {
+        const serverId = record?._origin
+        const at = privacy.positionFor(serverId, this.getPosition?.())
+        if (!at) {
+          const why = this.getPosition?.()
+            ? `„${labelFor({ key: actionKey })}" braucht eine Standort-Freigabe für diesen Server (Einstellungen → Privatsphäre).`
+            : 'Keine Position verfügbar.'
+          try { this.onInteractError?.(record, actionKey, why) }
+          catch (e) { console.warn('[interact] error feedback', e) }
+          if (!this.onInteractError) alert(why)
+          return
+        }
+        payload = { at }
+      }
+      const res = await this.ajna.interact(record.id, actionKey, payload)
       console.log('[interact]', actionKey, '→', res)
       // ZUERST die Nebenwirkung (Einsammeln → Inventar, Auftrag → annehmen/
       // abschließen), DANN das Feedback: der Reply-Text leitet sich nur aus dem

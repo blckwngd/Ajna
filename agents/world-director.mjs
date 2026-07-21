@@ -20,6 +20,17 @@
 // UMGESETZT:
 //   • P2 Bewegung/Autonomie auf dem Straßennetz (geo.waysNear + Routing)
 //   • P3 Drachen-/Vogel-Freiflug: sanftes Umherfliegen im Areal (makeFlyer)
+//   • „Rufen": der Spieler ruft einen Drachen zu sich (Aktion `call`). Der
+//     Client schickt seine Position im interact-Payload — wie GENAU, entscheidet
+//     dort die Privatsphäre-Stufe (exakt oder aufs Raster vergröbert). Ablauf:
+//     anfliegen → tief kreisen → landen (Boden bevorzugt, Dach als Kür aus den
+//     OSM-Gebäuden) → 2 min warten → abheben → Routine. Siehe advanceSummon()
+//     und agents/lib/landing-spots.mjs (dort die Geometrie, isoliert testbar:
+//     npm run test:landing).
+//     BEWUSST hier und nicht in einem eigenen Agent: advanceRoamer schreibt dem
+//     Wesen jeden Tick die Position — ein zweiter Schreiber würde sich mit ihm
+//     um dasselbe Objekt prügeln (sichtbares Zittern). Ein Ruf ist deshalb ein
+//     temporärer Zustands-Override DESSELBEN Controllers.
 // NOCH NICHT (kommt in späteren Phasen, siehe docs/world-objects.md):
 //   • Boden-Tiere auf Freiflächen (geo.areasNear)
 //   • Echte Interaktions-Effekte / Belohnungen / GLB-Modelle
@@ -33,6 +44,13 @@
 //   WD_COUNT_NPC / _ENEMY / _ANIMAL / _DRAGON / _ITEM / _HINT
 //               Soll-Bestand pro Archetyp (Defaults siehe ARCHETYPES)
 //   WD_HEARTBEAT_S  Manifest-Heartbeat-Intervall in s (Default: 60)
+//   „Rufen" (Drache kommt zum Spieler):
+//     WD_CALL_CIRCLE_ALT  Kreishöhe über Grund in m       (Default: 10)
+//     WD_CALL_CIRCLE_R    Kreisradius über dem Spieler in m (Default: 15)
+//     WD_CALL_CIRCLE_S    Kreisen vor der Landung in s     (Default: 12)
+//     WD_CALL_STAY_S      Verweildauer am Boden in s       (Default: 120)
+//     WD_CALL_LAND_MIN_M / _MAX_M  Landeplatz-Ring um den Spieler (5 / 20)
+//     WD_CALL_RANGE_M     max. Entfernung, ab der ein Ruf ignoriert wird (1500)
 //
 // Start:  node agents/world-director.mjs   bzw.   npm run director
 
@@ -45,6 +63,7 @@ if (typeof globalThis.EventSource !== 'function') globalThis.EventSource = Event
 
 import { AjnaManager } from '../client/core/AjnaManager.js'
 import { AjnaGeo } from '../client/core/AjnaGeo.js'
+import { findLandingSpot } from './lib/landing-spots.mjs'
 import { stepAlongPath, buildWayGraph, nearestNodeKey, randomReachableTarget, shortestPath, haversine, bearingRad } from '../client/core/StreetNav.js'
 import { animalNameFor } from '../client/core/animalNames.js'
 
@@ -111,6 +130,22 @@ const ROAM_AREA_M   = parseFloat(process.env.WD_ROAM_AREA_M   || '80')   // Radi
 // die exakte Position bleibt on-device). Also kein „dreht sich zum Spieler",
 // sondern Stehenbleiben + idle für ein paar Sekunden.
 const ATTEND_MS = parseFloat(process.env.WD_ATTEND_S || '6') * 1000
+
+// ─── „Rufen" (Drache kommt zum Spieler) ──────────────────────────────────
+// Ablauf: anfliegen → tief kreisen → landen → warten → abheben → Routine.
+// Der Spieler schickt seine Position im interact-Payload; WIE genau sie ist,
+// hat der Client anhand seiner Privatsphäre-Stufe entschieden (exakt oder aufs
+// Raster vergröbert) — der Director nimmt sie, wie sie kommt.
+const CALL_CIRCLE_ALT   = parseFloat(process.env.WD_CALL_CIRCLE_ALT || '10')   // m über Grund beim Kreisen
+const CALL_CIRCLE_R     = parseFloat(process.env.WD_CALL_CIRCLE_R   || '15')   // m Kreisradius über dem Spieler
+const CALL_CIRCLE_S     = parseFloat(process.env.WD_CALL_CIRCLE_S   || '12')   // s kreisen, bevor er landet
+const CALL_STAY_S       = parseFloat(process.env.WD_CALL_STAY_S     || '120')  // s am Boden bleiben (2 min)
+const CALL_LAND_MIN_M   = parseFloat(process.env.WD_CALL_LAND_MIN_M || '5')    // nicht näher an den Spieler
+const CALL_LAND_MAX_M   = parseFloat(process.env.WD_CALL_LAND_MAX_M || '20')
+const CALL_APPROACH_SPEED = parseFloat(process.env.WD_CALL_SPEED    || '14')   // m/s Anflug (zügiger als Streifen)
+const CALL_DESCENT_SPEED  = parseFloat(process.env.WD_CALL_DESCENT  || '4')    // m/s Sinken/Steigen
+const CALL_MAX_RANGE_M  = parseFloat(process.env.WD_CALL_RANGE_M    || '1500') // weiter weg → Ruf ignorieren
+const CALL_BUILDING_R   = parseFloat(process.env.WD_CALL_BUILDING_R || '60')   // m Umkreis für die Gebäudeabfrage
 
 const ROAM_MOVE_MIN = parseFloat(process.env.WD_ROAM_MOVE_MIN || '8')
 const ROAM_MOVE_MAX = parseFloat(process.env.WD_ROAM_MOVE_MAX || '22')
@@ -253,7 +288,7 @@ const ARCHETYPES = {
   npc:    { count: 2, actions: [{ key: 'talk', label: 'Sprechen' }, { key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: false },
   enemy:  { count: 1, actions: [{ key: 'attack', label: 'Angreifen' }, { key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: false },
   animal: { count: 2, actions: [{ key: 'feed', label: 'Füttern' }, { key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: false },
-  dragon: { count: 1, actions: [{ key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: true  },
+  dragon: { count: 1, actions: [{ key: 'call', label: 'Rufen' }, { key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: true  },
   item:   { count: 2, actions: [],                                         initialAnim: 'idle', flying: false },
   hint:   { count: 1, actions: [{ key: 'examine', label: 'Lesen' }],       initialAnim: 'idle', flying: false },
   // Diamanten: bewusst SELTEN (kleiner count), einsammelbar + stapelbar. Später
@@ -618,7 +653,10 @@ function makeRoamer(obj, flying) {
     lastTickAt: Date.now(),
     busy: false,
     attendUntil: 0,                       // bis wann die Figur einem Spieler zuhört
-    unsubInteract: null
+    unsubInteract: null,
+    // „Rufen": solange gesetzt, steuert advanceSummon() das Wesen allein.
+    summon: null,
+    altCruise: alt                        // Reiseflughöhe, auf die er nach dem Ruf zurückkehrt
   }
 }
 
@@ -692,12 +730,145 @@ async function advanceFor(c) {
 
 // Ein Tick freien Flugs: Wander + Randlenkung Richtung Zentrum (mit der Distanz
 // stärker), begrenzte Drehrate → weiche Kurven statt 180°-Sprung am Rand.
+// Landeplatz suchen: Gebäude in der Nähe holen (für „nicht im Haus landen" und
+// die Dach-Kür). Fällt die Geo-Abfrage aus, landet er eben ohne Gebäudewissen —
+// besser ein Landeplatz auf freiem Feld als gar keine Landung.
+async function pickLandingSpot(c, s) {
+  let buildings = []
+  try {
+    const res = await geo.buildingsNear(s.lat, s.lon, CALL_BUILDING_R, 'all')
+    buildings = Array.isArray(res?.features) ? res.features : []
+  } catch (err) {
+    console.warn(`[director] Gebäude-Abfrage für Landung fehlgeschlagen: ${err?.message || err}`)
+  }
+  const spot = findLandingSpot({
+    lat: s.lat, lon: s.lon, buildings,
+    minM: CALL_LAND_MIN_M, maxM: CALL_LAND_MAX_M
+  })
+  if (spot) {
+    console.log(`[director] 🐉 "${c.id}" landet ${spot.kind === 'roof' ? 'auf einem Dach' : 'am Boden'} — ${Math.round(spot.distance)} m vom Spieler, Höhe ${Math.round(spot.altitude)} m`)
+  }
+  return spot
+}
+
+// Ruf-Sequenz. Übernimmt die Steuerung vollständig, solange c.summon gesetzt ist
+// — DESHALB gehört das in den Director und nicht in einen zweiten Agent: es gibt
+// genau einen Schreiber pro Wesen, sonst zappelt das Objekt zwischen beiden.
+async function advanceSummon(c, dt, now) {
+  const s = c.summon
+  const dist = haversine(c.lat, c.lon, s.lat, s.lon)
+
+  // Gemeinsam: Kurs aufs Ziel mit begrenzter Drehrate (weiche Kurven wie sonst).
+  const steerTo = (tLat, tLon, speed) => {
+    const desired = bearingRad(c.lat, c.lon, tLat, tLon)
+    const maxTurn = FLY_TURN_RATE * dt
+    const turn = clamp(angleDiff(desired, c.heading), -maxTurn, maxTurn)
+    c.heading = wrapPi(c.heading + turn)
+    const p = destPoint(c.lat, c.lon, c.heading, speed * dt)
+    c.lat = p.lat; c.lon = p.lon
+    return turn / (maxTurn || 1)
+  }
+  // Höhe sanft auf einen Zielwert ziehen (kein Teleport).
+  const approachAlt = (target) => {
+    const step = CALL_DESCENT_SPEED * dt
+    if (c.altBase < target) c.altBase = Math.min(target, c.altBase + step)
+    else c.altBase = Math.max(target, c.altBase - step)
+    return Math.abs(c.altBase - target) < 0.5
+  }
+
+  let turnRatio = 0, anim = 'fly'
+
+  switch (s.phase) {
+    case 'inbound': {
+      turnRatio = steerTo(s.lat, s.lon, CALL_APPROACH_SPEED)
+      approachAlt(CALL_CIRCLE_ALT)          // schon im Anflug sinken
+      anim = 'fly'
+      if (dist <= CALL_CIRCLE_R * 1.4) {
+        s.phase = 'circling'
+        s.until = now + CALL_CIRCLE_S * 1000
+        console.log(`[director] 🐉 "${c.id}" kreist über dem Spieler`)
+      }
+      break
+    }
+    case 'circling': {
+      // Auf einer Kreisbahn um den Spieler fliegen: Zielpunkt wandert über den
+      // Kreis, der Drache jagt ihm hinterher → saubere Kurve statt Zickzack.
+      s.circleAngle = wrapPi(s.circleAngle + (CALL_APPROACH_SPEED / CALL_CIRCLE_R) * dt * 0.6)
+      const t = destPoint(s.lat, s.lon, s.circleAngle, CALL_CIRCLE_R)
+      turnRatio = steerTo(t.lat, t.lon, CALL_APPROACH_SPEED * 0.8)
+      approachAlt(CALL_CIRCLE_ALT)
+      anim = 'fly'
+      if (now >= s.until) {
+        s.spot = await pickLandingSpot(c, s)
+        if (!s.spot) {                       // nirgends Platz → Ruf abbrechen
+          console.warn(`[director] 🐉 "${c.id}" findet keinen Landeplatz → zurück zur Routine`)
+          c.summon = null
+          return
+        }
+        s.phase = 'landing'
+      }
+      break
+    }
+    case 'landing': {
+      const dSpot = haversine(c.lat, c.lon, s.spot.lat, s.spot.lon)
+      turnRatio = steerTo(s.spot.lat, s.spot.lon, Math.max(2, CALL_APPROACH_SPEED * 0.4))
+      const atAlt = approachAlt(s.spot.altitude)
+      anim = 'fly'
+      if (dSpot < 3 && atAlt) {
+        // Exakt aufsetzen, damit er nicht 2 m daneben schwebt.
+        c.lat = s.spot.lat; c.lon = s.spot.lon; c.altBase = s.spot.altitude
+        s.phase = 'landed'
+        s.until = now + CALL_STAY_S * 1000
+        console.log(`[director] 🐉 "${c.id}" ist gelandet — bleibt ${CALL_STAY_S} s`)
+      }
+      break
+    }
+    case 'landed': {
+      // Steht still: Idle setzen und RAUS — 2 Minuten lang jeden Tick dieselbe
+      // Position zu schreiben wäre reine Last (wie beim Rasten der Boden-Tiere).
+      // Position/Höhe/Yaw stehen bereits aus dem Aufsetz-Tick.
+      if (c.anim !== 'idle') { c.anim = 'idle'; await ajna.setAnimation(c.id, 'idle') }
+      if (now >= s.until) {
+        s.phase = 'takeoff'
+        console.log(`[director] 🐉 "${c.id}" hebt wieder ab`)
+      }
+      return
+    }
+    case 'takeoff': {
+      // Steigen und dabei schon wieder Fahrt aufnehmen.
+      const p = destPoint(c.lat, c.lon, c.heading, CALL_APPROACH_SPEED * 0.5 * dt)
+      c.lat = p.lat; c.lon = p.lon
+      const cruise = c.altCruise || 40
+      anim = 'fly'
+      if (approachAlt(cruise)) {
+        // Zurück zur Routine — und zwar HIER als neues Revier, sonst zieht ihn
+        // die Randlenkung sofort quer über die Karte zum alten Spawn zurück.
+        c.homeLat = c.lat; c.homeLon = c.lon
+        c.summon = null
+        c.anim = null                        // nächster Roam-Tick setzt die Animation neu
+        console.log(`[director] 🐉 "${c.id}" nimmt die Routine wieder auf`)
+        return
+      }
+      break
+    }
+  }
+
+  if (anim !== c.anim) { c.anim = anim; await ajna.setAnimation(c.id, anim) }
+  await ajna.updateObject(c.id, {
+    lat: c.lat, lon: c.lon, altitude: c.altBase,
+    rotation: { x: 0, y: wrapPi(Math.PI - c.heading + FLY_YAW_OFFSET), z: clamp(turnRatio, -1, 1) * FLY_BANK_MAX }
+  })
+}
+
 async function advanceRoamer(c) {
   c.busy = true
   try {
     const now = Date.now()
     const dt = Math.min(1, (now - c.lastTickAt) / 1000)
     c.lastTickAt = now
+
+    // Gerufen? Dann hat die Ruf-Sequenz die alleinige Kontrolle.
+    if (c.summon) { await advanceSummon(c, dt, now); return }
 
     // Angesprochen? Dann stehenbleiben und zuhören — Vorrang vor allem anderen.
     // Nur Bodenfiguren: ein Flieger würde sonst mitten in der Luft einfrieren
@@ -800,10 +971,40 @@ function attachInteractListener(c) {
   ajna.onInteract(c.id, (evt) => {
     const action = evt?.action
     if (!action || action === 'examine') return   // Untersuchen ist passiv — keine Reaktion
+
+    // „Rufen": der Spieler hat eine Position mitgeschickt → Anflug starten.
+    if (action === 'call' && c.flying) { startSummon(c, evt); return }
+
     c.attendUntil = Date.now() + ATTEND_MS
     console.log(`[director] 👂 "${c.id}" hält inne (${action})`)
   }).then(unsub => { c.unsubInteract = unsub })
     .catch(err => console.warn(`[director] interact-Abo (${c.id}): ${err?.message || err}`))
+}
+
+// Ruf annehmen: Ziel merken, FSM auf Anflug stellen. Ohne brauchbare Position
+// passiert NICHTS — lieber ignorieren als planlos irgendwohin fliegen.
+function startSummon(c, evt) {
+  const at = evt?.payload?.at
+  const lat = Number(at?.lat), lon = Number(at?.lon)
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    console.warn(`[director] 📣 Ruf an "${c.id}" ohne Position — ignoriert`)
+    return
+  }
+  const d = haversine(c.lat, c.lon, lat, lon)
+  if (d > CALL_MAX_RANGE_M) {
+    console.log(`[director] 📣 Ruf an "${c.id}" ignoriert — ${Math.round(d)} m entfernt (max ${CALL_MAX_RANGE_M})`)
+    return
+  }
+  c.summon = {
+    phase: 'inbound',
+    lat, lon,
+    precise: at?.precise === true,
+    until: 0,
+    spot: null,
+    circleAngle: Math.random() * Math.PI * 2
+  }
+  c.attendUntil = 0            // Ruf hat Vorrang vor „innehalten"
+  console.log(`[director] 📣 "${c.id}" wurde gerufen — ${Math.round(d)} m entfernt, ${at?.precise ? 'exakte' : 'ungefähre'} Position`)
 }
 
 function syncControllers() {

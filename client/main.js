@@ -625,6 +625,9 @@ async function init() {
     editorUI,
     contextMenu,
     permissionDialog,
+    // Für Aktionen wie „Rufen": exakte Position, die ObjectActions je nach
+    // Privatsphäre-Stufe vergröbert oder gar nicht mitschickt.
+    getPosition: () => positionSource?.getWorldPosition?.() || null,
     // Tap-Menü-Interaktion → gleiches Feedback wie der XR-/Wand-Pfad
     // (Reply-Toast + Highlight-Puls + TTS-Ansage).
     onInteract: (record, key) => _showInteractFeedback(record.id, key),
