@@ -49,7 +49,7 @@
 //     WD_CALL_CIRCLE_R    Kreisradius über dem Spieler in m (Default: 15)
 //     WD_CALL_CIRCLE_S    Kreisen vor der Landung in s     (Default: 12)
 //     WD_CALL_STAY_S      Verweildauer am Boden in s       (Default: 120)
-//     WD_CALL_LAND_MIN_M / _MAX_M  Landeplatz-Ring um den Spieler (5 / 20)
+//     WD_CALL_LAND_MIN_M / _MAX_M  Landeplatz-Ring um den Spieler (8 / 20)
 //     WD_CALL_RANGE_M     max. Entfernung, ab der ein Ruf ignoriert wird (1500)
 //
 // Start:  node agents/world-director.mjs   bzw.   npm run director
@@ -140,7 +140,7 @@ const CALL_CIRCLE_ALT   = parseFloat(process.env.WD_CALL_CIRCLE_ALT || '10')   /
 const CALL_CIRCLE_R     = parseFloat(process.env.WD_CALL_CIRCLE_R   || '15')   // m Kreisradius über dem Spieler
 const CALL_CIRCLE_S     = parseFloat(process.env.WD_CALL_CIRCLE_S   || '12')   // s kreisen, bevor er landet
 const CALL_STAY_S       = parseFloat(process.env.WD_CALL_STAY_S     || '120')  // s am Boden bleiben (2 min)
-const CALL_LAND_MIN_M   = parseFloat(process.env.WD_CALL_LAND_MIN_M || '5')    // nicht näher an den Spieler
+const CALL_LAND_MIN_M   = parseFloat(process.env.WD_CALL_LAND_MIN_M || '8')    // nicht näher an den Spieler
 const CALL_LAND_MAX_M   = parseFloat(process.env.WD_CALL_LAND_MAX_M || '20')
 const CALL_APPROACH_SPEED = parseFloat(process.env.WD_CALL_SPEED    || '14')   // m/s Anflug (zügiger als Streifen)
 const CALL_DESCENT_SPEED  = parseFloat(process.env.WD_CALL_DESCENT  || '4')    // m/s Sinken/Steigen

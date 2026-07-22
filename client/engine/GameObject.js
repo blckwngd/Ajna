@@ -403,6 +403,13 @@ export class GameObject {
 
     // Vorherige stoppen — Babylon spielt sonst beide gleichzeitig.
     this.animationGroups.forEach(g => g.stop())
+    // Bones auf Ruhelage, BEVOR die neue Group startet: manche Clips animieren
+    // nur einen Teil des Skeletts. Das Dragon-"Idle" z. B. bewegt nur Wirbel +
+    // Schwanz, NICHT die Flügel (im GLB verifiziert: 13 vs. 57 Knoten). Ohne
+    // Reset behielten die nicht animierten Bones die letzte Pose der vorherigen
+    // Group — der gelandete Drache bliebe mit den aus GlideFlight/FlapFlight
+    // gespreizten Flügeln stehen, während nur Rumpf/Schwanz idle-atmen.
+    this.skeletons?.forEach(sk => { try { sk.returnToRest() } catch {} })
     next.start(true)
     this._activeAnim = next
   }
