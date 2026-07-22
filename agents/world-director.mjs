@@ -824,22 +824,43 @@ async function advanceSummon(c, dt, now) {
     }
     case 'landing': {
       const dSpot = haversine(c.lat, c.lon, s.spot.lat, s.spot.lon)
-      turnRatio = steerTo(s.spot.lat, s.spot.lon, Math.max(2, CALL_APPROACH_SPEED * 0.4))
-      const atAlt = approachAlt(s.spot.altitude)
+      turnRatio = steerTo(s.spot.lat, s.spot.lon, Math.max(2.5, CALL_APPROACH_SPEED * 0.4))
+      // Gleitpfad: Zielhöhe proportional zur Restdistanz. Ohne das sinkt er mit
+      // fester Rate — und ist auf Bodenhöhe, während er noch Dutzende Meter
+      // entfernt ist, sodass er flach über den Boden zum Spieler schrammt (was
+      // wie tiefes Gleiten aussieht). So sinkt er STETIG auf den Platz zu.
+      approachAlt(s.spot.altitude + Math.min(CALL_CIRCLE_ALT, dSpot * 0.5))
       anim = 'fly'
-      if (dSpot < 3 && atAlt) {
-        // Exakt aufsetzen, damit er nicht 2 m daneben schwebt.
+      if (dSpot < 2.5) {
+        // Aufsetzen — der einzige Tick, in dem der Endzustand geschrieben wird,
+        // darum EXPLIZIT und in EINEM atomaren Update:
+        //   • exakt auf den Platz (nicht 2 m daneben schweben),
+        //   • Blick ZUM SPIELER (nicht in die Anflugrichtung),
+        //   • animation_state 'idle' (der Drache hat einen echten Idle-Clip;
+        //     ohne diese Zeile behielt er den letzten Flug-Clip),
+        //   • z:0 — keine Flug-Schräglage mehr am Boden.
+        // Ab hier schreibt der 'landed'-Zustand NICHTS mehr → der Spieler kann
+        // um ihn herumlaufen, ohne dass er sich mitdreht.
         c.lat = s.spot.lat; c.lon = s.spot.lon; c.altBase = s.spot.altitude
+        c.heading = bearingRad(s.spot.lat, s.spot.lon, s.lat, s.lon)
+        c.anim = 'idle'
+        await ajna.updateObject(c.id, {
+          lat: c.lat, lon: c.lon, altitude: c.altBase,
+          animation_state: 'idle',
+          rotation: { x: 0, y: wrapPi(Math.PI - c.heading + FLY_YAW_OFFSET), z: 0 }
+        })
         s.phase = 'landed'
         s.until = now + CALL_STAY_S * 1000
-        console.log(`[director] 🐉 "${c.id}" ist gelandet — bleibt ${CALL_STAY_S} s`)
+        console.log(`[director] 🐉 "${c.id}" gelandet, zum Spieler gewandt — bleibt ${CALL_STAY_S} s`)
+        return
       }
       break
     }
     case 'landed': {
-      // Steht still: Idle setzen und RAUS — 2 Minuten lang jeden Tick dieselbe
-      // Position zu schreiben wäre reine Last (wie beim Rasten der Boden-Tiere).
-      // Position/Höhe/Yaw stehen bereits aus dem Aufsetz-Tick.
+      // Steht still — bewusst NICHTS schreiben: 2 min lang jeden Tick dieselbe
+      // Position zu senden wäre Last, und ein Rotations-Update ließe ihn dem
+      // umherlaufenden Spieler nachdrehen. Idle + Ausrichtung stehen aus dem
+      // Aufsetz-Tick. Nur nachziehen, falls ein fremdes Update dazwischenkam.
       if (c.anim !== 'idle') { c.anim = 'idle'; await ajna.setAnimation(c.id, 'idle') }
       if (now >= s.until) {
         s.phase = 'takeoff'
