@@ -44,8 +44,16 @@ export function buildEnvironment(scene) {
 
 
   // Skybox
-
-  const skybox = BABYLON.MeshBuilder.CreateBox('skyBox', { size: 1000.0 }, scene);
+  //
+  // Groß genug, dass ALLE Objekte hineinpassen: `infiniteDistance` zentriert die
+  // Box zwar auf die Kamera, erzwingt aber KEINE Ferntiefe — die Innenflächen
+  // verdecken alles, was weiter als die Halbkante entfernt ist. Mit den alten
+  // 1000 (Halbkante 500 m) wurden ferne Flugzeuge (ADS-B, bis ~52 km) unten
+  // abgeschnitten (halbe Kugel + Wolken dahinter). 180 km Kantenlänge → Halbkante
+  // 90 km deckt den 50-km-Radius + Flughöhe ab; die Box-Ecken (~156 km) bleiben
+  // innerhalb maxZ (200 km, siehe CameraComponent), damit sie nicht ihrerseits
+  // wegge-clippt werden. Größe ist texturneutral (Cubemap ist richtungsbasiert).
+  const skybox = BABYLON.MeshBuilder.CreateBox('skyBox', { size: 180000.0 }, scene);
   const skyMat = new BABYLON.StandardMaterial('skyBoxMaterial', scene);
   skyMat.backFaceCulling = false;
   skyMat.disableLighting = true;
