@@ -109,6 +109,11 @@ try {
     source: 'opensky',
     agent_name: 'ADS-B-Bridge',
     description: `Flugzeuge via OpenSky-Network im Radius ${RADIUS_KM} km`,
+    // Unbegrenztes Render-Budget: sonst zeigt der Client nur die 50 kamera-
+    // nächsten (DEFAULT_RENDER_BUDGET) und cullt den Rest per Distanz — bei
+    // Flugzeugen ist aber gerade die Weitsicht der Punkt. Die Gesamtzahl deckelt
+    // ohnehin ADSB_MAX_AIRCRAFT.
+    render_budget: 0,
     layers: [{ key: 'all', label: 'Alle Flugzeuge', predicate: null }]
   })
   console.log('[ajna] manifest aktualisiert')

@@ -45,6 +45,11 @@ export class DebugCameraComponent extends BaseComponent {
 
     this.freeCamera.setTarget(BABYLON.Vector3.Zero())
 
+    // Gleicher Far-Clip wie die Player-Kamera (CameraComponent), damit auch im
+    // Free-Modus weit entfernte Flugzeuge nicht an der Default-10-km-Wand
+    // abgeschnitten werden.
+    this.freeCamera.maxZ = 200000
+
     // Sowohl WASD als auch Pfeiltasten als Movement-Keys binden.
     // (keyCodes: W=87 S=83 A=65 D=68 / Arrow Up=38 Down=40 Left=37 Right=39)
     this.freeCamera.keysUp    = [87, 38]
