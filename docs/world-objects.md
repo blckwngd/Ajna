@@ -35,9 +35,26 @@ Code-Änderung**.
 | `item`   | `idle`                                   |
 | `hint`   | `idle`                                   |
 
-**Für Modell-Autoren:** Benenne die AnimationGroups exakt wie oben (Groß-/Kleinschreibung
-egal). Fehlt der im `animation_state` genannte Name, fällt der Renderer auf die erste
-Gruppe zurück.
+**Für Modell-Autoren:** Benenne die AnimationGroups wie oben (Groß-/Kleinschreibung
+egal). Der Resolver ([`ANIM_ALIASES`](../client/engine/GameObject.js)) matcht **per
+Teilstring** und über eine Alias-Prioritätsliste — ein Präfix wie `metarig|` stört
+also nicht, und modell-spezifische Namen (`FlapFlight`, `GlideFlight`) werden
+erkannt. Fehlt jeder Treffer, fällt der Renderer auf die erste Gruppe zurück.
+
+**Verfügbare Flug-Modelle** (`MODEL_POOL.dragon` im World-Director):
+
+| Modell | idle | fly (aktiv/klappen) | glide (gleiten) | walk |
+|---|---|---|---|---|
+| `Dragon.glb`  | `Idle` | `FlapFlight` | `GlideFlight` | `Walk` |
+| `wyvern.glb`  | `metarig\|idol` | `metarig\|flaping` | `metarig\|flying` | `metarig\|walk` |
+
+> Der wyvern hat abweichende/fehlerbehaftete Clip-Namen (`idol` statt idle,
+> `flaping` statt flapping). Die Aliase `idol` (→ idle) und `flying` (→ glide)
+> fangen das ab — beim Ergänzen ähnlich benannter Modelle die passenden
+> Teilstrings zu `ANIM_ALIASES` hinzufügen, statt Clips umzubenennen.
+>
+> Quelle wyvern.glb: [Sketchfab „Wyvern Animated"](https://sketchfab.com/3d-models/wyvern-animated-1dc70bbf15c2456a85290c8613b6c1ff)
+> — Lizenzbedingungen (Namensnennung o. Ä.) vor einer Veröffentlichung prüfen.
 
 ## Objekt-`state`-Identitätsschema
 

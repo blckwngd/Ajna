@@ -310,7 +310,7 @@ const MODEL_POOL = {
   npc:    ['CesiumMan.glb', 'Soldier.glb', 'RobotExpressive.glb'],
   enemy:  ['MawGooey.glb', 'Slime.glb', 'Soldier.glb'],
   animal: ['Fox.glb', 'Horse.glb', 'Flamingo.glb', 'Stork.glb', 'Parrot.glb'],
-  dragon: ['Dragon.glb'],
+  dragon: ['Dragon.glb', 'wyvern.glb'],   // wyvern: Animationen „metarig|idol|flaping|flying|walk"
   item:   ['Sword.glb', 'TreasureChest.glb'],
   hint:   [],  // kein Modell → Viewer nutzt den appearance-/Typ-Platzhalter
   diamond: ['Diamond.glb']
@@ -320,7 +320,7 @@ const MODEL_POOL = {
 const FLYING_MODELS = new Set(['Flamingo.glb', 'Stork.glb', 'Parrot.glb'])
 // Modelle mit brauchbarer Idle-/Ruhe-Animation → dürfen beim Streifen Pausen
 // einlegen (sonst wirkt die Szene unruhig). Horse/Vögel/CesiumMan haben keine.
-const IDLE_MODELS = new Set(['Soldier.glb', 'RobotExpressive.glb', 'MawGooey.glb', 'Slime.glb', 'Fox.glb', 'AIMonster.glb', 'Dragon.glb'])
+const IDLE_MODELS = new Set(['Soldier.glb', 'RobotExpressive.glb', 'MawGooey.glb', 'Slime.glb', 'Fox.glb', 'AIMonster.glb', 'Dragon.glb', 'wyvern.glb'])
 
 function targetCount(archetype) {
   const env = process.env[`WD_COUNT_${archetype.toUpperCase()}`]

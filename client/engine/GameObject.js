@@ -35,12 +35,17 @@ const INTERACTION_ANIM = {
 // derselbe Director-State auf modell-spezifische Clip-Namen: ein fliegendes Wesen
 // nutzt für „fly" FlapFlight, für „glide" GlideFlight; ein Vogel mit nur einem
 // Clip fällt auf dessen erste Group zurück. Deckt Groß-/Kleinschreibung ab.
+// Zusätzliche Teilstrings decken abweichende/fehlerbehaftete Clip-Namen ab:
+// „idol" (wyvern.glb, Tippfehler für idle), „flying" (wyvern glide-Clip). Der
+// Präfix „metarig|" ist egal — gematcht wird per includes(). Reihenfolge =
+// Priorität; die spezifischen Namen (glideflight/flapflight) stehen VORNE, damit
+// sie beim Dragon.glb weiterhin zuerst greifen.
 const ANIM_ALIASES = {
   walk:  ["walk", "move", "trot", "flapflight", "fly", "run"],
   run:   ["run", "gallop", "sprint", "flapflight", "fly", "walk"],
-  idle:  ["idle", "survey", "rest", "stand", "glideflight", "glide", "hover"],
+  idle:  ["idle", "idol", "survey", "rest", "stand", "glideflight", "glide", "hover"],
   fly:   ["flapflight", "flap", "fly", "flight", "wing", "walk", "run", "move"],
-  glide: ["glideflight", "glide", "soar", "hover", "idle", "flight", "flapflight"],
+  glide: ["glideflight", "glide", "flying", "soar", "hover", "idle", "flight", "flapflight"],
 }
 
 // Typen, die als „Figur" einen Blob-Schatten bekommen (Objekte mit 3D-Modell
