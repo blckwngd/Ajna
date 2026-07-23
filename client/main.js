@@ -942,7 +942,10 @@ async function init() {
 
     const cam = scene.activeCamera
     if (!cam) return
-    const ray = cam.getForwardRay(100)
+    // Weit reichender Gaze-Ray (200 km statt 100 m), damit auch ferne Flugzeuge
+    // anvisierbar sind. pickWithRay liefert den NÄCHSTEN Treffer — nahe Objekte
+    // gewinnen also weiterhin; die größere Länge kostet nichts.
+    const ray = cam.getForwardRay(200000)
     const pickInfo = scene.pickWithRay(ray,
       mesh => !!mesh.metadata?.gameObject
     )
@@ -994,10 +997,14 @@ async function init() {
       next = pickGameObjectTolerant(vp.x + vp.width / 2, vp.y + vp.height / 2)
     }
     if (next && !next.name) next = null
-    // Reichweite: nur Objekte innerhalb _auraRangeM (Meter) fokussieren.
+    // Reichweite: nur Objekte innerhalb _auraRangeM (Meter) fokussieren —
+    // AUSSER Flugzeuge (ADS-B). Die sind naturgemäß weit oben/weg; man zielt
+    // bewusst in den Himmel, um eines zu greifen, darum kein Nah-Reichweitentor.
     if (next) {
+      const rec = ajnaManager.objectMap.get(next.id)
+      const farOk = rec?.type === 'aircraft' || !!rec?.state?.adsb
       const c = objectWorldCenter(next.root)
-      if (!c || BABYLON.Vector3.Distance(cam.globalPosition, c) > _auraRangeM) next = null
+      if (!c || (!farOk && BABYLON.Vector3.Distance(cam.globalPosition, c) > _auraRangeM)) next = null
     }
     // Fokuswechsel: Highlight + Zielansage nur bei Wechsel umschalten.
     if (next !== _auraGO) {

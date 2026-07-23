@@ -149,6 +149,9 @@ function mapUpdateMarkers(objects) {
       const m = markerLayer.get(obj.id)
       if (m) {
         feedSmoother(obj)
+        // Flugzeug: Kurs am bestehenden Icon nachziehen (kein Rebuild → Smoother
+        // bleibt, Extrapolation reißt nicht ab).
+        if ((obj.type || '').toLowerCase() === 'aircraft') applyAircraftHeading(m, obj)
         if (m._ajnaSig !== sig) {   // Darstellung geändert → Marker neu aufbauen
           removeMarker(obj.id)
           addMarker(obj)
@@ -280,7 +283,38 @@ function makeMarker(obj) {
       fillColor: color, fillOpacity: 0.4
     })
   }
+  if (type === 'aircraft') {
+    return window.L.marker([obj.lat, obj.lon], { icon: aircraftIcon(obj), draggable: false })
+  }
   return window.L.marker([obj.lat, obj.lon], { icon: markerIconFor(obj), draggable: true })
+}
+
+// Flugzeug-Marker: ein nach NORDEN zeigendes SVG-Symbol, per rotate() auf den
+// Kurs (state.adsb.trk, Grad CW von Nord) gedreht. Bewusst SVG statt der ✈️-
+// Emoji — deren Basis-Ausrichtung ist plattformabhängig, ließe sich also nicht
+// verlässlich auf einen Kurs drehen. Das Label bleibt aufrecht (separater Span,
+// nur `.acft-rot` dreht sich). Rotation wird beim Reconcile per applyAircraftHeading
+// direkt am DOM nachgezogen — ohne den Marker (und damit den Smoother) neu zu bauen.
+function aircraftHeading(obj) {
+  const t = Number(obj.state?.adsb?.trk)
+  return Number.isFinite(t) ? t : 0
+}
+function aircraftIcon(obj) {
+  const color = colorOf(obj) || '#39a0ff'
+  const svg = `<svg class="acft-rot" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"
+      style="transform:rotate(${aircraftHeading(obj)}deg)">
+      <path d="M12 2 L13.4 11 L22 15.5 L22 17.4 L13.4 15 L13.4 20 L16 21.8 L16 23 L12 21.8 L8 23 L8 21.8 L10.6 20 L10.6 15 L2 17.4 L2 15.5 L10.6 11 Z"
+        fill="${color}" stroke="#0a1e30" stroke-width="0.6" stroke-linejoin="round"/>
+    </svg>`
+  return window.L.divIcon({
+    className: 'map-marker map-aircraft',
+    iconSize: [22, 22],
+    html: `<span class="acft-wrap">${svg}<span class="acft-label">${escHtml(obj.name)}</span></span>`
+  })
+}
+function applyAircraftHeading(marker, obj) {
+  const el = marker?._icon?.querySelector?.('.acft-rot')
+  if (el) el.style.transform = `rotate(${aircraftHeading(obj)}deg)`
 }
 
 // Popup-Inhalt aus dem AjnaManager-Cache (frische Position). Als Funktion an
@@ -511,6 +545,16 @@ function injectHighlightStyles() {
     #map.map-theme-dark .map-marker {
       color: #f2f4f7;
       text-shadow: 0 0 3px #000, 0 0 3px #000, 0 0 2px #000;
+    }
+    /* Flugzeug: Symbol + Label nebeneinander. Nur das SVG (.acft-rot) rotiert auf
+       den Kurs; das Label bleibt lesbar (aufrecht). drop-shadow hebt das Symbol
+       von beiden Basemaps ab. */
+    .map-marker.map-aircraft { white-space: nowrap; }
+    .map-aircraft .acft-wrap { display: inline-flex; align-items: center; gap: 3px; }
+    .map-aircraft .acft-rot {
+      transform-origin: 50% 50%;
+      transition: transform 400ms ease-out;   /* sanfte Kursdrehung statt Sprung */
+      filter: drop-shadow(0 0 1.5px rgba(0,0,0,0.6));
     }
   `
   document.head.appendChild(style)
