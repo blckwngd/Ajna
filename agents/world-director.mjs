@@ -799,6 +799,14 @@ async function advanceSummon(c, dt, now) {
       if (dist <= CALL_CIRCLE_R * 1.4) {
         s.phase = 'circling'
         s.until = now + CALL_CIRCLE_S * 1000
+        // Landeplatz JETZT im Hintergrund suchen — die Geo-Abfrage (Overpass)
+        // dauert oft Sekunden. Während der Drache kreist, ist Zeit dafür. Würde
+        // man erst beim Übergang zum Landen await-en, hinge er solange bewegungs-
+        // los in der Luft (die await-Pause blockiert den ganzen Tick).
+        // undefined = Suche läuft noch; wird zu Spot-Objekt oder null.
+        s.spot = undefined
+        pickLandingSpot(c, s).then(spot => { s.spot = spot || null })
+                             .catch(() => { s.spot = null })
         console.log(`[director] 🐉 "${c.id}" kreist über dem Spieler`)
       }
       break
@@ -811,8 +819,10 @@ async function advanceSummon(c, dt, now) {
       turnRatio = steerTo(t.lat, t.lon, CALL_APPROACH_SPEED * 0.8)
       approachAlt(CALL_CIRCLE_ALT)
       anim = 'fly'
-      if (now >= s.until) {
-        s.spot = await pickLandingSpot(c, s)
+      // Landen erst, wenn die Kreiszeit UM ist UND die Suche fertig (nicht mehr
+      // undefined). Ist die Geo-Abfrage noch unterwegs, kreist er einfach weiter
+      // — eine natürliche Warteschleife statt Einfrieren.
+      if (now >= s.until && s.spot !== undefined) {
         if (!s.spot) {                       // nirgends Platz → Ruf abbrechen
           console.warn(`[director] 🐉 "${c.id}" findet keinen Landeplatz → zurück zur Routine`)
           c.summon = null
