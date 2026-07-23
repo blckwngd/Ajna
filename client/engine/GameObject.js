@@ -46,6 +46,9 @@ const ANIM_ALIASES = {
   idle:  ["idle", "idol", "survey", "rest", "stand", "glideflight", "glide", "hover"],
   fly:   ["flapflight", "flap", "fly", "flight", "wing", "walk", "run", "move"],
   glide: ["glideflight", "glide", "flying", "soar", "hover", "idle", "flight", "flapflight"],
+  // Abheben: der wyvern hat „metarig|take off"; Modelle ohne eigenen Takeoff-Clip
+  // (z. B. Dragon.glb) fallen sauber auf ihre Flap-/Flug-Animation zurück.
+  takeoff: ["take off", "takeoff", "take_off", "launch", "flapflight", "flap", "fly", "flight"],
 }
 
 // Typen, die als „Figur" einen Blob-Schatten bekommen (Objekte mit 3D-Modell

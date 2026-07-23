@@ -43,10 +43,14 @@ erkannt. Fehlt jeder Treffer, fällt der Renderer auf die erste Gruppe zurück.
 
 **Verfügbare Flug-Modelle** (`MODEL_POOL.dragon` im World-Director):
 
-| Modell | idle | fly (aktiv/klappen) | glide (gleiten) | walk |
-|---|---|---|---|---|
-| `Dragon.glb`  | `Idle` | `FlapFlight` | `GlideFlight` | `Walk` |
-| `wyvern.glb`  | `metarig\|idol` | `metarig\|flaping` | `metarig\|flying` | `metarig\|walk` |
+| Modell | idle | fly (klappen) | glide (gleiten) | walk | takeoff (abheben) |
+|---|---|---|---|---|---|
+| `Dragon.glb`  | `Idle` | `FlapFlight` | `GlideFlight` | `Walk` | — (→ `FlapFlight`) |
+| `wyvern.glb`  | `metarig\|idol` | `metarig\|flaping` | `metarig\|flying` | `metarig\|walk` | `metarig\|take off` |
+
+Neue lokale GLB-Dateien in **zwei** Listen eintragen: `MODEL_POOL` (agents/world-director.mjs,
+welcher Archetyp welches Modell spawnt) UND [`LOCAL_MODELS`](../client/core/localModels.js)
+(client — speist das 3D-Modell-Dropdown im Editor).
 
 > Der wyvern hat abweichende/fehlerbehaftete Clip-Namen (`idol` statt idle,
 > `flaping` statt flapping). Die Aliase `idol` (→ idle) und `flying` (→ glide)

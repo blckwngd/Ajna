@@ -19,4 +19,5 @@ export const LOCAL_MODELS = [
   'Stork.glb',
   'Sword.glb',
   'TreasureChest.glb',
+  'wyvern.glb',
 ]

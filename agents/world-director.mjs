@@ -883,7 +883,9 @@ async function advanceSummon(c, dt, now) {
       const p = destPoint(c.lat, c.lon, c.heading, CALL_APPROACH_SPEED * 0.5 * dt)
       c.lat = p.lat; c.lon = p.lon
       const cruise = c.altCruise || 40
-      anim = 'fly'
+      // Abheben-Animation (wyvern: „take off"); Modelle ohne Takeoff-Clip fallen
+      // im Resolver auf ihre Flap-Animation zurück (siehe ANIM_ALIASES.takeoff).
+      anim = 'takeoff'
       if (approachAlt(cruise)) {
         // Zurück zur Routine — und zwar HIER als neues Revier, sonst zieht ihn
         // die Randlenkung sofort quer über die Karte zum alten Spawn zurück.
