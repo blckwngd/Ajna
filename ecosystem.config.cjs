@@ -15,6 +15,7 @@ const ROOT = __dirname
 const AGENTS = [
   'poi-bridge',
   'ais-bridge',
+  'adsb-bridge',   // Flugzeuge aus OpenSky; läuft anonym, optional OAuth2 (.env)
   'wigle-bridge',
   'world-director',
   'homeassistant-gateway', // MQTT-Gateway: eingebetteter Broker (Port 1883) +

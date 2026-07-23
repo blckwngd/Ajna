@@ -127,7 +127,7 @@ Da `AjnaManager.js` `import PocketBase from 'pocketbase'` verwendet, brauchst du
 
 ## Vorgefertigte Bridges (Referenz-Implementierungen)
 
-Im Verzeichnis [`agents/`](../agents/) liegen zwei produktionsreife Node-Agents, die als Vorlage für eigene Bridges dienen können:
+Im Verzeichnis [`agents/`](../agents/) liegen mehrere produktionsreife Node-Agents, die als Vorlage für eigene Bridges dienen können:
 
 ### AIS-Bridge — [agents/ais-bridge.mjs](../agents/ais-bridge.mjs)
 
@@ -143,6 +143,28 @@ AIS_STALE_TIMEOUT_S=600
 ```
 
 Start: `npm run ais`.
+
+### ADS-B-Bridge — [agents/adsb-bridge.mjs](../agents/adsb-bridge.mjs)
+
+Spiegelt **Flugzeuge** aus dem [OpenSky-Network](https://opensky-network.org/) (`type="aircraft"`). Analog zur AIS-Bridge, aber mit drei Besonderheiten, die als Muster für „schnelle, weit entfernte, hart rate-limitierte Quellen" taugen:
+
+- **Große Sichtweite (~50 km)** und **großzügige Interest-Areas**: der kleine (~500 m) gefuzzte Spielerbereich wird auf einen 50-km-Radius um seine Mitte aufgeblasen.
+- **Aggressive API-Drosselung**: OpenSky ist REST-Poll und limitiert (anonym 400 Credits/Tag, authentifiziert 4000). Gepollt wird **nur bei aktiven Interessensbereichen**; der Antwort-Header `X-Rate-Limit-Remaining` steuert die Drosselung, bei knappem Budget / HTTP 429 wird pausiert. Anonym per Default, optional **OAuth2 Client-Credentials** (`OPENSKY_CLIENT_ID/SECRET`) für das größere Budget.
+- **Client-seitige Vorausberechnung (Dead-Reckoning)**: weil Polls selten sind (~30 s), aber Flugzeuge schnell (250 m/s → 7,5 km zwischen Polls), schreibt der Agent nur `state.adsb = {v, trk, vrate, t, lat0, lon0, alt0}`; der [`PositionSmoother`](../client/core/PositionSmoother.js) rechnet daraus **pro Frame** die aktuelle Position voraus (statt zu interpolieren). Gilt automatisch für Karte UND AR.
+
+```ini
+# leer = anonym; für mehr Budget OAuth2-Client anlegen
+OPENSKY_CLIENT_ID=
+OPENSKY_CLIENT_SECRET=
+ADSB_CENTER_LAT=50.11    # Frankfurt (Fallback ohne Interessensbereiche)
+ADSB_CENTER_LON=8.68
+ADSB_RADIUS_KM=50
+ADSB_POLL_S=30
+ADSB_MAX_AIRCRAFT=200
+ADSB_STALE_TIMEOUT_S=120
+```
+
+Start: `npm run adsb`.
 
 ### POI-Bridge — [agents/poi-bridge.mjs](../agents/poi-bridge.mjs)
 
