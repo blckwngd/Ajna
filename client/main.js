@@ -57,6 +57,7 @@ import { sunPosition } from "./core/solarPosition.js"
 import { ArPassthrough } from "./core/ArPassthrough.js"
 import { ArFovCalibration } from "./core/ArFovCalibration.js"
 import { CompassCalibration } from "./core/CompassCalibration.js"
+import { HeadingStabilizer } from "./core/headingStabilizer.js"
 import { ObjectAura } from "./core/ObjectAura.js"
 import { QuickActions } from "./core/QuickActions.js"
 import { UwbAnchorOverlay } from "./core/UwbAnchorOverlay.js"
@@ -329,6 +330,11 @@ async function init() {
   window.addEventListener('ajna:ar-north', ev => {
     _arNorthRad = (parseFloat(ev.detail) || 0) * Math.PI / 180
   })
+  // Gyro-Stabilisierung des Headings (siehe Hook unten). _smoothedHeadingQ hält
+  // den geglätteten Zustand; null = neu ansetzen (nach Modus-Aus/An kein Lerp aus
+  // einer veralteten Orientierung).
+  const _headingStab = new HeadingStabilizer()
+  let _smoothedHeadingQ = null
   if (_playerCam) {
     // Kompass-Input EINMAL einrichten: die Player-Kamera bekommt ausschließlich
     // Babylons DeviceOrientation-Input (kein Maus/Touch/Tastatur). Bewusst NICHT
@@ -344,10 +350,16 @@ async function init() {
     // Yaw (links/rechts) bleibt. Nur bei aktivem Kompass, nach dem Input-Check.
     _playerCam.onAfterCheckInputsObservable.add(() => {
       const q = _playerCam.rotationQuaternion
-      if (!_compassActive || !q) return
+      if (!_compassActive || !q) { _smoothedHeadingQ = null; return }
       const e = q.toEulerAngles()
       // + _arNorthRad korrigiert den Kompass↔Daten-Nord-Versatz (z. B. 180°).
       BABYLON.Quaternion.RotationYawPitchRollToRef(e.y + _arNorthRad, -e.x, -e.z, q)
+      // Gyro-adaptive Glättung (headingStabilizer): bei Ruhe stark (Objekte
+      // schwimmen nicht mehr), bei echter Drehung ohne spürbaren Lag. q ist das
+      // Ziel; wir slerpen den gehaltenen Zustand darauf zu und schreiben zurück.
+      const t = _headingStab.factor()
+      if (!_smoothedHeadingQ) _smoothedHeadingQ = q.clone()
+      else { BABYLON.Quaternion.SlerpToRef(_smoothedHeadingQ, q, t, _smoothedHeadingQ); q.copyFrom(_smoothedHeadingQ) }
     })
   }
   // FOV-Kalibrierung der AR-Kamera an das reale Kamerabild (Pitch-Mismatch):
