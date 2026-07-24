@@ -21,6 +21,7 @@
 // Loop. `dispose()` räumt die Meshes auf.
 
 import { buildingHeightM, heightSource } from '../../core/buildingHeight.js'
+import { applyLayer } from '../../core/debugLayers.js'
 
 const DEFAULT_RADIUS_M = 300
 const STREET_Y = 0.05          // leicht über Ground, gegen Z-Fighting
@@ -75,6 +76,11 @@ export class OSMContext {
     } else {
       console.warn('[osm] buildings fetch failed:', buildingsRes.reason?.message || buildingsRes.reason)
     }
+
+    // Frisch gezeichnete Meshes an die gespeicherte Debug-Sichtbarkeit angleichen
+    // — sonst käme ein ausgeblendetes Overlay nach jedem Reload zurück.
+    applyLayer(this.scene, 'ways')
+    applyLayer(this.scene, 'buildings')
 
     this._loaded = wayCount > 0 || bldgCount > 0
     console.log(`[osm] drawn: ${wayCount} ways, ${bldgCount} buildings, radius ${this.radius} m`)

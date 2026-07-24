@@ -1,4 +1,5 @@
 import { GridMaterial } from "@babylonjs/materials"
+import { applyAllLayers } from "../../core/debugLayers.js"
 
 export function buildDebugScene(scene) {
 
@@ -73,6 +74,10 @@ export function buildDebugScene(scene) {
   }, scene)
   axisZ.color = new BABYLON.Color3(0, 0, 1)
   axisZ.isPickable = false
+
+  // Gespeicherte Overlay-Sichtbarkeit anwenden (Grid/Achsen existieren jetzt;
+  // OSM-Meshes noch nicht → dort no-op, greift beim OSM-Zeichnen selbst).
+  applyAllLayers(scene)
 
   // Ground-Mesh als Referenz zurückgeben — wird z. B. von der WebXR-
   // Teleportation als Floor benötigt.

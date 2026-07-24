@@ -1,4 +1,5 @@
 import { TransformComponent } from "../components/TransformComponent.js"
+import { DEBUG_LAYERS, layerVisible, setLayerVisible, applyLayer } from "../../core/debugLayers.js"
 
 export class DebugUIManager {
 
@@ -81,6 +82,17 @@ export class DebugUIManager {
       <section class="dbg-section">
         <h4>Scene Position</h4>
         <pre id="sceneInfo" class="dbg-readout">–</pre>
+      </section>
+
+      <section class="dbg-section">
+        <h4>Overlays</h4>
+        ${DEBUG_LAYERS.map(l => `
+          <div class="dbg-row dbg-toggle">
+            <label class="dbg-switch">
+              <input type="checkbox" data-layer="${l.key}">
+              <span>${l.label}</span>
+            </label>
+          </div>`).join('')}
       </section>
 
       <section class="dbg-section">
@@ -277,6 +289,19 @@ export class DebugUIManager {
   attachEvents() {
 
     this.container.querySelector("#dbgCloseBtn").addEventListener("click", () => this.hide())
+
+    // Overlay-Umschalter (Bodengitter/Achsen/Gebäude/Straßen): Checkbox aus der
+    // gespeicherten Sichtbarkeit vorbelegen, bei Änderung speichern + sofort auf
+    // die Meshes anwenden. Die OSM-Overlays wenden ihren Zustand zusätzlich beim
+    // (Neu-)Zeichnen selbst an (siehe debugLayers.js), damit ein Overpass-Reload
+    // die Einstellung nicht überschreibt.
+    for (const cb of this.container.querySelectorAll("[data-layer]")) {
+      cb.checked = layerVisible(cb.dataset.layer)
+      cb.addEventListener("change", e => {
+        setLayerVisible(e.target.dataset.layer, e.target.checked)
+        applyLayer(this.scene, e.target.dataset.layer)
+      })
+    }
 
     this.container.querySelector("#dummyToggle").addEventListener("change", e => {
       this.gps.enableDummyMode(e.target.checked)
