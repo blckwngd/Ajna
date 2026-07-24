@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<!--
+  PoC — Spike-Schritt 1 aus docs/visual-tracking.md:
+  „Läuft die 8th-Wall-Engine im WebView und liefert sie eine 6DoF-Pose?"
+
+  Diese Seite ist BEWUSST eigenständig (kein Ajna-Code, kein Webpack) — sie testet
+  die Engine ISOLIERT. Sie prüft NUR:
+    • lädt die Engine im (Capacitor-)WebView?
+    • bekommt sie Kamerazugriff und zeigt das Kamerabild?
+    • streamt sie eine 6DoF-Pose (Position + Rotation) + Tracking-Status?
+    • ändert sich die POSITION bei kleiner Seitwärtsbewegung? (= genau das, was
+      GPS nicht kann und weshalb Objekte heute „schwimmen".)
+
+  Der verankerte Test-Würfel (Spike-Schritt 2) kommt ERST, wenn diese Seite grün ist.
+
+  ⚠ AUSFÜLLEN: ENGINE_URL unten auf die selbst gehostete xr.js zeigen lassen
+  (Bezug siehe README.md in diesem Ordner). Alles andere ist die stabile XR8-API.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Ajna — SLAM PoC</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+  #camerafeed { position: fixed; inset: 0; width: 100%; height: 100%; }
+  #hud {
+    position: fixed; left: 8px; top: 8px; right: 8px;
+    color: #cfe8ff; background: rgba(0,0,0,0.55); border: 1px solid #2b4a66;
+    border-radius: 8px; padding: 10px 12px; white-space: pre-wrap;
+    pointer-events: none; text-shadow: 0 0 2px #000;
+  }
+  #hud b { color: #7ec8ff; }
+  .ok { color: #6ee787; } .warn { color: #ffcf6f; } .err { color: #ff8f8f; }
+  #big {
+    position: fixed; left: 8px; right: 8px; bottom: 10px;
+    color: #fff; background: rgba(0,0,0,0.6); border-radius: 8px; padding: 8px 12px;
+  }
+</style>
+
+<canvas id="camerafeed"></canvas>
+<div id="hud">Initialisiere …</div>
+<div id="big">Status: <span id="stat">Engine wird geladen …</span></div>
+
+<script>
+  // ═══════════════════════════════════════════════════════════════════════
+  //  ⚠ HIER die selbst gehostete Engine-URL eintragen (siehe README.md).
+  //  Die Open-Source-Engine wird als <script> geladen; SLAM steckt im
+  //  „Distributed Engine Binary". Am besten unter EIGENEM Origin hosten
+  //  (dann keine CSP-/Cross-Origin-Probleme im WebView).
+  // ═══════════════════════════════════════════════════════════════════════
+  const ENGINE_URL = ''   // z. B. '/poc/slam/engine/xr.js'  ODER  'https://8th.io/xrjs'
+
+  const hud = document.getElementById('hud')
+  const stat = document.getElementById('stat')
+  const setStat = (t, cls) => { stat.textContent = t; stat.className = cls || '' }
+
+  // Alles, was schiefgeht, sichtbar machen — ein Handy hat keine offene Konsole.
+  window.addEventListener('error', e => setStat('JS-Fehler: ' + (e.message || e.error), 'err'))
+  window.addEventListener('unhandledrejection', e => setStat('Promise-Fehler: ' + (e.reason?.message || e.reason), 'err'))
+
+  const fmt = v => v ? `x ${(+v.x).toFixed(3)}  y ${(+v.y).toFixed(3)}  z ${(+v.z).toFixed(3)}` : '—'
+  const fmtQ = q => q ? `w ${(+q.w).toFixed(3)}  x ${(+q.x).toFixed(3)}  y ${(+q.y).toFixed(3)}  z ${(+q.z).toFixed(3)}` : '—'
+
+  // ── Diagnose-Pipeline-Modul: liest die Pose pro Frame und zeigt sie an ──
+  // In 8th Wall kommt die Kamera-Pose im onUpdate über processCpuResult.reality
+  // { position:{x,y,z}, rotation:{w,x,y,z}, intrinsics, trackingStatus }.
+  let _origin = null, _frames = 0, _lastT = performance.now(), _fps = 0
+  function poseHudModule() {
+    return {
+      name: 'ajna-pose-hud',
+      onStart: () => setStat('läuft — bewege das Gerät', 'ok'),
+      onException: (err) => setStat('Engine-Exception: ' + (err?.message || err), 'err'),
+      onUpdate: ({ processCpuResult }) => {
+        const r = processCpuResult && processCpuResult.reality
+        if (!r || !r.position) return
+        _frames++
+        const now = performance.now()
+        if (now - _lastT >= 500) { _fps = Math.round(_frames * 1000 / (now - _lastT)); _frames = 0; _lastT = now }
+
+        // „Wie weit bin ich seit dem Start gewandert?" — der entscheidende Beweis,
+        // dass SLAM kleine Translation erfasst (GPS kann das nicht).
+        if (!_origin) _origin = { ...r.position }
+        const dx = r.position.x - _origin.x, dy = r.position.y - _origin.y, dz = r.position.z - _origin.z
+        const moved = Math.hypot(dx, dy, dz)
+
+        hud.innerHTML =
+          `<b>Tracking:</b> <span class="${(r.trackingStatus === 'NORMAL' || !r.trackingStatus) ? 'ok' : 'warn'}">${r.trackingStatus || '(kein Status-Feld)'}</span>   <b>FPS:</b> ${_fps}\n` +
+          `<b>Position (m):</b> ${fmt(r.position)}\n` +
+          `<b>Rotation (Quat):</b> ${fmtQ(r.rotation)}\n` +
+          `<b>seit Start bewegt:</b> <span class="${moved > 0.02 ? 'ok' : 'warn'}">${(moved * 100).toFixed(1)} cm</span>`
+      },
+    }
+  }
+
+  function boot() {
+    if (typeof XR8 === 'undefined') { setStat('XR8 nicht definiert — Engine-Script nicht geladen? URL/Bild prüfen.', 'err'); return }
+    try {
+      // 6DoF-Welt-Tracking (SLAM) explizit an (disableWorldTracking:false = Default,
+      // hier zur Klarheit). true wäre 3DoF (nur Rotation) — genau NICHT was wir wollen.
+      if (XR8.XrController && XR8.XrController.configure) {
+        XR8.XrController.configure({ disableWorldTracking: false })
+      }
+      XR8.addCameraPipelineModules([
+        XR8.GlTextureRenderer.pipelineModule(),   // Kamerabild in die Canvas
+        XR8.XrController.pipelineModule(),         // Welt-Tracking (SLAM)
+        poseHudModule(),                           // unsere Diagnose
+      ])
+      setStat('Engine geladen — fordere Kamerazugriff an …', 'warn')
+      XR8.run({ canvas: document.getElementById('camerafeed') })
+    } catch (e) {
+      setStat('Setup-Fehler: ' + (e?.message || e), 'err')
+    }
+  }
+
+  // Engine-Script laden. Feuert 'xrloaded', sobald XR8 bereit ist (klassische
+  // 8th-Wall-Konvention); wir binden das Event UND prüfen, ob XR8 schon da ist.
+  function loadEngine() {
+    if (!ENGINE_URL) { setStat('ENGINE_URL ist leer — bitte in index.html eintragen (siehe README.md).', 'err'); return }
+    window.addEventListener('xrloaded', boot)
+    const s = document.createElement('script')
+    s.src = ENGINE_URL
+    s.crossOrigin = 'anonymous'
+    s.onload = () => { if (typeof XR8 !== 'undefined') boot() }   // falls xrloaded schon feuerte
+    s.onerror = () => setStat('Engine-Script konnte nicht geladen werden: ' + ENGINE_URL, 'err')
+    document.head.appendChild(s)
+    setStat('lade Engine: ' + ENGINE_URL + ' …', 'warn')
+  }
+
+  loadEngine()
+</script>
