@@ -11,11 +11,24 @@ export class CameraComponent extends BaseComponent {
   init(gameObject) {
     super.init(gameObject)
 
+    // Augenhöhe = reale Höhe der GERÄTE-Kamera über dem Boden. Bestimmt, wo
+    // exakt platzierte Objekte (Anker/Marker mit realer Höhe) im Bild erscheinen —
+    // deshalb pro Gerät/Person kalibrierbar (Einstellung, live via Event).
+    let eye = 1.7
+    try { const v = parseFloat(localStorage.getItem('ajna.ar.eye_height')); if (Number.isFinite(v) && v > 0.5 && v < 2.5) eye = v } catch {}
+
     this.camera = new BABYLON.UniversalCamera(
       "playerCamera",
-      new BABYLON.Vector3(0, 1.7, 0),
+      new BABYLON.Vector3(0, eye, 0),
       this.scene
     )
+
+    // Live-Änderung (Einstellungs-Feld feuert 'ajna:ar-eye-height' mit Metern).
+    this._onEye = ev => {
+      const v = parseFloat(ev.detail)
+      if (Number.isFinite(v) && v > 0.5 && v < 2.5) this.camera.position.y = v
+    }
+    try { window.addEventListener('ajna:ar-eye-height', this._onEye) } catch {}
 
     // Far-Clip weit hinausschieben: der Babylon-Default (maxZ = 10 km) schnitt
     // alles jenseits von 10 km ab — Flugzeuge (ADS-B) bis ~50 km Umkreis

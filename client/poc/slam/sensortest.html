@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<!--
+  Minimale Sensor-Sonde — beantwortet EINE Frage:
+  „Liefert dieser Kontext (Browser ODER Capacitor-WebView) Bewegungssensor-Daten?"
+
+  KEINE Engine, kein Babylon, kein SLAM — lädt sofort. Nutzt dieselbe Logik wie
+  step2.html, aber isoliert: nur devicemotion + deviceorientation.
+
+  Hintergrund: SLAM (8th Wall VIO) braucht echte IMU-Daten. Brave/Firefox
+  blockieren sie (→ Pose läuft Amok). Stock Chrome liefert sie. Diese Seite prüft,
+  ob es der Android-System-WebView (= Chromium, wie Chrome) auch tut.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Ajna — Sensor-Sonde</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0f14; color: #cfe8ff;
+    font: 15px/1.6 ui-monospace, Menlo, Consolas, monospace; }
+  #wrap { padding: 16px; }
+  h1 { font-size: 17px; color: #7ec8ff; margin: 0 0 4px; }
+  .sub { color: #7a93a8; font-size: 12px; margin-bottom: 16px; }
+  .row { margin: 6px 0; } b { color: #7ec8ff; }
+  .ok { color: #6ee787; } .err { color: #ff8f8f; } .warn { color: #ffcf6f; }
+  #verdict { margin: 16px 0; padding: 14px 16px; border-radius: 10px; font-size: 16px; text-align: center;
+    border: 2px solid #2b4a66; background: rgba(255,255,255,0.04); }
+  #verdict.good { border-color: #6ee787; background: rgba(40,120,50,0.25); color: #d7ffd7; }
+  #verdict.bad  { border-color: #ff8f8f; background: rgba(125,18,18,0.35); color: #ffe0e0; }
+  #tap { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.9); text-align: center; padding: 24px; }
+  #tap b { font-size: 22px; color: #7ec8ff; }
+  .big { font-size: 22px; }
+</style>
+
+<div id="wrap">
+  <h1>Ajna — Sensor-Sonde</h1>
+  <div class="sub" id="ctx">Kontext: …</div>
+  <div id="verdict">warte auf Start …</div>
+  <div class="row"><b>devicemotion:</b> <span id="mc">0</span> Events</div>
+  <div class="row">└ Gyro (°/s): <span id="gyro">—</span>&nbsp;&nbsp;|Betrag| <span id="gyromag" class="big">—</span></div>
+  <div class="row">└ Beschl.+g (m/s²): <span id="acc">—</span></div>
+  <div class="row" style="margin-top:12px"><b>deviceorientation:</b> <span id="oc">0</span> Events</div>
+  <div class="row">└ α,β,γ (°): <span id="orient">—</span></div>
+</div>
+
+<div id="tap"><div><b>📱 Tippen zum Start</b><br><br>startet die Sensor-Messung<br>(auf iOS: fragt Freigabe ab)</div></div>
+
+<script>
+  const $ = id => document.getElementById(id)
+  const f3 = v => (v == null ? '—' : (+v).toFixed(1))
+
+  // Kontext anzeigen: Android-System-WebView hängt "; wv" an den User-Agent.
+  const ua = navigator.userAgent
+  const isWV = / wv\)/.test(ua) || /Version\/[\d.]+ Chrome/.test(ua)
+  $('ctx').textContent = 'Kontext: ' + (isWV ? 'Android-WebView (wahrscheinlich)' : 'Browser') + ' · ' + ua.slice(0, 80)
+
+  let mc = 0, oc = 0
+  const onMotion = (e) => {
+    mc++; $('mc').textContent = mc
+    const r = e.rotationRate, a = e.accelerationIncludingGravity
+    if (r) { $('gyro').textContent = `${f3(r.alpha)}, ${f3(r.beta)}, ${f3(r.gamma)}`
+      $('gyromag').textContent = f3(Math.hypot(r.alpha || 0, r.beta || 0, r.gamma || 0)) }
+    if (a) $('acc').textContent = `${f3(a.x)}, ${f3(a.y)}, ${f3(a.z)}`
+  }
+  const onOrient = (e) => { oc++; $('oc').textContent = oc
+    $('orient').textContent = `${f3(e.alpha)}, ${f3(e.beta)}, ${f3(e.gamma)}` }
+
+  // Verdikt: fließen die Events? Lebendiger Sensor feuert ~60 Hz (auch still).
+  function monitor() {
+    const v = $('verdict'); let seen = 0, dead = 0
+    setInterval(() => {
+      const d = mc - seen; seen = mc
+      if (d >= 3) {                         // Events fließen
+        v.className = 'good'
+        v.innerHTML = '✅ <b>Sensoren liefern Daten</b><br>Dieser Kontext ist für SLAM geeignet.'
+        dead = 0
+      } else if (++dead >= 2) {             // 4 s praktisch keine Events
+        v.className = 'bad'
+        v.innerHTML = '❌ <b>Keine Bewegungssensor-Daten</b><br>Dieser Kontext blockiert die Sensoren — SLAM kann hier nicht tracken.'
+      }
+    }, 2000)
+  }
+
+  $('tap').addEventListener('click', async () => {
+    for (const E of [window.DeviceMotionEvent, window.DeviceOrientationEvent]) {
+      try { if (E && E.requestPermission) await E.requestPermission() } catch {}
+    }
+    addEventListener('devicemotion', onMotion, true)
+    addEventListener('deviceorientation', onOrient, true)
+    $('tap').remove()
+    $('verdict').textContent = 'messe … Gerät bewegen'
+    monitor()
+  }, { once: true })
+</script>

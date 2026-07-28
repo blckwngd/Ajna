@@ -13,6 +13,9 @@ export class GeospatialComponent extends BaseComponent {
   }
 
   update() {
+    // Pausiert (z. B. während ein Editor-Gizmo das Objekt zieht): die Geo-
+    // Verankerung würde die Drag-Position jeden Frame überschreiben.
+    if (this.paused) return
     const local = this.geo.toLocalRef(
       this.lat,
       this.lon,

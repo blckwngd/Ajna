@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<!--
+  Koexistenz-Test: Kann 8th Wall (Kamera + SLAM, eigener GL-Kontext) neben einer
+  App-typischen Babylon-Szene (eigener GL-Kontext) auf dem Gerät laufen — bei
+  brauchbarer Framerate, dauerhaft?
+
+  Das ist DIE offene Machbarkeitsfrage für die echte Integration:
+    • Der Ajna-Client rendert 3D mit EINEM Babylon-WebGL-Kontext (+ getUserMedia-
+      <video> als Hintergrund).
+    • 8th Wall braucht die Kamera selbst + einen EIGENEN GL-Kontext (kann keinen
+      externen Stream übernehmen — im Binary verifiziert).
+    • Also zwei WebGL-Kontexte gleichzeitig. Im PoC (step2) sah das nach ~1–2 fps
+      aus — hier messen wir es SAUBER und über die Zeit.
+
+  Aufbau (= die Ziel-Architektur der Integration):
+    • Canvas A (#camerafeed): 8th Wall, eigener Loop, GlTextureRenderer + XrController
+      → zeichnet das Kamerabild + liefert die Pose (wie step1, dort 40–50 fps allein).
+    • Canvas B (#overlay): eigene Babylon-Szene, transparent darüber, ~24 rotierende
+      Meshes + 2 Lichter (repräsentative Last). Kamera wird aus der SLAM-Pose getrieben.
+    • HUD misst fps BEIDER Schleifen + Minimum über die Session + Tracking-Status.
+
+  Erwartung/Interpretation:
+    • Beide Schleifen halten ~30 fps dauerhaft → Zwei-Kontext trägt → Integration machbar.
+    • Bricht eine (v.a. „nach ein paar Sekunden") ein → Zwei-Kontext nicht tragfähig
+      auf dem Gerät → Single-Kontext-Weg (manuelles GL) oder Neubewertung.
+
+  Nur getUserMedia von 8th Wall aktiv (Babylon braucht keine Kamera) → hier KEIN
+  getUserMedia-Konflikt; der wird in der App per Hand-off gelöst. Sensoren: nur
+  stock Chrome / System-WebView.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Ajna — SLAM PoC · Koexistenz-Test</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+  #camerafeed, #overlay { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  #overlay { pointer-events: none; }
+  #hud { position: fixed; left: 8px; top: 8px; right: 8px; color: #cfe8ff; background: rgba(0,0,0,0.55);
+    border: 1px solid #2b4a66; border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; pointer-events: none; text-shadow: 0 0 2px #000; }
+  #hud b { color: #7ec8ff; } .ok { color: #6ee787; } .warn { color: #ffcf6f; } .err { color: #ff8f8f; }
+  #big { position: fixed; left: 8px; right: 8px; bottom: 8px; color: #fff; background: rgba(0,0,0,0.6); border-radius: 8px; padding: 6px 12px; }
+  #tap { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.88); color: #cfe8ff; text-align: center; padding: 24px; }
+  #tap b { font-size: 20px; color: #7ec8ff; }
+  #sensorwarn { position: fixed; left: 12px; right: 12px; top: 42%; z-index: 9; display: none; text-align: center;
+    background: rgba(125,18,18,0.95); color: #ffe0e0; border: 2px solid #ff8f8f; border-radius: 10px; padding: 16px; font-size: 15px; line-height: 1.5; }
+  #sensorwarn b { color: #fff; }
+</style>
+
+<canvas id="camerafeed"></canvas>
+<canvas id="overlay"></canvas>
+<div id="hud">Initialisiere …</div>
+<div id="big">Status: <span id="stat">wird geladen …</span></div>
+<div id="tap"><div><b>📱 Tippen zum Start</b><br><br>startet Kamera + SLAM + Babylon-Last<br>(fps beider Kontexte werden gemessen)</div></div>
+<div id="sensorwarn">⚠ <b>Keine Bewegungssensor-Daten</b><br>Bitte <b>Google&nbsp;Chrome</b> verwenden (Brave/Firefox blockieren die Sensoren).</div>
+
+<script src="/poc/slam/vendor/babylon.js"></script>
+<script>
+  const ENGINE_URL = '/poc/slam/engine/xr.js'
+  const $ = id => document.getElementById(id)
+  const stat = $('stat'), hud = $('hud')
+  const setStat = (t, cls) => { stat.textContent = t; stat.className = cls || '' }
+  window.addEventListener('error', e => setStat('JS-Fehler: ' + (e.message || e.error), 'err'))
+  window.addEventListener('unhandledrejection', e => setStat('Promise-Fehler: ' + (e.reason?.message || e.reason), 'err'))
+
+  // Sensor-Diagnose/Warnung (wie zuvor)
+  let motionCount = 0
+  const onMotion = () => { motionCount++ }
+  function monitorSensors() { const warn = $('sensorwarn'); let seen = 0, dead = 0
+    setInterval(() => { const d = motionCount - seen; seen = motionCount
+      if (d >= 3) { warn.style.display = 'none'; dead = 0 } else if (++dead >= 2) warn.style.display = 'block' }, 2000) }
+
+  const cam = $('camerafeed'), ov = $('overlay')
+  function sizeCanvases() { const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    const w = Math.round(innerWidth * dpr), h = Math.round(innerHeight * dpr)
+    if (cam.width !== w) { cam.width = w; cam.height = h } }   // Babylon sized via engine.resize()
+  addEventListener('resize', sizeCanvases)
+
+  // ── fps-Messung beider Schleifen ──
+  let xr8Frames = 0, xr8Fps = 0, xr8Min = 999
+  let babFps = 0, babMin = 999
+  let started = 0
+  let lastTracking = '—'
+
+  // ── App-typische Babylon-Last: ~24 rotierende Meshes + 2 Lichter, transparent ──
+  let overlay = null
+  function buildOverlay() {
+    const engine = new BABYLON.Engine(ov, true, { alpha: true, preserveDrawingBuffer: false }, true)
+    const scene = new BABYLON.Scene(engine)
+    scene.clearColor = new BABYLON.Color4(0, 0, 0, 0)
+    const camera = new BABYLON.FreeCamera('cam', new BABYLON.Vector3(0, 0, 0), scene)
+    camera.minZ = 0.01; camera.maxZ = 1000; camera.rotationQuaternion = new BABYLON.Quaternion()
+    scene.activeCamera = camera
+    const hemi = new BABYLON.HemisphericLight('h', new BABYLON.Vector3(0, 1, 0), scene); hemi.intensity = 0.8
+    const dir = new BABYLON.DirectionalLight('d', new BABYLON.Vector3(-1, -2, -1), scene); dir.intensity = 0.6
+
+    const meshes = []
+    const COLORS = ['#5ef27a', '#ff9e33', '#5ecbff', '#ff6ec7', '#ffe066', '#a06bff']
+    for (let i = 0; i < 24; i++) {
+      const ang = i / 24 * Math.PI * 2, rad = 2.5 + (i % 3)
+      const m = (i % 2)
+        ? BABYLON.MeshBuilder.CreateBox('b' + i, { size: 0.4 }, scene)
+        : BABYLON.MeshBuilder.CreateSphere('s' + i, { diameter: 0.5, segments: 16 }, scene)
+      m.position.set(Math.sin(ang) * rad, -0.5 + (i % 4) * 0.4, -1.5 - Math.cos(ang) * rad)
+      const mat = new BABYLON.StandardMaterial('m' + i, scene)
+      const c = BABYLON.Color3.FromHexString(COLORS[i % COLORS.length])
+      mat.diffuseColor = c; mat.specularColor = new BABYLON.Color3(0.6, 0.6, 0.6); mat.emissiveColor = c.scale(0.25)
+      m.material = mat; meshes.push(m)
+    }
+    scene.onBeforeRenderObservable.add(() => { for (let i = 0; i < meshes.length; i++) { meshes[i].rotation.y += 0.02; meshes[i].rotation.x += 0.01 } })
+
+    engine.runRenderLoop(() => { scene.render(); babFps = engine.getFps() })
+    addEventListener('resize', () => engine.resize())
+    return { engine, scene, camera }
+  }
+
+  // 8th-Wall-Pipeline (eigener Loop) → Kamerabild + Pose treibt Overlay-Kamera
+  function poseModule() {
+    return {
+      name: 'ajna-coexist',
+      onStart: () => { started = performance.now(); setStat('läuft — Gerät bewegen; 60 s beobachten', 'ok') },
+      onUpdate: ({ processCpuResult }) => {
+        xr8Frames++
+        const r = processCpuResult && processCpuResult.reality
+        if (!r || !r.position || !overlay) return
+        const c = overlay.camera
+        c.position.set(r.position.x, r.position.y, r.position.z)
+        if (r.rotation) c.rotationQuaternion.set(r.rotation.x, r.rotation.y, r.rotation.z, r.rotation.w)
+        if (r.intrinsics && Math.abs(r.intrinsics[0]) > 1e-4) { const im = r.intrinsics.slice(0); im[10] *= -1; im[11] *= -1; c.freezeProjectionMatrix(BABYLON.Matrix.FromArray(im)) }
+        lastTracking = r.trackingStatus
+      },
+    }
+  }
+
+  // HUD + fps-Auswertung im 1-s-Takt (nicht pro Frame → verfälscht die Messung nicht)
+  function startMeter() {
+    setInterval(() => {
+      xr8Fps = xr8Frames; xr8Frames = 0
+      const warm = performance.now() - started > 3000   // erste 3 s ignorieren (Warmlauf)
+      if (warm) { if (xr8Fps < xr8Min) xr8Min = xr8Fps; if (babFps < babMin) babMin = babFps }
+      const sec = started ? ((performance.now() - started) / 1000).toFixed(0) : 0
+      const cls = f => f >= 25 ? 'ok' : (f >= 15 ? 'warn' : 'err')
+      hud.innerHTML =
+        `<b>Laufzeit:</b> ${sec} s   <b>Tracking:</b> <span class="${lastTracking === 'NORMAL' ? 'ok' : 'warn'}">${lastTracking}</span>\n` +
+        `<b>8th Wall (Kamera+SLAM):</b> <span class="${cls(xr8Fps)}">${xr8Fps} fps</span>  (min ${xr8Min === 999 ? '—' : xr8Min})\n` +
+        `<b>Babylon (24 Meshes):</b> <span class="${cls(babFps)}">${babFps.toFixed(0)} fps</span>  (min ${babMin === 999 ? '—' : babMin.toFixed(0)})`
+    }, 1000)
+  }
+
+  // ── Boot ──
+  let _booted = false
+  async function boot(tries = 0) {
+    if (_booted) return
+    if (typeof BABYLON === 'undefined') return setStat('BABYLON nicht geladen.', 'err')
+    if (typeof XR8 === 'undefined') { if (tries < 120) return void setTimeout(() => boot(tries + 1), 50); return setStat('XR8 nie definiert.', 'err') }
+    _booted = true
+    if (!XR8.XrController) { setStat('lade SLAM-Chunk …', 'warn'); try { await XR8.loadChunk('slam') } catch (e) { return setStat('SLAM-Chunk fehlt: ' + (e?.message || e), 'err') } }
+    if (!XR8.XrController || !XR8.GlTextureRenderer) return setStat('Engine-Module fehlen.', 'err')
+    try {
+      sizeCanvases()
+      overlay = buildOverlay()            // Babylon-Kontext B (mit Last)
+      XR8.XrController.configure({ leftHandedAxes: true })
+      XR8.addCameraPipelineModules([XR8.GlTextureRenderer.pipelineModule(), XR8.XrController.pipelineModule(), poseModule()])
+      setStat('Engine geladen — Kamerazugriff …', 'warn')
+      XR8.run({ canvas: cam })            // 8th-Wall-Kontext A
+      startMeter()
+    } catch (e) { setStat('Setup-Fehler: ' + (e?.message || e), 'err') }
+  }
+  function startEngine() {
+    addEventListener('XRloaded', () => boot()); addEventListener('xrloaded', () => boot())
+    const s = document.createElement('script'); s.src = ENGINE_URL; s.crossOrigin = 'anonymous'
+    s.onerror = () => setStat('Engine-Script konnte nicht geladen werden.', 'err')
+    document.head.appendChild(s); setStat('lade Engine …', 'warn'); if (typeof XR8 !== 'undefined') boot()
+  }
+
+  $('tap').addEventListener('click', async () => {
+    for (const E of [window.DeviceMotionEvent, window.DeviceOrientationEvent]) { try { if (E && E.requestPermission) await E.requestPermission() } catch {} }
+    addEventListener('devicemotion', onMotion, true)
+    $('tap').remove(); monitorSensors(); startEngine()
+  }, { once: true })
+</script>

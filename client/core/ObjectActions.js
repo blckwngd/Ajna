@@ -39,11 +39,13 @@ const POSITION_ACTIONS = new Set(['call', 'rufen'])
 const labelFor = (a) => a?.label || ACTION_LABELS[String(a?.key || '').toLowerCase()] || a?.key || '?'
 
 export class ObjectActions {
-  constructor({ ajna, editorUI, contextMenu, permissionDialog, onInteract, onInteractError, getPosition }) {
+  constructor({ ajna, editorUI, contextMenu, permissionDialog, onInteract, onInteractError, getPosition, onGizmo }) {
     this.ajna = ajna
     this.editorUI = editorUI
     this.contextMenu = contextMenu
     this.permissionDialog = permissionDialog
+    // „Verschieben/Drehen": heftet das Editor-Gizmo an das Objekt (AR-View).
+    this.onGizmo = onGizmo || null
     // EXAKTE Position des Spielers (bleibt auf dem Gerät). Nur Aktionen aus
     // POSITION_ACTIONS bekommen daraus überhaupt etwas mit — und auch dann nur
     // so genau, wie die Stufe für DIESEN Server es erlaubt.
@@ -109,6 +111,7 @@ export class ObjectActions {
 
     const items = [
       { label: 'Bearbeiten',     onClick: () => this.editorUI?.fillEditor?.(record) },
+      this.onGizmo && { label: '✥ Verschieben/Drehen', onClick: () => this.onGizmo(record) },
       isOwner && { label: 'Berechtigungen', onClick: () => this.permissionDialog?.open(record) },
       collectible && { label: '🎒 Einsammeln', onClick: () => this._pickup(record) },
       isOwner && { label: 'Löschen', danger: true, onClick: () => this._confirmDelete(record) },

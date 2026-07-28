@@ -1,7 +1,10 @@
 # Visuelles Tracking (SLAM) — Integrations-Spike
 
-> **Status: Skizze / noch nicht gebaut.** Entscheidungsgrundlage für die
-> Verankerung geo-referenzierter Objekte in *nicht* präparierten Umgebungen.
+> **Status:** Entscheidungsgrundlage für die Verankerung geo-referenzierter
+> Objekte in *nicht* präparierten Umgebungen. **Spike-Schritt 1 (Engine liefert
+> 6DoF-Pose im WebView) verifiziert** ✅ — `client/poc/slam/index.html`.
+> **Schritt 2 (Pose → Babylon, verankerter Würfel) gebaut**, Geräte-Test offen —
+> `client/poc/slam/step2.html`. Schritte 3–6 noch offen.
 
 ## Problem
 

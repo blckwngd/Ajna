@@ -388,6 +388,7 @@ export class MobileShell {
     const arFovFactor = window.arFovCalibration?.factor
       ?? (parseFloat(localStorage.getItem('ajna.ar.fov_factor')) || 1)
     const arNorth = (() => { try { return parseFloat(localStorage.getItem('ajna.ar.north_offset')) || 0 } catch { return 0 } })()
+    const arEyeHeight = (() => { try { const v = parseFloat(localStorage.getItem('ajna.ar.eye_height')); return Number.isFinite(v) && v > 0.5 && v < 2.5 ? v : 1.7 } catch { return 1.7 } })()
     const arFovSlider = (() => { try { return localStorage.getItem('ajna.ar.fov_slider') === '1' } catch { return false } })()
     const arCompass = (() => { try { return localStorage.getItem('ajna.ar.compass_indicator') !== '0' } catch { return true } })()
     const arAura = (() => { try { return localStorage.getItem('ajna.ar.aura') !== '0' } catch { return true } })()
@@ -465,6 +466,13 @@ export class MobileShell {
         </label>
         <div class="meta" style="margin-top:6px">
           Falls Objekte im AR spiegelverkehrt liegen (Süd erscheint als Nord): auf 180 setzen (oder Button). Pro Gerät gespeichert.
+        </div>
+        <label class="meta" style="display:flex;align-items:center;gap:10px;margin-top:12px">
+          <span style="white-space:nowrap">Augenhöhe (m)</span>
+          <input type="number" data-field="ar-eye-height" value="${arEyeHeight}" step="0.05" min="0.5" max="2.5" style="width:80px">
+        </label>
+        <div class="meta" style="margin-top:6px">
+          Reale Höhe der Gerätekamera über dem Boden — bestimmt, auf welcher Höhe exakt platzierte Objekte (Anker/Marker) im Bild erscheinen. Pro Gerät gespeichert.
         </div>
         <label class="meta" style="display:flex;align-items:center;gap:8px;margin-top:12px">
           <input type="checkbox" data-field="ar-compass" ${arCompass ? 'checked' : ''}>
@@ -903,6 +911,15 @@ export class MobileShell {
     }
     northInput?.addEventListener('change', () => applyNorth(northInput.value))
     root.querySelector('[data-action="ar-north-flip"]')?.addEventListener('click', () => applyNorth((parseFloat(northInput?.value) || 0) + 180))
+
+    // Augenhöhe (reale Gerätekamera-Höhe über Boden) — live an die AR-Kamera.
+    const eyeInput = root.querySelector('[data-field="ar-eye-height"]')
+    eyeInput?.addEventListener('change', () => {
+      const v = parseFloat(eyeInput.value)
+      if (!Number.isFinite(v) || v <= 0.5 || v >= 2.5) return
+      try { localStorage.setItem('ajna.ar.eye_height', String(v)) } catch {}
+      window.dispatchEvent(new CustomEvent('ajna:ar-eye-height', { detail: v }))
+    })
 
     // Privatsphäre: Default für NEUE Server + „auf alle anwenden". Die Anzeige
     // nennt offen, wie viele Server abweichen — sonst wirkt der Default wie eine

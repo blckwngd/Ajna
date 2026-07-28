@@ -47,7 +47,7 @@
   //  „Distributed Engine Binary". Am besten unter EIGENEM Origin hosten
   //  (dann keine CSP-/Cross-Origin-Probleme im WebView).
   // ═══════════════════════════════════════════════════════════════════════
-  const ENGINE_URL = ''   // z. B. '/poc/slam/engine/xr.js'  ODER  'https://8th.io/xrjs'
+  const ENGINE_URL = '/poc/slam/engine/xr.js'   // z. B. '/poc/slam/engine/xr.js'  ODER  'https://8th.io/xrjs'
 
   const hud = document.getElementById('hud')
   const stat = document.getElementById('stat')
@@ -91,14 +91,60 @@
     }
   }
 
-  function boot() {
-    if (typeof XR8 === 'undefined') { setStat('XR8 nicht definiert — Engine-Script nicht geladen? URL/Bild prüfen.', 'err'); return }
+  // Zeichenpuffer der Canvas = echte Anzeigegröße × DPR (auf 2 gedeckelt, sonst
+  // rendert man weit über die Kamera-Auflösung → GPU-Verschwendung). Ohne das
+  // bleibt der Puffer bei 300×150 → Bild körnig (hochskaliert) und verzerrt (die
+  // Engine schneidet das Video auf 2:1 zu, CSS streckt es auf Hochkant).
+  function sizeCanvas() {
+    const c = document.getElementById('camerafeed')
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    const w = Math.round(window.innerWidth * dpr), h = Math.round(window.innerHeight * dpr)
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h }
+  }
+  window.addEventListener('resize', sizeCanvas)
+  window.addEventListener('orientationchange', sizeCanvas)
+
+  // Diese xr.js ist nur der Framework-LOADER. Die 6DoF-/SLAM-Engine liegt in
+  // einem separaten Chunk `xr-slam.js` (daneben, gleiche Basis-URL) und wird per
+  // XR8.loadChunk('slam') dynamisch importiert — erst DANN ist XR8.XrController
+  // (das Welt-Tracking) ungleich null. GlTextureRenderer (Kamerabild) ist immer da.
+  let _booted = false
+  async function boot(tries = 0) {
+    if (_booted) return
+    if (typeof XR8 === 'undefined') {
+      if (tries < 120) return void setTimeout(() => boot(tries + 1), 50)
+      return setStat('XR8 nie definiert — Engine-Script/Binary prüfen.', 'err')
+    }
+    // SYNCHRON festnageln: die zwei Ready-Events (XRloaded + xrloaded) feuern
+    // quasi gleichzeitig; ohne dieses Flag liefe loadChunk('slam') doppelt
+    // → „cannot redefine property: xrController".
+    _booted = true
+    // SLAM-Kern nachladen, falls noch nicht geschehen.
+    if (!XR8.XrController) {
+      if (typeof XR8.loadChunk !== 'function') {
+        return setStat('XR8.loadChunk fehlt — unerwarteter Engine-Build.', 'err')
+      }
+      setStat('lade SLAM-Chunk (xr-slam.js) …', 'warn')
+      try {
+        await XR8.loadChunk('slam')
+      } catch (e) {
+        return setStat('SLAM-Chunk „xr-slam.js" fehlt/lädt nicht — bitte NEBEN xr.js '
+          + 'in /poc/slam/engine/ legen (komplette Engine-Distribution, nicht nur xr.js). '
+          + 'Detail: ' + (e?.message || e), 'err')
+      }
+    }
+    if (!XR8.XrController) {
+      return setStat('SLAM-Chunk geladen, aber XR8.XrController bleibt null — '
+        + 'Build ohne World-Tracking.', 'err')
+    }
+    if (!XR8.GlTextureRenderer) {
+      return setStat('XR8.GlTextureRenderer fehlt — unerwarteter Engine-Build.', 'err')
+    }
     try {
+      sizeCanvas()   // Zeichenpuffer VOR run setzen, sonst greift die Engine 300×150 ab
       // 6DoF-Welt-Tracking (SLAM) explizit an (disableWorldTracking:false = Default,
       // hier zur Klarheit). true wäre 3DoF (nur Rotation) — genau NICHT was wir wollen.
-      if (XR8.XrController && XR8.XrController.configure) {
-        XR8.XrController.configure({ disableWorldTracking: false })
-      }
+      XR8.XrController.configure({ disableWorldTracking: false })
       XR8.addCameraPipelineModules([
         XR8.GlTextureRenderer.pipelineModule(),   // Kamerabild in die Canvas
         XR8.XrController.pipelineModule(),         // Welt-Tracking (SLAM)
@@ -111,18 +157,20 @@
     }
   }
 
-  // Engine-Script laden. Feuert 'xrloaded', sobald XR8 bereit ist (klassische
-  // 8th-Wall-Konvention); wir binden das Event UND prüfen, ob XR8 schon da ist.
+  // Engine-Script laden. Die Engine feuert nach ihrer async-Init BEIDE Events:
+  // "XRloaded" (großes R) UND "xrloaded". Wir binden beide; boot() ist idempotent
+  // und pollt selbst, bis die Module da sind (deckt jede Timing-Variante ab).
   function loadEngine() {
     if (!ENGINE_URL) { setStat('ENGINE_URL ist leer — bitte in index.html eintragen (siehe README.md).', 'err'); return }
-    window.addEventListener('xrloaded', boot)
+    window.addEventListener('XRloaded', () => boot())
+    window.addEventListener('xrloaded', () => boot())
     const s = document.createElement('script')
     s.src = ENGINE_URL
     s.crossOrigin = 'anonymous'
-    s.onload = () => { if (typeof XR8 !== 'undefined') boot() }   // falls xrloaded schon feuerte
     s.onerror = () => setStat('Engine-Script konnte nicht geladen werden: ' + ENGINE_URL, 'err')
     document.head.appendChild(s)
     setStat('lade Engine: ' + ENGINE_URL + ' …', 'warn')
+    if (typeof XR8 !== 'undefined') boot()   // Skript aus Cache: XR8 evtl. schon da
   }
 
   loadEngine()

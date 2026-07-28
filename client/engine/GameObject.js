@@ -19,6 +19,14 @@ const MODEL_TARGET_HEIGHT = {
   "Diamond.glb": 0.4,
 }
 
+// Per-Modell-Yaw-Korrektur (rad): manche GLBs schauen entlang +Z statt −Z —
+// die Figur liefe zur Blickrichtung des Directors „rückwärts". Der Offset wird
+// auf einen Wrapper-Node zwischen root und Modell gelegt, damit die geo-Rotation
+// (root, vom Agent/Editor) unberührt bleibt.
+const MODEL_YAW_RAD = {
+  "Soldier.glb": Math.PI,
+}
+
 // Aktion → mögliche Namen einer Reaktions-Animation (Teilstring, case-insensitiv).
 // Erste passende AnimationGroup des Modells wird EINMAL abgespielt, danach zurück
 // zum vorherigen Zustand. Modelle ohne passende Animation reagieren nicht.
@@ -170,6 +178,9 @@ export class GameObject {
     // Agent-definierte Darstellung (appearance). Im AR-Viewer gewinnt ein
     // gültiges gltf; sonst dient appearance (shape/color) als Fallback-Look.
     this._appearance = appearanceOf(data)
+    // Bild-Marker (state.marker = {image, widthM, heightM?, headingDeg?}) → der
+    // Platzhalter wird ein flacher texturierter Quader statt des Standard-Würfels.
+    this._marker = (data.state && data.state.marker) || data.marker || null
     // Kosmetischer Spin (appearance.spin = Grad/s um die Y-Achse) — rein lokal,
     // nicht synchronisiert.
     this._spinRad = (Number(this._appearance?.spin) || 0) * Math.PI / 180
@@ -265,15 +276,25 @@ export class GameObject {
     // Transformation verloren — Effekt: "nur Teil sichtbar, verzerrt".
     const importRoot = result.meshes[0]
     if (importRoot) {
-      // Optionaler Spin: Container zwischen root und Modell, damit die
-      // kosmetische Y-Rotation die geo-Rotation auf root nicht stört.
+      // Kette root → [yawFix] → [spin] → Modell. Beide Wrapper optional:
+      // yawFix korrigiert Modelle, die entlang +Z statt −Z schauen (Soldier
+      // liefe sonst rückwärts); spin ist die kosmetische Y-Rotation. Beide
+      // getrennt von root, damit die geo-Rotation (Agent/Editor) unberührt bleibt.
+      let parent = this.root
+      const file = (url.split(/[?#]/)[0].split("/").pop() || "")
+      const yaw = MODEL_YAW_RAD[file]
+      if (yaw) {
+        const yawNode = new BABYLON.TransformNode(`yawfix_${this.id}`, this.scene)
+        yawNode.rotation.y = yaw
+        yawNode.parent = parent
+        parent = yawNode
+      }
       if (this._spinRad) {
         this._spinNode = new BABYLON.TransformNode(`spin_${this.id}`, this.scene)
-        this._spinNode.parent = this.root
-        importRoot.parent = this._spinNode
-      } else {
-        importRoot.parent = this.root
+        this._spinNode.parent = parent
+        parent = this._spinNode
       }
+      importRoot.parent = parent
       this.#normalizeModelSize(importRoot, url)
     }
 
@@ -469,6 +490,27 @@ export class GameObject {
     //   item    → goldenes leuchtendes Oktaeder, schwebend
     //   hint    → gelbes leuchtendes Oktaeder, höher schwebend
     const phName = `placeholder_${this.id}`
+
+    // 0) Bild-Marker: flacher texturierter Quader mit dem Marker-Bild statt des
+    //    Standard-Würfels. Reale Breite/Höhe (m) + Ausrichtung aus state.marker;
+    //    Position/Höhe des Objekts kommen aus lat/lon/altitude (root).
+    if (this._marker && this._marker.image) {
+      const w = Number(this._marker.widthM) || 0.15
+      const h = Number(this._marker.heightM) || w
+      const box = BABYLON.MeshBuilder.CreateBox(phName, { width: w, height: h, depth: 0.02 }, this.scene)
+      const mMat = new BABYLON.StandardMaterial(`mat_${this.id}`, this.scene)
+      const mTex = new BABYLON.Texture(this._marker.image, this.scene)
+      mMat.diffuseTexture = mTex
+      mMat.emissiveTexture = mTex        // selbstleuchtend → im AR-Bild ohne Szenenlicht sichtbar
+      mMat.disableLighting = true
+      mMat.backFaceCulling = false
+      box.material = mMat
+      const hd = Number(this._marker.headingDeg)
+      if (Number.isFinite(hd)) box.rotation.y = -hd * Math.PI / 180   // Vorderseite in headingDeg
+      box.parent = this.root
+      this.meshes = [box]
+      return
+    }
 
     // 1) Agent-definierte AR-Darstellung zuerst (appearance / appearance.ar) —
     //    type-UNABHÄNGIG. Erkennt der Helfer ein 3D-Primitiv (z. B. WLAN als
@@ -728,6 +770,9 @@ export class GameObject {
   // Liest den aktuellen Smoother-Snap und schreibt ihn auf GeospatialComponent
   // (lat/lon → root.position via Component.update) sowie root.rotation direkt.
   _applySmoothedTransform() {
+    // Pausiert (Editor-Gizmo manipuliert das Objekt): sonst überschreibt der
+    // Smoother root.rotation pro Frame und macht den Rotations-Drag unsichtbar.
+    if (this.transformPaused) return
     const snap = this._smoother.sample()
     if (!snap) return
     const geoComp = this.getComponent(GeospatialComponent)

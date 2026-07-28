@@ -602,7 +602,9 @@ async function init() {
 
   // preferCanvas: Vektor-Layer (v. a. die vielen WLAN-Abdeckungskreise) rendern
   // auf einem Canvas statt als einzelne SVG-Elemente → skaliert auf hunderte.
-  const map = window.L.map('map', { preferCanvas: true }).setView(center, zoom)
+  // maxZoom 22: für präzises Platzieren (Marker/Anker) über die native Tile-
+  // Auflösung hinaus zoomen — die Layer skalieren via maxNativeZoom hoch.
+  const map = window.L.map('map', { preferCanvas: true, maxZoom: 22 }).setView(center, zoom)
   // Eigenes GPS-Control: erster Klick aktiviert Watch + Follow + Marker,
   // weitere Klicks toggeln nur Follow. Auf Capacitor-Native triggern wir
   // das per Event-Listener (s. mobile.js) sofort beim App-Start.
@@ -699,17 +701,19 @@ async function init() {
   // an; die Wahl bleibt gemerkt. Der Label-Kontrast (injectHighlightStyles) folgt
   // dem `contrast` der aktiven Basemap — Satellit nutzt den dunklen Kontrast
   // (heller Text + dunkler Halo liest sich auf Luftbildern am besten).
+  // maxNativeZoom = tiefste echte Tile-Stufe des Anbieters; darüber (bis maxZoom 22)
+  // skaliert Leaflet die letzte Stufe hoch — unscharf, aber präzise zu treffen.
   const lightTiles = window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
+    maxNativeZoom: 19, maxZoom: 22,
     attribution: '&copy; OpenStreetMap contributors'
   })
   const darkTiles = window.L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    maxZoom: 20, subdomains: 'abcd',
+    maxNativeZoom: 20, maxZoom: 22, subdomains: 'abcd',
     attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
   })
   // Esri World Imagery — Achtung: Tile-URL in Reihenfolge {z}/{y}/{x}.
   const satTiles = window.L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 19,
+    maxNativeZoom: 19, maxZoom: 22,
     attribution: 'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'
   })
   const BASEMAPS = {

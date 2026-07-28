@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<!--
+  PoC — Spike-Schritt 3 aus docs/visual-tracking.md: GEO-ALIGNMENT `T`.
+  „Objekt an eine echte Geo-Koordinate; T aus GPS+Kompass initialisieren —
+   steht es grob am richtigen realen Ort UND bleibt bei Bewegung fest?"
+
+  Baut auf Schritt 2 (2D-Overlay, ein GL-Kontext). Neu ist die Fusion:
+
+  Frames (beide gravitations-ausgerichtet, Y = oben, Babylon-Linkshand):
+    • S = SLAM-Weltframe (Ursprung = Session-Start, Yaw WILLKÜRLICH).
+    • G = Ajna-Geo/ENU-Frame (X=Ost, Y=Höhe, Z=Nord) — wie GeoTransformer.
+  Beide teilen den Ursprung (der Spieler steht bei Session-Start am GPS-Origin,
+  der zugleich der SLAM-Ursprung ist). Also ist T nur ein Yaw θ:
+
+        p_S = R_y(θ) · p_G          (Translation = 0 im PoC)
+
+  θ = (SLAM-Blickrichtung, horizontal) − (Kompass-Heading). Der Kompass ist im
+  Web geräteabhängig krumm → θ ist zusätzlich MANUELL nudgebar; „Neu ausrichten"
+  rechnet θ frisch aus Heading+SLAM. Sitzt θ, zeigen die N/O/S/W-Marker in die
+  echten Himmelsrichtungen und bleiben beim Gehen verankert — das ist der Beweis.
+
+  Sensoren wie Schritt 2: nur stock Chrome / System-WebView liefern IMU (nicht Brave).
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Ajna — SLAM PoC · Schritt 3 (Geo-Alignment)</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+  #camerafeed, #overlay { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  #overlay { pointer-events: none; }
+  #hud { position: fixed; left: 8px; top: 8px; right: 8px; color: #cfe8ff; background: rgba(0,0,0,0.55);
+    border: 1px solid #2b4a66; border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; pointer-events: none; text-shadow: 0 0 2px #000; }
+  #hud b { color: #7ec8ff; } .ok { color: #6ee787; } .warn { color: #ffcf6f; } .err { color: #ff8f8f; }
+  #bar, #bar2 { position: fixed; left: 8px; right: 8px; display: flex; gap: 8px; justify-content: center; }
+  #bar { bottom: 46px; } #bar2 { bottom: 88px; }
+  #bar button, #bar2 button { flex: 1; max-width: 160px; padding: 11px 8px; font: inherit; font-size: 14px; color: #cfe8ff;
+    background: rgba(20,40,60,0.9); border: 1px solid #2b4a66; border-radius: 8px; }
+  #bar button:active, #bar2 button:active { background: rgba(40,80,120,0.9); }
+  #big { position: fixed; left: 8px; right: 8px; bottom: 8px; color: #fff; background: rgba(0,0,0,0.6); border-radius: 8px; padding: 6px 12px; }
+  #tap { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.88); color: #cfe8ff; text-align: center; padding: 24px; }
+  #tap b { font-size: 20px; color: #7ec8ff; }
+  #sensorwarn { position: fixed; left: 12px; right: 12px; top: 42%; z-index: 9; display: none; text-align: center;
+    background: rgba(125,18,18,0.95); color: #ffe0e0; border: 2px solid #ff8f8f; border-radius: 10px; padding: 16px 18px; font-size: 15px; line-height: 1.5; }
+  #sensorwarn b { color: #fff; }
+</style>
+
+<canvas id="camerafeed"></canvas>
+<canvas id="overlay"></canvas>
+<div id="hud">Initialisiere …</div>
+<div id="bar2">
+  <button id="scaleD">Skala −</button>
+  <button id="reset">⟳ Reset</button>
+  <button id="scaleU">Skala +</button>
+</div>
+<div id="bar">
+  <button id="nudgeL">↺ −5°</button>
+  <button id="realign">Neu ausrichten</button>
+  <button id="nudgeR">+5° ↻</button>
+</div>
+<div id="big">Status: <span id="stat">wird geladen …</span></div>
+<div id="tap"><div><b>📱 Tippen zum Start</b><br><br>startet Sensoren + GPS-Freigabe<br>(Gyro/Beschleunigung — zwingend für SLAM)</div></div>
+<div id="sensorwarn">⚠ <b>Keine Bewegungssensor-Daten</b><br>SLAM braucht Gyroskop &amp; Beschleunigung.<br>Bitte <b>Google&nbsp;Chrome</b> verwenden — Brave/Firefox u.&nbsp;a. blockieren die Sensoren.</div>
+
+<script src="/poc/slam/vendor/babylon.js"></script>
+<script>
+  const ENGINE_URL = '/poc/slam/engine/xr.js'
+  const $ = id => document.getElementById(id)
+  const stat = $('stat'), hud = $('hud')
+  const setStat = (t, cls) => { stat.textContent = t; stat.className = cls || '' }
+  window.addEventListener('error', e => setStat('JS-Fehler: ' + (e.message || e.error), 'err'))
+  window.addEventListener('unhandledrejection', e => setStat('Promise-Fehler: ' + (e.reason?.message || e.reason), 'err'))
+  const DEG = 180 / Math.PI, RAD = Math.PI / 180
+
+  // ── Sensoren (IMU-Diagnose wie Schritt 2) + Kompass-Heading ──
+  let gyroMag = 0, motionCount = 0, headingDeg = null
+  const onMotion = (e) => { const r = e.rotationRate; if (r) { gyroMag = Math.hypot(r.alpha || 0, r.beta || 0, r.gamma || 0); motionCount++ } }
+  const onOrient = (e) => {
+    let h = null
+    if (typeof e.webkitCompassHeading === 'number') h = e.webkitCompassHeading       // iOS: im Uhrzeigersinn ab Nord
+    else if (e.absolute && typeof e.alpha === 'number') h = (360 - e.alpha)           // Android absolute (Näherung)
+    if (h != null) { const so = (screen.orientation && screen.orientation.angle) || 0; headingDeg = ((h + so) % 360 + 360) % 360 }
+  }
+  function monitorSensors() {
+    const warn = $('sensorwarn'); let seen = 0, dead = 0
+    setInterval(() => { const d = motionCount - seen; seen = motionCount
+      if (d >= 3) { warn.style.display = 'none'; dead = 0 } else if (++dead >= 2) warn.style.display = 'block' }, 2000)
+  }
+
+  // ── GPS: Origin (= SLAM-Ursprung) beim ersten Fix festhalten ──
+  let originLat = null, originLon = null, gpsAcc = null
+  function startGps() {
+    if (!navigator.geolocation) return
+    navigator.geolocation.watchPosition(
+      p => { gpsAcc = p.coords.accuracy; if (originLat == null) { originLat = p.coords.latitude; originLon = p.coords.longitude } },
+      () => {}, { enableHighAccuracy: true, maximumAge: 1000 })
+  }
+
+  // ── Canvas-Größen (Zeichenpuffer × DPR, ≤2) ──
+  const cam = $('camerafeed'), ov = $('overlay'), ctx = ov.getContext('2d')
+  let VW = 0, VH = 0
+  const VIEWPORT = new BABYLON.Viewport(0, 0, 1, 1)
+  function sizeCanvases() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    VW = Math.round(innerWidth * dpr); VH = Math.round(innerHeight * dpr)
+    if (cam.width !== VW) { cam.width = VW; cam.height = VH }
+    if (ov.width !== VW) { ov.width = VW; ov.height = VH }
+    VIEWPORT.width = VW; VIEWPORT.height = VH
+  }
+  addEventListener('resize', sizeCanvases)
+  addEventListener('orientationchange', () => setTimeout(sizeCanvases, 200))
+
+  // ── Geo-Marker (Ost/Nord-Offsets in Metern relativ zur Origin) + Nord-Gitter ──
+  const M = [
+    { lbl: 'N',  e: 0,  n: 8,  col: '#5ef27a' },
+    { lbl: 'O',  e: 8,  n: 0,  col: '#ff9e33' },
+    { lbl: 'S',  e: 0,  n: -8, col: '#5ecbff' },
+    { lbl: 'W',  e: -8, n: 0,  col: '#ff6ec7' },
+  ]
+  const CORNER = i => [(i & 1 ? 1 : -1), (i & 2 ? 1 : -1), (i & 4 ? 1 : -1)]
+  const CUBE_EDGES = [[0,1],[0,2],[0,4],[1,3],[1,5],[2,3],[2,6],[3,7],[4,5],[4,6],[5,7],[6,7]]
+  // Nord-ausgerichtetes Bodengitter im G-Frame (Linien laufen exakt N-S / O-W).
+  const GGRID = (() => { const y = -1.5, L = 10, seg = []
+    for (let i = -L; i <= L; i += 2) { seg.push([[i, y, -L], [i, y, L]]); seg.push([[-L, y, i], [L, y, i]]) } return seg })()
+
+  // ── Alignment θ: p_S = R_y(θ)·p_G ──  + Skala-Korrektur (monokulare VIO ist
+  //    nicht exakt metrisch → SLAM-Position × scaleFactor kalibrieren).
+  let theta = 0, thetaManual = 0, thetaAuto = null, lastAngleS = null, scaleFactor = 1
+  const gToS = (e, up, n) => {  // (Ost, Höhe, Nord) in G → S
+    const c = Math.cos(theta), s = Math.sin(theta)
+    return new BABYLON.Vector3(e * c + n * s, up, -e * s + n * c)
+  }
+  function realign() {   // θ frisch aus Kompass-Heading + SLAM-Blickrichtung
+    if (headingDeg == null || lastAngleS == null) { setStat('Neu ausrichten: warte auf Kompass/Pose …', 'warn'); return }
+    thetaAuto = lastAngleS - headingDeg * RAD; thetaManual = 0; theta = thetaAuto
+    setStat('ausgerichtet (θ=' + (theta * DEG).toFixed(0) + '°)', 'ok')
+  }
+  // Winkel-Lerp über den kürzesten Bogen (für die kontinuierliche θ-Korrektur).
+  function lerpAngle(a, target, k) {
+    let d = target - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI
+    return a + d * k
+  }
+
+  const ID = BABYLON.Matrix.Identity(), ONE = BABYLON.Vector3.One()
+  function project(pS, view, vp) {
+    if (BABYLON.Vector3.TransformCoordinates(pS, view).z <= 0.05) return null
+    const s = BABYLON.Vector3.Project(pS, ID, vp, VIEWPORT); return { x: s.x, y: s.y }
+  }
+  const line = (a, b, col, w) => { if (!a || !b) return; ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke() }
+  const FWD = new BABYLON.Vector3(0, 0, 1), _m = new BABYLON.Matrix()
+
+  function drawScene(r) {
+    const rot = new BABYLON.Quaternion(r.rotation.x, r.rotation.y, r.rotation.z, r.rotation.w)
+    // SLAM-Position skalieren (metrische Korrektur); Rotation bleibt unberührt.
+    const pos = new BABYLON.Vector3(r.position.x * scaleFactor, r.position.y * scaleFactor, r.position.z * scaleFactor)
+    const view = BABYLON.Matrix.Invert(BABYLON.Matrix.Compose(ONE, rot, pos))
+    let proj
+    if (r.intrinsics && Math.abs(r.intrinsics[0]) > 1e-4) { const im = r.intrinsics.slice(0); im[10] *= -1; im[11] *= -1; proj = BABYLON.Matrix.FromArray(im) }
+    else proj = BABYLON.Matrix.PerspectiveFovLH(1.1, VW / VH, 0.01, 1000)
+    const vp = view.multiply(proj)
+    const projG = (e, up, n) => project(gToS(e, up, n), view, vp)
+
+    ctx.clearRect(0, 0, VW, VH)
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1
+    ctx.beginPath(); ctx.moveTo(VW/2-26, VH/2); ctx.lineTo(VW/2+26, VH/2); ctx.moveTo(VW/2, VH/2-26); ctx.lineTo(VW/2, VH/2+26); ctx.stroke()
+
+    for (const [a, b] of GGRID) line(projG(a[0], a[1], a[2]), projG(b[0], b[1], b[2]), 'rgba(90,160,220,0.30)', 1)
+
+    ctx.font = `${Math.round(20 * (VW/720))}px ui-monospace, monospace`
+    ctx.textAlign = 'center'
+    for (const m of M) {
+      // Marker-Würfel (0,6 m) auf Augenhöhe-Ebene + Pfosten zum Boden + Live-Distanz.
+      const h = 0.3
+      const dist = BABYLON.Vector3.Distance(gToS(m.e, -0.4, m.n), pos)   // echte Entfernung Kamera↔Marker
+      const P = Array.from({ length: 8 }, (_, i) => { const d = CORNER(i); return projG(m.e + d[0]*h, -0.4 + d[1]*h, m.n + d[2]*h) })
+      for (const [i, j] of CUBE_EDGES) line(P[i], P[j], m.col, 3)
+      const top = projG(m.e, 0.1, m.n), foot = projG(m.e, -1.5, m.n)
+      line(top, foot, m.col, 1)
+      if (top) { ctx.fillStyle = m.col; ctx.fillText(`${m.lbl} ${dist.toFixed(1)}m`, top.x, top.y - 8) }
+    }
+  }
+
+  // ── Pose-Treiber (8th Walls eigener Loop wie Schritt 2) ──
+  function drawModule() {
+    let f = 0, t0 = performance.now(), fps = 0, lastIntr = null
+    return {
+      name: 'ajna-geo-anchor',
+      onStart: () => { sizeCanvases(); try { XR8.XrController.updateCameraProjectionMatrix({ cam: { pixelRectWidth: VW, pixelRectHeight: VH, nearClipPlane: 0.01, farClipPlane: 1000 } }) } catch {}; setStat('läuft — N/O/S/W prüfen, ggf. „Neu ausrichten"', 'ok') },
+      onException: (e) => setStat('Engine-Exception: ' + (e?.message || e), 'err'),
+      onUpdate: ({ processCpuResult }) => {
+        const r = processCpuResult && processCpuResult.reality
+        if (!r || !r.position || !r.rotation) return
+        if (r.intrinsics && Math.abs(r.intrinsics[0]) > 1e-4) lastIntr = r.intrinsics
+
+        // SLAM-Blickrichtung (horizontal) + KONTINUIERLICHE θ-Korrektur aus Kompass
+        // (Komplementärfilter: SLAM kurzfristig, Kompass langfristig). Fängt den
+        // SLAM-Yaw-Drift automatisch → kein „Neu ausrichten" von Hand mehr nötig.
+        BABYLON.Matrix.FromQuaternionToRef(new BABYLON.Quaternion(r.rotation.x, r.rotation.y, r.rotation.z, r.rotation.w), _m)
+        const fS = BABYLON.Vector3.TransformNormal(FWD, _m)
+        lastAngleS = Math.atan2(fS.x, fS.z)
+        // θ EINMALIG aus Kompass initialisieren, danach FEST. Kontinuierliche
+        // Korrektur ließ die Objekte schwimmen (Android-Heading zu verrauscht/
+        // gegenläufig). Yaw-Drift bei Bedarf manuell per „Neu ausrichten".
+        if (headingDeg != null && thetaAuto == null) thetaAuto = lastAngleS - headingDeg * RAD
+        theta = (thetaAuto || 0) + thetaManual
+
+        drawScene({ position: r.position, rotation: r.rotation, intrinsics: lastIntr })
+        f++; const now = performance.now()
+        if (now - t0 >= 500) { fps = Math.round(f * 1000 / (now - t0)); f = 0; t0 = now
+          const gps = originLat != null ? `${originLat.toFixed(6)}, ${originLon.toFixed(6)} ±${(gpsAcc || 0).toFixed(0)}m` : '— (warte auf Fix)'
+          const ts = r.trackingStatus, tr = r.trackingReason
+          const trackOk = ts === 'NORMAL' || ts === 2 || ts === 3
+          hud.innerHTML =
+            `<b>FPS:</b> ${fps}   <b>Tracking:</b> <span class="${trackOk ? 'ok' : 'err'}">${ts}${tr && tr !== 'UNSPECIFIED' && tr !== 0 ? ' / ' + tr : ''}</span>\n` +
+            `<b>motion:</b> <span class="${motionCount > 0 ? 'ok' : 'err'}">${gyroMag.toFixed(0)}°/s</span>   <b>Kompass:</b> ${headingDeg == null ? '—' : headingDeg.toFixed(0) + '°'}   <b>GPS:</b> ±${(gpsAcc || 0).toFixed(0)}m\n` +
+            `<b>θ:</b> ${(theta * DEG).toFixed(0)}°   <b>Skala:</b> ×${scaleFactor.toFixed(1)}`
+        }
+      },
+    }
+  }
+
+  // ── Boot (wie Schritt 2) ──
+  let _booted = false
+  async function boot(tries = 0) {
+    if (_booted) return
+    if (typeof BABYLON === 'undefined') return setStat('BABYLON nicht geladen.', 'err')
+    if (typeof XR8 === 'undefined') { if (tries < 120) return void setTimeout(() => boot(tries + 1), 50); return setStat('XR8 nie definiert.', 'err') }
+    _booted = true
+    if (!XR8.XrController) { setStat('lade SLAM-Chunk …', 'warn'); try { await XR8.loadChunk('slam') } catch (e) { return setStat('SLAM-Chunk fehlt: ' + (e?.message || e), 'err') } }
+    if (!XR8.XrController || !XR8.GlTextureRenderer) return setStat('Engine-Module fehlen.', 'err')
+    try {
+      sizeCanvases()
+      // leftHandedAxes: Posen linkshändig (Babylon). scale:'absolute': METRISCHE
+      // Welt (Default 'responsive' skaliert nicht-metrisch → Geo-Distanzen falsch).
+      XR8.XrController.configure({ leftHandedAxes: true, scale: 'absolute' })
+      XR8.addCameraPipelineModules([XR8.GlTextureRenderer.pipelineModule(), XR8.XrController.pipelineModule(), drawModule()])
+      setStat('Engine geladen — Kamerazugriff …', 'warn')
+      XR8.run({ canvas: cam })
+    } catch (e) { setStat('Setup-Fehler: ' + (e?.message || e), 'err') }
+  }
+  function startEngine() {
+    addEventListener('XRloaded', () => boot()); addEventListener('xrloaded', () => boot())
+    const s = document.createElement('script'); s.src = ENGINE_URL; s.crossOrigin = 'anonymous'
+    s.onerror = () => setStat('Engine-Script konnte nicht geladen werden.', 'err')
+    document.head.appendChild(s); setStat('lade Engine …', 'warn'); if (typeof XR8 !== 'undefined') boot()
+  }
+
+  // θ-Bedienung
+  $('nudgeL').addEventListener('click', () => { thetaManual -= 5 * RAD })
+  $('nudgeR').addEventListener('click', () => { thetaManual += 5 * RAD })
+  $('realign').addEventListener('click', realign)
+  $('scaleD').addEventListener('click', () => { scaleFactor = Math.max(0.3, scaleFactor - 0.2) })
+  $('scaleU').addEventListener('click', () => { scaleFactor = Math.min(5, scaleFactor + 0.2) })
+  // Reset: SLAM-Origin auf aktuelle Pose zurücksetzen (räumt Drift auf) + Geo-Origin
+  // und θ neu. Erholung, wenn das Tracking weggedriftet ist.
+  $('reset').addEventListener('click', () => {
+    try { XR8.XrController.recenter() } catch {}
+    originLat = null; thetaAuto = null   // nächster GPS-Fix + Kompass setzen neu
+    setStat('Reset — Origin/Tracking neu, kurz stehen bleiben', 'warn')
+  })
+
+  $('tap').addEventListener('click', async () => {
+    for (const E of [window.DeviceMotionEvent, window.DeviceOrientationEvent]) { try { if (E && E.requestPermission) await E.requestPermission() } catch {} }
+    addEventListener('devicemotion', onMotion, true)
+    addEventListener('deviceorientation', onOrient, true)
+    addEventListener('deviceorientationabsolute', onOrient, true)
+    $('tap').remove(); monitorSensors(); startGps(); startEngine()
+  }, { once: true })
+</script>

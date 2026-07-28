@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<!--
+  PoC — Spike-Schritt 2 aus docs/visual-tracking.md:
+  „SLAM-Pose → verankerte Objekte — bleiben sie beim Umhergehen an ihrem Platz?"
+
+  ── WARUM 2D-OVERLAY statt Babylon-3D-Render ─────────────────────────────────
+  Zwei zuvor probierte Wege scheiterten auf dem Gerät:
+    1. Nativer XR8.Babylonjs-Behavior (eine Szene/ein Frame): 8th Wall + Babylon
+       teilen EINEN GL-Kontext, der OSS-Build isoliert den GL-State nicht →
+       WebGL-Fehler in xr-slam.js → VIO resettet → Würfel springt extrem.
+    2. Zwei GL-Kontexte (8th Wall + eigenes Babylon-Overlay): mobile GPUs würgen
+       bei zwei WebGL-Kontexten ab → ~1–2 fps nach kurzem Aufheizen.
+
+  Nachweislich flüssig war NUR Schritt 1: EIN GL-Kontext (8th Wall), Kamera +
+  Pose + DOM. Also hier genauso — plus ein LEICHTES 2D-Canvas-Overlay (KEIN
+  zweiter WebGL-Kontext): die Würfel-/Gitter-Ecken werden pro Frame per Mathe
+  3D→2D projiziert und mit dem 2D-Context gezeichnet. Babylon dient nur als
+  Mathe-Bibliothek (Matrix/Quaternion/Vector3, kein Rendering).
+
+  Projektion 1:1 aus dem babylonjsrenderer des Binaries (Linkshand-System):
+    • view  = invert( compose(scale=1, quat=reality.rotation, pos=reality.position) )
+    • proj  = FromArray(reality.intrinsics)  mit Flip von Element [10] und [11]
+    • screen = Vector3.Project(punkt, I, view·proj, viewport)
+
+  (Für die eigentliche AR-Ansicht kommt später die Single-Frame-Integration mit
+  sauberem 8th↔Babylon-GL-State-Sharing — eigene Aufgabe, kein PoC-Thema.)
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Ajna — SLAM PoC · Schritt 2 (verankerte Objekte)</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+  #camerafeed, #overlay { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  #overlay { pointer-events: none; }   /* 2D-Zeichnung über dem Kamerabild */
+  #hud {
+    position: fixed; left: 8px; top: 8px; right: 8px;
+    color: #cfe8ff; background: rgba(0,0,0,0.55); border: 1px solid #2b4a66;
+    border-radius: 8px; padding: 10px 12px; white-space: pre-wrap;
+    pointer-events: none; text-shadow: 0 0 2px #000;
+  }
+  #hud b { color: #7ec8ff; }
+  .ok { color: #6ee787; } .warn { color: #ffcf6f; } .err { color: #ff8f8f; }
+  #big { position: fixed; left: 8px; right: 8px; bottom: 10px; color: #fff; background: rgba(0,0,0,0.6); border-radius: 8px; padding: 8px 12px; }
+  #tap { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.88); color: #cfe8ff; text-align: center; padding: 24px; }
+  #tap b { font-size: 20px; color: #7ec8ff; }
+  #sensorwarn { position: fixed; left: 12px; right: 12px; top: 42%; z-index: 9; display: none; text-align: center;
+    background: rgba(125,18,18,0.95); color: #ffe0e0; border: 2px solid #ff8f8f; border-radius: 10px;
+    padding: 16px 18px; font-size: 15px; line-height: 1.5; }
+  #sensorwarn b { color: #fff; }
+</style>
+
+<canvas id="camerafeed"></canvas>  <!-- 8th Wall / Kamerabild (WebGL) -->
+<canvas id="overlay"></canvas>     <!-- 2D-Overlay / Würfel + Gitter -->
+<div id="hud">Initialisiere …</div>
+<div id="big">Status: <span id="stat">wird geladen …</span></div>
+<div id="tap"><div><b>📱 Tippen zum Start</b><br><br>fordert die Bewegungssensor-Freigabe an<br>(Gyro/Beschleunigung — <u>zwingend</u> für SLAM)</div></div>
+<div id="sensorwarn">⚠ <b>Keine Bewegungssensor-Daten</b><br>SLAM braucht Gyroskop &amp; Beschleunigung, aber dieser Browser liefert keine.<br>Bitte <b>Google&nbsp;Chrome</b> verwenden — Brave, Firefox u.&nbsp;a. blockieren die Sensoren.</div>
+
+<!-- Babylon nur als Mathe-Bibliothek (kein Rendering) -->
+<script src="/poc/slam/vendor/babylon.js"></script>
+
+<script>
+  const ENGINE_URL = '/poc/slam/engine/xr.js'
+  const hud = document.getElementById('hud')
+  const stat = document.getElementById('stat')
+  const setStat = (t, cls) => { stat.textContent = t; stat.className = cls || '' }
+  window.addEventListener('error', e => setStat('JS-Fehler: ' + (e.message || e.error), 'err'))
+  window.addEventListener('unhandledrejection', e => setStat('Promise-Fehler: ' + (e.reason?.message || e.reason), 'err'))
+  const fmt = v => v ? `x ${(+v.x).toFixed(2)}  y ${(+v.y).toFixed(2)}  z ${(+v.z).toFixed(2)}` : '—'
+
+  // ── Sensor-Diagnose: liefert das Gerät überhaupt Bewegungsdaten? Ohne die
+  //    (Gyro/Beschleunigung) hat 8th Walls VIO keine Inertial-Referenz → die
+  //    Pose läuft Amok. gyroMag>0 beim Bewegen ⇒ Sensoren OK. ──
+  let gyroMag = 0, motionCount = 0, orientCount = 0, orientStr = '—'
+  const onMotion = (e) => { const r = e.rotationRate; if (r) { gyroMag = Math.hypot(r.alpha || 0, r.beta || 0, r.gamma || 0); motionCount++ } }
+  const onOrient = (e) => { orientCount++; orientStr = `${(e.alpha || 0).toFixed(0)},${(e.beta || 0).toFixed(0)},${(e.gamma || 0).toFixed(0)}` }
+
+  // Überwacht, ob Bewegungs-Events tatsächlich FLIESSEN. Ein lebendiger Sensor
+  // feuert ~60 Hz (auch im Stillstand); Brave & Co. liefern nur 2-3 Null-Events
+  // und stoppen. Zwei stille 2-s-Fenster (<3 Events) → Warnung; fließen sie
+  // wieder, verschwindet sie.
+  function monitorSensors() {
+    const warn = document.getElementById('sensorwarn')
+    let seen = 0, deadWindows = 0
+    setInterval(() => {
+      const d = motionCount - seen; seen = motionCount
+      if (d < 3) { if (++deadWindows >= 2) warn.style.display = 'block' }
+      else { deadWindows = 0; warn.style.display = 'none' }
+    }, 2000)
+  }
+
+  // ── Beide Canvas auf echte Anzeigegröße × DPR (≤2). Ohne das bleibt der
+  //    8th-Wall-Puffer bei 300×150 → körnig/gestaucht (wie in Schritt 1). ──
+  const cam = document.getElementById('camerafeed')
+  const ov = document.getElementById('overlay')
+  const ctx = ov.getContext('2d')
+  let VW = 0, VH = 0
+  const VIEWPORT = new BABYLON.Viewport(0, 0, 1, 1)   // einmal, statt pro Projektion neu
+  function sizeCanvases() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    VW = Math.round(window.innerWidth * dpr); VH = Math.round(window.innerHeight * dpr)
+    if (cam.width !== VW || cam.height !== VH) { cam.width = VW; cam.height = VH }
+    if (ov.width !== VW || ov.height !== VH) { ov.width = VW; ov.height = VH }
+    VIEWPORT.width = VW; VIEWPORT.height = VH
+  }
+  window.addEventListener('resize', sizeCanvases)
+  window.addEventListener('orientationchange', () => setTimeout(sizeCanvases, 200))
+
+  // ── Szenen-Geometrie im SLAM-Weltframe (Meter, Y oben, Babylon-Linkshand) ──
+  // Würfel als 8 Ecken; drei gestaffelte Tiefen für Parallaxe.
+  const CORNER = i => [ (i & 1 ? 1 : -1), (i & 2 ? 1 : -1), (i & 4 ? 1 : -1) ]
+  const CUBE_EDGES = [[0,1],[0,2],[0,4],[1,3],[1,5],[2,3],[2,6],[3,7],[4,5],[4,6],[5,7],[6,7]]
+  const CUBES = [
+    { c: [-0.45, -0.70, -1.2], s: 0.30, col: '#5ef27a' },  // nah
+    { c: [ 0.55, -0.40, -2.3], s: 0.40, col: '#ff9e33' },  // mitte
+    { c: [ 0.00,  0.10, -4.2], s: 0.60, col: '#5ecbff' },  // fern
+  ]
+  const cubeCorners = ({ c, s }) => { const h = s / 2; return Array.from({ length: 8 }, (_, i) => {
+    const d = CORNER(i); return new BABYLON.Vector3(c[0] + d[0]*h, c[1] + d[1]*h, c[2] + d[2]*h) }) }
+  // Boden-Gitter y=-1.5, ±6 m, 1-m-Raster.
+  const GRID = (() => { const y = -1.5, L = 6, seg = []
+    for (let i = -L; i <= L; i++) { seg.push([new BABYLON.Vector3(i, y, -L), new BABYLON.Vector3(i, y, L)])
+      seg.push([new BABYLON.Vector3(-L, y, i), new BABYLON.Vector3(L, y, i)]) } return seg })()
+
+  const ONE = BABYLON.Vector3.One()
+  const ID = BABYLON.Matrix.Identity()
+  let lastCount = 0, lastHadIntr = false   // Diagnose: sichtbare Ecken, echte Intrinsics?
+  // Projiziert einen Weltpunkt auf Bildschirm-Pixel; null wenn hinter der Kamera.
+  function project(p, view, vp) {
+    if (BABYLON.Vector3.TransformCoordinates(p, view).z <= 0.05) return null   // hinter Kamera → verwerfen
+    const s = BABYLON.Vector3.Project(p, ID, vp, VIEWPORT)
+    return { x: s.x, y: s.y }
+  }
+  const seg2d = (a, b, col, w) => { if (!a || !b) return; ctx.strokeStyle = col; ctx.lineWidth = w
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke() }
+
+  function drawScene(r) {
+    // view = invert(compose(1, quat, pos)) — Pose kommt LINKSHÄNDIG (leftHandedAxes:true).
+    const rot = new BABYLON.Quaternion(r.rotation.x, r.rotation.y, r.rotation.z, r.rotation.w)
+    const pos = new BABYLON.Vector3(r.position.x, r.position.y, r.position.z)
+    const view = BABYLON.Matrix.Invert(BABYLON.Matrix.Compose(ONE, rot, pos))
+    // Projektion: echte Intrinsics (Flip [10]/[11]) wenn brauchbar, sonst Fallback-Perspektive.
+    let proj
+    if (r.intrinsics && Math.abs(r.intrinsics[0]) > 1e-4) {
+      const im = r.intrinsics.slice(0); im[10] *= -1; im[11] *= -1
+      proj = BABYLON.Matrix.FromArray(im); lastHadIntr = true
+    } else {
+      proj = BABYLON.Matrix.PerspectiveFovLH(1.1, VW / VH, 0.01, 1000); lastHadIntr = false
+    }
+    const vp = view.multiply(proj)
+
+    ctx.clearRect(0, 0, VW, VH)
+    // Fadenkreuz — beweist, dass das 2D-Overlay überhaupt sichtbar zeichnet.
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1
+    ctx.beginPath(); ctx.moveTo(VW/2 - 30, VH/2); ctx.lineTo(VW/2 + 30, VH/2)
+    ctx.moveTo(VW/2, VH/2 - 30); ctx.lineTo(VW/2, VH/2 + 30); ctx.stroke()
+
+    for (const [a, b] of GRID) seg2d(project(a, view, vp), project(b, view, vp), 'rgba(90,160,220,0.35)', 1)
+    let count = 0
+    for (const cube of CUBES) {
+      const P = cubeCorners(cube).map(v => project(v, view, vp))
+      for (const p of P) if (p) count++
+      for (const [i, j] of CUBE_EDGES) seg2d(P[i], P[j], cube.col, 3)
+    }
+    lastCount = count
+  }
+
+  // ── Pipeline-Modul: liest Pose (8th Walls eigener Loop wie Schritt 1) und
+  //    zeichnet das 2D-Overlay. Kein zweiter GL-Kontext, kein Rendern in Canvas A. ──
+  function drawModule() {
+    let origin = null, f = 0, t0 = performance.now(), fps = 0, lastIntr = null
+    let prevPos = null, prevRot = null, maxDp = 0, maxDr = 0   // Roh-Jitter/Frame
+    return {
+      name: 'ajna-2d-anchor',
+      onStart: () => {
+        sizeCanvases()
+        // Kamera-Projektion setzen → reality.intrinsics wird gültig befüllt.
+        try { XR8.XrController.updateCameraProjectionMatrix({ cam: { pixelRectWidth: VW, pixelRectHeight: VH, nearClipPlane: 0.01, farClipPlane: 1000 } }) } catch {}
+        setStat('läuft — geh um die Würfel herum', 'ok')
+      },
+      onException: (e) => setStat('Engine-Exception: ' + (e?.message || e), 'err'),
+      onUpdate: ({ processCpuResult }) => {
+        const r = processCpuResult && processCpuResult.reality
+        if (!r || !r.position || !r.rotation) return
+        if (r.intrinsics && Math.abs(r.intrinsics[0]) > 1e-4) lastIntr = r.intrinsics
+        drawScene({ position: r.position, rotation: r.rotation, intrinsics: lastIntr })
+
+        // Roh-Jitter pro Frame messen (Maximum über das 500-ms-Fenster).
+        if (prevPos) {
+          const dp = Math.hypot(r.position.x - prevPos.x, r.position.y - prevPos.y, r.position.z - prevPos.z)
+          const dot = Math.abs(r.rotation.x * prevRot.x + r.rotation.y * prevRot.y + r.rotation.z * prevRot.z + r.rotation.w * prevRot.w)
+          const dr = 2 * Math.acos(Math.min(1, dot)) * 180 / Math.PI
+          if (dp > maxDp) maxDp = dp
+          if (dr > maxDr) maxDr = dr
+        }
+        prevPos = { ...r.position }; prevRot = { ...r.rotation }
+
+        f++
+        const now = performance.now()
+        if (now - t0 >= 500) {   // HUD nur alle 500 ms → kein DOM-Reflow pro Frame
+          fps = Math.round(f * 1000 / (now - t0)); f = 0; t0 = now
+          if (!origin) origin = { ...r.position }
+          const moved = Math.hypot(r.position.x - origin.x, r.position.y - origin.y, r.position.z - origin.z)
+          hud.innerHTML =
+            `<b>FPS:</b> ${fps}   <b>motion:</b> <span class="${motionCount > 0 ? 'ok' : 'err'}">${gyroMag.toFixed(0)}°/s (${motionCount})</span>   <b>orient:</b> <span class="${orientCount > 0 ? 'ok' : 'err'}">${orientStr} (${orientCount})</span>\n` +
+            `<b>Roh-Jitter/Frame:</b> Δpos <span class="${maxDp > 0.02 ? 'err' : 'ok'}">${(maxDp * 100).toFixed(1)} cm</span>   ` +
+            `Δrot <span class="${maxDr > 1 ? 'err' : 'ok'}">${maxDr.toFixed(2)}°</span>   (bei STILLHALTEN messen!)\n` +
+            `<b>Kamera-Pos (m):</b> ${fmt(r.position)}   seit Start ${(moved * 100).toFixed(0)} cm`
+          maxDp = 0; maxDr = 0
+        }
+      },
+    }
+  }
+
+  // ── Boot: warten bis XR8 + BABYLON bereit, SLAM-Chunk laden, Pipeline wie Schritt 1. ──
+  let _booted = false
+  async function boot(tries = 0) {
+    if (_booted) return
+    if (typeof BABYLON === 'undefined') { return setStat('BABYLON nicht geladen — vendor/babylon.js prüfen.', 'err') }
+    if (typeof XR8 === 'undefined') {
+      if (tries < 120) return void setTimeout(() => boot(tries + 1), 50)
+      return setStat('XR8 nie definiert — Engine-Script/Binary prüfen.', 'err')
+    }
+    _booted = true
+    if (!XR8.XrController) {
+      setStat('lade SLAM-Chunk (xr-slam.js) …', 'warn')
+      try { await XR8.loadChunk('slam') }
+      catch (e) { return setStat('SLAM-Chunk „xr-slam.js" fehlt/lädt nicht — neben xr.js in /poc/slam/engine/ legen. Detail: ' + (e?.message || e), 'err') }
+    }
+    if (!XR8.XrController || !XR8.GlTextureRenderer) { return setStat('Engine-Module fehlen (XrController/GlTextureRenderer).', 'err') }
+    try {
+      sizeCanvases()   // VOR run, damit 8th Wall die richtige Größe/Intrinsics nimmt
+      // KRITISCH: Posen linkshändig ausgeben (8th-Wall-Default ist rechtshändig),
+      // passend zu unserer Babylon-Linkshand-Projektion — sonst landet alles neben
+      // dem Bild/hinter der Kamera und man sieht nichts.
+      XR8.XrController.configure({ leftHandedAxes: true })
+      XR8.addCameraPipelineModules([
+        XR8.GlTextureRenderer.pipelineModule(),   // Kamerabild → Canvas A (einziger GL-Kontext)
+        XR8.XrController.pipelineModule(),         // SLAM
+        drawModule(),                              // Pose → 2D-Overlay
+      ])
+      setStat('Engine geladen — fordere Kamerazugriff an …', 'warn')
+      XR8.run({ canvas: cam })
+    } catch (e) { setStat('Setup-Fehler: ' + (e?.message || e), 'err') }
+  }
+
+  function startEngine() {
+    window.addEventListener('XRloaded', () => boot())
+    window.addEventListener('xrloaded', () => boot())
+    const scr = document.createElement('script')
+    scr.src = ENGINE_URL
+    scr.crossOrigin = 'anonymous'
+    scr.onerror = () => setStat('Engine-Script konnte nicht geladen werden: ' + ENGINE_URL, 'err')
+    document.head.appendChild(scr)
+    setStat('lade Engine: ' + ENGINE_URL + ' …', 'warn')
+    if (typeof XR8 !== 'undefined') boot()
+  }
+
+  // Nutzergeste: iOS verlangt DeviceMotion-Freigabe im Klick-Kontext; danach
+  // erhalten ALLE Motion-Listener der Seite (auch die der Engine) Sensordaten.
+  document.getElementById('tap').addEventListener('click', async () => {
+    for (const E of [window.DeviceMotionEvent, window.DeviceOrientationEvent]) {
+      try { if (E && E.requestPermission) await E.requestPermission() } catch {}
+    }
+    window.addEventListener('devicemotion', onMotion, true)
+    window.addEventListener('deviceorientation', onOrient, true)
+    document.getElementById('tap').remove()
+    monitorSensors()
+    startEngine()
+  }, { once: true })
+</script>

@@ -48,6 +48,7 @@ import { spawnRandomAndEdit, directorSpawnItems } from "./core/SpawnHere.js"
 import { CameraComponent } from "./engine/components/CameraComponent.js"
 import { DebugCameraComponent } from "./engine/components/DebugCameraComponent.js"
 import { PlayerGPSComponent } from "./engine/components/PlayerGPSComponent.js"
+import { GeospatialComponent } from "./engine/components/GeospatialComponent.js"
 import { TransformComponent } from "./engine/components/TransformComponent.js"
 import { NetworkSyncComponent } from "./engine/components/NetworkSyncComponent.js"
 import { buildDebugScene } from "./engine/debug/DebugSceneBuilder.js"
@@ -55,6 +56,8 @@ import { DebugUIManager } from "./engine/debug/DebugUIManager.js"
 import { buildEnvironment } from "./engine/environment/EnvironmentBuilder.js"
 import { sunPosition } from "./core/solarPosition.js"
 import { ArPassthrough } from "./core/ArPassthrough.js"
+import { WorldTracker } from "./core/WorldTracker.js"
+import { MarkerPreview } from "./core/MarkerPreview.js"
 import { ArFovCalibration } from "./core/ArFovCalibration.js"
 import { CompassCalibration } from "./core/CompassCalibration.js"
 import { HeadingStabilizer } from "./core/headingStabilizer.js"
@@ -313,6 +316,125 @@ async function init() {
   // Berechtigungs-Prompt).
   const arPassthrough = new ArPassthrough({ scene, skybox: arEnv?.skybox, canvas })
 
+  // ── SLAM-WorldTracker (Nah-Interaktion, OPT-IN) ──────────────────────────
+  // Default AUS. Einschalten: localStorage 'ajna.slam' = '1'. Wenn an, liefert in
+  // AR SLAM das Kamerabild und die (ruhige) Kamera-ROTATION statt Kompass-Jitter
+  // (Anti-Swim); ArPassthrough bleibt dann aus (nur einer hält die Kamera).
+  // Absolute Position bleibt GPS/UWB (SLAM ist kein metrischer Odometer).
+  // ── SLAM-Konfiguration ───────────────────────────────────────────────────
+  // Jeder Wert per URL (?slam=1&slam.scale=1.5&…) ODER localStorage 'ajna.slam.*';
+  // URL setzt + merkt sich. Zur Laufzeit tunebar über window.ajnaSlam.
+  const _cfg = (key, def) => {
+    try {
+      const u = new URLSearchParams(location.search)
+      if (u.has(key)) { try { localStorage.setItem('ajna.' + key, u.get(key)) } catch {}; return u.get(key) }
+      const ls = localStorage.getItem('ajna.' + key)
+      if (ls != null) return ls
+    } catch {}
+    return def
+  }
+  const SLAM_ENABLED = _cfg('slam', '0') === '1'
+  const slamCfg = {
+    // SLAM-Translation ist auf diesem Gerät NICHT metrisch verlässlich (responsive
+    // reskaliert dynamisch) → Default AUS. Rotation allein verankert die Objekte
+    // stabil am Kamerabild (Anti-Swim); Position bleibt GPS. translation=1 nur zum
+    // Experimentieren / später mit UWB/Marker als absoluter Metrik-Referenz.
+    translation: _cfg('slam.translation', '0') === '1',
+    scale: parseFloat(_cfg('slam.scale', '1')) || 1,    // Translations-Skala (metrische Kalibrierung, per Gerät)
+    maxOffsetM: parseFloat(_cfg('slam.max', '15')) || 0,// Reichweite: SLAM-Versatz auf N m begrenzen (0=unbegrenzt)
+    strength: Math.min(1, Math.max(0, parseFloat(_cfg('slam.strength', '1')) || 1)), // 0..1 Mischung SLAM↔GPS
+    fovScale: parseFloat(_cfg('slam.fovscale', '2.5')) || 2.5, // FOV-Feinabgleich aufs Kamerabild (Gerät-kalibriert)
+    rollScale: parseFloat(_cfg('slam.rollscale', '0.8')) || 0.8, // Roll-Trim (Gerät-kalibriert)
+    range: parseFloat(_cfg('slam.range', '40')) || 0,       // Nah-Gating: SLAM nur < N m vom nächsten Objekt (0=immer an)
+  }
+  window.ajnaSlam = slamCfg   // Live in der Konsole: ajnaSlam.scale = 1.5 / ajnaSlam.translation = false …
+  const SLAM_DEBUG = _cfg('slam.debug', '0') === '1'   // Debug-HUD + Diagnose-Toast nur mit ?slam.debug=1
+  const worldTracker = new WorldTracker({ scene, appCanvas: canvas, skybox: arEnv?.skybox })
+  let _slamTheta = null, _slamOrigin = null, _slamIntrLogged = false   // Nord-Alignment + Ursprung + Diag
+  window.addEventListener('ajna:slam-realign', () => { _slamTheta = null; _slamOrigin = null })   // Nord + Ursprung neu
+  // SLAM-Debug-HUD (on-screen, da DevTools gerade schwierig): rohe SLAM-Δ pro Achse
+  // (zeigt welche Achse bei Vorwärts/Seitwärts reagiert), angewandter Offset, θ/Konfig,
+  // und Distanz zum nächsten Objekt (für die Skala-Kalibrierung).
+  let _slamHud = null, _slamHudTxt = null, _slamHudTimer = null
+  function _ensureSlamHud() {
+    if (_slamHud) return _slamHud
+    const d = document.createElement('div'); d.id = 'slam-hud'
+    Object.assign(d.style, { position: 'fixed', left: '6px', top: '6px', zIndex: '9', padding: '6px 8px',
+      font: '11px/1.35 ui-monospace,Menlo,Consolas,monospace', color: '#cfe8ff', background: 'rgba(0,0,0,0.6)',
+      border: '1px solid #2b4a66', borderRadius: '6px', whiteSpace: 'pre' })
+    const txt = document.createElement('div')
+    const bar = document.createElement('div'); Object.assign(bar.style, { marginTop: '5px', display: 'flex', gap: '5px' })
+    const mk = (label, fn) => { const b = document.createElement('button'); b.textContent = label
+      Object.assign(b.style, { flex: '1', padding: '7px 4px', font: 'inherit', color: '#cfe8ff', background: 'rgba(40,80,120,0.95)', border: '1px solid #2b4a66', borderRadius: '5px' })
+      b.addEventListener('click', fn); return b }
+    // Live-Tuning OHNE Reload (bleibt in DERSELBEN SLAM-Session, ×/÷ 0.9 pro Klick).
+    bar.appendChild(mk('scale −', () => { slamCfg.scale = +(slamCfg.scale * 0.9).toFixed(3) }))
+    bar.appendChild(mk('scale +', () => { slamCfg.scale = +(slamCfg.scale / 0.9).toFixed(3) }))
+    d.appendChild(txt); d.appendChild(bar)
+    document.body.appendChild(d); _slamHud = d; _slamHudTxt = txt; return d
+  }
+  function _updateSlamHud() {
+    const r = worldTracker.reality
+    if (!r || !_slamOrigin || !_playerCam) return
+    const dx = r.position.x - _slamOrigin.x, dy = r.position.y - _slamOrigin.y, dz = r.position.z - _slamOrigin.z
+    const cb = _playerCam._slamCamBase || _playerCam.position
+    const ox = _playerCam.position.x - cb.x, oy = _playerCam.position.y - cb.y, oz = _playerCam.position.z - cb.z
+    let nd = Infinity; const cp = _playerCam.globalPosition
+    objectMap.forEach(go => { const p = go && go.root && go.root.getAbsolutePosition && go.root.getAbsolutePosition()
+      if (p) { const dd = BABYLON.Vector3.Distance(cp, p); if (dd < nd) nd = dd } })
+    _ensureSlamHud()
+    _slamHudTxt.textContent =
+      `θ ${((_slamTheta || 0) * 180 / Math.PI).toFixed(0)}°  scale ${slamCfg.scale}  fov ${slamCfg.fovScale}\n` +
+      `Δslam  x ${dx.toFixed(2)}  y ${dy.toFixed(2)}  z ${dz.toFixed(2)}\n` +
+      `offset x ${ox.toFixed(2)}  y ${oy.toFixed(2)}  z ${oz.toFixed(2)}\n` +
+      `nächstes Objekt: ${nd === Infinity ? '—' : nd.toFixed(1) + ' m'}`
+  }
+
+  // ── SLAM an/aus (Kamera-Hand-off macht der Aufrufer via ArPassthrough) ──
+  let _slamGateTimer = null
+  function _slamOn() {
+    if (worldTracker.active || worldTracker._starting) return
+    _slamTheta = null; _slamOrigin = null; _slamIntrLogged = false
+    if (slamCfg.translation) { const pg = player.getComponent(PlayerGPSComponent); if (pg) pg.paused = true }
+    worldTracker.start().catch(err => {
+      console.warn('[slam] Start fehlgeschlagen, Fallback Kompass:', err?.message || err)
+      const pg = player.getComponent(PlayerGPSComponent); if (pg) pg.paused = false
+      try { if (!_toast) _toast = new Toast(); _toast.show('SLAM nicht verfügbar — Kompass', { title: 'AR' }) } catch {}
+      arPassthrough.enable().catch(() => {})
+    })
+    if (SLAM_DEBUG) {
+      setTimeout(() => { if (!_slamIntrLogged) { try { if (!_toast) _toast = new Toast(); _toast.show('KEINE Intrinsics → Default-FOV (zu eng)', { title: 'SLAM' }) } catch {} } }, 3000)
+      _ensureSlamHud().style.display = 'block'
+      if (_slamHudTimer) clearInterval(_slamHudTimer); _slamHudTimer = setInterval(_updateSlamHud, 200)
+    }
+  }
+  function _slamOff() {
+    if (_slamHudTimer) { clearInterval(_slamHudTimer); _slamHudTimer = null }
+    if (_slamHud) _slamHud.style.display = 'none'
+    if (worldTracker.active) worldTracker.stop()
+    const pg = player.getComponent(PlayerGPSComponent); if (pg) pg.paused = false
+    try { _playerCam && _playerCam.unfreezeProjectionMatrix() } catch {}
+    if (_playerCam && _playerCam._slamCamBase) _playerCam.position.copyFrom(_playerCam._slamCamBase)
+  }
+  function _nearestObjDist() {
+    const cp = _playerCam && _playerCam.globalPosition; if (!cp) return Infinity
+    let nd = Infinity
+    objectMap.forEach(go => { const p = go && go.root && go.root.getAbsolutePosition && go.root.getAbsolutePosition()
+      if (p) { const d = BABYLON.Vector3.Distance(cp, p); if (d < nd) nd = d } })
+    return nd
+  }
+  // Nah-Gating: SLAM nur < range m vom nächsten Objekt (Akku sparen), mit Hysterese
+  // (verlässt erst bei range×1.3), damit es an der Grenze nicht flattert.
+  function _startSlamGate() {
+    if (_slamGateTimer) clearInterval(_slamGateTimer)
+    _slamGateTimer = setInterval(() => {
+      const d = _nearestObjDist()
+      if (!worldTracker.active && !worldTracker._starting && d < slamCfg.range) { arPassthrough.disable(); _slamOn() }
+      else if (worldTracker.active && d > slamCfg.range * 1.3) { _slamOff(); arPassthrough.enable().catch(() => {}) }
+    }, 1500)
+  }
+  function _stopSlamGate() { if (_slamGateTimer) { clearInterval(_slamGateTimer); _slamGateTimer = null } }
+
   // ── AR-Modus an "Switch Camera" koppeln ──────────────────────────────────
   // VOR Switch Camera (Free-Modus): frei bewegen + Skybox, kein Kompass.
   // NACH Switch Camera (Player-Modus): an die GPS-Position fixiert, Kamera-
@@ -329,6 +451,12 @@ async function init() {
   let _arNorthRad = (parseFloat(localStorage.getItem('ajna.ar.north_offset')) || 0) * Math.PI / 180
   window.addEventListener('ajna:ar-north', ev => {
     _arNorthRad = (parseFloat(ev.detail) || 0) * Math.PI / 180
+  })
+  // Augenhöhe live geändert (CameraComponent passt die Kamera an) → SLAM-Basis
+  // mitziehen, sonst addiert der Translations-Offset auf die alte Höhe.
+  window.addEventListener('ajna:ar-eye-height', ev => {
+    const v = parseFloat(ev.detail)
+    if (Number.isFinite(v) && _playerCam?._slamCamBase) _playerCam._slamCamBase.y = v
   })
   // Gyro-Stabilisierung des Headings (siehe Hook unten). _smoothedHeadingQ hält
   // den geglätteten Zustand; null = neu ansetzen (nach Modus-Aus/An kein Lerp aus
@@ -348,9 +476,69 @@ async function init() {
     // Handedness-Korrektur: rechtshändige Szene (useRightHandedSystem) invertiert
     // Pitch (oben/unten) UND Roll (Neigen) — beide Euler-Anteile (x,z) negieren,
     // Yaw (links/rechts) bleibt. Nur bei aktivem Kompass, nach dem Input-Check.
+    // Scratch für die SLAM→RH-Kamera-Abbildung (keine Allokation pro Frame).
+    const _slamQuat = new BABYLON.Quaternion()
+    const _eul = new BABYLON.Vector3()
+    const _off = new BABYLON.Vector3(), _rotM = new BABYLON.Matrix()
+    const _camBase = _playerCam.position.clone()   // Augenhöhe (0,1.7,0) — SLAM-Offset kommt drauf
+    // Bildet die rohe SLAM-Pose auf die rechtshändige App-Kamera ab: Rotation +
+    // (optional) Translation, einmaliges Nord-Alignment (θ) am Kompass, Intrinsics-FOV.
+    const _applySlamPose = (q, r) => {
+      // --- Rotation: SLAM-Pose ist bei Pitch/Roll bereits RH-korrekt (anders als der
+      //     DeviceOrientation-Input des Kompass-Hooks, der -x/-z negiert). Also NICHT
+      //     negieren; nur den Yaw um θ nach Nord ausrichten. Äquivalent zu Ry(θ)·slam. ---
+      _slamQuat.set(r.rotation.x, r.rotation.y, r.rotation.z, r.rotation.w)
+      _slamQuat.toEulerAnglesToRef(_eul)
+      if (_slamTheta == null) {
+        // θ = Kompass-Yaw (q frisch vom DeviceOrientation-Input, vor dem Überschreiben) − SLAM-Yaw.
+        const compassYaw = q.toEulerAngles().y + _arNorthRad
+        _slamTheta = compassYaw - _eul.y
+        _slamOrigin = { x: r.position.x, y: r.position.y, z: r.position.z }   // Positions-Ursprung merken
+        console.log('[slam] Nord-Alignment θ =', (_slamTheta * 180 / Math.PI).toFixed(1), '°')
+      }
+      BABYLON.Quaternion.RotationYawPitchRollToRef(_eul.y + _slamTheta, _eul.x, _eul.z * slamCfg.rollScale, q)
+      // --- Translation (Phase 2): SLAM-Versatz seit Start, RH-gemappt, nord-
+      //     gedreht, skaliert, auf Reichweite begrenzt, gemischt → auf Augenhöhe ---
+      if (slamCfg.translation && _slamOrigin) {
+        // SLAM-Position ist bereits Babylon-RH (vorwärts −Z, rechts +X) → KEINE
+        // (-x,-z)-Negation (die invertierte vor/zurück UND links/rechts). Nur
+        // den (willkürlichen) SLAM-Yaw per θ nach Nord drehen, dann skalieren.
+        _off.set(r.position.x - _slamOrigin.x, r.position.y - _slamOrigin.y, r.position.z - _slamOrigin.z)
+        BABYLON.Matrix.RotationYToRef(_slamTheta, _rotM)
+        BABYLON.Vector3.TransformCoordinatesToRef(_off, _rotM, _off)
+        _off.scaleInPlace(slamCfg.scale)
+        const len = _off.length()
+        if (slamCfg.maxOffsetM > 0 && len > slamCfg.maxOffsetM) _off.scaleInPlace(slamCfg.maxOffsetM / len)
+        if (slamCfg.strength !== 1) _off.scaleInPlace(slamCfg.strength)
+        _playerCam.position.set(_camBase.x + _off.x, _camBase.y + _off.y, _camBase.z + _off.z)
+      }
+      // FOV an das echte Kamerabild: Projektion aus Intrinsics (RH → KEIN [10]/[11]-Flip).
+      if (r.intrinsics && Math.abs(r.intrinsics[0]) > 1e-4) {
+        if (!_slamIntrLogged) {
+          _slamIntrLogged = true; const i = r.intrinsics
+          const fx = (2 * Math.atan(1 / Math.abs(i[0])) * 180 / Math.PI).toFixed(0)
+          const fy = (2 * Math.atan(1 / Math.abs(i[5])) * 180 / Math.PI).toFixed(0)
+          console.log('[slam] intrinsics DA · m00=%s m11=%s → fovX≈%s° fovY≈%s°', i[0].toFixed(3), i[5].toFixed(3), fx, fy)
+          if (SLAM_DEBUG) { try { if (!_toast) _toast = new Toast(); _toast.show(`Intrinsics DA · FOV ≈ ${fx}°/${fy}° (m00 ${i[0].toFixed(2)} m11 ${i[5].toFixed(2)})`, { title: 'SLAM' }) } catch {} }
+        }
+        // FOV-Feinabgleich aufs Kamerabild: m00/m11 gleich skalieren (Aspekt bleibt).
+        const m = r.intrinsics.slice(0)
+        if (slamCfg.fovScale !== 1) { m[0] /= slamCfg.fovScale; m[5] /= slamCfg.fovScale }
+        _playerCam.freezeProjectionMatrix(BABYLON.Matrix.FromArray(m))
+      }
+    }
+    _playerCam._slamCamBase = _camBase   // für Restore beim Modus-Aus
+
     _playerCam.onAfterCheckInputsObservable.add(() => {
       const q = _playerCam.rotationQuaternion
       if (!_compassActive || !q) { _smoothedHeadingQ = null; return }
+      // SLAM-Übernahme: ruhige, weltfeste Rotation aus visuellem Tracking statt
+      // Kompass-Jitter. Bei (noch) schlechtem Tracking Fallback auf Kompass unten.
+      if (SLAM_ENABLED && worldTracker.active) {
+        const r = worldTracker.reality
+        const ts = r && r.trackingStatus
+        if (r && r.rotation && (ts === 'NORMAL' || ts == null)) { _applySlamPose(q, r); return }
+      }
       const e = q.toEulerAngles()
       // + _arNorthRad korrigiert den Kompass↔Daten-Nord-Versatz (z. B. 180°).
       BABYLON.Quaternion.RotationYawPitchRollToRef(e.y + _arNorthRad, -e.x, -e.z, q)
@@ -410,14 +598,24 @@ async function init() {
     _compassActive = ar
     console.log(`[ar] Kamera-Modus → ${ar ? "AR (GPS-fix + Kompass)" : "Free-Fly"}`)
     if (ar) {
-      arPassthrough.enable().catch(err => {
-        if (!_toast) _toast = new Toast()
-        _toast.show(err?.message || "Kamera nicht verfügbar", { title: "AR" })
-      })
-      arFov?.activate()   // FOV an Kamerabild angleichen; Live-Slider nur wenn in Einstellungen aktiviert
+      if (SLAM_ENABLED && slamCfg.range > 0) {
+        // Nah-Gating: zunächst Kamera-Passthrough + Kompass; SLAM schaltet sich je
+        // nach Objekt-Nähe selbst zu/ab (Akku sparen, nur einer hält die Kamera).
+        arPassthrough.enable().catch(err => { try { if (!_toast) _toast = new Toast(); _toast.show(err?.message || "Kamera nicht verfügbar", { title: "AR" }) } catch {} })
+        arFov?.activate()
+        _startSlamGate()
+      } else if (SLAM_ENABLED) {
+        arPassthrough.disable()   // range=0 → SLAM immer an; Kamera frei → SLAM übernimmt
+        _slamOn()
+      } else {
+        arPassthrough.enable().catch(err => { if (!_toast) _toast = new Toast(); _toast.show(err?.message || "Kamera nicht verfügbar", { title: "AR" }) })
+        arFov?.activate()   // FOV an Kamerabild angleichen
+      }
       compass.activate()  // Kompass-Güte-Indikator (nur wenn in Einstellungen aktiviert)
       objectAura.activate() // Fokus-Reticle + Call-Out-Karte (nur wenn eingeschaltet)
     } else {
+      _stopSlamGate()
+      _slamOff()            // SLAM aus + Kamera/GPS/Projektion wiederherstellen (idempotent)
       arPassthrough.disable()
       arFov?.deactivate() // XR/Skybox: virtuelle Kamera auf Default-FOV, Slider aus
       compass.deactivate()
@@ -562,7 +760,7 @@ async function init() {
       // noch nicht angelegt hat (z. B. vor abgeschlossenem syncSceneObjects),
       // ist focusCameraOn no-op — kein Crash, keine Fehlermeldung.
       const go = objectMap.get(obj.id)
-      if (go) focusCameraOn(scene, go)
+      if (go) { focusCameraOn(scene, go); _toggleObjectGizmo(go) }
     },
     onObjectHover: (obj, hovering) => {
       const go = objectMap.get(obj.id)
@@ -576,6 +774,87 @@ async function init() {
   // button. Keeps the AR view unobstructed.
   const _arOverlay = setupArOverlayControls(arRoot, uiContainer, debugManager)
   _openArEditor = _arOverlay.openEditor
+
+  // ── Editor-Gizmos: Objekt in 3D verschieben/drehen (Babylon GizmoManager) ──
+  // Auswahl einer Objektzeile im Editor heftet Verschiebe-Pfeile + Y-Rotations-
+  // Ring an das Objekt; dieselbe Zeile erneut wählen (oder Esc) löst sie wieder.
+  // Während der Manipulation pausiert die Geo-Verankerung (sonst überschreibt
+  // sie die Drag-Position pro Frame); am Drag-Ende wird die Pose in echte
+  // Koordinaten zurückgerechnet und gespeichert (lat/lon/altitude/rotation).
+  let _gizmoMgr = null, _gizmoGo = null
+  const _gizmoSave = (kind) => {
+    const go = _gizmoGo; if (!go) return
+    const p = go.root.position
+    const w = geo.toWorld(p.x, 0, p.z)
+    const gc = go.getComponent?.(GeospatialComponent)
+    const ref = gc?.altitudeRef || 'ground'
+    // ground: altitude = Höhe über der Bodenebene (= p.y). msl: + Bodenhöhe (AMSL).
+    const alt = ref === 'msl'
+      ? (Number.isFinite(geo.groundAltitude) ? geo.groundAltitude : (geo.origin?.altitude || 0)) + p.y
+      : p.y
+    const rq = go.root.rotationQuaternion
+    const e = rq ? rq.toEulerAngles() : go.root.rotation
+    const rot = { x: e.x, y: e.y, z: e.z }
+    const s = go.root.scaling
+    const scl = { x: s.x, y: s.y, z: s.z }
+    // Lokal sofort übernehmen (kein Zurückschnappen nach dem Lösen, bis das
+    // Server-Echo eintrifft): Geo-Anker + Smoother mit der neuen Pose füttern.
+    gc?.setCoordinates?.(w.lat, w.lon, alt, ref)
+    go._smoother?.feed?.({ lat: w.lat, lon: w.lon, altitude: alt, rotation: rot })
+    ajnaManager.updateObject(go.id, { lat: w.lat, lon: w.lon, altitude: alt, rotation: rot, scale: scl })
+      .then(() => { if (!_toast) _toast = new Toast(); _toast.show(`${kind} gespeichert`, { title: go.name || 'Objekt' }) })
+      .catch(err => { if (!_toast) _toast = new Toast(); _toast.show('Speichern fehlgeschlagen: ' + (err?.message || err), { title: 'Editor' }) })
+  }
+  const _detachGizmo = () => {
+    if (!_gizmoMgr || !_gizmoGo) return
+    const r = _gizmoGo.root
+    // RotationGizmo arbeitet auf rotationQuaternion; danach zurück auf Euler,
+    // sonst ignoriert Babylon künftige .rotation-Schreiber (Server-Updates).
+    if (r.rotationQuaternion) { r.rotation.copyFrom(r.rotationQuaternion.toEulerAngles()); r.rotationQuaternion = null }
+    _gizmoGo.transformPaused = false
+    const gc = _gizmoGo.getComponent?.(GeospatialComponent); if (gc) gc.paused = false
+    _gizmoMgr.attachToNode(null)
+    _gizmoGo = null
+  }
+  const _toggleObjectGizmo = (go) => {
+    if (!go) return
+    if (_gizmoGo === go) { _detachGizmo(); return }   // dasselbe Objekt erneut → fertig
+    // Berechtigung VOR dem Einblenden prüfen: Position/Rotation ändern darf nur
+    // der Besitzer (Server-Regel; Gruppen-Rechte folgen mit dem ACE-System).
+    const rec = ajnaManager.objectMap.get(go.id) || ajnaManager.getObjectById?.(go.id)
+    const cli = ajnaManager.clients?.get(rec?._origin) || ajnaManager.defaultClient
+    const me = cli?.currentUser?.()
+    if (!me || !rec?.owner || me.id !== rec.owner) {
+      if (!_toast) _toast = new Toast()
+      _toast.show(!me ? 'Bitte einloggen — Objekt-Werkzeuge erfordern Besitzrechte.'
+        : 'Keine Berechtigung: nur der Besitzer kann dieses Objekt verschieben.', { title: go.name || 'Objekt' })
+      return
+    }
+    if (!_gizmoMgr) {
+      _gizmoMgr = new BABYLON.GizmoManager(scene)
+      _gizmoMgr.usePointerToAttachGizmos = false      // nur explizit (Editor/STRG+Klick/Menü)
+      _gizmoMgr.positionGizmoEnabled = true
+      _gizmoMgr.rotationGizmoEnabled = true
+      _gizmoMgr.scaleGizmoEnabled = true              // Achsen-Griffe = je Achse, Zentrum-Würfel = proportional
+      const gz = _gizmoMgr.gizmos
+      if (gz.rotationGizmo) { gz.rotationGizmo.xGizmo.isEnabled = false; gz.rotationGizmo.zGizmo.isEnabled = false }  // nur Yaw
+      gz.positionGizmo?.onDragEndObservable.add(() => _gizmoSave('Position'))
+      gz.rotationGizmo?.onDragEndObservable.add(() => _gizmoSave('Rotation'))
+      gz.scaleGizmo?.onDragEndObservable.add(() => _gizmoSave('Skalierung'))
+      window.addEventListener('keydown', ev => { if (ev.key === 'Escape') _detachGizmo() })
+    }
+    _detachGizmo()
+    // Live-Anzeige während des Drags: Smoother pausieren (er würde root.rotation
+    // pro Frame mit dem alten Wert überschreiben) + Quaternion-Modus erzwingen
+    // (der Ring arbeitet darauf; ohne Quaternion griffe er ins Leere).
+    go.transformPaused = true
+    const gc = go.getComponent?.(GeospatialComponent); if (gc) gc.paused = true
+    if (!go.root.rotationQuaternion) go.root.rotationQuaternion = BABYLON.Quaternion.FromEulerVector(go.root.rotation)
+    _gizmoMgr.attachToNode(go.root)
+    _gizmoGo = go
+    if (!_toast) _toast = new Toast()
+    _toast.show('Pfeile = verschieben · Ring = drehen · Würfel außen = Achse skalieren, Mitte = proportional. Daneben klicken/Esc = fertig.', { title: go.name || 'Objekt' })
+  }
 
   // ── Wand pointing → AR highlight (audio cues handled by the hub) ──────
   // The wand lives in the shared hub; here we attach AR-specific context:
@@ -637,6 +916,11 @@ async function init() {
     editorUI,
     contextMenu,
     permissionDialog,
+    // Kontextmenü „Verschieben/Drehen" → Gizmo an das Objekt heften.
+    onGizmo: (record) => {
+      const go = objectMap.get(record.id)
+      if (go) { focusCameraOn(scene, go); _toggleObjectGizmo(go) }
+    },
     // Für Aktionen wie „Rufen": exakte Position, die ObjectActions je nach
     // Privatsphäre-Stufe vergröbert oder gar nicht mitschickt.
     getPosition: () => positionSource?.getWorldPosition?.() || null,
@@ -851,10 +1135,16 @@ async function init() {
     let go = pickInfo?.hit ? pickInfo.pickedMesh?.metadata?.gameObject : null
     // Exakter Pick daneben (kleines/fernes Objekt)? → toleranter Fallback.
     if (!go) go = pickGameObjectTolerant(scene.pointerX, scene.pointerY)
+
+    // Gizmo-Abwahl: Klick auf Luft/Boden/ein ANDERES Objekt löst die Auswahl.
+    if (_gizmoGo && go !== _gizmoGo) _detachGizmo()
     if (!go?.name) return
 
     const record = ajnaManager.objectMap.get(go.id)
     if (!record) return
+
+    // STRG+Klick: Objekt fokussieren + Gizmo anheften (statt Menü/Aktionen).
+    if (eventData.event?.ctrlKey) { focusCameraOn(scene, go); _toggleObjectGizmo(go); return }
 
     _announcer?.target(record)   // "Zeigen": Tap sagt "<Typ> <Name>" an (gegated)
 
@@ -1083,6 +1373,21 @@ async function init() {
   ajnaManager.onObjectsChanged(() => uwbAnchors.refresh())
   uwbAnchors.refresh()
   window.addEventListener('ajna:uwb-anchors', e => uwbAnchors.setVisible(!!e.detail))
+
+  // Marker-Vorschau: Bild-Marker (Datum am Ajna-Objekt: obj.marker = {image,
+  // widthM, heightM?, headingDeg?, alt?}) als originalgetreue Fläche an ihrer
+  // realen Geo-Pose. Umschaltbar (Event 'ajna:markers' / ?markers=0). window.ajnaMarkers
+  // erlaubt Test-Marker ohne Objekt/Backend.
+  // Objekt-Marker (state.marker) rendern jetzt direkt als Objekt-Platzhalter
+  // (flacher texturierter Quader, siehe GameObject.#createPlaceholder). MarkerPreview
+  // bleibt nur für Test-Marker OHNE Objekt (window.ajnaMarkers) — z. B. ohne Backend.
+  const markerPreview = new MarkerPreview({ scene, geo })
+  window.markerPreview = markerPreview
+  const _refreshMarkers = () => markerPreview.set(Array.isArray(window.ajnaMarkers) ? window.ajnaMarkers : [])
+  _refreshMarkers()
+  window.addEventListener('ajna:markers', e => markerPreview.setVisible(!!e.detail))
+  window.setAjnaMarkers = (arr) => { window.ajnaMarkers = arr; _refreshMarkers() }   // Test-Helfer
+  markerPreview.setVisible(!/[?&]markers=0\b/.test(location.search))
 
   // Re-Capping bei Kamerabewegung: die "nächsten X je Agent" hängen von der
   // Kameraposition ab. syncSceneObjects feuert sonst nur bei Datenänderung —
