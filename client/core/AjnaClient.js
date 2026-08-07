@@ -152,15 +152,34 @@ export class AjnaClient {
    */
   async verifySession(timeoutMs = 5000) {
     if (!this.pb.authStore.isValid) return 'logged-out'
+    // Single-Flight + Cooldown — SCHLEIFENSCHUTZ: ein erfolgreicher authRefresh
+    // speichert ein NEUES Token → authStore.onChange → serversChanged → der
+    // ServerDialog rendert und verifiziert erneut → Endlosschleife, die den
+    // Browser mit Requests flutet (ERR_INSUFFICIENT_RESOURCES, UI eingefroren).
+    // Deshalb: parallele Aufrufe teilen EINEN Request, und ein Ergebnis gilt
+    // 30 s — egal wie oft Dialog/Manager in der Zeit fragen.
+    const now = Date.now()
+    if (this._verifyInflight) return this._verifyInflight
+    if (this._verifyResult && now - (this._verifyAt || 0) < 30000) return this._verifyResult
+    this._verifyInflight = (async () => {
+      try {
+        await Promise.race([
+          this.pb.collection('users').authRefresh(),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), timeoutMs))
+        ])
+        return 'confirmed'
+      } catch (err) {
+        if (err?.status === 401) { this.pb.authStore.clear(); return 'revoked' }
+        return 'unreachable'
+      }
+    })()
     try {
-      await Promise.race([
-        this.pb.collection('users').authRefresh(),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), timeoutMs))
-      ])
-      return 'confirmed'
-    } catch (err) {
-      if (err?.status === 401) { this.pb.authStore.clear(); return 'revoked' }
-      return 'unreachable'
+      const res = await this._verifyInflight
+      this._verifyResult = res
+      this._verifyAt = Date.now()
+      return res
+    } finally {
+      this._verifyInflight = null
     }
   }
 

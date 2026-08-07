@@ -129,6 +129,26 @@ Bildbreite füllen.
 **Alternative** (falls Natural-Feature auf dem Gerät zu unzuverlässig): klassische
 **ArUco/AprilTag**-Fiducials via separatem Detektor — robuster, aber eigener Pfad.
 
+### Degradations-Leiter: Marker funktionieren auch OHNE Sensoren
+
+Die Marker-Erkennung ist **rein visuell** (Kamera + Feature-Matching) — sie braucht
+keine IMU. Was auf sensor-blockierenden Browsern (Brave, Firefox) ausfällt, ist nur
+die VIO/SLAM-Weltverankerung. 8th Wall hat dafür einen offiziellen Modus:
+**`disableWorldTracking: true`** (vor `XR8.run()` setzen) = Image-Target-only-AR —
+Marker werden rein visuell verfolgt, Posen relativ zur Kamera. Einschränkung:
+Inhalte kleben **nur am sichtbaren Marker** (keine Weltverankerung, die überbrückt,
+wenn der Marker das Bild verlässt).
+
+Daraus ergibt sich die Kompatibilitäts-Leiter — die App steigt je Gerätefähigkeit
+eine Stufe ab, statt auszufallen:
+
+| Stufe | braucht | kann |
+|---|---|---|
+| **Marker-only** | nur Kamera (jeder Browser, auch Brave) | Overlay am sichtbaren Marker (Serverrack-Fall!) |
+| + Kompass/Gyro | Sensoren (Chrome/System-WebView) | grob weltverankertes AR (heutiges Verhalten) |
+| + SLAM | Sensoren + Engine | Nahfeld-Anti-Swim, ruhige Rotation |
+| + UWB | Anker-Infrastruktur | cm-genau in präparierten Zonen |
+
 ## Offene Fragen
 
 - Kegel-Optik/FOV am Stab (Trefferzone vs. Präzision).

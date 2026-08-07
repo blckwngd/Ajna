@@ -242,18 +242,46 @@ export class GameObject {
     return [url]
   }
 
+  // Pro Modell-URL EIN Parse: AssetContainer-Cache (URL → Promise<Container>).
+  // Vorher parste JEDES Objekt seine GLB komplett neu (ImportMeshAsync) — bei
+  // mehreren Wyverns (12 MB) fror der Main-Thread beim Boot sekundenlang ein
+  // und jede Kopie hielt eigene Geometrie/Texturen. Jetzt: einmal laden+parsen,
+  // dann pro Objekt instanziieren (Geometrie/Texturen geteilt, Skelette/
+  // AnimationGroups pro Instanz — Figuren animieren weiterhin unabhängig).
+  static _containerCache = new Map()
+  static _loadContainer(url, scene) {
+    let p = GameObject._containerCache.get(url)
+    if (!p) {
+      p = BABYLON.SceneLoader.LoadAssetContainerAsync("", url, scene)
+      p.catch(() => GameObject._containerCache.delete(url))   // Fehlschlag nicht cachen
+      GameObject._containerCache.set(url, p)
+    }
+    return p
+  }
+
   async #loadModel(url) {
     const candidates = this.#modelCandidates(url)
-    let result, lastErr
+    let container, lastErr
     for (const candidate of candidates) {
       try {
-        result = await BABYLON.SceneLoader.ImportMeshAsync("", "", candidate, this.scene)
+        container = await GameObject._loadContainer(candidate, this.scene)
         break
       } catch (err) {
         lastErr = err   // z. B. nicht im Bundle → nächster Kandidat (Server)
       }
     }
-    if (!result) throw lastErr
+    if (!container) throw lastErr
+
+    // Instanzieren statt neu parsen. Materialien nur klonen, wenn dieses Objekt
+    // sie individuell einfärbt/transparent macht (sonst teilen alle Instanzen).
+    const cloneMats = !!(this._appearance?.color || Number.isFinite(Number(this._appearance?.opacity)))
+    const inst = container.instantiateModelsToScene(n => n, cloneMats)
+    const instRoot = inst.rootNodes[0]
+    const result = {
+      meshes: instRoot ? [instRoot, ...instRoot.getChildMeshes(false)] : [],
+      animationGroups: inst.animationGroups || [],
+      skeletons: inst.skeletons || [],
+    }
 
     // Race-Guard: kam das GameObject während des Loads aus der Szene
     // (z. B. via syncSceneObjects → dispose), die geladenen Meshes wieder

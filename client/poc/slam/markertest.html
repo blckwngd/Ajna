@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<!--
+  Marker-Test — verifiziert die Bild-Target-Funktion des OSS-8th-Wall-Builds.
+
+  Aus dem Binary (xr-slam.js) entschlüsseltes Target-Format:
+    XR8.XrController.configure({ imageTargets: [
+      { name: 'm1', imagePath: '/img/DayMarker.jpg', type: 'flat',
+        physicalWidthInMeters: 0.15, moveable: false },
+    ]})
+  Die Engine lädt die Bilder zur LAUFZEIT selbst (<img crossorigin>) und
+  extrahiert die Features im Client — keine Cloud-Kompilierung.
+
+  Erwartete Events (Pipeline-Listener):
+    reality.imageloading  → Targets angenommen (Liste)
+    reality.imagescanning → Feature-Extraktion fertig, Suche läuft
+    reality.imagefound    → Marker im Bild! {name, position, rotation, scale, …}
+    reality.imageupdated  → Pose-Updates, solange sichtbar
+    reality.imagelost     → aus dem Bild verloren
+
+  Diese Seite loggt alle Events on-screen (kein DevTools nötig) und zeichnet
+  bei found/updated den Marker-UMRISS + Name ins Kamerabild (2D-Projektion wie
+  step2/3). URL-Parameter:
+    ?img=/img/DayMarker.jpg   Target-Bild (Default DayMarker.jpg)
+    ?w=0.15                   reale Breite in Metern (WICHTIG: wie gedruckt!)
+
+  Sensoren wie immer: stock Chrome / System-WebView (nicht Brave).
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Ajna — SLAM PoC · Marker-Test</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+  #camerafeed, #overlay { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  #overlay { pointer-events: none; }
+  #log { position: fixed; left: 8px; top: 8px; right: 8px; max-height: 45%; overflow-y: auto;
+    color: #cfe8ff; background: rgba(0,0,0,0.6); border: 1px solid #2b4a66; border-radius: 8px;
+    padding: 8px 10px; white-space: pre-wrap; pointer-events: none; }
+  .ok { color: #6ee787; } .warn { color: #ffcf6f; } .err { color: #ff8f8f; } .ev { color: #7ec8ff; }
+  #big { position: fixed; left: 8px; right: 8px; bottom: 8px; color: #fff; background: rgba(0,0,0,0.6); border-radius: 8px; padding: 6px 12px; }
+  #tap { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.88); color: #cfe8ff; text-align: center; padding: 24px; }
+  #tap b { font-size: 20px; color: #7ec8ff; }
+  #thumb { position: fixed; right: 8px; bottom: 44px; width: 84px; border: 2px solid #2b4a66; border-radius: 6px; opacity: 0.9; }
+</style>
+
+<canvas id="camerafeed"></canvas>
+<canvas id="overlay"></canvas>
+<div id="log">Initialisiere …</div>
+<img id="thumb" alt="Target">
+<div id="big">Status: <span id="stat">wird geladen …</span></div>
+<div id="tap"><div><b>📱 Tippen zum Start</b><br><br>Kamera + SLAM + Marker-Suche<br>(das gesuchte Bild siehst du unten rechts)</div></div>
+
+<script src="/poc/slam/vendor/babylon.js"></script>
+<script>
+  const ENGINE_URL = '/poc/slam/engine/xr.js'
+  const P = new URLSearchParams(location.search)
+  const TARGET_IMG = P.get('img') || '/img/DayMarker.jpg'
+  const TARGET_W = parseFloat(P.get('w')) || 0.15
+
+  const $ = id => document.getElementById(id)
+  const stat = $('stat'), logEl = $('log')
+  $('thumb').src = TARGET_IMG
+  const setStat = (t, cls) => { stat.textContent = t; stat.className = cls || '' }
+  const LOG_MAX = 30
+  const lines = []
+  function log(msg, cls) {
+    const t = new Date().toTimeString().slice(0, 8)
+    lines.push(`<span class="${cls || ''}">[${t}] ${msg}</span>`)
+    while (lines.length > LOG_MAX) lines.shift()
+    logEl.innerHTML = lines.join('\n')
+    logEl.scrollTop = logEl.scrollHeight
+  }
+  window.addEventListener('error', e => log('JS-Fehler: ' + (e.message || e.error), 'err'))
+  window.addEventListener('unhandledrejection', e => log('Promise-Fehler: ' + (e.reason?.message || e.reason), 'err'))
+
+  // ── Canvas + Projektion (wie step2: Pose → view, Intrinsics → proj) ──
+  const cam = $('camerafeed'), ov = $('overlay'), ctx = ov.getContext('2d')
+  let VW = 0, VH = 0
+  const VIEWPORT = new BABYLON.Viewport(0, 0, 1, 1)
+  function sizeCanvases() { const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    VW = Math.round(innerWidth * dpr); VH = Math.round(innerHeight * dpr)
+    if (cam.width !== VW) { cam.width = VW; cam.height = VH }
+    if (ov.width !== VW) { ov.width = VW; ov.height = VH }
+    VIEWPORT.width = VW; VIEWPORT.height = VH }
+  addEventListener('resize', sizeCanvases)
+
+  const ID = BABYLON.Matrix.Identity(), ONE = BABYLON.Vector3.One()
+  let lastIntr = null, lastReality = null
+  // Aktive Marker: name → {position, rotation, scaledWidth, scaledHeight, t}
+  const found = new Map()
+  // Echte Pixel-Seitenverhältnisse der Targets (beim Preload gemessen) — die
+  // Höhe des Rahmens leiten wir daraus ab statt aus scaledHeight (deren
+  // Konvention je nach isRotated uneindeutig ist; Breite stimmt empirisch).
+  const targetAspect = new Map()   // name → h/w
+
+  function project(p, view, vp) {
+    if (BABYLON.Vector3.TransformCoordinates(p, view).z <= 0.05) return null
+    const s = BABYLON.Vector3.Project(p, ID, vp, VIEWPORT); return { x: s.x, y: s.y }
+  }
+
+  function drawOverlay() {
+    ctx.clearRect(0, 0, VW, VH)
+    const r = lastReality
+    if (!r || !r.rotation || !lastIntr || found.size === 0) return
+    const rot = new BABYLON.Quaternion(r.rotation.x, r.rotation.y, r.rotation.z, r.rotation.w)
+    const pos = new BABYLON.Vector3(r.position.x, r.position.y, r.position.z)
+    const view = BABYLON.Matrix.Invert(BABYLON.Matrix.Compose(ONE, rot, pos))
+    const im = lastIntr.slice(0); im[10] *= -1; im[11] *= -1
+    const vp = view.multiply(BABYLON.Matrix.FromArray(im))
+
+    ctx.font = `${Math.round(20 * (VW / 720))}px ui-monospace, monospace`
+    ctx.textAlign = 'center'
+    for (const [name, d] of found) {
+      // Marker-Quad im Weltraum: Zentrum d.position, Orientierung d.rotation,
+      // Halbmaße aus scale × scaledWidth/Height (Engine-Konvention).
+      const q = new BABYLON.Quaternion(d.rotation.x, d.rotation.y, d.rotation.z, d.rotation.w)
+      const m = new BABYLON.Matrix(); BABYLON.Matrix.FromQuaternionToRef(q, m)
+      const c = new BABYLON.Vector3(d.position.x, d.position.y, d.position.z)
+      const s = d.scale || 1
+      const local = (x, y, z) => { const v = BABYLON.Vector3.TransformCoordinates(new BABYLON.Vector3(x, y, z), m); return project(c.add(v), view, vp) }
+      const quad = (hw, hh, col, w) => {
+        const P = [[-hw, hh, 0], [hw, hh, 0], [hw, -hh, 0], [-hw, -hh, 0]].map(a => local(a[0], a[1], a[2]))
+        ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath()
+        let st = false
+        for (const p of P) { if (!p) continue; st ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); st = true }
+        if (st) { ctx.closePath(); ctx.stroke() }
+        return P
+      }
+      // Empirisch bestimmte Konventionen (Achsen-Diagnose + Skalen-Messung):
+      //  • lokale +X = physisch OBEN, +Y = physisch LINKS (Engine speichert das
+      //    Target intern 90° gedreht) → HÖHE entlang X, BREITE entlang Y.
+      //  • Pose UND Größe kommen in SLAM-EINHEITEN (responsive ≠ Meter!):
+      //    d.scale = längste Kante in Einheiten. Der Rahmen muss daraus gebaut
+      //    werden — die Meter-Registrierung dient nur der echten Metrik (Snap).
+      //    Einheiten/Meter = widthU / physicalWidth = der Session-Skalenfaktor.
+      const asp = targetAspect.get(name) || 1
+      const widthU = asp <= 1 ? s : s / asp   // physische Breite in SLAM-Einheiten
+      const halfX = (widthU * asp) / 2        // physische HÖHE → lokal X
+      const halfY = widthU / 2                // physische BREITE → lokal Y
+      const P = quad(halfX, halfY, '#5ef27a', 4)
+      const o = local(0, 0, 0), px = local(halfX, 0, 0), py = local(0, halfY, 0)
+      if (o && px) { ctx.strokeStyle = '#ff5a5a'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(px.x, px.y); ctx.stroke() }
+      if (o && py) { ctx.strokeStyle = '#ffe066'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(py.x, py.y); ctx.stroke() }
+      const top = P[0] || P[1]
+      // Echte Distanz: RELATIVE Pose (Marker↔Kamera, gleicher Frame) ÷ u/m —
+      // robust gegen das Springen des Welt-Frames (responsive reskaliert).
+      const upm = widthU / TARGET_W
+      const distM = BABYLON.Vector3.Distance(c, pos) / upm
+      if (top) { ctx.fillStyle = '#5ef27a'; ctx.fillText(`${name} · ${distM.toFixed(2)} m · ${upm.toFixed(2)} u/m`, top.x, top.y - 10) }
+    }
+  }
+
+  // ── Pipeline-Modul: Pose merken + ALLE Image-Events loggen ──
+  function markerModule() {
+    const evLog = (tag, cls) => (ev) => {
+      const d = ev.detail || {}
+      if (tag === 'imageloading' || tag === 'imagescanning') {
+        const names = (d.imageTargets || []).map(t => t.name).join(', ')
+        log(`${tag}: [${names || '—'}]`, 'ev')
+      } else if (tag === 'imagefound') {
+        // Roh-Werte einmal komplett loggen → klärt die scaledWidth/Height-Konvention.
+        log(`${tag}: ${d.name}  pos(${d.position?.x?.toFixed(2)},${d.position?.y?.toFixed(2)},${d.position?.z?.toFixed(2)})  scale ${Number(d.scale).toFixed(3)}  sW ${Number(d.scaledWidth).toFixed(3)}  sH ${Number(d.scaledHeight).toFixed(3)}`, cls || 'ev')
+      } else {
+        log(`${tag}: ${d.name || '?'}${d.position ? `  pos(${d.position.x?.toFixed(2)},${d.position.y?.toFixed(2)},${d.position.z?.toFixed(2)})` : ''}`, cls || 'ev')
+      }
+      if (tag === 'imagefound' || tag === 'imageupdated') {
+        found.set(d.name, { position: d.position, rotation: d.rotation, scale: d.scale,
+          scaledWidth: d.scaledWidth || d.geometry?.scaledWidth, scaledHeight: d.scaledHeight || d.geometry?.scaledHeight })
+      }
+      if (tag === 'imagelost') found.delete(d.name)
+    }
+    return {
+      name: 'ajna-marker-test',
+      onStart: () => { sizeCanvases()
+        try { XR8.XrController.updateCameraProjectionMatrix({ cam: { pixelRectWidth: VW, pixelRectHeight: VH, nearClipPlane: 0.01, farClipPlane: 1000 } }) } catch {}
+        setStat('läuft — Kamera auf den Marker richten', 'ok') },
+      onException: (e) => log('Engine-Exception: ' + (e?.message || e), 'err'),
+      onUpdate: ({ processCpuResult }) => {
+        const r = processCpuResult && processCpuResult.reality
+        if (!r) return
+        lastReality = r
+        if (r.intrinsics && Math.abs(r.intrinsics[0]) > 1e-4) lastIntr = r.intrinsics
+        // Dauer-Diagnose 1×/s: Tracking-Zustand + Roh-Detections (detectedImages
+        // ist DIESELBE Quelle wie die Events — zeigt, ob überhaupt etwas ankommt).
+        const now = performance.now()
+        if (!this._diagT || now - this._diagT > 1000) {
+          this._diagT = now
+          const n = r.detectedImages ? (r.detectedImages.length ?? '?') : '—'
+          setStat(`Tracking: ${r.trackingStatus || '?'}${r.trackingReason && r.trackingReason !== 'UNSPECIFIED' ? '/' + r.trackingReason : ''} · detectedImages: ${n} · worldPoints: ${r.worldPoints?.length ?? '—'}`,
+            r.trackingStatus === 'NORMAL' ? 'ok' : 'warn')
+        }
+        drawOverlay()
+      },
+      listeners: [
+        { event: 'reality.imageloading', process: evLog('imageloading') },
+        { event: 'reality.imagescanning', process: evLog('imagescanning') },
+        { event: 'reality.imagefound', process: evLog('imagefound', 'ok') },
+        { event: 'reality.imageupdated', process: evLog('imageupdated') },
+        { event: 'reality.imagelost', process: evLog('imagelost', 'warn') },
+      ],
+    }
+  }
+
+  // ── Boot (wie step2) + Target-Registrierung ──
+  let _booted = false
+  async function boot(tries = 0) {
+    if (_booted) return
+    if (typeof BABYLON === 'undefined') return setStat('BABYLON nicht geladen.', 'err')
+    if (typeof XR8 === 'undefined') { if (tries < 120) return void setTimeout(() => boot(tries + 1), 50); return setStat('XR8 nie definiert.', 'err') }
+    _booted = true
+    if (!XR8.XrController) { setStat('lade SLAM-Chunk …', 'warn'); try { await XR8.loadChunk('slam') } catch (e) { return setStat('SLAM-Chunk fehlt: ' + (e?.message || e), 'err') } }
+    if (!XR8.XrController || !XR8.GlTextureRenderer) return setStat('Engine-Module fehlen.', 'err')
+    try {
+      sizeCanvases()
+      // Registrierung VOR run (wie disableWorldTracking-Regel). Format aus dem
+      // Binary: name + imagePath (Runtime-Load) + type + physicalWidthInMeters.
+      // WICHTIG (alles aus dem Binary verifiziert):
+      //  • Schlüssel = imageTargetData (`imageTargets` ist No-Op + Warnung)
+      //  • type = "PLANAR" (xrhomeName-Konvention; 'flat' → UNSPECIFIED)
+      //  • properties ist PFLICHT: Original-Pixelmaße + Crop-Rechteck (Erbe der
+      //    Cloud-Pipeline). Volles Bild: original = natural, Crop = ganzes Bild.
+      //    Ohne properties wirft der Loader ("reading 'originalWidth'").
+      const loadDims = (src) => new Promise((res, rej) => {
+        const im = new Image(); im.crossOrigin = 'anonymous'
+        im.onload = () => res({ w: im.naturalWidth, h: im.naturalHeight })
+        im.onerror = () => rej(new Error('Bild nicht ladbar: ' + src))
+        im.src = src
+      })
+      const mkTarget = async (name, src) => {
+        const d = await loadDims(src)
+        targetAspect.set(name, d.h / d.w)   // fürs Rahmen-Zeichnen (echtes Seitenverhältnis)
+        log(`Target ${name}: ${src} (${d.w}×${d.h}px, ${TARGET_W} m)`, 'warn')
+        return { name, imagePath: src, type: 'PLANAR', physicalWidthInMeters: TARGET_W, moveable: false,
+          properties: { originalWidth: d.w, originalHeight: d.h, left: 0, top: 0, width: d.w, height: d.h, isRotated: false } }
+      }
+      const targets = await Promise.all([mkTarget('marker-1', TARGET_IMG), mkTarget('starry', '/img/starrynight.png')])
+      XR8.XrController.configure({ leftHandedAxes: true, imageTargetData: targets })
+      log(`Target registriert: ${TARGET_IMG} (${TARGET_W} m breit) — warte auf imageloading/imagescanning …`, 'warn')
+      XR8.addCameraPipelineModules([XR8.GlTextureRenderer.pipelineModule(), XR8.XrController.pipelineModule(), markerModule()])
+      setStat('Engine geladen — Kamerazugriff …', 'warn')
+      XR8.run({ canvas: cam })
+    } catch (e) { setStat('Setup-Fehler: ' + (e?.message || e), 'err'); log('Setup: ' + (e?.message || e), 'err') }
+  }
+  addEventListener('XRloaded', () => boot()); addEventListener('xrloaded', () => boot())
+  function startEngine() {
+    const s = document.createElement('script'); s.src = ENGINE_URL; s.crossOrigin = 'anonymous'
+    s.onerror = () => setStat('Engine-Script konnte nicht geladen werden.', 'err')
+    document.head.appendChild(s); setStat('lade Engine …', 'warn'); if (typeof XR8 !== 'undefined') boot()
+  }
+  $('tap').addEventListener('click', async () => {
+    for (const E of [window.DeviceMotionEvent, window.DeviceOrientationEvent]) { try { if (E && E.requestPermission) await E.requestPermission() } catch {} }
+    $('tap').remove(); startEngine()
+  }, { once: true })
+</script>

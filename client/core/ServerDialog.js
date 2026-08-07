@@ -33,12 +33,17 @@ export class ServerDialog {
     this._verify = new Map()
     this._injectStyles()
     this._unsubServers = this.ajna.onServersChanged(() => {
-      if (this._backdrop) this._render()
+      if (!this._backdrop) return
+      // Debounce: Auth-/Server-Events kommen in Schüben (z. B. Token-Save nach
+      // authRefresh) — pro Schub EIN Re-Render statt Render-Sturm.
+      clearTimeout(this._renderT)
+      this._renderT = setTimeout(() => { if (this._backdrop) this._render() }, 100)
     })
   }
 
   open() {
     if (this._backdrop) return
+    this._verify.clear()   // pro Öffnen EINMAL frisch verifizieren (siehe _verifySessions)
     this._mount()
     this._render()
   }
@@ -162,7 +167,12 @@ export class ServerDialog {
   _verifySessions(servers) {
     for (const s of servers) {
       if (!(s.isLoggedIn && !s.isConnected)) continue   // nur die „eingeloggt"-Fälle
-      if (!this._verify.has(s.id)) this._verify.set(s.id, 'pending')  // letztes Ergebnis halten
+      // SCHLEIFENSCHUTZ: pro Dialog-Öffnung nur EINMAL je Server verifizieren.
+      // Jedes _render() rief sonst erneut authRefresh → Token-Save → servers-
+      // Changed → _render → … (Endlosschleife; open() leert _verify wieder).
+      const v = this._verify.get(s.id)
+      if (v === 'confirmed' || v === 'unreachable' || v === 'pending') continue
+      this._verify.set(s.id, 'pending')
       this.ajna.verifyServerSession(s.id).then(status => {
         // 'revoked'/'logged-out' → Token weg; AjnaManager feuert onServersChanged
         // → _render() zieht alles neu (Login-Status hat sich geändert).

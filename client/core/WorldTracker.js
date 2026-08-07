@@ -50,13 +50,17 @@ function loadEngine() {
 }
 
 export class WorldTracker {
-  /** @param {{scene:object, appCanvas:HTMLCanvasElement, skybox?:object}} opts */
-  constructor({ scene, appCanvas, skybox }) {
+  /** @param {{scene:object, appCanvas:HTMLCanvasElement, skybox?:object, dpr?:number}} opts */
+  constructor({ scene, appCanvas, skybox, dpr }) {
     this.scene = scene
     this.appCanvas = appCanvas
     this.skybox = skybox || null
+    // Auflösung der Kamera-Canvas: großer GPU-Hebel (Fill-Rate). 1.5 ist auf
+    // Handys kaum sichtbar schlechter als 2.0, spart aber ~44 % Pixel.
+    this.dpr = Number.isFinite(dpr) && dpr > 0 ? dpr : 1.5
     this._active = false
     this._starting = false
+    this.generation = 0       // zählt Starts — Konsumenten (MarkerTracking) re-registrieren danach
     this._reality = null      // letzte rohe Pose {position, rotation, intrinsics, trackingStatus}
     this._canvas = null       // 8th-Wall-Kamera-Canvas
     this._origClear = null
@@ -74,17 +78,18 @@ export class WorldTracker {
    *  metrischen Snap (Marker/UWB > GPS), siehe docs/realworld-remote.md. */
   get detectedImages() { return (this._reality && this._reality.detectedImages) || null }
 
-  /** Bild-Marker registrieren. GERÜST: Die genaue Registrierungs-API des OSS-Builds
-   *  ist noch am Gerät zu verifizieren (klassisch XR8.XrController.configure({imageTargets:[…]});
-   *  der OSS-Build verarbeitet Ziel-Bilder zur Laufzeit clientseitig). Snap-Logik folgt. */
+  /** Bild-Marker registrieren. OSS-Build-API (aus dem Binary verifiziert):
+   *  configure({ imageTargetData: [{ name, imagePath, type: 'PLANAR',
+   *  physicalWidthInMeters, moveable }] }) — NICHT `imageTargets` (No-Op, nur
+   *  Deprecation-Warnung). Die Engine lädt die Bilder zur Laufzeit selbst. */
   configureImageTargets(targets) {
-    try { window.XR8 && window.XR8.XrController && window.XR8.XrController.configure({ imageTargets: targets }) }
+    try { window.XR8 && window.XR8.XrController && window.XR8.XrController.configure({ imageTargetData: targets }) }
     catch (e) { console.warn('[worldtracker] configureImageTargets:', e && e.message) }
   }
 
   _size() {
     if (!this._canvas) return
-    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    const dpr = Math.min(window.devicePixelRatio || 1, this.dpr)
     const w = Math.round(window.innerWidth * dpr), h = Math.round(window.innerHeight * dpr)
     if (this._canvas.width !== w || this._canvas.height !== h) { this._canvas.width = w; this._canvas.height = h }
   }
@@ -109,11 +114,15 @@ export class WorldTracker {
   }
 
   /**
-   * Startet Kamera + SLAM. Löst KEINEN getUserMedia-Konflikt selbst — der
+   * Startet Kamera + Engine. Löst KEINEN getUserMedia-Konflikt selbst — der
    * Aufrufer muss ArPassthrough vorher deaktiviert haben.
+   * @param {{worldTracking?:boolean}} [opts]  worldTracking:false = VIO/SLAM AUS
+   *   (offizieller Image-Target-only-Modus) — Kamerabild + Marker-Erkennung
+   *   laufen weiter, aber ohne die teure Visual-Inertial-Odometrie. Für
+   *   Lastdiagnose und sensorlose Browser (Brave).
    * @returns {Promise<void>}
    */
-  async start() {
+  async start({ worldTracking = true } = {}) {
     if (this._active || this._starting) return
     this._starting = true
     try {
@@ -126,8 +135,10 @@ export class WorldTracker {
       this.scene.clearColor?.set?.(0, 0, 0, 0)
 
       // RH-Szene → leftHandedAxes:false. responsive (relatives Tracking gut; Metrik
-      // ist nicht SLAMs Job hier). disableWorldTracking NICHT setzen (Default an).
-      XR8.XrController.configure({ leftHandedAxes: false, scale: 'responsive' })
+      // ist nicht SLAMs Job hier). disableWorldTracking nur PRE-run setzbar.
+      const cfg = { leftHandedAxes: false, scale: 'responsive' }
+      if (!worldTracking) cfg.disableWorldTracking = true
+      XR8.XrController.configure(cfg)
       XR8.addCameraPipelineModules([
         XR8.GlTextureRenderer.pipelineModule(),   // Kamerabild → slam-camerafeed
         XR8.XrController.pipelineModule(),         // SLAM
@@ -154,6 +165,7 @@ export class WorldTracker {
       window.addEventListener('orientationchange', this._onResize)
       XR8.run({ canvas })
       this._active = true
+      this.generation++
     } finally {
       this._starting = false
     }

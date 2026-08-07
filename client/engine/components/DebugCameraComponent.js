@@ -1,5 +1,18 @@
 import { BaseComponent } from "../BaseComponent.js"
 
+// Bewegungs-Stufen der freien Kamera: normal bewusst gemächlich (präzises
+// Arbeiten/Platzieren), STRG = schnell (früheres Standard-Tempo), SHIFT =
+// Schritttempo (Feinpositionierung). Modifier werden pro Key-Event gelesen.
+const CAM_SPEED_NORMAL = 0.5
+const CAM_SPEED_FAST   = 1.8      // STRG
+const CAM_SPEED_SLOW   = 0.1    // SHIFT (~Schrittgeschwindigkeit)
+
+// Sanftes Anfahren: Bewegung startet gedrosselt und erreicht in ~1 s das
+// konfigurierte Tempo. Der Ramp startet neu, sobald ALLE Bewegungstasten
+// losgelassen waren — Richtungswechsel bei gehaltener Taste rampen nicht neu.
+const CAM_RAMP_MS    = 1000
+const CAM_RAMP_START = 0.15   // Anteil des Zieltempos im ersten Frame (nicht 0 → sofortiges Feedback)
+
 export class DebugCameraComponent extends BaseComponent {
 
   constructor(canvas, playerCameraComponent, debug = false, container = document.body) {
@@ -57,7 +70,46 @@ export class DebugCameraComponent extends BaseComponent {
     this.freeCamera.keysLeft  = [65, 37]
     this.freeCamera.keysRight = [68, 39]
 
-    this.freeCamera.speed = 2
+    this.freeCamera.speed = CAM_SPEED_NORMAL
+
+    // Geschwindigkeit an gehaltene Modifier koppeln. Zustand kommt aus dem
+    // Event selbst (shiftKey/ctrlKey) — deckt auch das Loslassen des Modifiers
+    // ab (keyup von Shift hat shiftKey=false). SHIFT gewinnt vor STRG (wer
+    // beides hält, will eher Präzision als Tempo). Blur setzt zurück, damit
+    // kein Modifier "hängen bleibt" (Alt-Tab bei gehaltener Taste).
+    // Der Modifier setzt nur das ZIEL-Tempo; das effektive Tempo rampt der
+    // onAfterCheckInputs-Hook unten (sanftes Anfahren).
+    const MOVE_CODES = new Set([87, 83, 65, 68, 38, 40, 37, 39])   // WASD + Pfeile
+    this._targetSpeed = CAM_SPEED_NORMAL
+    this._moveKeys = new Set()
+    this._moveStart = 0
+    this._onSpeedKey = (e) => {
+      this._targetSpeed = e.shiftKey ? CAM_SPEED_SLOW : e.ctrlKey ? CAM_SPEED_FAST : CAM_SPEED_NORMAL
+      if (MOVE_CODES.has(e.keyCode)) {
+        if (e.type === "keydown") {
+          if (this._moveKeys.size === 0) this._moveStart = performance.now()   // Bewegungs-Beginn
+          this._moveKeys.add(e.keyCode)   // Auto-Repeat: Set dedupliziert
+        } else {
+          this._moveKeys.delete(e.keyCode)
+        }
+      }
+    }
+    this._onSpeedReset = () => { this._targetSpeed = CAM_SPEED_NORMAL; this._moveKeys.clear() }
+    window.addEventListener("keydown", this._onSpeedKey)
+    window.addEventListener("keyup", this._onSpeedKey)
+    window.addEventListener("blur", this._onSpeedReset)
+
+    // Pro Frame: Zieltempo × Anfahr-Faktor (linear von CAM_RAMP_START auf 1
+    // innerhalb CAM_RAMP_MS seit Bewegungs-Beginn). Feuert nur, solange diese
+    // Kamera aktiv ist; ohne gehaltene Bewegungstaste bleibt das Zieltempo.
+    this.freeCamera.onAfterCheckInputsObservable.add(() => {
+      let f = 1
+      if (this._moveKeys.size > 0) {
+        const t = (performance.now() - this._moveStart) / CAM_RAMP_MS
+        f = t >= 1 ? 1 : CAM_RAMP_START + (1 - CAM_RAMP_START) * t
+      }
+      this.freeCamera.speed = this._targetSpeed * f
+    })
 
     // Babylons FreeCameraTouchInput mappt vertikal = Vorwärtsbewegung und
     // horizontal = Gier-Drehung mit touchAngularSensibility-Default ~200000
@@ -174,6 +226,11 @@ export class DebugCameraComponent extends BaseComponent {
 
   dispose() {
     this.#detachTouchLook()
+    if (this._onSpeedKey) {
+      window.removeEventListener("keydown", this._onSpeedKey)
+      window.removeEventListener("keyup", this._onSpeedKey)
+      window.removeEventListener("blur", this._onSpeedReset)
+    }
     if (this.button) this.button.remove()
     if (this.freeCamera) this.freeCamera.dispose()
   }

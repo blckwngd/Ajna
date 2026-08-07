@@ -58,6 +58,7 @@ import { sunPosition } from "./core/solarPosition.js"
 import { ArPassthrough } from "./core/ArPassthrough.js"
 import { WorldTracker } from "./core/WorldTracker.js"
 import { MarkerPreview } from "./core/MarkerPreview.js"
+import { MarkerTracking } from "./core/MarkerTracking.js"
 import { ArFovCalibration } from "./core/ArFovCalibration.js"
 import { CompassCalibration } from "./core/CompassCalibration.js"
 import { HeadingStabilizer } from "./core/headingStabilizer.js"
@@ -346,11 +347,23 @@ async function init() {
     fovScale: parseFloat(_cfg('slam.fovscale', '2.5')) || 2.5, // FOV-Feinabgleich aufs Kamerabild (Gerät-kalibriert)
     rollScale: parseFloat(_cfg('slam.rollscale', '0.8')) || 0.8, // Roll-Trim (Gerät-kalibriert)
     range: parseFloat(_cfg('slam.range', '40')) || 0,       // Nah-Gating: SLAM nur < N m vom nächsten Objekt (0=immer an)
+    dpr: parseFloat(_cfg('slam.dpr', '1.5')) || 1.5,        // Kamera-Canvas-Auflösung (GPU-Last; 1.0 = Perf-Test)
   }
   window.ajnaSlam = slamCfg   // Live in der Konsole: ajnaSlam.scale = 1.5 / ajnaSlam.translation = false …
   const SLAM_DEBUG = _cfg('slam.debug', '0') === '1'   // Debug-HUD + Diagnose-Toast nur mit ?slam.debug=1
-  const worldTracker = new WorldTracker({ scene, appCanvas: canvas, skybox: arEnv?.skybox })
+  // Marker-Tracking UNABHÄNGIG schaltbar (Lastdiagnose + Marker-only-Betrieb):
+  //   ?marker=1 → Marker erzwingen: Engine läuft auch ohne SLAM, aber mit
+  //               disableWorldTracking (VIO AUS → misst die reine Marker-Last;
+  //               zugleich der Modus für Browser ohne Sensoren, s. Doku)
+  //   ?marker=0 → Marker aus, auch bei slam=1 (misst die reine SLAM-Last)
+  //   (unset)   → Marker an, wenn SLAM an (Standard)
+  const MARKER_MODE = _cfg('marker', '')
+  const MARKERS_ENABLED = MARKER_MODE === '1' || (MARKER_MODE !== '0' && SLAM_ENABLED)
+  const ENGINE_ENABLED = SLAM_ENABLED || MARKER_MODE === '1'   // 8th-Wall-Engine überhaupt starten?
+  const worldTracker = new WorldTracker({ scene, appCanvas: canvas, skybox: arEnv?.skybox, dpr: slamCfg.dpr })
   let _slamTheta = null, _slamOrigin = null, _slamIntrLogged = false   // Nord-Alignment + Ursprung + Diag
+  let markerTracking = null   // wird nach player/geo-Setup instanziiert (braucht Spieler-Position)
+  let _markerSnapActive = 0   // Zeitstempel des letzten Marker-Snaps (für GPS-Resume)
   window.addEventListener('ajna:slam-realign', () => { _slamTheta = null; _slamOrigin = null })   // Nord + Ursprung neu
   // SLAM-Debug-HUD (on-screen, da DevTools gerade schwierig): rohe SLAM-Δ pro Achse
   // (zeigt welche Achse bei Vorwärts/Seitwärts reagiert), angewandter Offset, θ/Konfig,
@@ -396,12 +409,13 @@ async function init() {
     if (worldTracker.active || worldTracker._starting) return
     _slamTheta = null; _slamOrigin = null; _slamIntrLogged = false
     if (slamCfg.translation) { const pg = player.getComponent(PlayerGPSComponent); if (pg) pg.paused = true }
-    worldTracker.start().catch(err => {
+    worldTracker.start({ worldTracking: SLAM_ENABLED }).catch(err => {
       console.warn('[slam] Start fehlgeschlagen, Fallback Kompass:', err?.message || err)
       const pg = player.getComponent(PlayerGPSComponent); if (pg) pg.paused = false
       try { if (!_toast) _toast = new Toast(); _toast.show('SLAM nicht verfügbar — Kompass', { title: 'AR' }) } catch {}
       arPassthrough.enable().catch(() => {})
     })
+    markerTracking?.startOverlay()   // Umriss+Name erkannter Marker im Kamerabild
     if (SLAM_DEBUG) {
       setTimeout(() => { if (!_slamIntrLogged) { try { if (!_toast) _toast = new Toast(); _toast.show('KEINE Intrinsics → Default-FOV (zu eng)', { title: 'SLAM' }) } catch {} } }, 3000)
       _ensureSlamHud().style.display = 'block'
@@ -409,6 +423,8 @@ async function init() {
     }
   }
   function _slamOff() {
+    markerTracking?.stopOverlay()
+    _markerSnapActive = 0
     if (_slamHudTimer) { clearInterval(_slamHudTimer); _slamHudTimer = null }
     if (_slamHud) _slamHud.style.display = 'none'
     if (worldTracker.active) worldTracker.stop()
@@ -481,6 +497,7 @@ async function init() {
     const _eul = new BABYLON.Vector3()
     const _off = new BABYLON.Vector3(), _rotM = new BABYLON.Matrix()
     const _camBase = _playerCam.position.clone()   // Augenhöhe (0,1.7,0) — SLAM-Offset kommt drauf
+    const _lerpAngle = (a, b, k) => { let d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return a + d * k }
     // Bildet die rohe SLAM-Pose auf die rechtshändige App-Kamera ab: Rotation +
     // (optional) Translation, einmaliges Nord-Alignment (θ) am Kompass, Intrinsics-FOV.
     const _applySlamPose = (q, r) => {
@@ -496,10 +513,30 @@ async function init() {
         _slamOrigin = { x: r.position.x, y: r.position.y, z: r.position.z }   // Positions-Ursprung merken
         console.log('[slam] Nord-Alignment θ =', (_slamTheta * 180 / Math.PI).toFixed(1), '°')
       }
+      // --- Marker-Snap: exakte, frame-lokale Metrik-Referenz. Überstimmt das
+      //     Kompass-θ (Marker-Ausrichtung ist präziser) und setzt die Kamera-
+      //     Position cm-genau (GPS pausiert währenddessen). ---
+      const snap = markerTracking && markerTracking.computeSnap(r)
+      if (snap) {
+        _slamTheta = _lerpAngle(_slamTheta, snap.theta, 0.15)
+        _markerSnapActive = performance.now()
+        const pg = player.getComponent(PlayerGPSComponent); if (pg) pg.paused = true
+        // player.root so setzen, dass die Kamera (root + Augenhöhe) auf der
+        // berechneten Geo-Position landet — geglättet gegen Detektions-Jitter.
+        const rp = player.root.position
+        rp.x += (snap.camLocal.x - _camBase.x - rp.x) * 0.2
+        rp.y += (snap.camLocal.y - _camBase.y - rp.y) * 0.2
+        rp.z += (snap.camLocal.z - _camBase.z - rp.z) * 0.2
+      } else if (_markerSnapActive && performance.now() - _markerSnapActive > 3000) {
+        // Marker seit >3 s nicht mehr gesehen → GPS-Anker wieder aktiv.
+        _markerSnapActive = 0
+        if (!slamCfg.translation) { const pg = player.getComponent(PlayerGPSComponent); if (pg) pg.paused = false }
+      }
       BABYLON.Quaternion.RotationYawPitchRollToRef(_eul.y + _slamTheta, _eul.x, _eul.z * slamCfg.rollScale, q)
       // --- Translation (Phase 2): SLAM-Versatz seit Start, RH-gemappt, nord-
-      //     gedreht, skaliert, auf Reichweite begrenzt, gemischt → auf Augenhöhe ---
-      if (slamCfg.translation && _slamOrigin) {
+      //     gedreht, skaliert, auf Reichweite begrenzt, gemischt → auf Augenhöhe.
+      //     Pausiert, solange ein Marker-Snap aktiv ist (der ist präziser). ---
+      if (slamCfg.translation && _slamOrigin && !snap) {
         // SLAM-Position ist bereits Babylon-RH (vorwärts −Z, rechts +X) → KEINE
         // (-x,-z)-Negation (die invertierte vor/zurück UND links/rechts). Nur
         // den (willkürlichen) SLAM-Yaw per θ nach Nord drehen, dann skalieren.
@@ -598,14 +635,14 @@ async function init() {
     _compassActive = ar
     console.log(`[ar] Kamera-Modus → ${ar ? "AR (GPS-fix + Kompass)" : "Free-Fly"}`)
     if (ar) {
-      if (SLAM_ENABLED && slamCfg.range > 0) {
-        // Nah-Gating: zunächst Kamera-Passthrough + Kompass; SLAM schaltet sich je
-        // nach Objekt-Nähe selbst zu/ab (Akku sparen, nur einer hält die Kamera).
+      if (ENGINE_ENABLED && slamCfg.range > 0) {
+        // Nah-Gating: zunächst Kamera-Passthrough + Kompass; Engine schaltet sich
+        // je nach Objekt-Nähe selbst zu/ab (Akku sparen, nur einer hält die Kamera).
         arPassthrough.enable().catch(err => { try { if (!_toast) _toast = new Toast(); _toast.show(err?.message || "Kamera nicht verfügbar", { title: "AR" }) } catch {} })
         arFov?.activate()
         _startSlamGate()
-      } else if (SLAM_ENABLED) {
-        arPassthrough.disable()   // range=0 → SLAM immer an; Kamera frei → SLAM übernimmt
+      } else if (ENGINE_ENABLED) {
+        arPassthrough.disable()   // range=0 → Engine immer an; Kamera frei → Engine übernimmt
         _slamOn()
       } else {
         arPassthrough.enable().catch(err => { if (!_toast) _toast = new Toast(); _toast.show(err?.message || "Kamera nicht verfügbar", { title: "AR" }) })
@@ -1388,6 +1425,61 @@ async function init() {
   window.addEventListener('ajna:markers', e => markerPreview.setVisible(!!e.detail))
   window.setAjnaMarkers = (arr) => { window.ajnaMarkers = arr; _refreshMarkers() }   // Test-Helfer
   markerPreview.setVisible(!/[?&]markers=0\b/.test(location.search))
+
+  // Marker-Tracking: registriert state.marker-Objekte im Umkreis als Bild-
+  // Targets (25 m, Hysterese, max 8 — siehe MarkerTracking.js), zeichnet das
+  // Erkennungs-Overlay und liefert den frame-lokalen Metrik-Snap. Unabhängig
+  // von SLAM schaltbar (?marker=0/1) — für Lastdiagnose + Marker-only-Betrieb.
+  if (MARKERS_ENABLED) {
+    markerTracking = new MarkerTracking({
+      worldTracker, geo, appCanvas: canvas,
+      getPlayerLocal: () => player?.root?.position || null,
+      getRecordName: (id) => ajnaManager.getObjectById?.(id)?.name || id,
+    })
+    window.markerTracking = markerTracking   // Konsole: ajnaMarkerCfg.radiusM etc.
+    ajnaManager.onObjectsChanged(() => markerTracking.refresh(ajnaManager.getObjectList()))
+    markerTracking.refresh(ajnaManager.getObjectList())
+  }
+
+  // ── Distanz-basierter Perf-Pass („LOD light") ────────────────────────────
+  // Alle 2 s: Schattenwurf und Skelett-Animationen nur für NAHE Objekte —
+  // beides sind die teuersten Posten pro Figur (Shadow-Map-Renderpass bzw.
+  // Bone-Matrizen pro Frame). Ferne Objekte bleiben sichtbar, werfen aber
+  // keinen Schatten und stehen still (fällt jenseits der Radien nicht auf).
+  // Live tunebar: ajnaPerf.shadowRadiusM / ajnaPerf.animRadiusM (0 = aus).
+  const perfCfg = { shadowRadiusM: 40, animRadiusM: 60 }
+  window.ajnaPerf = perfCfg
+  setInterval(() => {
+    const cam = scene.activeCamera
+    if (!cam) return
+    const cp = cam.globalPosition
+    const sg = scene._ajnaShadowGenerator
+    objectMap.forEach(go => {
+      const p = go?.root?.getAbsolutePosition?.()
+      if (!p) return
+      const d = BABYLON.Vector3.Distance(cp, p)
+      // Schatten nur nah (Caster aus der Shadow-Map nehmen, Mesh bleibt sichtbar).
+      if (sg && go._castsShadow && go.meshes?.length && perfCfg.shadowRadiusM > 0) {
+        const want = d <= perfCfg.shadowRadiusM
+        const on = go._shadowOn !== false   // initial true (beim Load registriert)
+        if (want && !on) { go.meshes.forEach(m => { try { sg.addShadowCaster(m) } catch {} }); go._shadowOn = true }
+        else if (!want && on) { go.meshes.forEach(m => { try { sg.removeShadowCaster(m) } catch {} }); go._shadowOn = false }
+      }
+      // Animationen nur nah — NUR die gerade laufenden Groups pausieren und
+      // exakt diese später fortsetzen (nicht alle starten: sonst liefen
+      // plötzlich mehrere Clips gleichzeitig).
+      if (go.animationGroups?.length && perfCfg.animRadiusM > 0) {
+        const want = d <= perfCfg.animRadiusM
+        if (!want && !go._pausedAnims) {
+          go._pausedAnims = go.animationGroups.filter(g => g.isPlaying)
+          go._pausedAnims.forEach(g => { try { g.pause() } catch {} })
+        } else if (want && go._pausedAnims) {
+          go._pausedAnims.forEach(g => { try { g.play(true) } catch {} })
+          go._pausedAnims = null
+        }
+      }
+    })
+  }, 2000)
 
   // Re-Capping bei Kamerabewegung: die "nächsten X je Agent" hängen von der
   // Kameraposition ab. syncSceneObjects feuert sonst nur bei Datenänderung —
