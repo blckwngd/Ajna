@@ -101,30 +101,55 @@ export function httpGet(url, { timeoutMs = 4000, insecure = false } = {}) {
 // ─── Ajna-Instanz-Erkennung ───────────────────────────────────────────────
 
 /**
- * Probt bekannte lokale Endpunkte und erkennt Ajna am anonym lesbaren
+ * Probt Kandidaten-Endpunkte und erkennt Ajna am anonym lesbaren
  * objects-Endpoint (nacktes PocketBase antwortet dort 404/403).
- * @returns {Promise<Array<{url:string, health:boolean, isAjna:boolean}>>}
+ *
+ * Kandidaten (in dieser Reihenfolge, dedupliziert):
+ *   1. `extra` — z. B. AJNA_URL aus der geschichteten .env (auf einem VPS
+ *      hinter Caddy steht dort die echte URL; Ports raten greift dann nicht)
+ *   2. Domains aus der Caddyfile → https://<domain>
+ *   3. Standard-Entwicklungs-Endpunkte
+ * @param {string[]} [extra]  Zusätzliche URLs, zuerst geprobt
+ * @returns {Promise<Array<{url:string, source:'env'|'caddy'|'default', health:boolean, isAjna:boolean}>>}
  */
-export async function probeLocalAjna() {
-  const candidates = ['http://127.0.0.1:8090', 'https://localhost', 'https://127.0.0.1']
+export async function probeLocalAjna(extra = []) {
+  const seen = new Set()
+  const candidates = []
+  const add = (url, source) => {
+    const u = String(url || '').trim().replace(/\/+$/, '')
+    if (!/^https?:\/\//i.test(u) || seen.has(u.toLowerCase())) return
+    seen.add(u.toLowerCase())
+    candidates.push({ url: u, source })
+  }
+  for (const u of extra) add(u, 'env')
+  for (const d of caddyDomains().domains) add(`https://${d}`, 'caddy')
+  add('http://127.0.0.1:8090', 'default')
+  add('https://localhost', 'default')
+  add('https://127.0.0.1', 'default')
   const found = []
-  for (const url of candidates) {
+  for (const { url, source } of candidates) {
     const health = await httpGet(`${url}/api/health`, { insecure: true })
     if (!health || health.status !== 200) continue
     const objects = await httpGet(`${url}/api/collections/objects/records?perPage=1`, { insecure: true })
-    found.push({ url, health: true, isAjna: objects?.status === 200 })
+    found.push({ url, source, health: true, isAjna: objects?.status === 200 })
   }
   return found
 }
 
 // ─── Caddy-Helfer ─────────────────────────────────────────────────────────
 
-/** Öffentliche Domains aus der lokalen Caddyfile(.prod) — best effort. */
+/** Öffentliche Domains aus der Caddyfile — best effort. Sucht erst im Repo
+ *  (Caddyfile.prod/Caddyfile), dann beim System-Caddy (/etc/caddy). */
 export function caddyDomains() {
-  for (const f of ['Caddyfile.prod', 'Caddyfile']) {
-    const path = resolve(REPO_ROOT, f)
+  const files = [
+    resolve(REPO_ROOT, 'Caddyfile.prod'),
+    resolve(REPO_ROOT, 'Caddyfile'),
+    ...(process.platform !== 'win32' ? ['/etc/caddy/Caddyfile'] : []),
+  ]
+  for (const path of files) {
     if (!existsSync(path)) continue
-    const text = readFileSync(path, 'utf8')
+    let text = ''
+    try { text = readFileSync(path, 'utf8') } catch { continue }   // z. B. /etc/caddy ohne Leserecht
     const domains = new Set()
     let depth = 0
     for (const raw of text.split(/\r?\n/)) {

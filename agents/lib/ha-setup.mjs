@@ -29,18 +29,21 @@ export async function runHaSetup() {
   console.log('\n══ Ajna · Home-Assistant-Gateway — Einrichtung ══\n')
 
   // ── 1) Ajna-Instanz ────────────────────────────────────────────────────
-  let ajnaUrl = env.AJNA_URL || ''
-  console.log('Suche lokale Ajna-Instanzen …')
-  const local = (await probeLocalAjna()).filter(f => f.isAjna)
+  // AJNA_URL aus der geschichteten .env wird als erster Kandidat mitgeprobt —
+  // hinter Caddy (VPS) greifen die Standard-Ports nicht, die .env kennt die URL.
+  let ajnaUrl = (env.AJNA_URL || '').replace(/\/+$/, '')
+  console.log('Suche laufende Ajna-Instanzen …')
+  const local = (await probeLocalAjna([ajnaUrl])).filter(f => f.isAjna)
+  const srcLabel = { env: 'aus .env', caddy: 'via Caddyfile', default: 'lokal erkannt' }
   const options = [
-    ...local.map(f => `Lokale Instanz: ${f.url}`),
-    'Externe Instanz (URL eingeben)',
+    ...local.map(f => `${f.url} (${srcLabel[f.source] || 'erkannt'})`),
+    'Andere Instanz (URL eingeben)',
   ]
   const defIdx = ajnaUrl && !local.some(f => f.url === ajnaUrl) ? options.length - 1
     : Math.max(0, local.findIndex(f => f.url === ajnaUrl))
   const pick = await choose(rl, local.length
     ? `${local.length} Ajna-Instanz(en) gefunden — welche soll das Gateway nutzen?`
-    : 'Keine lokale Ajna-Instanz gefunden.', options, defIdx)
+    : 'Keine laufende Ajna-Instanz gefunden (geprüft: AJNA_URL aus .env, Caddyfile-Domains, Standard-Ports).', options, defIdx)
   if (pick < local.length) ajnaUrl = local[pick].url
   else {
     ajnaUrl = await ask(rl, 'Ajna-URL (z. B. https://ajna.example.org)', ajnaUrl)
