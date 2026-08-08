@@ -32,6 +32,11 @@ html, body {
 .shell {
   display: flex; flex-direction: column;
   height: 100vh; height: 100dvh;
+  /* Nicht unter die Geräte-Statusleiste zeichnen: Safe-Area oben als Abstand
+     für ALLE Ansichten. --safe-top wird auf Android-Geräten, deren WebView
+     env() nicht liefert, von mobile.js mit einem Fallback gesetzt. */
+  padding-top: var(--safe-top, env(safe-area-inset-top, 0px));
+  box-sizing: border-box;
 }
 .shell-views {
   flex: 1; position: relative; min-height: 0;
@@ -97,7 +102,10 @@ html, body {
 /* ─── Settings-View ────────────────────────────────────────────── */
 .settings-view {
   height: 100%; overflow: auto;
-  padding: 16px;
+  /* border-box: sonst ragt 100% + Padding über die View hinaus und übermalt
+     die Tabbar. Unten zusätzlich Safe-Area, wie im Objekte-Tab. */
+  box-sizing: border-box;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
   display: flex; flex-direction: column; gap: 12px;
   -webkit-overflow-scrolling: touch;
 }
@@ -185,6 +193,10 @@ html, body {
         <button class="settings-btn secondary" data-action="ar-preview">3D-Vorschau in der App</button>
       </div>
     </section>
+    <section class="shell-view" data-view="nearby">
+      <!-- Nächstgelegene Objekte (NearbyList.js, von MobileShell verdrahtet). -->
+      <div class="nearby-root"></div>
+    </section>
     <section class="shell-view" data-view="settings">
       <div id="mobileSettings" class="settings-view"></div>
     </section>
@@ -195,6 +207,9 @@ html, body {
     </button>
     <button data-tab="ar" role="tab" aria-label="AR">
       <span class="tab-icon">🥽</span><span>AR</span>
+    </button>
+    <button data-tab="nearby" role="tab" aria-label="Objekte">
+      <span class="tab-icon">📋</span><span>Objekte</span>
     </button>
     <button data-tab="settings" role="tab" aria-label="Einstellungen">
       <span class="tab-icon">⚙️</span><span>Einstellungen</span>

@@ -125,6 +125,7 @@ export class WorldTracker {
   async start({ worldTracking = true } = {}) {
     if (this._active || this._starting) return
     this._starting = true
+    this.worldTracking = worldTracking   // für Konsumenten: läuft die VIO mit?
     try {
       const XR8 = await loadEngine()
       const canvas = this._ensureCanvas()

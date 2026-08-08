@@ -11,6 +11,8 @@
 // Marker-Visuals via DivIcon — keine externe Asset-Datei noetig, das
 // pulse-Aussehen ist reines CSS.
 
+import { compassHeadingDeg } from './compassHeading.js'
+
 const STYLE_ID = 'ajnaMapGpsStyles'
 
 const STATE = {
@@ -32,6 +34,52 @@ export function setupMapGps(map, { onError, positionSource, onActivate } = {}) {
   let accuracyCircle = null
   let firstFix = true
   let posUnsub = null
+
+  // ── Blickrichtungs-Kegel (Google-Maps-Stil) ─────────────────────────────
+  // Kompass-Heading dreht ein SVG-Segment am Positions-Marker: webkitCompass-
+  // Heading (iOS) bzw. 360−alpha aus ABSOLUTEN Events (Android) + Bildschirm-
+  // Rotation. BEWUSST EIGENER Offset (ajna.map.north_offset), NICHT der
+  // AR-Offset: die AR-Kamera hört auf relative deviceorientation-Events
+  // (sitzungsabhängiger Nullpunkt) und extrahiert Yaw anders (3D-Quaternion
+  // vs. Flach-Näherung) — die beiden Kalibrierungen sind nicht übertragbar.
+  let coneEl = null
+  let headingActive = false
+  let lastShownDeg = null
+  let northOffDeg = (() => { try { return parseFloat(localStorage.getItem('ajna.map.north_offset')) || 0 } catch { return 0 } })()
+  window.addEventListener('ajna:map-north', ev => { northOffDeg = parseFloat(ev.detail) || 0; lastShownDeg = null })
+
+  function onOrient(e) {
+    // Tilt-kompensiert (compassHeading.js): stabil auch bei senkrecht
+    // gehaltenem Gerät — die Flach-Näherung 360−alpha sprang dort extrem.
+    const h = compassHeadingDeg(e)
+    if (h == null) return
+    const deg = ((h + northOffDeg) % 360 + 360) % 360
+    if (!coneEl) coneEl = positionMarker?.getElement()?.querySelector('.cone') || null
+    if (!coneEl) return
+    // DOM nur bei sichtbarer Änderung anfassen (Events kommen mit ~60 Hz).
+    if (lastShownDeg != null && Math.abs(((deg - lastShownDeg + 540) % 360) - 180) < 1.5) return
+    lastShownDeg = deg
+    coneEl.hidden = false
+    coneEl.style.transform = `rotate(${deg}deg)`
+  }
+
+  function startHeading() {
+    if (headingActive) return
+    headingActive = true
+    // iOS verlangt eine Geste — der GPS-Button-Klick ist eine; best-effort.
+    try { window.DeviceOrientationEvent?.requestPermission?.().catch(() => {}) } catch {}
+    window.addEventListener('deviceorientationabsolute', onOrient, true)
+    window.addEventListener('deviceorientation', onOrient, true)
+  }
+
+  function stopHeading() {
+    if (!headingActive) return
+    headingActive = false
+    window.removeEventListener('deviceorientationabsolute', onOrient, true)
+    window.removeEventListener('deviceorientation', onOrient, true)
+    coneEl = null
+    lastShownDeg = null
+  }
 
   const control = createControl(handleClick)
   map.addControl(control)
@@ -84,6 +132,7 @@ export function setupMapGps(map, { onError, positionSource, onActivate } = {}) {
     }
     watchActive = true
     state = STATE.FOLLOWING
+    startHeading()
     updateButton()
   }
 
@@ -144,6 +193,7 @@ export function setupMapGps(map, { onError, positionSource, onActivate } = {}) {
     }
     if (positionMarker) { positionMarker.remove(); positionMarker = null }
     if (accuracyCircle) { accuracyCircle.remove(); accuracyCircle = null }
+    stopHeading()
     firstFix = true
     state = STATE.IDLE
     updateButton()
@@ -191,11 +241,22 @@ function createControl(onClick) {
 }
 
 function makeIcon() {
+  // Kegel VOR pulse/dot: der Punkt liegt obenauf. Das SVG-Segment zeigt nach
+  // Norden (oben); die Kompass-Rotation dreht das .cone-Element um den Punkt.
+  const cone =
+    '<div class="cone" hidden>' +
+    '<svg width="88" height="88" viewBox="0 0 88 88">' +
+    '<defs><radialGradient id="ajnaConeGrad" gradientUnits="userSpaceOnUse" cx="44" cy="44" r="40">' +
+    '<stop offset="0%" stop-color="#4a90d9" stop-opacity="0.55"/>' +
+    '<stop offset="100%" stop-color="#4a90d9" stop-opacity="0"/>' +
+    '</radialGradient></defs>' +
+    '<path d="M44 44 L24 9.4 A40 40 0 0 1 64 9.4 Z" fill="url(#ajnaConeGrad)"/>' +
+    '</svg></div>'
   return window.L.divIcon({
     className: 'ajna-gps-marker',
     iconSize: [22, 22],
     iconAnchor: [11, 11],
-    html: '<div class="pulse"></div><div class="dot"></div>'
+    html: cone + '<div class="pulse"></div><div class="dot"></div>'
   })
 }
 
@@ -221,6 +282,13 @@ function injectStyles() {
     .ajna-gps-btn.is-following:hover { background: #356da6; }
 
     .ajna-gps-marker { pointer-events: none; }
+    .ajna-gps-marker .cone {
+      position: absolute; left: -33px; top: -33px;
+      width: 88px; height: 88px;
+      transform-origin: 50% 50%;
+      will-change: transform;
+      pointer-events: none;
+    }
     .ajna-gps-marker .dot {
       position: absolute; left: 6px; top: 6px;
       width: 10px; height: 10px; border-radius: 50%;

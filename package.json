@@ -22,6 +22,7 @@
     "wand-agent": "node agents/wand-agent.mjs",
     "director": "node agents/world-director.mjs",
     "ha-gateway": "node agents/homeassistant-gateway.mjs",
+    "ha-gateway:setup": "node agents/homeassistant-gateway.mjs --setup",
     "uwb-anchors": "node agents/uwb-anchors.mjs",
     "mobile:sync": "webpack && cap sync android",
     "mobile:run": "webpack && node scripts/mobile-run.mjs",

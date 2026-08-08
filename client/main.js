@@ -62,6 +62,7 @@ import { MarkerTracking } from "./core/MarkerTracking.js"
 import { ArFovCalibration } from "./core/ArFovCalibration.js"
 import { CompassCalibration } from "./core/CompassCalibration.js"
 import { HeadingStabilizer } from "./core/headingStabilizer.js"
+import { compassHeadingDeg } from "./core/compassHeading.js"
 import { ObjectAura } from "./core/ObjectAura.js"
 import { QuickActions } from "./core/QuickActions.js"
 import { UwbAnchorOverlay } from "./core/UwbAnchorOverlay.js"
@@ -334,7 +335,7 @@ async function init() {
     } catch {}
     return def
   }
-  const SLAM_ENABLED = _cfg('slam', '0') === '1'
+  let SLAM_ENABLED = _cfg('slam', '0') === '1'
   const slamCfg = {
     // SLAM-Translation ist auf diesem Gerät NICHT metrisch verlässlich (responsive
     // reskaliert dynamisch) → Default AUS. Rotation allein verankert die Objekte
@@ -358,12 +359,31 @@ async function init() {
   //   ?marker=0 → Marker aus, auch bei slam=1 (misst die reine SLAM-Last)
   //   (unset)   → Marker an, wenn SLAM an (Standard)
   const MARKER_MODE = _cfg('marker', '')
-  const MARKERS_ENABLED = MARKER_MODE === '1' || (MARKER_MODE !== '0' && SLAM_ENABLED)
-  const ENGINE_ENABLED = SLAM_ENABLED || MARKER_MODE === '1'   // 8th-Wall-Engine überhaupt starten?
+  let MARKERS_ENABLED = MARKER_MODE === '1' || (MARKER_MODE !== '0' && SLAM_ENABLED)
+  let ENGINE_ENABLED = SLAM_ENABLED || MARKER_MODE === '1'   // 8th-Wall-Engine überhaupt starten?
+  // Laufzeit-Modi (Einstellungen → „Tracking: SLAM/Marker"): gespeicherte Werte
+  // überstimmen die URL-Defaults, außer die URL nennt den Parameter explizit
+  // (dann gewinnt sie und wird als neuer Modus gespeichert).
+  try {
+    const storedSlam = localStorage.getItem('ajna.track.slam')
+    if (storedSlam && !/[?&]slam=/.test(location.search)) {
+      SLAM_ENABLED = storedSlam !== 'off'
+      slamCfg.translation = storedSlam === 'full'
+    } else {
+      localStorage.setItem('ajna.track.slam', SLAM_ENABLED ? (slamCfg.translation ? 'full' : 'rotation') : 'off')
+    }
+    const storedMarker = localStorage.getItem('ajna.track.marker')
+    if (storedMarker != null && !/[?&]marker=/.test(location.search)) MARKERS_ENABLED = storedMarker === '1'
+    else localStorage.setItem('ajna.track.marker', MARKERS_ENABLED ? '1' : '0')
+    ENGINE_ENABLED = SLAM_ENABLED || MARKERS_ENABLED
+  } catch {}
   const worldTracker = new WorldTracker({ scene, appCanvas: canvas, skybox: arEnv?.skybox, dpr: slamCfg.dpr })
   let _slamTheta = null, _slamOrigin = null, _slamIntrLogged = false   // Nord-Alignment + Ursprung + Diag
   let markerTracking = null   // wird nach player/geo-Setup instanziiert (braucht Spieler-Position)
-  let _markerSnapActive = 0   // Zeitstempel des letzten Marker-Snaps (für GPS-Resume)
+  // Anker der marker-verankerten Koppelnavigation: letzter Snap (Geo-Position der
+  // Kamera, SLAM-Position, gemessene Skala u/m, Zeitstempel). SLAM trägt die
+  // Bewegung davon weiter, bis Zeit-/Distanz-Budget erschöpft ist.
+  let _markerAnchor = null
   window.addEventListener('ajna:slam-realign', () => { _slamTheta = null; _slamOrigin = null })   // Nord + Ursprung neu
   // SLAM-Debug-HUD (on-screen, da DevTools gerade schwierig): rohe SLAM-Δ pro Achse
   // (zeigt welche Achse bei Vorwärts/Seitwärts reagiert), angewandter Offset, θ/Konfig,
@@ -424,7 +444,7 @@ async function init() {
   }
   function _slamOff() {
     markerTracking?.stopOverlay()
-    _markerSnapActive = 0
+    _markerAnchor = null
     if (_slamHudTimer) { clearInterval(_slamHudTimer); _slamHudTimer = null }
     if (_slamHud) _slamHud.style.display = 'none'
     if (worldTracker.active) worldTracker.stop()
@@ -479,6 +499,42 @@ async function init() {
   // einer veralteten Orientierung).
   const _headingStab = new HeadingStabilizer()
   let _smoothedHeadingQ = null
+
+  // ── Absolute Yaw-Referenz ────────────────────────────────────────────────
+  // Babylons DeviceOrientation-Input hört auf RELATIVE Events (Chrome/Android:
+  // Nullpunkt = Gerätelage beim Sensor-Start) → der Nord-Offset wäre pro
+  // Sitzung anders. Deshalb Komplementärfilter: der relative Sensor liefert
+  // die GLATTE Hochfrequenz-Drehung, der absolute Kompass (deviceorientation-
+  // absolute / webkitCompassHeading) referenziert den Yaw LANGSAM auf echtes
+  // Nord. Der Nord-Offset in den Einstellungen bleibt als Fein-Trim (Geräte-
+  // Kompassfehler + Deklination) — aber sessionSTABIL. Abschaltbar
+  // (Einstellung 'ajna.ar.abs_yaw'; Default an). Ohne absolute Events
+  // (Desktop/Brave) greift automatisch das bisherige Verhalten.
+  let _absYawOn = (() => { try { return localStorage.getItem('ajna.ar.abs_yaw') !== '0' } catch { return true } })()
+  window.addEventListener('ajna:ar-abs-yaw', ev => { _absYawOn = !!ev.detail; _absYawOffset = null })
+  let _absHeadingRad = null, _absHeadingAt = 0, _absYawOffset = null
+  const _onAbsOrient = (ev) => {
+    // Tilt-kompensiert (compassHeading.js) — in AR wird das Gerät aufrecht
+    // gehalten, genau dort war die Flach-Näherung instabil (Gimbal-Springen).
+    const h = compassHeadingDeg(ev)
+    if (h == null) return
+    _absHeadingRad = h * Math.PI / 180
+    _absHeadingAt = performance.now()
+  }
+  try {
+    window.addEventListener('deviceorientationabsolute', _onAbsOrient, true)
+    window.addEventListener('deviceorientation', _onAbsOrient, true)   // iOS-Pfad (webkitCompassHeading)
+  } catch {}
+  const _lerpAngleG = (a, b, k) => { let d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return a + d * k }
+  // Frame-Konvention: Nord = −Z (invertNorthSouth), RH-Yaw dreht gen Westen →
+  // Ziel-Yaw = −Kompass-Heading. Liefert den langsam nachgeführten Offset
+  // relativ zum rohen Babylon-Yaw (oder null, wenn keine frische Referenz).
+  const _absYawCorrection = (rawYaw) => {
+    if (!_absYawOn || _absHeadingRad == null || performance.now() - _absHeadingAt > 3000) return _absYawOffset
+    const want = -_absHeadingRad - rawYaw
+    _absYawOffset = (_absYawOffset == null) ? want : _lerpAngleG(_absYawOffset, want, 0.02)
+    return _absYawOffset
+  }
   if (_playerCam) {
     // Kompass-Input EINMAL einrichten: die Player-Kamera bekommt ausschließlich
     // Babylons DeviceOrientation-Input (kein Maus/Touch/Tastatur). Bewusst NICHT
@@ -498,6 +554,16 @@ async function init() {
     const _off = new BABYLON.Vector3(), _rotM = new BABYLON.Matrix()
     const _camBase = _playerCam.position.clone()   // Augenhöhe (0,1.7,0) — SLAM-Offset kommt drauf
     const _lerpAngle = (a, b, k) => { let d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return a + d * k }
+    // Kamera-Zielposition aus einem Marker-Snap: MarkerGeo − R_q·relCam (Meter).
+    // q = AKTUELLE Szenen-Kamera-Rotation → virtueller und realer Marker werden
+    // deckungsgleich, egal ob die Rotation aus SLAM oder Kompass stammt.
+    const _snapM = new BABYLON.Matrix()
+    const _markerSnapTarget = (q, snap) => {
+      BABYLON.Matrix.FromQuaternionToRef(q, _snapM)
+      BABYLON.Vector3.TransformNormalToRef(snap.relCamM, _snapM, _off)
+      return new BABYLON.Vector3(snap.markerLocal.x - _off.x, snap.markerLocal.y - _off.y, snap.markerLocal.z - _off.z)
+    }
+    let _compassSnapAt = 0   // letzter Marker-Snap im Kompass-Pfad (GPS-Resume)
     // Bildet die rohe SLAM-Pose auf die rechtshändige App-Kamera ab: Rotation +
     // (optional) Translation, einmaliges Nord-Alignment (θ) am Kompass, Intrinsics-FOV.
     const _applySlamPose = (q, r) => {
@@ -507,8 +573,9 @@ async function init() {
       _slamQuat.set(r.rotation.x, r.rotation.y, r.rotation.z, r.rotation.w)
       _slamQuat.toEulerAnglesToRef(_eul)
       if (_slamTheta == null) {
-        // θ = Kompass-Yaw (q frisch vom DeviceOrientation-Input, vor dem Überschreiben) − SLAM-Yaw.
-        const compassYaw = q.toEulerAngles().y + _arNorthRad
+        // θ = Kompass-Yaw (q frisch vom DeviceOrientation-Input, vor dem Über-
+        // schreiben) − SLAM-Yaw. Inkl. Absolut-Korrektur, falls vorhanden.
+        const compassYaw = q.toEulerAngles().y + (_absYawOffset ?? 0) + _arNorthRad
         _slamTheta = compassYaw - _eul.y
         _slamOrigin = { x: r.position.x, y: r.position.y, z: r.position.z }   // Positions-Ursprung merken
         console.log('[slam] Nord-Alignment θ =', (_slamTheta * 180 / Math.PI).toFixed(1), '°')
@@ -517,26 +584,53 @@ async function init() {
       //     Kompass-θ (Marker-Ausrichtung ist präziser) und setzt die Kamera-
       //     Position cm-genau (GPS pausiert währenddessen). ---
       const snap = markerTracking && markerTracking.computeSnap(r)
-      if (snap) {
-        _slamTheta = _lerpAngle(_slamTheta, snap.theta, 0.15)
-        _markerSnapActive = performance.now()
-        const pg = player.getComponent(PlayerGPSComponent); if (pg) pg.paused = true
-        // player.root so setzen, dass die Kamera (root + Augenhöhe) auf der
-        // berechneten Geo-Position landet — geglättet gegen Detektions-Jitter.
-        const rp = player.root.position
-        rp.x += (snap.camLocal.x - _camBase.x - rp.x) * 0.2
-        rp.y += (snap.camLocal.y - _camBase.y - rp.y) * 0.2
-        rp.z += (snap.camLocal.z - _camBase.z - rp.z) * 0.2
-      } else if (_markerSnapActive && performance.now() - _markerSnapActive > 3000) {
-        // Marker seit >3 s nicht mehr gesehen → GPS-Anker wieder aktiv.
-        _markerSnapActive = 0
-        if (!slamCfg.translation) { const pg = player.getComponent(PlayerGPSComponent); if (pg) pg.paused = false }
-      }
+      if (snap) _slamTheta = _lerpAngle(_slamTheta, snap.theta, 0.15)
       BABYLON.Quaternion.RotationYawPitchRollToRef(_eul.y + _slamTheta, _eul.x, _eul.z * slamCfg.rollScale, q)
+      if (snap) {
+        const pg = player.getComponent(PlayerGPSComponent); if (pg) pg.paused = true
+        // Kamera-relative Platzierung: Kamera = MarkerGeo − R_q·relCam. Damit
+        // liegen virtueller und realer Marker DECKUNGSGLEICH — unabhängig davon,
+        // woher die Rotation stammt. Geglättet gegen Detektions-Jitter.
+        const target = _markerSnapTarget(q, snap)
+        // Anker für die Koppelnavigation: Geo-Ziel + SLAM-Position + GEMESSENE
+        // Skala dieses Frames (der Marker misst die SLAM-Einheiten!).
+        _markerAnchor = {
+          cam: target.clone(),
+          slam: { x: r.position.x, y: r.position.y, z: r.position.z },
+          upm: snap.upm, at: performance.now(),
+        }
+        const rp = player.root.position
+        rp.x += (target.x - _camBase.x - rp.x) * 0.2
+        rp.y += (target.y - _camBase.y - rp.y) * 0.2
+        rp.z += (target.z - _camBase.z - rp.z) * 0.2
+      } else if (_markerAnchor) {
+        // --- Marker-verankerte Koppelnavigation: SLAM trägt die Bewegung vom
+        //     letzten Snap weiter — mit dort gemessener Skala (u/m) und Marker-θ.
+        //     Budgetiert (ajnaMarkerCfg.drTimeS/drMaxM), denn die responsive-
+        //     Skala driftet über Zeit/Strecke; danach übernimmt wieder GPS. ---
+        const a = _markerAnchor
+        const mcfg = markerTracking?.cfg || {}
+        const du = { x: r.position.x - a.slam.x, y: r.position.y - a.slam.y, z: r.position.z - a.slam.z }
+        const distM = Math.hypot(du.x, du.y, du.z) / a.upm
+        if (performance.now() - a.at <= (mcfg.drTimeS ?? 30) * 1000 && distM <= (mcfg.drMaxM ?? 15)) {
+          _off.set(du.x / a.upm, du.y / a.upm, du.z / a.upm)   // Meter im SLAM-Frame (RH, verifiziert)
+          BABYLON.Matrix.RotationYToRef(_slamTheta, _rotM)
+          BABYLON.Vector3.TransformCoordinatesToRef(_off, _rotM, _off)
+          const rp = player.root.position
+          rp.x += (a.cam.x + _off.x - _camBase.x - rp.x) * 0.25
+          rp.y += (a.cam.y + _off.y - _camBase.y - rp.y) * 0.25
+          rp.z += (a.cam.z + _off.z - _camBase.z - rp.z) * 0.25
+        } else {
+          // Budget erschöpft → Anker verwerfen, GPS wieder aktiv (außer die
+          // generische SLAM-Translation ist eingeschaltet, die pausiert selbst).
+          _markerAnchor = null
+          if (!slamCfg.translation) { const pg = player.getComponent(PlayerGPSComponent); if (pg) pg.paused = false }
+        }
+      }
       // --- Translation (Phase 2): SLAM-Versatz seit Start, RH-gemappt, nord-
       //     gedreht, skaliert, auf Reichweite begrenzt, gemischt → auf Augenhöhe.
-      //     Pausiert, solange ein Marker-Snap aktiv ist (der ist präziser). ---
-      if (slamCfg.translation && _slamOrigin && !snap) {
+      //     Pausiert, solange Marker-Snap/Koppelnavigation aktiv ist (präziser). ---
+      if (slamCfg.translation && _slamOrigin && !snap && !_markerAnchor) {
         // SLAM-Position ist bereits Babylon-RH (vorwärts −Z, rechts +X) → KEINE
         // (-x,-z)-Negation (die invertierte vor/zurück UND links/rechts). Nur
         // den (willkürlichen) SLAM-Yaw per θ nach Nord drehen, dann skalieren.
@@ -577,14 +671,38 @@ async function init() {
         if (r && r.rotation && (ts === 'NORMAL' || ts == null)) { _applySlamPose(q, r); return }
       }
       const e = q.toEulerAngles()
-      // + _arNorthRad korrigiert den Kompass↔Daten-Nord-Versatz (z. B. 180°).
-      BABYLON.Quaternion.RotationYawPitchRollToRef(e.y + _arNorthRad, -e.x, -e.z, q)
+      // Yaw = roher (relativer) Sensor + langsam nachgeführte Absolut-Korrektur
+      // (sessionstabil) + Nord-Offset als Fein-Trim. Ohne absolute Referenz
+      // bleibt es beim bisherigen Verhalten (nur Offset).
+      const corr = _absYawCorrection(e.y)
+      BABYLON.Quaternion.RotationYawPitchRollToRef(e.y + (corr ?? 0) + _arNorthRad, -e.x, -e.z, q)
       // Gyro-adaptive Glättung (headingStabilizer): bei Ruhe stark (Objekte
       // schwimmen nicht mehr), bei echter Drehung ohne spürbaren Lag. q ist das
       // Ziel; wir slerpen den gehaltenen Zustand darauf zu und schreiben zurück.
       const t = _headingStab.factor()
       if (!_smoothedHeadingQ) _smoothedHeadingQ = q.clone()
       else { BABYLON.Quaternion.SlerpToRef(_smoothedHeadingQ, q, t, _smoothedHeadingQ); q.copyFrom(_smoothedHeadingQ) }
+
+      // Marker-Snap auch OHNE SLAM (Marker-only/Kompass-Modus): die Engine
+      // liefert die kamera-relative Marker-Pose, die Rotation kommt vom Kompass.
+      // Solange ein Marker sichtbar ist, wird die Kamera deckungsgleich platziert;
+      // 2 s nach Verlust übernimmt wieder GPS (ohne VIO keine Koppelnavigation).
+      if (worldTracker.active && markerTracking && markerTracking.enabled) {
+        const mr = worldTracker.reality
+        const msnap = mr ? markerTracking.computeSnap(mr) : null
+        if (msnap) {
+          _compassSnapAt = performance.now()
+          const pg = player.getComponent(PlayerGPSComponent); if (pg) pg.paused = true
+          const target = _markerSnapTarget(q, msnap)
+          const rp = player.root.position
+          rp.x += (target.x - _camBase.x - rp.x) * 0.2
+          rp.y += (target.y - _camBase.y - rp.y) * 0.2
+          rp.z += (target.z - _camBase.z - rp.z) * 0.2
+        } else if (_compassSnapAt && performance.now() - _compassSnapAt > 2000) {
+          _compassSnapAt = 0
+          const pg = player.getComponent(PlayerGPSComponent); if (pg) pg.paused = false
+        }
+      }
     })
   }
   // FOV-Kalibrierung der AR-Kamera an das reale Kamerabild (Pitch-Mismatch):
@@ -627,6 +745,50 @@ async function init() {
       try { await M.requestPermission() } catch {}
     }
   }
+  // Tracking-Aufbau für den AR-Modus — auch bei LAUFZEIT-Umschaltung der Modi
+  // (Einstellungen) erneut aufgerufen: räumt den alten Zustand ab und baut den
+  // gewünschten (Kompass / Engine mit-ohne VIO / Nah-Gating) neu auf.
+  function _applyArTracking() {
+    _stopSlamGate()
+    if (worldTracker.active || worldTracker._starting) _slamOff()
+    if (ENGINE_ENABLED && slamCfg.range > 0) {
+      // Nah-Gating: zunächst Kamera-Passthrough + Kompass; Engine schaltet sich
+      // je nach Objekt-Nähe selbst zu/ab (Akku sparen, nur einer hält die Kamera).
+      arPassthrough.enable().catch(err => { try { if (!_toast) _toast = new Toast(); _toast.show(err?.message || "Kamera nicht verfügbar", { title: "AR" }) } catch {} })
+      arFov?.activate()
+      _startSlamGate()
+    } else if (ENGINE_ENABLED) {
+      arPassthrough.disable()   // range=0 → Engine immer an; Kamera frei → Engine übernimmt
+      _slamOn()
+    } else {
+      arPassthrough.enable().catch(err => { if (!_toast) _toast = new Toast(); _toast.show(err?.message || "Kamera nicht verfügbar", { title: "AR" }) })
+      arFov?.activate()   // FOV an Kamerabild angleichen
+    }
+  }
+
+  // Laufzeit-Umschaltung der Tracking-Modi (Einstellungen → Dropdowns).
+  window.addEventListener('ajna:tracking-mode', ev => {
+    const d = ev.detail || {}
+    const mode = d.slam || 'off'
+    SLAM_ENABLED = mode !== 'off'
+    slamCfg.translation = mode === 'full'
+    MARKERS_ENABLED = !!d.marker
+    ENGINE_ENABLED = SLAM_ENABLED || MARKERS_ENABLED
+    markerTracking?.setEnabled(MARKERS_ENABLED)
+    console.log(`[tracking] SLAM=${mode} Marker=${MARKERS_ENABLED ? 'an' : 'aus'}`)
+    if (_debugCam?.activeMode !== 'player') return   // greift beim nächsten AR-Start
+    // Engine-Neustart nur wenn nötig (an/aus oder VIO-Modus geändert);
+    // rotation↔voll geht live (nur GPS-Pause nachziehen).
+    const engineRunning = worldTracker.active || worldTracker._starting
+    const sameEngine = engineRunning && ENGINE_ENABLED && worldTracker.worldTracking === SLAM_ENABLED
+    if (sameEngine) {
+      const pg = player.getComponent(PlayerGPSComponent)
+      if (pg) pg.paused = slamCfg.translation || !!_markerAnchor
+    } else {
+      _applyArTracking()
+    }
+  })
+
   // Auf den Kamerawechsel reagieren: Player-Modus = AR (GPS-fix + Kompass +
   // Passthrough), Free-Modus = frei + Skybox. Die Kamera + den Kompass-Input-
   // Attach schaltet DebugCameraComponent selbst.
@@ -635,19 +797,7 @@ async function init() {
     _compassActive = ar
     console.log(`[ar] Kamera-Modus → ${ar ? "AR (GPS-fix + Kompass)" : "Free-Fly"}`)
     if (ar) {
-      if (ENGINE_ENABLED && slamCfg.range > 0) {
-        // Nah-Gating: zunächst Kamera-Passthrough + Kompass; Engine schaltet sich
-        // je nach Objekt-Nähe selbst zu/ab (Akku sparen, nur einer hält die Kamera).
-        arPassthrough.enable().catch(err => { try { if (!_toast) _toast = new Toast(); _toast.show(err?.message || "Kamera nicht verfügbar", { title: "AR" }) } catch {} })
-        arFov?.activate()
-        _startSlamGate()
-      } else if (ENGINE_ENABLED) {
-        arPassthrough.disable()   // range=0 → Engine immer an; Kamera frei → Engine übernimmt
-        _slamOn()
-      } else {
-        arPassthrough.enable().catch(err => { if (!_toast) _toast = new Toast(); _toast.show(err?.message || "Kamera nicht verfügbar", { title: "AR" }) })
-        arFov?.activate()   // FOV an Kamerabild angleichen
-      }
+      _applyArTracking()
       compass.activate()  // Kompass-Güte-Indikator (nur wenn in Einstellungen aktiviert)
       objectAura.activate() // Fokus-Reticle + Call-Out-Karte (nur wenn eingeschaltet)
     } else {
@@ -1105,7 +1255,11 @@ async function init() {
     }
   }
 
-  const inventory = new InventoryUI({
+  // In der Mobile-Shell stellt map.js bereits ein GLOBALES Inventar (body-FAB,
+  // in allen Tabs sichtbar) — dort kein zweites erzeugen, sonst überlappen zwei
+  // identische Buttons. Nur die Standalone-AR-Seite braucht ein eigenes.
+  const _inShell = !!document.querySelector('.shell-tabbar')
+  const inventory = _inShell ? null : new InventoryUI({
     ajna: ajnaManager,
     editorUI,
     container: document.querySelector('.shell-view[data-view="ar"]') || document.body,
@@ -1121,8 +1275,8 @@ async function init() {
     },
     getDevices: () => inventoryDevices(accessories),
   })
-  accessories.wand?.onStatusChange?.(() => inventory.refresh())
-  accessories.uwb?.onStatusChange?.(() => inventory.refresh())
+  accessories.wand?.onStatusChange?.(() => inventory?.refresh())
+  accessories.uwb?.onStatusChange?.(() => inventory?.refresh())
 
   // Drag&Drop (Desktop): Item aus dem Inventar auf die AR-Szene ablegen.
   canvas.addEventListener('dragover', (e) => {
@@ -1430,16 +1584,17 @@ async function init() {
   // Targets (25 m, Hysterese, max 8 — siehe MarkerTracking.js), zeichnet das
   // Erkennungs-Overlay und liefert den frame-lokalen Metrik-Snap. Unabhängig
   // von SLAM schaltbar (?marker=0/1) — für Lastdiagnose + Marker-only-Betrieb.
-  if (MARKERS_ENABLED) {
-    markerTracking = new MarkerTracking({
-      worldTracker, geo, appCanvas: canvas,
-      getPlayerLocal: () => player?.root?.position || null,
-      getRecordName: (id) => ajnaManager.getObjectById?.(id)?.name || id,
-    })
-    window.markerTracking = markerTracking   // Konsole: ajnaMarkerCfg.radiusM etc.
-    ajnaManager.onObjectsChanged(() => markerTracking.refresh(ajnaManager.getObjectList()))
-    markerTracking.refresh(ajnaManager.getObjectList())
-  }
+  // Immer instanziieren (Laufzeit-Umschaltung braucht die Instanz); enabled
+  // spiegelt den aktuellen „Tracking: Marker"-Modus.
+  markerTracking = new MarkerTracking({
+    worldTracker, geo, appCanvas: canvas,
+    getPlayerLocal: () => player?.root?.position || null,
+    getRecordName: (id) => ajnaManager.getObjectById?.(id)?.name || id,
+  })
+  markerTracking.enabled = MARKERS_ENABLED
+  window.markerTracking = markerTracking   // Konsole: ajnaMarkerCfg.radiusM etc.
+  ajnaManager.onObjectsChanged(() => markerTracking.refresh(ajnaManager.getObjectList()))
+  markerTracking.refresh(ajnaManager.getObjectList())
 
   // ── Distanz-basierter Perf-Pass („LOD light") ────────────────────────────
   // Alle 2 s: Schattenwurf und Skelett-Animationen nur für NAHE Objekte —

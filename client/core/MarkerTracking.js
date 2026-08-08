@@ -40,8 +40,11 @@ export class MarkerTracking {
     this.getPlayerLocal = getPlayerLocal
     this.getRecordName = getRecordName || (id => id)
     // Laufzeit-Tuning ohne Rebuild (Konsole): ajnaMarkerCfg.radiusM = 50 …
-    this.cfg = { radiusM: RADIUS_M, snap: true, headingSign: 1, thetaOffsetDeg: 0 }
+    // drTimeS/drMaxM = Budget der marker-verankerten Koppelnavigation (nach
+    // Marker-Verlust trägt SLAM die Position mit gemessener Skala weiter).
+    this.cfg = { radiusM: RADIUS_M, snap: true, headingSign: 1, thetaOffsetDeg: 0, drTimeS: 30, drMaxM: 15 }
     try { window.ajnaMarkerCfg = this.cfg } catch {}
+    this.enabled = true   // Laufzeit-Schalter (Einstellungen „Tracking: Marker")
 
     this._candidates = []        // [{id, lat, lon, alt, headingDeg, image, widthM}]
     this._activeIds = new Set()  // aktuell registrierte Objekt-IDs
@@ -61,8 +64,24 @@ export class MarkerTracking {
     this._objects = objects || []
   }
 
+  /** Laufzeit-Schalter (Einstellungen „Tracking: Marker"): aus → Targets aus
+   *  der Engine entladen + Overlay weg; an → Auswahl/Overlay neu aufbauen. */
+  setEnabled(on) {
+    on = !!on
+    if (on === this.enabled) return
+    this.enabled = on
+    if (!on) {
+      this.stopOverlay()
+      if (this._activeIds.size) this._apply([], new Set())
+    } else {
+      this._tick()
+      if (this.tracker?.active) this.startOverlay()
+    }
+  }
+
   // ── Auswahl im Umkreis + Registrierung (läuft nur alle TICK_MS) ──────────
   _tick() {
+    if (!this.enabled) return
     if (!this.tracker?.active || !this.geo?.origin) return
     const p = this.getPlayerLocal?.()
     if (!p) return
@@ -137,7 +156,7 @@ export class MarkerTracking {
    * @returns {{theta:number, camLocal:object, upm:number, markerId:string}|null}
    */
   computeSnap(r) {
-    if (!this.cfg.snap || !r || !r.detectedImages || !r.detectedImages.length) return null
+    if (!this.enabled || !this.cfg.snap || !r || !r.detectedImages || !r.detectedImages.length) return null
     const B = window.BABYLON
     for (const d of r.detectedImages) {
       const reg = this._registry.get(d.name)
@@ -160,12 +179,21 @@ export class MarkerTracking {
       const yawG = -reg.headingDeg * Math.PI / 180 * this.cfg.headingSign
         + this.cfg.thetaOffsetDeg * Math.PI / 180
       const theta = yawG - yawS
-      // Kamera-Geo-Position = Marker-Geo-Pos − Ry(θ)·rel
       const markerLocal = this.geo.toLocalRef(reg.lat, reg.lon, reg.alt, 'ground')
+      // Welt-Frame-Variante (nur mit VIO sinnvoll): Kamera = Marker − Ry(θ)·rel.
       const rot = new B.Matrix(); B.Matrix.RotationYToRef(theta, rot)
       const relG = B.Vector3.TransformCoordinates(rel, rot)
       const camLocal = markerLocal.subtract(relG)
-      return { theta, camLocal, upm, markerId: d.name }
+      // KAMERA-relative Variante (modus-unabhängig, auch ohne VIO): Relativ-
+      // vektor Kamera→Marker in Metern, ausgedrückt im KAMERA-Frame. Der
+      // Aufrufer rechnet damit „Kamera = MarkerGeo − R_Szenenkamera · relCamM"
+      // — virtueller und realer Marker werden deckungsgleich, egal woher die
+      // Kamera-Rotation stammt (SLAM oder Kompass).
+      const camQ = new B.Quaternion(r.rotation.x, r.rotation.y, r.rotation.z, r.rotation.w)
+      const camM = new B.Matrix(); B.Matrix.FromQuaternionToRef(camQ, camM)
+      const invCam = B.Matrix.Invert(camM)
+      const relCamM = B.Vector3.TransformNormal(rel, invCam)   // rel ist bereits in Metern
+      return { theta, camLocal, relCamM, markerLocal, upm, markerId: d.name }
     }
     return null
   }

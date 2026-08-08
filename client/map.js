@@ -773,6 +773,9 @@ async function init() {
     onInteractError: (record, key, message) =>
       toast.show(message || 'Aktion nicht möglich', { title: record?.name || 'Aktion' })
   })
+  // EditorUI nachträglich exponieren (ajnaUI entsteht vor init) — die Shell
+  // (Objekte-Tab „Bearbeiten") öffnet darüber den Karten-Editor.
+  window.ajnaUI.editorUI = editorUI
 
   // ── Inventar: Fenster + Platzieren (Tipp-Modus & Drag&Drop) ──
   let _placing = null
@@ -799,7 +802,10 @@ async function init() {
   const inventory = new InventoryUI({
     ajna,
     editorUI,
-    container: document.querySelector('.shell-view[data-view="map"]') || document.body,
+    // body statt Map-View: der FAB ist position:fixed, hing aber im Map-Subtree
+    // und verschwand mit dessen display:none — Inventar soll wie der Chat-Button
+    // in ALLEN Tabs erreichbar sein.
+    container: document.body,
     onExamine: (rec) => {
       toast.show(interactionReply(rec, 'examine', rec.name), { title: rec.name || 'Objekt' })
       _announcer?.interaction(rec, 'examine')

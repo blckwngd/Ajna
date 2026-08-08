@@ -43,19 +43,30 @@ import { Aedes } from 'aedes'
 import mqtt from 'mqtt'
 import { AjnaManager } from '../client/core/AjnaManager.js'
 
-// ─── .env laden ───────────────────────────────────────────────────────────
-function loadDotenv() {
-  const path = resolve(process.cwd(), '.env')
-  if (!existsSync(path)) return
-  for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
-    const m = line.replace(/^\s*#.*$/, '').trim().match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/i)
-    if (!m) continue
-    let v = m[2].trim()
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1)
-    if (process.env[m[1]] === undefined) process.env[m[1]] = v
+// ─── Env laden (geschichtet: Prozess-Env > agents/.env.ha-gateway > Root-.env) ──
+import { loadAgentEnv } from './lib/env.mjs'
+loadAgentEnv('ha-gateway')
+
+// ─── Setup-Wizard: Erststart (Pflichtwerte fehlen) oder explizit --setup ──
+{
+  const wantSetup = process.argv.includes('--setup')
+  const incomplete = !process.env.AJNA_USER || !process.env.AJNA_PASS
+    || !process.env.MQTT_HA_USER || !process.env.MQTT_HA_PASS
+  if (wantSetup || incomplete) {
+    if (!process.stdin.isTTY) {
+      if (incomplete) {
+        console.error('✗ Konfiguration unvollständig (agents/.env.ha-gateway fehlt/leer).')
+        console.error('  Interaktiv einrichten:  node agents/homeassistant-gateway.mjs --setup')
+        process.exit(1)
+      }
+      // --setup ohne TTY (z. B. via pm2): ignorieren, normal starten.
+    } else {
+      const { runHaSetup } = await import('./lib/ha-setup.mjs')
+      const res = await runHaSetup()   // schreibt .env.ha-gateway + setzt process.env
+      if (res?.exit) process.exit(0)   // z. B. an pm2 übergeben
+    }
   }
 }
-loadDotenv()
 
 const AJNA_URL   = process.env.AJNA_URL  || 'http://127.0.0.1:8090'
 const AJNA_USER  = process.env.AJNA_USER

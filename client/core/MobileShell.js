@@ -18,6 +18,10 @@ import { PermissionDialog } from './PermissionDialog.js'
 import { InterestArea } from './InterestArea.js'
 import { ProximityReporter } from './ProximityReporter.js'
 import { infoHint } from './InfoHint.js'
+import { NearbyList } from './NearbyList.js'
+import { ObjectActions } from './ObjectActions.js'
+import { Toast } from './Toast.js'
+import { interactionReply } from './InteractionReply.js'
 import { privacy } from './PrivacyPolicy.js'
 import { messageLog, CATS } from './MessageLog.js'
 import { MessageLogPanel } from './MessageLogPanel.js'
@@ -38,6 +42,7 @@ const UWB_NET_KEY = 'ajna_uwb_network'   // persisted active PANS network id
 const TAB_DEFS = [
   { id: 'map',      icon: '🗺️', label: 'Karte' },
   { id: 'ar',       icon: '🥽', label: 'AR' },
+  { id: 'nearby',   icon: '📋', label: 'Objekte' },
   { id: 'settings', icon: '⚙️', label: 'Einstellungen' }
 ]
 
@@ -90,6 +95,45 @@ export class MobileShell {
     this.uwb = hub.uwb
     this.wandAudio = hub.audio
     this.positionSource = hub.positionSource
+
+    // Tab „Objekte": nächstgelegene Objekte mit Interaktions-Buttons. Nutzt
+    // dieselbe Aktions-Quelle wie Kontextmenü/Quick-Actions (ObjectActions) und
+    // die geteilte Positionsquelle. Aktiv nur, solange der Tab offen ist.
+    const _nbPos = () => this.positionSource?.getWorldPosition?.() || window.ajnaGeo?.position || null
+    // Sichtbares Interaktions-Feedback wie im AR-Pfad: Reply-Text als Toast
+    // (der Toast schreibt zugleich den Verlaufs-Eintrag) + TTS-Ansage (gegated).
+    this._toast = new Toast()
+    this._nearbyActions = new ObjectActions({
+      ajna: this.ajna,
+      getPosition: _nbPos,
+      onInteract: (rec, key) => {
+        const name = rec?.name || rec?.id || 'Objekt'
+        this._toast.show(interactionReply(rec, key, name), { title: name })
+        hub.announcer?.interaction?.(rec, key)
+      },
+      onInteractError: (rec, key, msg) => { this._logEvent(`interact ${key} abgelehnt: ${msg}`); this._flashNotice(msg) },
+    })
+    const _nbRoot = document.querySelector('.shell-view[data-view="nearby"] .nearby-root')
+    if (_nbRoot) {
+      this._nearby = new NearbyList({
+        ajna: this.ajna,
+        container: _nbRoot,
+        getPosition: _nbPos,
+        actions: this._nearbyActions,
+        onShowOnMap: (rec) => {
+          this.switchTo('map')
+          try { window.map?.setView([rec.lat, rec.lon], 18) } catch {}
+        },
+        // „Bearbeiten": der Objekt-Editor lebt in der Karten-Ansicht → Tab
+        // wechseln und dort den Editor mit dem Record öffnen.
+        onEdit: (rec) => {
+          const ui = this.getUI?.()
+          if (!ui?.editorUI?.fillEditor) { this._flashNotice('Editor nicht verfügbar.'); return }
+          this.switchTo('map')
+          try { ui.editorUI.fillEditor(rec) } catch (e) { this._flashNotice('Editor: ' + (e?.message || e)) }
+        },
+      })
+    }
     this.gps = hub.gps   // für den Echt/Dummy-GPS-Schalter in den Einstellungen
     hub.setPositionFallback(() => window.ajnaGeo?.position || null)
 
@@ -183,6 +227,20 @@ export class MobileShell {
     this._selPopup.querySelector('[data-role="sel-name"]').textContent = '🔒 ' + (o.name || o.id)
   }
 
+  // Kurzlebige Hinweis-Blase (z. B. abgelehnte Interaktion aus dem Objekte-Tab) —
+  // unaufdringlich, verschwindet von selbst; kein blockierendes alert().
+  _flashNotice(text) {
+    try {
+      const el = document.createElement('div')
+      el.style.cssText = 'position:fixed;left:50%;bottom:calc(var(--tabbar-height, 56px) + 24px);transform:translateX(-50%);z-index:6500;'
+        + 'max-width:86vw;background:rgba(120,40,40,0.95);color:#ffe8e8;border:1px solid #a05050;border-radius:10px;'
+        + 'padding:8px 14px;font:13px system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,0.5)'
+      el.textContent = text
+      document.body.appendChild(el)
+      setTimeout(() => el.remove(), 3500)
+    } catch {}
+  }
+
   _fmtWandEvent(e) {
     const d = e?.data || {}
     switch (e?.type) {
@@ -216,6 +274,7 @@ export class MobileShell {
     this._debugTimer = null
     this._selPopup?.remove(); this._selPopup = null
     this._logPanel?.destroy(); this._logPanel = null
+    this._nearby?.destroy(); this._nearby = null
   }
 
   // ───────────────────────────────────────────────────────────────────
@@ -256,6 +315,9 @@ export class MobileShell {
     } else {
       window.arPause?.()
     }
+
+    // „Objekte"-Liste nur bei offenem Tab live halten (Subscription + Timer).
+    this._nearby?.setActive(tabId === 'nearby')
   }
 
   async _onArTab() {
@@ -389,6 +451,11 @@ export class MobileShell {
       ?? (parseFloat(localStorage.getItem('ajna.ar.fov_factor')) || 1)
     const arNorth = (() => { try { return parseFloat(localStorage.getItem('ajna.ar.north_offset')) || 0 } catch { return 0 } })()
     const arEyeHeight = (() => { try { const v = parseFloat(localStorage.getItem('ajna.ar.eye_height')); return Number.isFinite(v) && v > 0.5 && v < 2.5 ? v : 1.7 } catch { return 1.7 } })()
+    const mapNorth = (() => { try { return parseFloat(localStorage.getItem('ajna.map.north_offset')) || 0 } catch { return 0 } })()
+    const arAbsYaw = (() => { try { return localStorage.getItem('ajna.ar.abs_yaw') !== '0' } catch { return true } })()
+    const trackSlam = (() => { try { return localStorage.getItem('ajna.track.slam') || 'off' } catch { return 'off' } })()
+    const trackMarker = (() => { try { return localStorage.getItem('ajna.track.marker') === '1' } catch { return false } })()
+    const uwbTagName = (() => { try { return localStorage.getItem('ajna.uwb.tag_name') || '' } catch { return '' } })()
     const arFovSlider = (() => { try { return localStorage.getItem('ajna.ar.fov_slider') === '1' } catch { return false } })()
     const arCompass = (() => { try { return localStorage.getItem('ajna.ar.compass_indicator') !== '0' } catch { return true } })()
     const arAura = (() => { try { return localStorage.getItem('ajna.ar.aura') !== '0' } catch { return true } })()
@@ -468,6 +535,41 @@ export class MobileShell {
           Falls Objekte im AR spiegelverkehrt liegen (Süd erscheint als Nord): auf 180 setzen (oder Button). Pro Gerät gespeichert.
         </div>
         <label class="meta" style="display:flex;align-items:center;gap:10px;margin-top:12px">
+          <span style="white-space:nowrap">Tracking: SLAM</span>
+          <select data-field="track-slam" class="settings-input" style="width:auto;margin:0;padding:6px 10px">
+            <option value="off" ${trackSlam === 'off' ? 'selected' : ''}>Aus (nur Kompass)</option>
+            <option value="rotation" ${trackSlam === 'rotation' ? 'selected' : ''}>Rotation (Anti-Schwimmen)</option>
+            <option value="full" ${trackSlam === 'full' ? 'selected' : ''}>Voll (Rotation + Position)</option>
+          </select>
+        </label>
+        <label class="meta" style="display:flex;align-items:center;gap:10px;margin-top:8px">
+          <span style="white-space:nowrap">Tracking: Marker</span>
+          <select data-field="track-marker" class="settings-input" style="width:auto;margin:0;padding:6px 10px">
+            <option value="0" ${trackMarker ? '' : 'selected'}>Aus</option>
+            <option value="1" ${trackMarker ? 'selected' : ''}>An (Erkennung + Snap)</option>
+          </select>
+        </label>
+        <div class="meta" style="margin-top:6px">
+          Wirkt sofort, auch in laufender AR-Ansicht. Marker ohne SLAM = reine
+          Bild-Erkennung (läuft auch ohne Bewegungssensoren).
+        </div>
+        <label class="meta" style="display:flex;align-items:center;gap:8px;margin-top:12px">
+          <input type="checkbox" data-field="ar-abs-yaw" ${arAbsYaw ? 'checked' : ''}>
+          AR-Blickrichtung am absoluten Kompass referenzieren
+        </label>
+        <div class="meta" style="margin-top:6px">
+          Korrigiert den sitzungsabhängigen Nullpunkt der relativen Sensorik langsam
+          auf echtes Nord — der Nord-Offset oben wird damit sessionstabil (Fein-Trim).
+        </div>
+        <label class="meta" style="display:flex;align-items:center;gap:10px;margin-top:12px">
+          <span style="white-space:nowrap">Karten-Kompass-Offset (°)</span>
+          <input type="number" data-field="map-north" value="${mapNorth}" step="1" style="width:80px">
+        </label>
+        <div class="meta" style="margin-top:6px">
+          Korrigiert den Blickrichtungs-Kegel auf der Karte. Getrennt vom AR-Offset —
+          Karte (absoluter Kompass) und AR (relative Sensorik) kalibrieren unterschiedlich.
+        </div>
+        <label class="meta" style="display:flex;align-items:center;gap:10px;margin-top:12px">
           <span style="white-space:nowrap">Augenhöhe (m)</span>
           <input type="number" data-field="ar-eye-height" value="${arEyeHeight}" step="0.05" min="0.5" max="2.5" style="width:80px">
         </label>
@@ -522,6 +624,16 @@ export class MobileShell {
             <div class="meta" data-role="uwb-status">${this.uwbConnected ? 'verbunden' : 'nicht verbunden'}</div>
           </div>
           <button class="settings-btn-inline" data-action="uwb-settings">Einstellungen</button>
+        </div>
+        <label class="meta" style="display:flex;align-items:center;gap:10px;margin-top:8px">
+          <span style="white-space:nowrap">UWB-Tag</span>
+          <input class="settings-input" data-field="uwb-tag-name" type="text"
+            value="${uwbTagName}" placeholder="z. B. DW1924 oder 1924"
+            style="width:130px;margin:0;padding:6px 10px">
+        </label>
+        <div class="meta" style="margin-top:4px">
+          Gerätename des EIGENEN Tags (DW + letzte 4 Hex der Node-ID). Leer = erster
+          gefundener DW-Knoten — bei mehreren Nutzern/Ankern mit BLE nicht eindeutig!
         </div>
         <button class="settings-btn secondary" data-action="uwb" style="margin-top:8px">
           ${this.uwbConnected ? 'UWB trennen' : 'UWB verbinden'}
@@ -912,6 +1024,60 @@ export class MobileShell {
     northInput?.addEventListener('change', () => applyNorth(northInput.value))
     root.querySelector('[data-action="ar-north-flip"]')?.addEventListener('click', () => applyNorth((parseFloat(northInput?.value) || 0) + 180))
 
+    // UWB-Tag-Name: gezielt DAS eigene Modul verbinden (mehrere Nutzer/Anker
+    // mit BLE im Umfeld → Präfix „DW" allein ist nicht eindeutig). Eingabe wird
+    // normalisiert („1924"/„0x1924" → „DW1924"); Änderung verwirft das gemerkte
+    // Gerät, sonst reconnectet der Button stur zur alten Adresse.
+    const uwbTagInput = root.querySelector('[data-field="uwb-tag-name"]')
+    uwbTagInput?.addEventListener('change', () => {
+      let v = (uwbTagInput.value || '').trim()
+      if (/^0x[0-9a-f]{1,4}$/i.test(v)) v = v.slice(2)
+      if (/^[0-9a-f]{4}$/i.test(v)) v = 'DW' + v.toUpperCase()
+      if (/^dw/i.test(v)) v = 'DW' + v.slice(2).toUpperCase()
+      uwbTagInput.value = v
+      try {
+        localStorage.setItem('ajna.uwb.tag_name', v)
+        // Gemerktes viewer-Gerät verwerfen, wenn es nicht zum neuen Namen passt.
+        const devs = JSON.parse(localStorage.getItem('ajna.uwb.devices') || '{}')
+        if (devs.viewer && v && !(devs.viewer.name || '').toUpperCase().startsWith(v.toUpperCase())) {
+          delete devs.viewer
+          localStorage.setItem('ajna.uwb.devices', JSON.stringify(devs))
+        }
+      } catch {}
+    })
+
+    // Tracking-Modi (SLAM/Marker) — persistieren + live an die AR-Ansicht.
+    const trackSlamSel = root.querySelector('[data-field="track-slam"]')
+    const trackMarkerSel = root.querySelector('[data-field="track-marker"]')
+    const emitTracking = () => {
+      const slam = trackSlamSel?.value || 'off'
+      const marker = trackMarkerSel?.value === '1'
+      try {
+        localStorage.setItem('ajna.track.slam', slam)
+        localStorage.setItem('ajna.track.marker', marker ? '1' : '0')
+      } catch {}
+      window.dispatchEvent(new CustomEvent('ajna:tracking-mode', { detail: { slam, marker } }))
+    }
+    trackSlamSel?.addEventListener('change', emitTracking)
+    trackMarkerSel?.addEventListener('change', emitTracking)
+
+    // Absolute AR-Yaw-Referenz an/aus — live an den AR-Kompass-Hook.
+    const absYawToggle = root.querySelector('[data-field="ar-abs-yaw"]')
+    absYawToggle?.addEventListener('change', () => {
+      const on = absYawToggle.checked
+      try { localStorage.setItem('ajna.ar.abs_yaw', on ? '1' : '0') } catch {}
+      window.dispatchEvent(new CustomEvent('ajna:ar-abs-yaw', { detail: on }))
+    })
+
+    // Karten-Kompass-Offset — live an den Blickrichtungs-Kegel der Karte.
+    const mapNorthInput = root.querySelector('[data-field="map-north"]')
+    mapNorthInput?.addEventListener('change', () => {
+      const d = ((Math.round(Number(mapNorthInput.value) || 0) % 360) + 360) % 360
+      mapNorthInput.value = d
+      try { localStorage.setItem('ajna.map.north_offset', String(d)) } catch {}
+      window.dispatchEvent(new CustomEvent('ajna:map-north', { detail: d }))
+    })
+
     // Augenhöhe (reale Gerätekamera-Höhe über Boden) — live an die AR-Kamera.
     const eyeInput = root.querySelector('[data-field="ar-eye-height"]')
     eyeInput?.addEventListener('change', () => {
@@ -1106,11 +1272,15 @@ export class MobileShell {
     if (this.uwbConnected) { await this.uwb.disconnect('viewer'); this.uwbConnected = false; this._renderSettings(); return }
     try {
       setStatus('Verbinde …')
-      // Gemerktes Gerät → direkt per Adresse (kein Scan), sonst per Name suchen.
+      // Konfigurierter Tag-Name (Einstellungen) gewinnt: nur dieses Gerät. Ein
+      // gemerktes Gerät wird NUR genutzt, wenn sein Name dazu passt — sonst
+      // würde die App stur zum falschen Modul (z. B. einem Anker) reconnecten.
+      const wanted = (() => { try { return localStorage.getItem('ajna.uwb.tag_name') || '' } catch { return '' } })()
       const dev = this.uwb.rememberedDevice?.('viewer')
-      await this.uwb.connect(dev?.address
-        ? { role: 'viewer', address: dev.address, name: dev.name || 'DW' }
-        : { role: 'viewer', name: 'DW' })
+      const devOk = dev?.address && (!wanted || (dev.name || '').toUpperCase().startsWith(wanted.toUpperCase()))
+      await this.uwb.connect(devOk
+        ? { role: 'viewer', address: dev.address, name: dev.name || wanted || 'DW' }
+        : { role: 'viewer', name: wanted || 'DW' })
     } catch (err) {
       setStatus(err?.message || 'Verbindung fehlgeschlagen')
     }

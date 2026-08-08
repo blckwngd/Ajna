@@ -35,6 +35,20 @@ window.addEventListener('DOMContentLoaded', () => {
       startNativeGps(ajna)   // WebView navigator.geolocation often never fires on Android
     }
 
+    // Statusleisten-Abstand: .shell nutzt env(safe-area-inset-top). Manche
+    // Android-WebViews liefern env() aber 0, obwohl sie edge-to-edge unter der
+    // Statusleiste zeichnen → dann festen Fallback setzen (typisch ~28 px).
+    if (isNative) {
+      try {
+        const probe = document.createElement('div')
+        probe.style.cssText = 'position:fixed;top:0;height:env(safe-area-inset-top, 0px)'
+        document.body.appendChild(probe)
+        const h = probe.getBoundingClientRect().height
+        probe.remove()
+        if (h < 1) document.documentElement.style.setProperty('--safe-top', '28px')
+      } catch {}
+    }
+
     const shell = new MobileShell({
       ajna,
       getUI: () => window.ajnaUI || null
