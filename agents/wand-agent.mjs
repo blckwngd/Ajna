@@ -16,7 +16,7 @@
 //   3. Abonniert interact-Events auf diesem Objekt.
 //   4. Auf wand_*-Aktionen: schaltet animation_state um und loggt.
 //
-// Konfiguration (ENV oder .env im CWD):
+// Konfiguration (Env > agents/.env.wand-agent > Root-.env — siehe lib/env.mjs):
 //   AJNA_URL   PocketBase-URL  (Default: http://127.0.0.1:8090)
 //   AJNA_USER  Pflicht — Agent-User
 //   AJNA_PASS  Pflicht
@@ -25,52 +25,13 @@
 //
 // Start:  node agents/wand-agent.mjs   bzw.   npm run wand-agent
 
-import { readFileSync, existsSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { maybeReexecWithSystemCa } from './lib/system-ca.mjs'
-import { EventSource } from 'eventsource'
-if (typeof globalThis.EventSource !== 'function') globalThis.EventSource = EventSource
+import { bootAgent, envNum } from './lib/agent-base.mjs'
 
-import { AjnaManager } from '../client/core/AjnaManager.js'
-
-// ─── .env laden (gleiches Schema wie poi-bridge.mjs) ─────────────────────
-function loadDotenv() {
-  const path = resolve(process.cwd(), '.env')
-  if (!existsSync(path)) return
-  for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
-    const stripped = line.replace(/^\s*#.*$/, '').trim()
-    if (!stripped) continue
-    const m = stripped.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/i)
-    if (!m) continue
-    let value = m[2].trim()
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1)
-    if (process.env[m[1]] === undefined) process.env[m[1]] = value
-  }
-}
-loadDotenv()
-
-const AJNA_URL  = process.env.AJNA_URL  || 'http://127.0.0.1:8090'
-const AJNA_USER = process.env.AJNA_USER
-const AJNA_PASS = process.env.AJNA_PASS
-const WAND_LAT  = parseFloat(process.env.WAND_LAT || '50.3569')
-const WAND_LON  = parseFloat(process.env.WAND_LON || '7.5890')
-
-// Bei HTTPS ggf. mit --use-system-ca neu starten (Caddys interne CA). Robust
-// gegen altes Node & öffentliche Zerts — siehe agents/lib/system-ca.mjs.
-maybeReexecWithSystemCa(AJNA_URL)
-
-function die(msg) { console.error(`✗ ${msg}`); process.exit(1) }
-if (!AJNA_USER || !AJNA_PASS) die('AJNA_USER und AJNA_PASS fehlen')
+const { ajna } = await bootAgent('wand-agent', { connect: true })
+const WAND_LAT = envNum('WAND_LAT', 50.3569)
+const WAND_LON = envNum('WAND_LON', 7.5890)
 
 const WAND_ACTIONS = ['wand_press', 'wand_long', 'wand_gesture', 'wand_effect']
-
-const ajna = new AjnaManager(AJNA_URL)
-try { await ajna.login(AJNA_USER, AJNA_PASS) }
-catch (err) { die(`Ajna-Login fehlgeschlagen: ${err?.response?.data?.message || err?.message || err}`) }
-console.log(`[wand-agent] eingeloggt als ${ajna.currentUser()?.email || AJNA_USER}`)
-
-await ajna.connect()
 
 // ─── Demo-Zielobjekt sicherstellen (idempotent über state.wand_demo) ─────
 function findDemoTarget() {
@@ -120,4 +81,3 @@ await ajna.subscribeInteract(target.id, async (evt) => {
 })
 
 console.log('[wand-agent] bereit — warte auf Stab-Interaktionen. (Strg+C zum Beenden)')
-process.on('SIGINT', () => { console.log('\n[wand-agent] beende.'); process.exit(0) })

@@ -27,44 +27,17 @@
 //                   "anchors": [ { "nodeId":1, "network":"0x89AB", … }, … ] }
 //   (siehe uwb-anchors.example.json bzw. uwb-anchors-network.example.json)
 //
-// ENV: AJNA_URL (Default http://127.0.0.1:8090), AJNA_USER, AJNA_PASS,
+// ENV (geschichtet, siehe lib/env.mjs): AJNA_URL, AJNA_USER, AJNA_PASS,
 //      UWB_ANCHORS_FILE (Default ./uwb-anchors.json)
 //
 // Start:  node agents/uwb-anchors.mjs   bzw.   npm run uwb-anchors
 
 import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { maybeReexecWithSystemCa } from './lib/system-ca.mjs'
-import { EventSource } from 'eventsource'
-if (typeof globalThis.EventSource !== 'function') globalThis.EventSource = EventSource
+import { bootAgent, die, envStr } from './lib/agent-base.mjs'
 
-import { AjnaManager } from '../client/core/AjnaManager.js'
-
-function loadDotenv() {
-  const path = resolve(process.cwd(), '.env')
-  if (!existsSync(path)) return
-  for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
-    const s = line.replace(/^\s*#.*$/, '').trim()
-    const m = s && s.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/i)
-    if (!m) continue
-    let v = m[2].trim()
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1)
-    if (process.env[m[1]] === undefined) process.env[m[1]] = v
-  }
-}
-loadDotenv()
-
-const AJNA_URL  = process.env.AJNA_URL  || 'http://127.0.0.1:8090'
-const AJNA_USER = process.env.AJNA_USER
-const AJNA_PASS = process.env.AJNA_PASS
-const FILE      = process.env.UWB_ANCHORS_FILE || 'uwb-anchors.json'
-
-// Bei HTTPS ggf. mit --use-system-ca neu starten (Caddys interne CA). Robust
-// gegen altes Node & öffentliche Zerts — siehe agents/lib/system-ca.mjs.
-maybeReexecWithSystemCa(AJNA_URL)
-
-function die(msg) { console.error(`✗ ${msg}`); process.exit(1) }
-if (!AJNA_USER || !AJNA_PASS) die('AJNA_USER und AJNA_PASS fehlen')
+const { ajna } = await bootAgent('uwb-anchors', { connect: true })
+const FILE = envStr('UWB_ANCHORS_FILE', 'uwb-anchors.json') || 'uwb-anchors.json'
 
 const path = resolve(process.cwd(), FILE)
 if (!existsSync(path)) die(`Anker-Datei nicht gefunden: ${path}`)
@@ -86,11 +59,6 @@ if (Array.isArray(defs)) {
   die('Anker-Datei: Array oder { networks?, anchors } erwartet')
 }
 if (!anchorDefs.length && !networkDefs.length) die('Anker-Datei enthält weder anchors noch networks')
-
-const ajna = new AjnaManager(AJNA_URL)
-try { await ajna.login(AJNA_USER, AJNA_PASS) } catch (e) { die(`Login fehlgeschlagen: ${e?.message || e}`) }
-await ajna.connect()
-console.log(`[uwb-anchors] eingeloggt als ${ajna.currentUser()?.email || AJNA_USER}`)
 
 const existing = new Map()     // nodeId -> uwb_anchor object
 const existingNets = new Map() // String(networkId) -> uwb_network object

@@ -37,79 +37,24 @@
 //   bzw.:
 //   npm run poi
 
-import { readFileSync, existsSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { maybeReexecWithSystemCa } from './lib/system-ca.mjs'
-import { EventSource } from 'eventsource'
-// PB-SDK öffnet beim ersten refreshObjects()/connect() eine Realtime-SSE
-// und greift dabei auf globalThis.EventSource zu. In Node ist das je nach
-// Version nicht (zuverlässig) verfügbar → wir polyfillen aus npm.
-if (typeof globalThis.EventSource !== 'function') globalThis.EventSource = EventSource
-
-import { AjnaManager } from '../client/core/AjnaManager.js'
+import { bootAgent, die, envNum, envStr, publishManifest } from './lib/agent-base.mjs'
 import { AjnaGeo } from '../client/core/AjnaGeo.js'
 
-// ───────────────────────────────────────────────────────────────────────
-//  .env laden (identisches Schema wie ais-bridge.mjs)
-// ───────────────────────────────────────────────────────────────────────
+// Login + geschichtete .env (Env > agents/.env.poi > Root-.env) + System-CA.
+const { ajna } = await bootAgent('poi')
+const geo = new AjnaGeo(ajna)
 
-function loadDotenv() {
-  const path = resolve(process.cwd(), '.env')
-  if (!existsSync(path)) return
-  const raw = readFileSync(path, 'utf8')
-  for (const line of raw.split(/\r?\n/)) {
-    const stripped = line.replace(/^\s*#.*$/, '').trim()
-    if (!stripped) continue
-    const m = stripped.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/i)
-    if (!m) continue
-    const key = m[1]
-    let value = m[2].trim()
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1)
-    }
-    if (process.env[key] === undefined) process.env[key] = value
-  }
-}
-
-loadDotenv()
-
-const AJNA_URL  = process.env.AJNA_URL  || 'http://127.0.0.1:8090'
-const AJNA_USER = process.env.AJNA_USER
-const AJNA_PASS = process.env.AJNA_PASS
-const CENTER_LAT = parseFloat(process.env.POI_CENTER_LAT || '50.3569')
-const CENTER_LON = parseFloat(process.env.POI_CENTER_LON || '7.5890')
-const RADIUS_KM  = parseFloat(process.env.POI_RADIUS_KM  || '1')
-const FILTER     = process.env.POI_FILTER || 'common'
+const CENTER_LAT = envNum('POI_CENTER_LAT', 50.3569)
+const CENTER_LON = envNum('POI_CENTER_LON', 7.5890)
+const RADIUS_KM  = envNum('POI_RADIUS_KM', 1)
+const FILTER     = envStr('POI_FILTER') || 'common'
 // Default kontinuierlich (120 s): die Bridge ist demand-getrieben und muss die
 // aktiven Interessensbereiche fortlaufend pollen. Einmal-Sync via POI_REFRESH_S=0.
-const REFRESH_MS = parseFloat(process.env.POI_REFRESH_S || '120') * 1000
+const REFRESH_MS = envNum('POI_REFRESH_S', 120) * 1000
 
-// Bei HTTPS ggf. mit --use-system-ca neu starten (Caddys interne CA). Robust
-// gegen altes Node & öffentliche Zerts — siehe agents/lib/system-ca.mjs.
-maybeReexecWithSystemCa(AJNA_URL)
-
-function die(msg) { console.error(`✗ ${msg}`); process.exit(1) }
-
-if (!AJNA_USER || !AJNA_PASS) die('AJNA_USER und AJNA_PASS fehlen')
-if (!Number.isFinite(CENTER_LAT) || !Number.isFinite(CENTER_LON)) die('Ungültige Center-Koords')
-if (!Number.isFinite(RADIUS_KM) || RADIUS_KM <= 0) die('Ungültiger Radius')
+if (RADIUS_KM <= 0) die('Ungültiger Radius')
 
 console.log(`[poi] center: ${CENTER_LAT.toFixed(4)}, ${CENTER_LON.toFixed(4)}  radius: ${RADIUS_KM} km  filter: ${FILTER}`)
-
-// ───────────────────────────────────────────────────────────────────────
-//  Ajna-Login + initiales Laden vorhandener POIs (via AjnaManager —
-//  Routing/Composite-IDs/Auth-Handling laufen über die Bibliothek).
-// ───────────────────────────────────────────────────────────────────────
-
-const ajna = new AjnaManager(AJNA_URL)
-const geo  = new AjnaGeo(ajna)
-try {
-  await ajna.login(AJNA_USER, AJNA_PASS)
-} catch (err) {
-  die(`Ajna-Login fehlgeschlagen: ${err?.response?.data?.message || err?.message || err}`)
-}
-console.log(`[ajna] eingeloggt als ${ajna.currentUser()?.email || AJNA_USER}`)
 
 // ───────────────────────────────────────────────────────────────────────
 //  Agent-Manifest publishen — der Client zeigt die Layer im FilterDialog
@@ -138,18 +83,13 @@ const POI_LAYERS_GENERIC = [
   { key: 'all', label: 'Alle POIs', predicate: null }
 ]
 
-try {
-  const layers = FILTER === 'common' ? POI_LAYERS_COMMON : POI_LAYERS_GENERIC
-  await ajna.upsertAgentManifest({
-    source: 'overpass',
-    agent_name: 'POI-Bridge',
-    description: `OSM-POIs (Filter: ${FILTER}) im Radius ${RADIUS_KM} km um ${CENTER_LAT.toFixed(3)}, ${CENTER_LON.toFixed(3)}`,
-    layers
-  })
-  console.log(`[ajna] manifest aktualisiert (${layers.length} Layer)`)
-} catch (err) {
-  console.warn('[ajna] manifest-upsert fehlgeschlagen:', err?.message || err)
-}
+const layers = FILTER === 'common' ? POI_LAYERS_COMMON : POI_LAYERS_GENERIC
+if (await publishManifest(ajna, {
+  source: 'overpass',
+  agent_name: 'POI-Bridge',
+  description: `OSM-POIs (Filter: ${FILTER}) im Radius ${RADIUS_KM} km um ${CENTER_LAT.toFixed(3)}, ${CENTER_LON.toFixed(3)}`,
+  layers
+})) console.log(`[ajna] manifest aktualisiert (${layers.length} Layer)`)
 
 /**
  * In-Memory-Map: osm_id (z. B. "node/123") → { objectId, name }.
@@ -324,7 +264,7 @@ if (REFRESH_MS > 0) {
   setInterval(() => {
     syncPois().catch(err => console.warn(`[poi] refresh error: ${err?.message || err}`))
   }, REFRESH_MS)
-  process.on('SIGINT',  () => { console.log('\n[poi] SIGINT — exit'); process.exit(0) })
+  // SIGINT übernimmt bootAgent; SIGTERM (pm2/systemd-Stop) zusätzlich hier.
   process.on('SIGTERM', () => { console.log('[poi] SIGTERM — exit');  process.exit(0) })
 } else {
   console.log('[poi] initial sync abgeschlossen, beende.')

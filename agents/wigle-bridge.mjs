@@ -41,68 +41,38 @@
 //
 // Start:  node agents/wigle-bridge.mjs   bzw.   npm run wigle
 
-import { readFileSync, existsSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { maybeReexecWithSystemCa } from './lib/system-ca.mjs'
-import { EventSource } from 'eventsource'
-if (typeof globalThis.EventSource !== 'function') globalThis.EventSource = EventSource
-
-import { AjnaManager } from '../client/core/AjnaManager.js'
+import { bootAgent, die, envNum, envInt, envBool, envStr, publishManifest } from './lib/agent-base.mjs'
 import { encCategory, ENC_STYLE, wifiManifestLayers } from '../client/core/wifiStyle.js'
 
-// ─── .env laden (gleiches Schema wie poi-bridge.mjs) ─────────────────────
-function loadDotenv() {
-  const path = resolve(process.cwd(), '.env')
-  if (!existsSync(path)) return
-  for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
-    const stripped = line.replace(/^\s*#.*$/, '').trim()
-    if (!stripped) continue
-    const m = stripped.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/i)
-    if (!m) continue
-    let value = m[2].trim()
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1)
-    if (process.env[m[1]] === undefined) process.env[m[1]] = value
-  }
-}
-loadDotenv()
+// Login + geschichtete .env (Env > agents/.env.wigle > Root-.env) + System-CA.
+const { ajna } = await bootAgent('wigle')
 
-const AJNA_URL   = process.env.AJNA_URL  || 'http://127.0.0.1:8090'
-const AJNA_USER  = process.env.AJNA_USER
-const AJNA_PASS  = process.env.AJNA_PASS
 // Akzeptiert beide Namenskonventionen: WIGLE_API_NAME/TOKEN (kanonisch) und
 // API_NAME/API_TOKEN (wie auf wigle.net und in mancher .env).
-const API_NAME   = process.env.WIGLE_API_NAME  || process.env.API_NAME
-const API_TOKEN  = process.env.WIGLE_API_TOKEN || process.env.API_TOKEN
-const CENTER_LAT = parseFloat(process.env.WIGLE_CENTER_LAT || '50.3569')
-const CENTER_LON = parseFloat(process.env.WIGLE_CENTER_LON || '7.5890')
-const RADIUS_M   = parseFloat(process.env.WIGLE_RADIUS_M   || '1000')  // Abfrage-Radius je Ziel
-const MAX_NETS   = parseInt(process.env.WIGLE_MAX || '300', 10)        // Gesamt-Cap je Areal (über Seiten)
-const MAX_PAGES  = parseInt(process.env.WIGLE_MAX_PAGES || '3', 10)    // Seiten je Areal (je 100, Quota-Schutz)
-const INTERVAL_MS = parseFloat(process.env.WIGLE_INTERVAL_S || '3600') * 1000  // Re-Query bei Stillstand
-const COVERAGE_M = parseFloat(process.env.WIGLE_COVERAGE_M || '50')
-const MAX_AREAS  = parseInt(process.env.WIGLE_MAX_AREAS || '8', 10)    // Quota-Schutz
-const POLL_MS      = parseFloat(process.env.WIGLE_POLL_S || '60') * 1000        // Bereichs-Poll (billig, lokal)
-const QUERY_MIN_MS = parseFloat(process.env.WIGLE_QUERY_MIN_S || '300') * 1000  // min. Abstand WiGLE-Abfragen
+const API_NAME   = envStr('WIGLE_API_NAME') || envStr('API_NAME')
+const API_TOKEN  = envStr('WIGLE_API_TOKEN') || envStr('API_TOKEN')
+const CENTER_LAT = envNum('WIGLE_CENTER_LAT', 50.3569)
+const CENTER_LON = envNum('WIGLE_CENTER_LON', 7.5890)
+const RADIUS_M   = envNum('WIGLE_RADIUS_M', 1000)   // Abfrage-Radius je Ziel
+const MAX_NETS   = envInt('WIGLE_MAX', 300)         // Gesamt-Cap je Areal (über Seiten)
+const MAX_PAGES  = envInt('WIGLE_MAX_PAGES', 3)     // Seiten je Areal (je 100, Quota-Schutz)
+const INTERVAL_MS = envNum('WIGLE_INTERVAL_S', 3600) * 1000  // Re-Query bei Stillstand
+const COVERAGE_M = envNum('WIGLE_COVERAGE_M', 50)
+const MAX_AREAS  = envInt('WIGLE_MAX_AREAS', 8)     // Quota-Schutz
+const POLL_MS      = envNum('WIGLE_POLL_S', 60) * 1000        // Bereichs-Poll (billig, lokal)
+const QUERY_MIN_MS = envNum('WIGLE_QUERY_MIN_S', 300) * 1000  // min. Abstand WiGLE-Abfragen
 
 // Ansatz B (optional): empirischer Empfangsradius aus den Einzelsichtungen
 // (network/detail). EINE WiGLE-Abfrage PRO NETZ → hart budgetiert. Aus (Default)
 // bleibt es bei der bandbasierten Schätzung.
-const DETAIL_ON    = /^(1|true|yes|on)$/i.test(process.env.WIGLE_DETAIL_RADIUS || '')
-const DETAIL_MAX   = parseInt(process.env.WIGLE_DETAIL_MAX || '10', 10)         // Detail-Abfragen pro Sync (Quota!)
-const DETAIL_PCTL  = Math.min(1, Math.max(0, parseFloat(process.env.WIGLE_DETAIL_PCTL || '0.9')))  // Perzentil statt Max
-const DETAIL_MIN   = parseInt(process.env.WIGLE_DETAIL_MIN_SAMPLES || '4', 10)  // darunter nicht vertrauenswürdig
-const DETAIL_CAP_M = parseFloat(process.env.WIGLE_DETAIL_CAP_M || '250')        // Deckel gg. mobile/streuende APs
+const DETAIL_ON    = envBool('WIGLE_DETAIL_RADIUS')
+const DETAIL_MAX   = envInt('WIGLE_DETAIL_MAX', 10)             // Detail-Abfragen pro Sync (Quota!)
+const DETAIL_PCTL  = Math.min(1, Math.max(0, envNum('WIGLE_DETAIL_PCTL', 0.9)))  // Perzentil statt Max
+const DETAIL_MIN   = envInt('WIGLE_DETAIL_MIN_SAMPLES', 4)      // darunter nicht vertrauenswürdig
+const DETAIL_CAP_M = envNum('WIGLE_DETAIL_CAP_M', 250)          // Deckel gg. mobile/streuende APs
 const DETAIL_FLOOR_M = 10
 
-// Bei HTTPS ggf. mit --use-system-ca neu starten (Caddys interne CA). Robust
-// gegen altes Node & öffentliche Zerts — siehe agents/lib/system-ca.mjs.
-maybeReexecWithSystemCa(AJNA_URL)
-
-function die(msg) { console.error(`✗ ${msg}`); process.exit(1) }
-if (!AJNA_USER || !AJNA_PASS) die('AJNA_USER und AJNA_PASS fehlen')
-if (!API_NAME || !API_TOKEN)  die('WIGLE_API_NAME und WIGLE_API_TOKEN fehlen (wigle.net → Account → API)')
-if (!Number.isFinite(CENTER_LAT) || !Number.isFinite(CENTER_LON)) die('Ungültige Center-Koords')
+if (!API_NAME || !API_TOKEN) die('WIGLE_API_NAME und WIGLE_API_TOKEN fehlen (wigle.net → Account → API)')
 
 // BoundingBox (RADIUS_M) um ein beliebiges Zentrum — für den Zentrum-Fallback
 // und pro aktivem Interessensbereich (dessen Mittelpunkt).
@@ -121,23 +91,12 @@ console.log(DETAIL_ON
   ? `[wigle] Empfangsradius: EMPIRISCH aus Sichtungen (network/detail, max ${DETAIL_MAX} Abfragen/Sync, p${Math.round(DETAIL_PCTL * 100)}, Deckel ${DETAIL_CAP_M} m), Band als Fallback`
   : `[wigle] Empfangsradius: bandbasiert geschätzt (WIGLE_DETAIL_RADIUS=1 für empirische Verfeinerung)`)
 
-// ─── Ajna-Login + Manifest ───────────────────────────────────────────────
-const ajna = new AjnaManager(AJNA_URL)
-try { await ajna.login(AJNA_USER, AJNA_PASS) }
-catch (err) { die(`Ajna-Login fehlgeschlagen: ${err?.response?.data?.message || err?.message || err}`) }
-console.log(`[ajna] eingeloggt als ${ajna.currentUser()?.email || AJNA_USER}`)
-
-try {
-  await ajna.upsertAgentManifest({
-    source: 'wigle',
-    agent_name: 'WiGLE-Bridge',
-    description: `WLAN-Netze via WiGLE.net im Radius ${RADIUS_M} m um ${CENTER_LAT.toFixed(3)}, ${CENTER_LON.toFixed(3)}`,
-    layers: wifiManifestLayers()   // "Alle" + ein Filter-Layer je Verschlüsselung
-  })
-  console.log('[ajna] manifest aktualisiert')
-} catch (err) {
-  console.warn('[ajna] manifest-upsert fehlgeschlagen:', err?.message || err)
-}
+if (await publishManifest(ajna, {
+  source: 'wigle',
+  agent_name: 'WiGLE-Bridge',
+  description: `WLAN-Netze via WiGLE.net im Radius ${RADIUS_M} m um ${CENTER_LAT.toFixed(3)}, ${CENTER_LON.toFixed(3)}`,
+  layers: wifiManifestLayers()   // "Alle" + ein Filter-Layer je Verschlüsselung
+})) console.log('[ajna] manifest aktualisiert')
 
 // ─── In-Memory-Map: netid (BSSID) → { objectId, name, basis, lat, lon } ──
 // `basis` merkt sich, WORAUS der Radius kommt ('observations'|'band'|'fallback')
@@ -459,5 +418,5 @@ await tick()
 setInterval(() => { tick().catch(err => console.warn(`[wigle] tick: ${err?.message || err}`)) }, POLL_MS)
 console.log(`[wigle] bereit — Bereichs-Poll alle ${(POLL_MS / 1000) | 0} s, WiGLE-Query min. alle ${(QUERY_MIN_MS / 1000) | 0} s, Re-Query alle ${(INTERVAL_MS / 1000) | 0} s. (Strg+C)`)
 
-process.on('SIGINT',  () => { console.log('\n[wigle] SIGINT — exit'); process.exit(0) })
+// SIGINT übernimmt bootAgent.
 process.on('SIGTERM', () => { console.log('[wigle] SIGTERM — exit'); process.exit(0) })

@@ -44,53 +44,24 @@
 // Start:  node agents/adsb-bridge.mjs   bzw.   npm run adsb
 // Beenden: Ctrl+C.
 
-import { readFileSync, existsSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { maybeReexecWithSystemCa } from './lib/system-ca.mjs'
-import { EventSource } from 'eventsource'
-if (typeof globalThis.EventSource !== 'function') globalThis.EventSource = EventSource
+import { bootAgent, envNum, envInt, envStr, publishManifest } from './lib/agent-base.mjs'
 
-import { AjnaManager } from '../client/core/AjnaManager.js'
+// Login + geschichtete .env (Env > agents/.env.adsb > Root-.env) + System-CA.
+const { ajna } = await bootAgent('adsb')
 
-// ─── .env laden (gleiches Schema wie ais-/poi-/wigle-bridge) ─────────────
-function loadDotenv() {
-  const path = resolve(process.cwd(), '.env')
-  if (!existsSync(path)) return
-  for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
-    const stripped = line.replace(/^\s*#.*$/, '').trim()
-    if (!stripped) continue
-    const m = stripped.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/i)
-    if (!m) continue
-    let value = m[2].trim()
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1)
-    if (process.env[m[1]] === undefined) process.env[m[1]] = value
-  }
-}
-loadDotenv()
-
-const AJNA_URL   = process.env.AJNA_URL  || 'http://127.0.0.1:8090'
-const AJNA_USER  = process.env.AJNA_USER
-const AJNA_PASS  = process.env.AJNA_PASS
-const OS_CLIENT_ID     = process.env.OPENSKY_CLIENT_ID
-const OS_CLIENT_SECRET = process.env.OPENSKY_CLIENT_SECRET
-const CENTER_LAT = parseFloat(process.env.ADSB_CENTER_LAT || '50.11')
-const CENTER_LON = parseFloat(process.env.ADSB_CENTER_LON || '8.68')
-const RADIUS_KM  = parseFloat(process.env.ADSB_RADIUS_KM || '50')
-const POLL_MS    = parseFloat(process.env.ADSB_POLL_S || '30') * 1000
-const MAX_AIRCRAFT = parseInt(process.env.ADSB_MAX_AIRCRAFT || '200', 10)
-const MAX_AREAS    = parseInt(process.env.ADSB_MAX_AREAS || '6', 10)
-const STALE_MS   = parseFloat(process.env.ADSB_STALE_TIMEOUT_S || '120') * 1000
-const MIN_CREDITS = parseInt(process.env.ADSB_MIN_CREDITS || '25', 10)
+const OS_CLIENT_ID     = envStr('OPENSKY_CLIENT_ID')
+const OS_CLIENT_SECRET = envStr('OPENSKY_CLIENT_SECRET')
+const CENTER_LAT = envNum('ADSB_CENTER_LAT', 50.11)
+const CENTER_LON = envNum('ADSB_CENTER_LON', 8.68)
+const RADIUS_KM  = envNum('ADSB_RADIUS_KM', 50)
+const POLL_MS    = envNum('ADSB_POLL_S', 30) * 1000
+const MAX_AIRCRAFT = envInt('ADSB_MAX_AIRCRAFT', 200)
+const MAX_AREAS    = envInt('ADSB_MAX_AREAS', 6)
+const STALE_MS   = envNum('ADSB_STALE_TIMEOUT_S', 120) * 1000
+const MIN_CREDITS = envInt('ADSB_MIN_CREDITS', 25)
 
 const OS_STATES_URL = 'https://opensky-network.org/api/states/all'
 const OS_TOKEN_URL  = 'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token'
-
-maybeReexecWithSystemCa(AJNA_URL)
-
-function die(msg) { console.error(`✗ ${msg}`); process.exit(1) }
-if (!AJNA_USER || !AJNA_PASS) die('AJNA_USER und AJNA_PASS fehlen')
-if (!Number.isFinite(CENTER_LAT) || !Number.isFinite(CENTER_LON)) die('Ungültige Center-Koords')
 
 const KM_PER_DEG_LAT = 111
 const AUTHED = !!(OS_CLIENT_ID && OS_CLIENT_SECRET)
@@ -98,28 +69,17 @@ const AUTHED = !!(OS_CLIENT_ID && OS_CLIENT_SECRET)
 console.log(`[adsb] Zentrum ${CENTER_LAT.toFixed(3)}, ${CENTER_LON.toFixed(3)} · Radius ${RADIUS_KM} km · Poll ${(POLL_MS/1000)|0} s`)
 console.log(`[adsb] Auth: ${AUTHED ? 'OAuth2 (OPENSKY_CLIENT_ID gesetzt)' : 'ANONYM'} · Budget-Puffer ${MIN_CREDITS} Credits · max ${MAX_AIRCRAFT} Flugzeuge`)
 
-// ─── Ajna-Login + Manifest ───────────────────────────────────────────────
-const ajna = new AjnaManager(AJNA_URL)
-try { await ajna.login(AJNA_USER, AJNA_PASS) }
-catch (err) { die(`Ajna-Login fehlgeschlagen: ${err?.response?.data?.message || err?.message || err}`) }
-console.log(`[ajna] eingeloggt als ${ajna.currentUser()?.email || AJNA_USER}`)
-
-try {
-  await ajna.upsertAgentManifest({
-    source: 'opensky',
-    agent_name: 'ADS-B-Bridge',
-    description: `Flugzeuge via OpenSky-Network im Radius ${RADIUS_KM} km`,
-    // Unbegrenztes Render-Budget: sonst zeigt der Client nur die 50 kamera-
-    // nächsten (DEFAULT_RENDER_BUDGET) und cullt den Rest per Distanz — bei
-    // Flugzeugen ist aber gerade die Weitsicht der Punkt. Die Gesamtzahl deckelt
-    // ohnehin ADSB_MAX_AIRCRAFT.
-    render_budget: 0,
-    layers: [{ key: 'all', label: 'Alle Flugzeuge', predicate: null }]
-  })
-  console.log('[ajna] manifest aktualisiert')
-} catch (err) {
-  console.warn('[ajna] manifest-upsert fehlgeschlagen:', err?.message || err)
-}
+if (await publishManifest(ajna, {
+  source: 'opensky',
+  agent_name: 'ADS-B-Bridge',
+  description: `Flugzeuge via OpenSky-Network im Radius ${RADIUS_KM} km`,
+  // Unbegrenztes Render-Budget: sonst zeigt der Client nur die 50 kamera-
+  // nächsten (DEFAULT_RENDER_BUDGET) und cullt den Rest per Distanz — bei
+  // Flugzeugen ist aber gerade die Weitsicht der Punkt. Die Gesamtzahl deckelt
+  // ohnehin ADSB_MAX_AIRCRAFT.
+  render_budget: 0,
+  layers: [{ key: 'all', label: 'Alle Flugzeuge', predicate: null }]
+})) console.log('[ajna] manifest aktualisiert')
 
 // ─── In-Memory: icao24 → { objectId, name, lastSeenMs, inflight } ─────────
 const planes = new Map()
@@ -384,5 +344,5 @@ setInterval(() => tick().catch(err => console.warn(`[adsb] tick: ${err?.message 
 setInterval(() => cleanup().catch(err => console.warn(`[adsb] cleanup: ${err?.message || err}`)), 30_000)
 console.log('[adsb] bereit. (Strg+C zum Beenden)')
 
-process.on('SIGINT',  () => { console.log('\n[adsb] SIGINT — exit'); process.exit(0) })
+// SIGINT übernimmt bootAgent; SIGTERM (pm2/systemd-Stop) zusätzlich hier.
 process.on('SIGTERM', () => { console.log('[adsb] SIGTERM — exit'); process.exit(0) })

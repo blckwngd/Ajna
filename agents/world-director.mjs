@@ -54,39 +54,18 @@
 //
 // Start:  node agents/world-director.mjs   bzw.   npm run director
 
-import { readFileSync, existsSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { maybeReexecWithSystemCa } from './lib/system-ca.mjs'
 import { randomUUID } from 'node:crypto'
-import { EventSource } from 'eventsource'
-if (typeof globalThis.EventSource !== 'function') globalThis.EventSource = EventSource
-
-import { AjnaManager } from '../client/core/AjnaManager.js'
+import { bootAgent, die, envNum } from './lib/agent-base.mjs'
 import { AjnaGeo } from '../client/core/AjnaGeo.js'
 import { findLandingSpot } from './lib/landing-spots.mjs'
 import { stepAlongPath, buildWayGraph, nearestNodeKey, randomReachableTarget, shortestPath, haversine, bearingRad } from '../client/core/StreetNav.js'
 import { animalNameFor } from '../client/core/animalNames.js'
 
-// ─── .env laden (gleiches Schema wie ais-bridge.mjs) ─────────────────────
-function loadDotenv() {
-  const path = resolve(process.cwd(), '.env')
-  if (!existsSync(path)) return
-  for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
-    const stripped = line.replace(/^\s*#.*$/, '').trim()
-    if (!stripped) continue
-    const m = stripped.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/i)
-    if (!m) continue
-    let value = m[2].trim()
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1)
-    if (process.env[m[1]] === undefined) process.env[m[1]] = value
-  }
-}
-loadDotenv()
+// Login + geschichtete .env (Env > agents/.env.director > Root-.env) + System-CA.
+// Die WD_*-Konstanten unten lesen process.env erst NACH diesem await — die
+// Schichten sind dann geladen.
+const { ajna } = await bootAgent('director', { tag: 'director' })
 
-const AJNA_URL    = process.env.AJNA_URL  || 'http://127.0.0.1:8090'
-const AJNA_USER   = process.env.AJNA_USER
-const AJNA_PASS   = process.env.AJNA_PASS
 const CENTER_LAT  = parseFloat(process.env.WD_CENTER_LAT || '50.3569')
 const CENTER_LON  = parseFloat(process.env.WD_CENTER_LON || '7.5890')
 const RADIUS_M    = parseFloat(process.env.WD_RADIUS_M   || '150')
@@ -169,12 +148,6 @@ const RECONCILE_MS  = parseFloat(process.env.WD_RECONCILE_S || '45') * 1000
 // (WD_SOURCE="") = alle Areas berücksichtigen.
 const WD_SOURCE     = process.env.WD_SOURCE ?? 'world-director'
 
-// Bei HTTPS ggf. mit --use-system-ca neu starten (Caddys interne CA). Robust
-// gegen altes Node & öffentliche Zerts — siehe agents/lib/system-ca.mjs.
-maybeReexecWithSystemCa(AJNA_URL)
-
-function die(msg) { console.error(`✗ ${msg}`); process.exit(1) }
-if (!AJNA_USER || !AJNA_PASS) die('AJNA_USER und AJNA_PASS fehlen (.env oder env var)')
 if (!Number.isFinite(CENTER_LAT) || !Number.isFinite(CENTER_LON)) die('Ungültige Center-Koords')
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -395,12 +368,8 @@ function buildSpawn(archetype, center = { lat: CENTER_LAT, lon: CENTER_LON }, op
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-//  Boot
+//  Boot (Login lief bereits in bootAgent)
 // ─────────────────────────────────────────────────────────────────────────
-const ajna = new AjnaManager(AJNA_URL)
-try { await ajna.login(AJNA_USER, AJNA_PASS) }
-catch (err) { die(`Ajna-Login fehlgeschlagen: ${err?.response?.data?.message || err?.message || err}`) }
-console.log(`[director] eingeloggt als ${ajna.currentUser()?.email || AJNA_USER}`)
 console.log(`[director] Zentrum: ${CENTER_LAT.toFixed(4)}, ${CENTER_LON.toFixed(4)} · Radius ${RADIUS_M} m`)
 
 async function publishManifest() {
@@ -1285,5 +1254,5 @@ ajna.onAgentCommand(WD_SOURCE || 'world-director', (evt) => {
 setInterval(() => { publishManifest() }, HEARTBEAT_MS)
 console.log('[director] bereit. (Strg+C zum Beenden)')
 
-process.on('SIGINT',  () => { console.log('\n[director] SIGINT — exit'); process.exit(0) })
+// SIGINT übernimmt bootAgent.
 process.on('SIGTERM', () => { console.log('[director] SIGTERM — exit'); process.exit(0) })

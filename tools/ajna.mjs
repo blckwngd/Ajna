@@ -2,8 +2,8 @@
 //
 // tools/ajna.mjs — CLI-Helper für Ajna / PocketBase
 //
-// Liest Credentials aus Umgebungsvariablen oder `.env` im aktuellen
-// Arbeitsverzeichnis (Repo-Root). Spricht den PB-Server direkt an
+// Liest Credentials geschichtet: Umgebungsvariablen > agents/.env.cli >
+// Root-`.env` des Repos (siehe agents/lib/env.mjs). Spricht den PB-Server direkt an
 // (Loopback :8090 by default) — bewusst an Caddy vorbei, damit kein
 // TLS-Setup nötig ist. Wer durch Caddy will, setzt `AJNA_URL` auf die
 // HTTPS-URL; Node ≥ 22 vertraut der Caddy-Root-CA nach deren System-
@@ -36,53 +36,20 @@
 // stderr → pipe-freundlich: `node tools/ajna.mjs list-objects | jq '.[].name'`.
 
 import PocketBase from 'pocketbase'
-import { readFileSync, existsSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { loadAgentEnv } from '../agents/lib/env.mjs'
+import { maybeReexecWithSystemCa } from '../agents/lib/system-ca.mjs'
 
-// ───────────────────────────────────────────────────────────────────────
-//  .env laden (simpler KEY=VALUE-Parser, keine extra Dependency)
-// ───────────────────────────────────────────────────────────────────────
-
-function loadDotenv() {
-  const path = resolve(process.cwd(), '.env')
-  if (!existsSync(path)) return
-  const raw = readFileSync(path, 'utf8')
-  for (const line of raw.split(/\r?\n/)) {
-    const stripped = line.replace(/^\s*#.*$/, '').trim()
-    if (!stripped) continue
-    const m = stripped.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/i)
-    if (!m) continue
-    const key = m[1]
-    let value = m[2].trim()
-    // simple "..." / '...' quoting
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1)
-    }
-    if (process.env[key] === undefined) process.env[key] = value
-  }
-}
-
-loadDotenv()
+// Geschichtete .env: Prozess-Env > agents/.env.cli > Root-.env (Repo-verankert,
+// funktioniert damit aus jedem Arbeitsverzeichnis).
+loadAgentEnv('cli')
 
 const URL  = process.env.AJNA_URL  || 'http://127.0.0.1:8090'
 const USER = process.env.AJNA_USER
 const PASS = process.env.AJNA_PASS
 
-// Wenn die AJNA_URL auf HTTPS zeigt (z. B. https://localhost durch Caddy):
-// Node trust standardmäßig nur die Mozilla-CA-Liste und kennt Caddys
-// lokale Root-CA NICHT, obwohl die im System-Keystore liegt. Wir re-execen
-// uns deshalb selbst mit --use-system-ca (Node 23+), sobald HTTPS im Spiel
-// ist — spart dem Anwender, das Flag jedes Mal mitzutippen.
-if (URL.startsWith('https://') && !process.execArgv.includes('--use-system-ca')) {
-  const r = spawnSync(
-    process.execPath,
-    ['--use-system-ca', process.argv[1], ...process.argv.slice(2)],
-    { stdio: 'inherit' }
-  )
-  process.exit(r.status ?? 1)
-}
+// HTTPS (z. B. https://localhost durch Caddy): einmaliger Re-Exec mit
+// --use-system-ca, damit Node Caddys lokaler Root-CA vertraut.
+maybeReexecWithSystemCa(URL)
 
 // ───────────────────────────────────────────────────────────────────────
 //  Helpers

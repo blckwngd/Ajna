@@ -128,6 +128,7 @@ export async function probeLocalAjna(extra = []) {
   add('https://127.0.0.1', 'default')
   const found = []
   for (const { url, source } of candidates) {
+    console.log(`[probe] ${url} (${source}) ...`)
     const health = await httpGet(`${url}/api/health`, { insecure: true })
     if (!health || health.status !== 200) continue
     const objects = await httpGet(`${url}/api/collections/objects/records?perPage=1`, { insecure: true })

@@ -14,7 +14,7 @@
 //   Ajna-Interaktion „einschalten" → Gateway publisht ajna/ha/<inst>/<d>/<e>/set
 //        {service,data} → HA-Automation ruft <domain>.<service>.
 //
-// Konfiguration (ENV oder .env im CWD):
+// Konfiguration (Env > agents/.env.ha-gateway > Root-.env — siehe lib/env.mjs):
 //   AJNA_URL/USER/PASS        Ajna-Login (Gateway-User; seine Standardrechte
 //                             gelten für die angelegten Objekte — s. Startwarnung)
 //   HA_INSTANCE               Namespace/Instanz (Default: home)
@@ -35,68 +35,42 @@ import os from 'node:os'
 import net from 'node:net'
 import tls from 'node:tls'
 import { randomUUID, X509Certificate } from 'node:crypto'
-import { maybeReexecWithSystemCa } from './lib/system-ca.mjs'
-import { EventSource } from 'eventsource'
-if (typeof globalThis.EventSource !== 'function') globalThis.EventSource = EventSource
+import { bootAgent, die, envNum, envInt, envBool, envStr } from './lib/agent-base.mjs'
 
 import { Aedes } from 'aedes'
 import mqtt from 'mqtt'
-import { AjnaManager } from '../client/core/AjnaManager.js'
 
-// ─── Env laden (geschichtet: Prozess-Env > agents/.env.ha-gateway > Root-.env) ──
-import { loadAgentEnv } from './lib/env.mjs'
-loadAgentEnv('ha-gateway')
+// Geschichtete .env + Erststart-Wizard (--setup oder fehlende Pflichtwerte,
+// nur TTY) + System-CA-Re-Exec + Login + connect — alles in bootAgent.
+const { ajna } = await bootAgent('ha-gateway', {
+  connect: true,
+  setup: {
+    need: ['AJNA_USER', 'AJNA_PASS', 'MQTT_HA_USER', 'MQTT_HA_PASS'],
+    run: async () => (await import('./lib/ha-setup.mjs')).runHaSetup(),   // schreibt .env.ha-gateway + setzt process.env
+  },
+})
 
-// ─── Setup-Wizard: Erststart (Pflichtwerte fehlen) oder explizit --setup ──
-{
-  const wantSetup = process.argv.includes('--setup')
-  const incomplete = !process.env.AJNA_USER || !process.env.AJNA_PASS
-    || !process.env.MQTT_HA_USER || !process.env.MQTT_HA_PASS
-  if (wantSetup || incomplete) {
-    if (!process.stdin.isTTY) {
-      if (incomplete) {
-        console.error('✗ Konfiguration unvollständig (agents/.env.ha-gateway fehlt/leer).')
-        console.error('  Interaktiv einrichten:  node agents/homeassistant-gateway.mjs --setup')
-        process.exit(1)
-      }
-      // --setup ohne TTY (z. B. via pm2): ignorieren, normal starten.
-    } else {
-      const { runHaSetup } = await import('./lib/ha-setup.mjs')
-      const res = await runHaSetup()   // schreibt .env.ha-gateway + setzt process.env
-      if (res?.exit) process.exit(0)   // z. B. an pm2 übergeben
-    }
-  }
-}
-
-const AJNA_URL   = process.env.AJNA_URL  || 'http://127.0.0.1:8090'
-const AJNA_USER  = process.env.AJNA_USER
-const AJNA_PASS  = process.env.AJNA_PASS
-const HA_INSTANCE = (process.env.HA_INSTANCE || 'home').replace(/[^a-z0-9_-]/gi, '')
-const MQTT_PORT  = parseInt(process.env.MQTT_PORT || '1883', 10)
-const MQTT_HA_USER = process.env.MQTT_HA_USER
-const MQTT_HA_PASS = process.env.MQTT_HA_PASS
-const MQTT_GW_USER = process.env.MQTT_GATEWAY_USER || 'ajna_gateway'
-const MQTT_GW_PASS = process.env.MQTT_GATEWAY_PASS || randomUUID()   // intern, nur localhost
-const MQTT_EXTERNAL_URL = process.env.MQTT_EXTERNAL_URL || ''
-const TLS_CERT = process.env.MQTT_TLS_CERT
-const TLS_KEY  = process.env.MQTT_TLS_KEY
+const HA_INSTANCE = envStr('HA_INSTANCE', 'home').replace(/[^a-z0-9_-]/gi, '') || 'home'
+const MQTT_PORT  = envInt('MQTT_PORT', 1883)
+const MQTT_HA_USER = envStr('MQTT_HA_USER')
+const MQTT_HA_PASS = envStr('MQTT_HA_PASS')
+const MQTT_GW_USER = envStr('MQTT_GATEWAY_USER') || 'ajna_gateway'
+const MQTT_GW_PASS = envStr('MQTT_GATEWAY_PASS') || randomUUID()   // intern, nur localhost
+const MQTT_EXTERNAL_URL = envStr('MQTT_EXTERNAL_URL')
+const TLS_CERT = envStr('MQTT_TLS_CERT')
+const TLS_KEY  = envStr('MQTT_TLS_KEY')
 // Selbst signiertes TLS: wenn keine echten Zertifikate gesetzt sind, kann das
 // Gateway auf Wunsch selbst eins erzeugen (einmalig, dann persistent).
-const TLS_AUTO = /^(1|true|yes|on)$/i.test(process.env.MQTT_TLS_AUTO || '')
-const TLS_DIR  = process.env.MQTT_TLS_DIR || resolve(process.cwd(), '.ha-gateway-tls')
-const TLS_CN   = process.env.MQTT_TLS_CN || os.hostname()
-const TLS_SAN  = (process.env.MQTT_TLS_SAN || '').split(',').map(s => s.trim()).filter(Boolean)
-const HA_LAT   = parseFloat(process.env.HA_LAT || '50.3569')
-const HA_LON   = parseFloat(process.env.HA_LON || '7.5890')
+const TLS_AUTO = envBool('MQTT_TLS_AUTO')
+const TLS_DIR  = envStr('MQTT_TLS_DIR') || resolve(process.cwd(), '.ha-gateway-tls')
+const TLS_CN   = envStr('MQTT_TLS_CN') || os.hostname()
+const TLS_SAN  = envStr('MQTT_TLS_SAN').split(',').map(s => s.trim()).filter(Boolean)
+const HA_LAT   = envNum('HA_LAT', 50.3569)
+const HA_LON   = envNum('HA_LON', 7.5890)
 const BASE = `ajna/ha/${HA_INSTANCE}`
 const CONTROLLER_NAME = 'Smart Home'
 
-maybeReexecWithSystemCa(AJNA_URL)
-
-function die(msg) { console.error(`✗ ${msg}`); process.exit(1) }
-if (!AJNA_USER || !AJNA_PASS) die('AJNA_USER und AJNA_PASS fehlen (.env)')
 if (!MQTT_EXTERNAL_URL && (!MQTT_HA_USER || !MQTT_HA_PASS)) die('MQTT_HA_USER/MQTT_HA_PASS fehlen (Zugangsdaten des HA-Clients)')
-if (!Number.isFinite(HA_LAT) || !Number.isFinite(HA_LON)) die('Ungültige HA_LAT/HA_LON')
 
 // ─── Steuerbare Domains: Emoji + Aktionen (→ MQTT-{service,data}) ─────────
 const DOMAINS = {
@@ -264,13 +238,8 @@ async function startEmbeddedBroker() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-//  Ajna
+//  Ajna (Login + connect liefen bereits in bootAgent)
 // ═════════════════════════════════════════════════════════════════════════
-const ajna = new AjnaManager(AJNA_URL)
-try { await ajna.login(AJNA_USER, AJNA_PASS) }
-catch (err) { die(`Ajna-Login fehlgeschlagen: ${err?.response?.data?.message || err?.message || err}`) }
-console.log(`[ha-gateway] eingeloggt als ${ajna.currentUser()?.email || AJNA_USER}`)
-await ajna.connect()
 warnIfNoDefaults()
 
 // ─── Broker + eigener MQTT-Client ─────────────────────────────────────────
@@ -299,7 +268,6 @@ subscribeController(controller)
 adoptExisting()
 
 console.log(`[ha-gateway] bereit. Warte auf HA-State-Topics unter ${BASE}/… (Strg+C zum Beenden)`)
-process.on('SIGINT', () => { console.log('\n[ha-gateway] beende.'); process.exit(0) })
 
 // ═════════════════════════════════════════════════════════════════════════
 //  MQTT → Registry → Ajna

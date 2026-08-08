@@ -40,63 +40,20 @@
 // Beenden: Ctrl+C.
 
 import WebSocket from 'ws'
-import { readFileSync, existsSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { maybeReexecWithSystemCa } from './lib/system-ca.mjs'
-import { EventSource } from 'eventsource'
-// PB-SDK öffnet beim ersten refreshObjects()/connect() eine Realtime-SSE
-// und greift dabei auf globalThis.EventSource zu. In Node ist das je nach
-// Version nicht (zuverlässig) verfügbar → wir polyfillen aus npm.
-if (typeof globalThis.EventSource !== 'function') globalThis.EventSource = EventSource
+import { bootAgent, die, envNum, envStr, publishManifest } from './lib/agent-base.mjs'
 
-import { AjnaManager } from '../client/core/AjnaManager.js'
+// Login + geschichtete .env (Env > agents/.env.ais > Root-.env) + System-CA.
+const { ajna } = await bootAgent('ais', { require: ['AISSTREAM_API_KEY'] })
 
-// ───────────────────────────────────────────────────────────────────────
-//  .env laden (identisches Schema wie tools/ajna.mjs)
-// ───────────────────────────────────────────────────────────────────────
-
-function loadDotenv() {
-  const path = resolve(process.cwd(), '.env')
-  if (!existsSync(path)) return
-  const raw = readFileSync(path, 'utf8')
-  for (const line of raw.split(/\r?\n/)) {
-    const stripped = line.replace(/^\s*#.*$/, '').trim()
-    if (!stripped) continue
-    const m = stripped.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/i)
-    if (!m) continue
-    const key = m[1]
-    let value = m[2].trim()
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1)
-    }
-    if (process.env[key] === undefined) process.env[key] = value
-  }
-}
-
-loadDotenv()
-
-const AJNA_URL  = process.env.AJNA_URL  || 'http://127.0.0.1:8090'
-const AJNA_USER = process.env.AJNA_USER
-const AJNA_PASS = process.env.AJNA_PASS
-const AIS_KEY   = process.env.AISSTREAM_API_KEY
-const CENTER_LAT = parseFloat(process.env.AIS_CENTER_LAT || '53.5511')
-const CENTER_LON = parseFloat(process.env.AIS_CENTER_LON || '9.9937')
-const RADIUS_KM  = parseFloat(process.env.AIS_RADIUS_KM  || '10')
-const UPDATE_INTERVAL_MS = parseFloat(process.env.AIS_UPDATE_INTERVAL_S || '5') * 1000
-const STALE_TIMEOUT_MS   = parseFloat(process.env.AIS_STALE_TIMEOUT_S   || '600') * 1000
+const AIS_KEY   = envStr('AISSTREAM_API_KEY')
+const CENTER_LAT = envNum('AIS_CENTER_LAT', 53.5511)
+const CENTER_LON = envNum('AIS_CENTER_LON', 9.9937)
+const RADIUS_KM  = envNum('AIS_RADIUS_KM', 10)
+const UPDATE_INTERVAL_MS = envNum('AIS_UPDATE_INTERVAL_S', 5) * 1000
+const STALE_TIMEOUT_MS   = envNum('AIS_STALE_TIMEOUT_S', 600) * 1000
 const CLEANUP_INTERVAL_MS = 30 * 1000
 
-// Bei HTTPS ggf. mit --use-system-ca neu starten (Caddys interne CA). Robust
-// gegen altes Node & öffentliche Zerts — siehe agents/lib/system-ca.mjs.
-maybeReexecWithSystemCa(AJNA_URL)
-
-function die(msg) { console.error(`✗ ${msg}`); process.exit(1) }
-
-if (!AIS_KEY)  die('AISSTREAM_API_KEY fehlt (.env oder env var)')
-if (!AJNA_USER || !AJNA_PASS) die('AJNA_USER und AJNA_PASS fehlen')
-if (!Number.isFinite(CENTER_LAT) || !Number.isFinite(CENTER_LON)) die('Ungültige Center-Koords')
-if (!Number.isFinite(RADIUS_KM) || RADIUS_KM <= 0) die('Ungültiger Radius')
+if (RADIUS_KM <= 0) die('Ungültiger Radius')
 
 // ───────────────────────────────────────────────────────────────────────
 //  BoundingBox berechnen (Quadrat um Center, das den Kreis-Radius enthält)
@@ -117,38 +74,19 @@ console.log(`[ais] throttle: ${(UPDATE_INTERVAL_MS / 1000).toFixed(1)} s pro Sch
 console.log(`[ais] stale timeout: ${(STALE_TIMEOUT_MS / 1000).toFixed(0)} s`)
 
 // ───────────────────────────────────────────────────────────────────────
-//  Ajna-Login + initiales Laden bekannter Schiffe (via AjnaManager —
-//  keine direkten PB-Aufrufe, damit Federation-Routing + Composite-IDs
-//  transparent greifen).
-// ───────────────────────────────────────────────────────────────────────
-
-const ajna = new AjnaManager(AJNA_URL)
-try {
-  await ajna.login(AJNA_USER, AJNA_PASS)
-} catch (err) {
-  die(`Ajna-Login fehlgeschlagen: ${err?.response?.data?.message || err?.message || err}`)
-}
-console.log(`[ajna] eingeloggt als ${ajna.currentUser()?.email || AJNA_USER}`)
-
-// ───────────────────────────────────────────────────────────────────────
 //  Agent-Manifest publishen — damit der Client im FilterDialog weiß,
 //  was dieser Agent anbietet. AIS hat (V1) nur einen "all"-Layer; eine
 //  feinere Aufschlüsselung nach Schiffstyp könnte später aus
 //  ShipStaticData.Type abgeleitet werden.
 // ───────────────────────────────────────────────────────────────────────
-try {
-  await ajna.upsertAgentManifest({
-    source: 'aisstream',
-    agent_name: 'AIS-Bridge',
-    description: `Schiffe via aisstream.io im Radius ${RADIUS_KM} km um ${CENTER_LAT.toFixed(3)}, ${CENTER_LON.toFixed(3)}`,
-    layers: [
-      { key: 'all', label: 'Alle Schiffe', predicate: null }
-    ]
-  })
-  console.log('[ajna] manifest aktualisiert')
-} catch (err) {
-  console.warn('[ajna] manifest-upsert fehlgeschlagen:', err?.message || err)
-}
+if (await publishManifest(ajna, {
+  source: 'aisstream',
+  agent_name: 'AIS-Bridge',
+  description: `Schiffe via aisstream.io im Radius ${RADIUS_KM} km um ${CENTER_LAT.toFixed(3)}, ${CENTER_LON.toFixed(3)}`,
+  layers: [
+    { key: 'all', label: 'Alle Schiffe', predicate: null }
+  ]
+})) console.log('[ajna] manifest aktualisiert')
 
 /**
  * In-Memory-Map: MMSI → Schiffs-State
@@ -447,5 +385,5 @@ setInterval(async () => {
 
 connect()
 
-process.on('SIGINT',  () => { console.log('\n[ais] SIGINT — exit'); process.exit(0) })
+// SIGINT übernimmt bootAgent; SIGTERM (pm2/systemd-Stop) zusätzlich hier.
 process.on('SIGTERM', () => { console.log('[ais] SIGTERM — exit'); process.exit(0) })

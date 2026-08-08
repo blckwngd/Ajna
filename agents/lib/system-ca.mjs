@@ -24,6 +24,7 @@ export function maybeReexecWithSystemCa(ajnaUrl) {
   if (!ajnaUrl || !ajnaUrl.startsWith('https://')) return  // HTTP → kein CA-Thema
   if (process.execArgv.includes('--use-system-ca')) return // schon re-exec't
   if (process.env.AJNA_NO_SYSTEM_CA === '1') return        // explizit aus
+  if (!process.argv[1]) return                             // node -e/REPL: kein Skript zum Re-Exec
 
   if (!nodeSupportsSystemCa()) {
     // Öffentliche Zerts funktionieren ohne das Flag. Für eine interne CA auf
