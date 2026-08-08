@@ -81,21 +81,27 @@ export const randomSecret = (bytes = 18) => randomBytes(bytes).toString('base64u
 // ─── HTTP-Probe (auch gegen selbstsignierte lokale Zertifikate) ───────────
 
 export function httpGet(url, { timeoutMs = 4000, insecure = false } = {}) {
-  return new Promise((res) => {
+  const attempt = (family) => new Promise((res) => {
     try {
       const u = new URL(url)
       const mod = u.protocol === 'https:' ? https : http
       const req = mod.request(u, { method: 'GET', timeout: timeoutMs,
+        ...(family ? { family } : {}),
         ...(insecure ? { rejectUnauthorized: false } : {}) }, (r) => {
         let body = ''
         r.on('data', (c) => { if (body.length < 65536) body += c })
         r.on('end', () => res({ status: r.statusCode, body }))
       })
-      req.on('timeout', () => { req.destroy(); res(null) })
-      req.on('error', () => res(null))
+      req.on('timeout', () => { req.destroy(); res({ status: 0, error: 'Timeout' }) })
+      req.on('error', (e) => res({ status: 0, error: e?.code || e?.message || 'Netzfehler' }))
       req.end()
-    } catch { res(null) }
+    } catch (e) { res({ status: 0, error: e?.message || 'ungültige URL' }) }
   })
+  // Status 0 = gar keine HTTP-Antwort (DNS/TCP/TLS/Timeout); dann einmal
+  // IPv4-only nachfassen: kaputte/injizierte AAAA-Records lassen Node je nach
+  // Version hängen, während curl per Happy Eyeballs still auf IPv4 ausweicht.
+  return attempt().then(r => (r.status !== 0 ? r
+    : attempt(4).then(r4 => (r4.status !== 0 ? r4 : { ...r, error: `${r.error} (auch via IPv4: ${r4.error})` }))))
 }
 
 // ─── Ajna-Instanz-Erkennung ───────────────────────────────────────────────
@@ -128,11 +134,15 @@ export async function probeLocalAjna(extra = []) {
   add('https://127.0.0.1', 'default')
   const found = []
   for (const { url, source } of candidates) {
-    console.log(`[probe] ${url} (${source}) ...`)
     const health = await httpGet(`${url}/api/health`, { insecure: true })
-    if (!health || health.status !== 200) continue
+    if (!health || health.status !== 200) {
+      console.log(`[probe] ${url} (${source}) → health: ${health?.error || `HTTP ${health?.status}`}`)
+      continue
+    }
     const objects = await httpGet(`${url}/api/collections/objects/records?perPage=1`, { insecure: true })
-    found.push({ url, source, health: true, isAjna: objects?.status === 200 })
+    const isAjna = objects?.status === 200
+    console.log(`[probe] ${url} (${source}) → health ok, objects: ${isAjna ? 'ok' : (objects?.error || `HTTP ${objects?.status}`)}${isAjna ? '' : ' → kein Ajna-Fingerprint'}`)
+    found.push({ url, source, health: true, isAjna })
   }
   return found
 }

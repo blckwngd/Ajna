@@ -48,7 +48,7 @@ export async function runHaSetup() {
   else {
     ajnaUrl = await ask(rl, 'Ajna-URL (z. B. https://ajna.example.org)', ajnaUrl)
     const h = await httpGet(`${ajnaUrl}/api/health`, { insecure: true })
-    if (!h || h.status !== 200) console.log('⚠ Instanz antwortet nicht auf /api/health — bitte URL prüfen (weiter trotzdem möglich).')
+    if (!h || h.status !== 200) console.log(`⚠ Instanz antwortet nicht auf /api/health (${h?.error || `HTTP ${h?.status}`}) — bitte URL prüfen (weiter trotzdem möglich).`)
     else console.log('✓ Instanz erreichbar.')
   }
 
