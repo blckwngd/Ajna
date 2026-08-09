@@ -223,6 +223,24 @@ export function pm2Available() {
   catch { return false }
 }
 
+/** Von pm2 verwaltete Prozesse als {name, script, args} — leer ohne pm2. */
+export function pm2Processes() {
+  try {
+    const out = execFileSync(PM2, ['jlist'], { stdio: ['ignore', 'pipe', 'pipe'] }).toString()
+    const arr = JSON.parse(out.slice(out.indexOf('[')))   // evtl. Banner vor dem JSON abschneiden
+    return arr.map(p => ({
+      name: p.name,
+      script: p.pm2_env?.pm_exec_path || '',
+      args: Array.isArray(p.pm2_env?.args) ? p.pm2_env.args.join(' ') : String(p.pm2_env?.args ?? ''),
+    }))
+  } catch { return [] }
+}
+
+/** Startet einen pm2-Prozess neu. Wirft bei Fehlern. */
+export function pm2Restart(name) {
+  execFileSync(PM2, ['restart', name], { stdio: 'inherit' })
+}
+
 /** Registriert ein Script bei pm2 (start + save). Wirft bei Fehlern. */
 export function pm2Register({ name, script, args = [] }) {
   execFileSync(PM2, ['start', script, '--name', name, '--cwd', REPO_ROOT,

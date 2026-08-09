@@ -18,7 +18,8 @@ import PocketBase from 'pocketbase'
 import { writeAgentEnv, agentEnvPath } from './env.mjs'
 import {
   makeRl, ask, askHidden, confirm, choose, randomSecret, httpGet,
-  probeLocalAjna, caddyDomains, findCaddyCert, pm2Available, pm2Register, REPO_ROOT,
+  probeLocalAjna, caddyDomains, findCaddyCert, pm2Available, pm2Register,
+  pm2Processes, pm2Restart, REPO_ROOT,
 } from './setup-wizard.mjs'
 
 const AGENT = 'ha-gateway'
@@ -161,6 +162,20 @@ export async function runHaSetup() {
   console.log(`  → enthält die UI-Schritte für die MQTT-Integration + den mqtt_statestream-Schnipsel.`)
 
   // ── 8) pm2 ─────────────────────────────────────────────────────────────
+  // Verwaltet pm2 das Gateway bereits (z. B. via ecosystem.config.cjs als
+  // "homeassistant-gateway"), KEINE zweite Registrierung — zwei Instanzen
+  // kollidieren am MQTT-Port. Stattdessen Restart mit frischer Config anbieten.
+  const managed = pm2Processes().filter(p =>
+    ['ajna-ha-gateway', 'homeassistant-gateway'].includes(p.name)
+    || /homeassistant-gateway/.test(`${p.script} ${p.args}`))
+  if (managed.length) {
+    console.log(`ℹ pm2 verwaltet das Gateway bereits: ${managed.map(p => p.name).join(', ')} — keine erneute Registrierung.`)
+    if (await confirm(rl, `Jetzt mit der neuen Konfiguration neu starten (pm2 restart ${managed[0].name})?`, true)) {
+      try { pm2Restart(managed[0].name); console.log('✓ Neu gestartet.') }
+      catch (e) { console.log(`⚠ pm2 restart fehlgeschlagen: ${e?.message || e} — bitte manuell: pm2 restart ${managed[0].name}`) }
+    }
+    rl.close(); return { exit: true }   // Vordergrund-Start würde mit der pm2-Instanz kollidieren
+  }
   if (pm2Available() && await confirm(rl, 'Gateway jetzt bei pm2 registrieren (Autostart)?', true)) {
     try {
       pm2Register({ name: 'ajna-ha-gateway', script: 'agents/homeassistant-gateway.mjs' })

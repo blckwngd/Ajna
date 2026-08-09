@@ -219,6 +219,11 @@ async function startEmbeddedBroker() {
   const server = useTls
     ? tls.createServer({ cert: tlsMat.cert, key: tlsMat.key }, handler)
     : net.createServer(handler)
+  server.on('error', (e) => {
+    if (e?.code === 'EADDRINUSE') die(`MQTT-Port ${MQTT_PORT} ist belegt — läuft bereits eine Gateway-Instanz? `
+      + `Prüfen: ss -tlnp | grep ${MQTT_PORT} bzw. pm2 status (homeassistant-gateway vs. ajna-ha-gateway — nur EINE behalten).`)
+    die(`MQTT-Broker-Start fehlgeschlagen: ${e?.message || e}`)
+  })
   server.listen(MQTT_PORT, () => {
     console.log(`[ha-gateway] Broker läuft auf ${useTls ? 'mqtts' : 'mqtt'}://0.0.0.0:${MQTT_PORT} (Instanz „${HA_INSTANCE}")`)
     if (!useTls) {
