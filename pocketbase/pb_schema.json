@@ -439,11 +439,11 @@
   },
   {
     "id": "pbc_2237939851",
-    "listRule": "object.owner = @request.auth.id || (@collection.effective_permissions.object = object.id && @collection.effective_permissions.user = @request.auth.id && @collection.effective_permissions.rights ?~ \"owner\")",
-    "viewRule": "object.owner = @request.auth.id || (@collection.effective_permissions.object = object.id && @collection.effective_permissions.user = @request.auth.id && @collection.effective_permissions.rights ?~ \"owner\")",
-    "createRule": "object.owner = @request.auth.id || (@collection.effective_permissions.object = object.id && @collection.effective_permissions.user = @request.auth.id && @collection.effective_permissions.rights ?~ \"owner\")",
-    "updateRule": "object.owner = @request.auth.id || (@collection.effective_permissions.object = object.id && @collection.effective_permissions.user = @request.auth.id && @collection.effective_permissions.rights ?~ \"owner\")",
-    "deleteRule": "object.owner = @request.auth.id || (@collection.effective_permissions.object = object.id && @collection.effective_permissions.user = @request.auth.id && @collection.effective_permissions.rights ?~ \"owner\")",
+    "listRule": "object.owner = @request.auth.id || (@collection.effective_permissions.object ?= object.id && @collection.effective_permissions.user ?= @request.auth.id && @collection.effective_permissions.rights ?~ \"owner\")",
+    "viewRule": "object.owner = @request.auth.id || (@collection.effective_permissions.object ?= object.id && @collection.effective_permissions.user ?= @request.auth.id && @collection.effective_permissions.rights ?~ \"owner\")",
+    "createRule": "object.owner = @request.auth.id || (@collection.effective_permissions.object ?= object.id && @collection.effective_permissions.user ?= @request.auth.id && @collection.effective_permissions.rights ?~ \"owner\")",
+    "updateRule": "object.owner = @request.auth.id || (@collection.effective_permissions.object ?= object.id && @collection.effective_permissions.user ?= @request.auth.id && @collection.effective_permissions.rights ?~ \"owner\")",
+    "deleteRule": "object.owner = @request.auth.id || (@collection.effective_permissions.object ?= object.id && @collection.effective_permissions.user ?= @request.auth.id && @collection.effective_permissions.rights ?~ \"owner\")",
     "name": "object_permissions",
     "type": "base",
     "fields": [
@@ -565,11 +565,11 @@
   },
   {
     "id": "pbc_592032537",
-    "listRule": "owner = @request.auth.id || (@collection.effective_permissions.object = id && @collection.effective_permissions.user = @request.auth.id && @collection.effective_permissions.rights ?~ \"view\") || (@request.auth.id != \"\" && @collection.object_permissions.object = id && (@collection.object_permissions.subject_type = \"authenticated\" || @collection.object_permissions.subject_type = \"everyone\") && @collection.object_permissions.rights ?~ \"view\") || (@request.auth.id = \"\" && @collection.object_permissions.object = id && (@collection.object_permissions.subject_type = \"anonymous\" || @collection.object_permissions.subject_type = \"everyone\") && @collection.object_permissions.rights ?~ \"view\")",
-    "viewRule": "owner = @request.auth.id || (@collection.effective_permissions.object = id && @collection.effective_permissions.user = @request.auth.id && @collection.effective_permissions.rights ?~ \"view\") || (@request.auth.id != \"\" && @collection.object_permissions.object = id && (@collection.object_permissions.subject_type = \"authenticated\" || @collection.object_permissions.subject_type = \"everyone\") && @collection.object_permissions.rights ?~ \"view\") || (@request.auth.id = \"\" && @collection.object_permissions.object = id && (@collection.object_permissions.subject_type = \"anonymous\" || @collection.object_permissions.subject_type = \"everyone\") && @collection.object_permissions.rights ?~ \"view\")",
+    "listRule": "owner = @request.auth.id || (@collection.effective_permissions.object ?= id && @collection.effective_permissions.user ?= @request.auth.id && @collection.effective_permissions.rights ?~ \"view\") || (@request.auth.id != \"\" && @collection.object_permissions.object ?= id && (@collection.object_permissions.subject_type ?= \"authenticated\" || @collection.object_permissions.subject_type ?= \"everyone\") && @collection.object_permissions.rights ?~ \"view\") || (@request.auth.id = \"\" && @collection.object_permissions.object ?= id && (@collection.object_permissions.subject_type ?= \"anonymous\" || @collection.object_permissions.subject_type ?= \"everyone\") && @collection.object_permissions.rights ?~ \"view\")",
+    "viewRule": "owner = @request.auth.id || (@collection.effective_permissions.object ?= id && @collection.effective_permissions.user ?= @request.auth.id && @collection.effective_permissions.rights ?~ \"view\") || (@request.auth.id != \"\" && @collection.object_permissions.object ?= id && (@collection.object_permissions.subject_type ?= \"authenticated\" || @collection.object_permissions.subject_type ?= \"everyone\") && @collection.object_permissions.rights ?~ \"view\") || (@request.auth.id = \"\" && @collection.object_permissions.object ?= id && (@collection.object_permissions.subject_type ?= \"anonymous\" || @collection.object_permissions.subject_type ?= \"everyone\") && @collection.object_permissions.rights ?~ \"view\")",
     "createRule": "@request.auth.id != \"\"",
-    "updateRule": "owner = @request.auth.id || (@collection.effective_permissions.object = id && @collection.effective_permissions.user = @request.auth.id && @collection.effective_permissions.rights ?~ \"edit\")",
-    "deleteRule": "@request.auth.id = owner.id || (@collection.effective_permissions.object = id && @collection.effective_permissions.user = @request.auth.id && @collection.effective_permissions.rights ?~ \"owner\")",
+    "updateRule": "owner = @request.auth.id || (@collection.effective_permissions.object ?= id && @collection.effective_permissions.user ?= @request.auth.id && @collection.effective_permissions.rights ?~ \"edit\")",
+    "deleteRule": "@request.auth.id = owner.id || (@collection.effective_permissions.object ?= id && @collection.effective_permissions.user ?= @request.auth.id && @collection.effective_permissions.rights ?~ \"owner\")",
     "name": "objects",
     "type": "base",
     "fields": [
