@@ -1003,18 +1003,24 @@ async function init() {
     _gizmoMgr.attachToNode(null)
     _gizmoGo = null
   }
-  const _toggleObjectGizmo = (go) => {
+  const _toggleObjectGizmo = async (go) => {
     if (!go) return
     if (_gizmoGo === go) { _detachGizmo(); return }   // dasselbe Objekt erneut → fertig
-    // Berechtigung VOR dem Einblenden prüfen: Position/Rotation ändern darf nur
-    // der Besitzer (Server-Regel; Gruppen-Rechte folgen mit dem ACE-System).
+    // Berechtigung VOR dem Einblenden prüfen: Besitzer ODER User-/Gruppen-ACE
+    // mit edit/move/owner-Recht (myRights fragt den effective_permissions-
+    // Cache — dieselben Fälle, die die Server-Regel objects.updateRule erlaubt).
     const rec = ajnaManager.objectMap.get(go.id) || ajnaManager.getObjectById?.(go.id)
     const cli = ajnaManager.clients?.get(rec?._origin) || ajnaManager.defaultClient
     const me = cli?.currentUser?.()
-    if (!me || !rec?.owner || me.id !== rec.owner) {
+    let allowed = !!(me && rec?.owner && me.id === rec.owner)
+    if (!allowed && me && rec) {
+      const r = await ajnaManager.myRights?.(go.id)?.catch?.(() => null)
+      allowed = !!(r?.rights || []).some(x => x === 'edit' || x === 'move' || x === 'owner')
+    }
+    if (!allowed) {
       if (!_toast) _toast = new Toast()
-      _toast.show(!me ? 'Bitte einloggen — Objekt-Werkzeuge erfordern Besitzrechte.'
-        : 'Keine Berechtigung: nur der Besitzer kann dieses Objekt verschieben.', { title: go.name || 'Objekt' })
+      _toast.show(!me ? 'Bitte einloggen — Objekt-Werkzeuge erfordern Bearbeitungsrechte.'
+        : 'Keine Berechtigung: Verschieben erfordert Besitz oder ein edit/move-Recht.', { title: go.name || 'Objekt' })
       return
     }
     if (!_gizmoMgr) {

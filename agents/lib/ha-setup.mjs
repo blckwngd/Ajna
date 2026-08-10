@@ -60,11 +60,13 @@ export async function runHaSetup() {
     'Vorhandenen Benutzer verwenden',
   ], ajnaUser ? 1 : 0)
   const pb = new PocketBase(ajnaUrl)
+  let suActive = false   // Superuser-Session aktiv? (transient, wird nie gespeichert)
   if (userMode === 0) {
     const suEmail = await ask(rl, 'Superuser-E-Mail')
     const suPass = await askHidden(rl, 'Superuser-Passwort (nur für diesen Schritt, wird nicht gespeichert)')
     try {
       await pb.collection('_superusers').authWithPassword(suEmail, suPass)
+      suActive = true
       console.log('✓ Superuser-Login ok.')
     } catch (e) { console.log(`✗ Superuser-Login fehlgeschlagen: ${e?.message || e}`); rl.close(); return { exit: true } }
     ajnaUser = await ask(rl, 'E-Mail des neuen Gateway-Users', ajnaUser || 'ha-gateway@ajna.local')
@@ -92,11 +94,50 @@ export async function runHaSetup() {
     } catch (e) {
       console.log(`✗ Benutzer-Anlage fehlgeschlagen: ${e?.response?.message || e?.message || e}`)
       rl.close(); return { exit: true }
-    } finally { pb.authStore.clear() }   // Superuser-Session verwerfen
+    }
   } else {
     ajnaUser = await ask(rl, 'Gateway-User (E-Mail)', ajnaUser)
     ajnaPass = (await askHidden(rl, `Passwort für ${ajnaUser} (Enter = unverändert lassen)`)) || ajnaPass
   }
+
+  // ── 2b) Admin-Spieler (optional) ───────────────────────────────────────
+  // Bekommt vom Gateway auf dem Controller und ALLEN Geräte-Objekten eine
+  // User-ACE mit view/edit/move/owner + allen Aktionen — de facto Besitzer.
+  // Das owner-FELD bleibt beim Gateway-User (der muss seine Objekte pflegen);
+  // das owner-RECHT greift über die PB-Regeln (Migration owner_right_in_rules).
+  let adminUser = env.HA_ADMIN_USER || ''
+  {
+    const input = (await ask(rl, 'Admin-Spieler mit Vollzugriff auf die HA-Objekte (User-ID oder E-Mail, leer = keiner)', adminUser)).trim()
+    if (!input) adminUser = ''
+    else if (!input.includes('@')) adminUser = input
+    else {
+      // E-Mail → ID braucht Superuser-Rechte (users sind für normale Accounts
+      // nicht listbar). Session aus Schritt 2 wird mitbenutzt, sonst nachfragen.
+      if (!suActive) {
+        const suEmail = await ask(rl, 'Superuser-E-Mail für die E-Mail-Auflösung (leer = stattdessen ID eingeben)')
+        if (suEmail) {
+          const suPass = await askHidden(rl, 'Superuser-Passwort (nur für diesen Schritt)')
+          try { await pb.collection('_superusers').authWithPassword(suEmail, suPass); suActive = true }
+          catch (e) { console.log(`✗ Superuser-Login fehlgeschlagen: ${e?.message || e}`) }
+        }
+      }
+      if (suActive) {
+        try {
+          const u = await pb.collection('users').getFirstListItem(`email = ${JSON.stringify(input)}`)
+          adminUser = u.id
+          console.log(`✓ ${input} → User-ID ${u.id}`)
+        } catch {
+          console.log(`⚠ Kein Nutzer mit E-Mail ${input} gefunden.`)
+          adminUser = (await ask(rl, 'Admin-Spieler User-ID (leer = keiner)', '')).trim()
+        }
+      } else {
+        console.log('⚠ Ohne Superuser keine E-Mail-Auflösung — User-ID steht in PB-Admin → users.')
+        adminUser = (await ask(rl, 'Admin-Spieler User-ID (leer = keiner)', '')).trim()
+      }
+    }
+  }
+  pb.authStore.clear()   // Superuser-Session verwerfen
+
   try {
     await pb.collection('users').authWithPassword(ajnaUser, ajnaPass)
     console.log('✓ Gateway-Login geprüft.')
@@ -149,6 +190,7 @@ export async function runHaSetup() {
   // ── 6) Schreiben ───────────────────────────────────────────────────────
   const envPath = writeAgentEnv(AGENT, {
     AJNA_URL: ajnaUrl, AJNA_USER: ajnaUser, AJNA_PASS: ajnaPass,
+    HA_ADMIN_USER: adminUser || null,
     HA_INSTANCE: haInstance, MQTT_PORT: mqttPort,
     MQTT_HA_USER: mqttHaUser, MQTT_HA_PASS: mqttHaPass,
     MQTT_TLS_CERT: tls.cert || null, MQTT_TLS_KEY: tls.key || null,

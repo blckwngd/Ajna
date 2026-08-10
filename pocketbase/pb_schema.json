@@ -439,11 +439,11 @@
   },
   {
     "id": "pbc_2237939851",
-    "listRule": "object.owner = @request.auth.id",
-    "viewRule": "object.owner = @request.auth.id",
-    "createRule": "object.owner = @request.auth.id",
-    "updateRule": "object.owner = @request.auth.id",
-    "deleteRule": "object.owner = @request.auth.id",
+    "listRule": "object.owner = @request.auth.id || (@collection.effective_permissions.object = object.id && @collection.effective_permissions.user = @request.auth.id && @collection.effective_permissions.rights ?~ \"owner\")",
+    "viewRule": "object.owner = @request.auth.id || (@collection.effective_permissions.object = object.id && @collection.effective_permissions.user = @request.auth.id && @collection.effective_permissions.rights ?~ \"owner\")",
+    "createRule": "object.owner = @request.auth.id || (@collection.effective_permissions.object = object.id && @collection.effective_permissions.user = @request.auth.id && @collection.effective_permissions.rights ?~ \"owner\")",
+    "updateRule": "object.owner = @request.auth.id || (@collection.effective_permissions.object = object.id && @collection.effective_permissions.user = @request.auth.id && @collection.effective_permissions.rights ?~ \"owner\")",
+    "deleteRule": "object.owner = @request.auth.id || (@collection.effective_permissions.object = object.id && @collection.effective_permissions.user = @request.auth.id && @collection.effective_permissions.rights ?~ \"owner\")",
     "name": "object_permissions",
     "type": "base",
     "fields": [
@@ -569,7 +569,7 @@
     "viewRule": "owner = @request.auth.id || (@collection.effective_permissions.object = id && @collection.effective_permissions.user = @request.auth.id && @collection.effective_permissions.rights ?~ \"view\")",
     "createRule": "@request.auth.id != \"\"",
     "updateRule": "owner = @request.auth.id || (@collection.effective_permissions.object = id && @collection.effective_permissions.user = @request.auth.id && @collection.effective_permissions.rights ?~ \"edit\")",
-    "deleteRule": "@request.auth.id = owner.id",
+    "deleteRule": "@request.auth.id = owner.id || (@collection.effective_permissions.object = id && @collection.effective_permissions.user = @request.auth.id && @collection.effective_permissions.rights ?~ \"owner\")",
     "name": "objects",
     "type": "base",
     "fields": [

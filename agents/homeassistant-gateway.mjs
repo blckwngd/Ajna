@@ -25,6 +25,8 @@
 //   MQTT_EXTERNAL_URL         statt eingebettetem Broker einen externen nutzen
 //                             (z. B. mqtt://host:1883) — dann kein aedes
 //   HA_LAT/HA_LON             Controller-Koordinaten (Default: 50.3569/7.5890)
+//   HA_ADMIN_USER             optional: User-ID mit Vollzugriff (view/edit/move/
+//                             owner + alle Aktionen) auf Controller + Geräte
 //
 // Start:  node agents/homeassistant-gateway.mjs   bzw.   npm run ha-gateway
 
@@ -36,6 +38,7 @@ import net from 'node:net'
 import tls from 'node:tls'
 import { randomUUID, X509Certificate } from 'node:crypto'
 import { bootAgent, die, envNum, envInt, envBool, envStr } from './lib/agent-base.mjs'
+import { ensureAce } from '../client/core/ensureObject.js'
 
 import { Aedes } from 'aedes'
 import mqtt from 'mqtt'
@@ -67,6 +70,10 @@ const TLS_CN   = envStr('MQTT_TLS_CN') || os.hostname()
 const TLS_SAN  = envStr('MQTT_TLS_SAN').split(',').map(s => s.trim()).filter(Boolean)
 const HA_LAT   = envNum('HA_LAT', 50.3569)
 const HA_LON   = envNum('HA_LON', 7.5890)
+// Optional: User-ID, die auf Controller + allen Geräte-Objekten eine User-ACE
+// mit view/edit/move/owner + allen Aktionen bekommt (de facto Besitzer; das
+// owner-FELD bleibt beim Gateway-User). Vom Wizard abgefragt (HA_ADMIN_USER).
+const HA_ADMIN = envStr('HA_ADMIN_USER')
 const BASE = `ajna/ha/${HA_INSTANCE}`
 const CONTROLLER_NAME = 'Smart Home'
 
@@ -350,6 +357,15 @@ async function updateObjectsFor(entityId) {
 // ═════════════════════════════════════════════════════════════════════════
 //  Controller-Objekt
 // ═════════════════════════════════════════════════════════════════════════
+// Admin-ACE (Union-Merge, idempotent) — siehe HA_ADMIN oben.
+async function grantAdmin(objId) {
+  if (!HA_ADMIN) return
+  await ensureAce(ajna, objId, {
+    subject_type: 'user', subject: HA_ADMIN,
+    rights: ['view', 'edit', 'move', 'owner'], interact_actions: ['*'],
+  }, { warn: (...a) => console.warn('[ha-gateway]', ...a) })
+}
+
 async function ensureController(list) {
   let ctrl = ajna.getObjects().find(o => o?.state?.ha_controller === true && o?.state?.ha_instance === HA_INSTANCE)
   const actions = controllerActions(list)
@@ -364,6 +380,7 @@ async function ensureController(list) {
     })
     console.log(`[ha-gateway] Controller angelegt: ${ctrl.id} @ ${HA_LAT.toFixed(4)}, ${HA_LON.toFixed(4)}`)
   }
+  await grantAdmin(ctrl.id)   // heilt auch einen bereits vorhandenen Controller
   return ctrl
 }
 
@@ -418,6 +435,7 @@ async function createEntityObject(entityId) {
     },
   })
   subscribeEntity(rec.id, entityId, domain)
+  await grantAdmin(rec.id)
   console.log(`[ha-gateway] Objekt angelegt: "${name}" (${entityId}) → ${rec.id}`)
   return rec
 }
@@ -427,6 +445,7 @@ function adoptExisting() {
   for (const o of ajna.getObjects()) {
     if (o?.state?.ha_bridge === true && o?.state?.ha_entity && o?.state?.ha_instance === HA_INSTANCE) {
       subscribeEntity(o.id, o.state.ha_entity, o.state.ha_domain || domainOf(o.state.ha_entity))
+      grantAdmin(o.id)   // fire-and-forget: heilt Bestandsobjekte um die Admin-ACE
       n++
     }
   }

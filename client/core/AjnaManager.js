@@ -620,6 +620,19 @@ export class AjnaManager {
     return this._clientFor(compositeId).listPermissions(compositeId)
   }
 
+  /**
+   * Eigene effektive Rechte auf ein Objekt: Besitzer → alles; sonst der
+   * serverseitige effective_permissions-Cache (user-/group-ACEs; implizite
+   * Audiences landen dort nicht). null = keine expliziten Rechte.
+   */
+  async myRights(compositeId) {
+    const cli = this._clientFor(compositeId)
+    const rec = this.objectMap?.get(compositeId)
+    const me = cli?.currentUser?.()
+    if (me && rec?.owner === me.id) return { rights: ['view', 'edit', 'move', 'owner'], interact_actions: ['*'] }
+    return cli.myRights(compositeId)
+  }
+
   async addPermission(compositeId, ace) {
     return this._clientFor(compositeId).addPermission(compositeId, ace)
   }

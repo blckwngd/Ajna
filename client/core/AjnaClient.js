@@ -619,6 +619,23 @@ export class AjnaClient {
     return this._tagOriginList(list)
   }
 
+  /**
+   * Eigene effektive Rechte auf ein Objekt (aus dem serverseitigen Cache).
+   * Deckt Besitz + user-/group-ACEs ab; implizite Audiences (authenticated/…)
+   * landen NICHT im Cache — für sie bleibt es beim view-über-Sichtbarkeit.
+   * @returns {Promise<{rights:string[], interact_actions:string[]}|null>}
+   */
+  async myRights(objectId) {
+    const me = this.currentUser?.()
+    if (!me) return null
+    const raw = this._toRaw(objectId)
+    try {
+      const row = await this.pb.collection('effective_permissions')
+        .getFirstListItem(`object = "${raw}" && user = "${me.id}"`)
+      return { rights: row.rights || [], interact_actions: row.interact_actions || [] }
+    } catch { return null }   // kein Cache-Eintrag = keine expliziten Rechte
+  }
+
   async addPermission(objectId, ace) {
     const raw = this._toRaw(objectId)
     const rec = await this.pb.collection('object_permissions').create({
