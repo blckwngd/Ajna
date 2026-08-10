@@ -79,6 +79,7 @@ Commands:
                                      subject:      ID des Users/der Gruppe (bei implizit leer)
                                      rights:       Array, view | edit | move | owner, z. B. ["view"]
                                      interact_actions: Array von Aktion-Keys (optional)
+  list-permissions <objectId>      ACEs eines Objekts listen (braucht Besitz oder owner-Recht)
 
 Env (oder .env im CWD):
   AJNA_URL   Default: http://127.0.0.1:8090
@@ -191,6 +192,19 @@ async function cmdDeleteObject(pb, [id]) {
   console.error(`✓ gelöscht: ${id}`)
 }
 
+async function cmdListPermissions(pb, [objectId]) {
+  if (!objectId) die('Args: list-permissions <objectId>')
+  await login(pb)
+  let list
+  try {
+    list = await pb.collection('object_permissions').getFullList({ filter: `object = "${objectId}"`, sort: '+created' })
+  } catch (err) {
+    die(`list-permissions fehlgeschlagen: ${describePbError(err)}`)
+  }
+  console.log(JSON.stringify(list, null, 2))
+  console.error(`✓ ${list.length} ACE(s) — Liste erfordert Besitz ODER owner-Recht (kanonische Regeln)`)
+}
+
 async function cmdDebugView(pb, [id]) {
   if (!id) die('Args: debug-view <id>')
   await login(pb)
@@ -269,6 +283,7 @@ async function main() {
     case 'update-object':  await cmdUpdateObject(pb, rest);   break
     case 'delete-object':  await cmdDeleteObject(pb, rest);   break
     case 'add-permission': await cmdAddPermission(pb, rest);  break
+    case 'list-permissions': await cmdListPermissions(pb, rest); break
     case 'debug-view':     await cmdDebugView(pb, rest);      break
     default:
       console.error(`Unbekanntes Subcommand: ${cmd}\n`)

@@ -98,11 +98,23 @@ onRecordAfterDeleteSuccess((e) => {
 // 2026-08-10: pm2 "online", Port nie gebunden). TRUNCATE checkpointet und
 // stutzt die Datei auf 0.
 // ---------------------------------------------------------------------
+// Checkpointet BEIDE Datenbanken: data.db UND die Auxiliary-/Logs-DB —
+// letztere bekommt jeden API-Request der Dauerpoller und wächst am schnellsten.
+// Ergebnis wird geloggt, wenn der Checkpoint nicht durchkam (busy=1 heißt:
+// ein langlebiger Reader blockiert — dann wächst das WAL trotz Cron weiter).
 cronAdd("wal_checkpoint", "*/15 * * * *", () => {
-  try {
-    $app.db().newQuery("PRAGMA wal_checkpoint(TRUNCATE)").execute()
-  } catch (err) {
-    console.log("[wal_checkpoint] error: " + (err && err.message ? err.message : err))
+  for (const [label, db] of [["data", () => $app.db()], ["aux", () => $app.auxDB && $app.auxDB()]]) {
+    try {
+      const conn = db()
+      if (!conn) continue
+      const res = new DynamicModel({ busy: 0, log: 0, checkpointed: 0 })
+      conn.newQuery("PRAGMA wal_checkpoint(TRUNCATE)").one(res)
+      if (res.busy || res.log > res.checkpointed) {
+        console.log(`[wal_checkpoint] ${label}: busy=${res.busy} log=${res.log} checkpointed=${res.checkpointed} — WAL nicht (voll) eingedampft`)
+      }
+    } catch (err) {
+      console.log(`[wal_checkpoint] ${label} error: ` + (err && err.message ? err.message : err))
+    }
   }
 })
 
