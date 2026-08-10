@@ -121,6 +121,15 @@ const DOMAINS = {
 }
 
 const domainOf = (entityId) => String(entityId).split('.')[0]
+
+// „Leuchtet" das Gerät? → appearance.glow (Hex) für den Viewer (Karten-Halo +
+// AR-Aura, siehe client/core/Appearance.js). Aktive Zustände je Domain-Familie;
+// unlocked leuchtet warnend (Tür offen!), locked bewusst nicht.
+const GLOW_COLORS = { light: '#ffd54a', fan: '#4fc3f7', media_player: '#b388ff', lock: '#ff7043' }
+const GLOW_STATES = new Set(['on', 'open', 'playing', 'unlocked', 'heat', 'cool', 'heat_cool', 'dry', 'auto'])
+const glowFor = (domain, state) =>
+  GLOW_STATES.has(String(state || '').toLowerCase()) ? (GLOW_COLORS[domain] || '#7bd88a') : null
+
 const humanState = (s, domain, attrs) => {
   if (s === 'on') {
     const b = Number(attrs?.brightness)
@@ -344,10 +353,19 @@ async function updateObjectsFor(entityId) {
     const cur = ajna.getObjectById(o.id) || o
     const s = e?.state ?? 'unknown'
     if (cur.state?.ha_state === s) continue
+    // Schaltzustand sichtbar machen: appearance.glow setzen/entfernen (Viewer
+    // rendert Halo/Aura und baut bei appearance-Änderung automatisch neu auf).
+    let appearance = cur.appearance
+    if (typeof appearance === 'string') { try { appearance = JSON.parse(appearance) } catch { appearance = null } }
+    appearance = { ...(appearance || {}) }
+    const glow = glowFor(domain, s)
+    if (glow) appearance.glow = glow
+    else delete appearance.glow
     try {
       await ajna.updateObject(o.id, {
         animation_state: s,
         description: `${cur.name} — ${humanState(s, domain, e?.attributes)}`,
+        appearance,
         state: { ...(cur.state || {}), ha_state: s },
       })
     } catch (err) { console.warn('[ha-gateway] Objekt-Update:', err?.message || err) }
@@ -426,7 +444,7 @@ async function createEntityObject(entityId) {
     lat: HA_LAT + off.dLat, lon: HA_LON + off.dLon, altitude: 0,
     animation_state: e?.state || 'unknown',
     description: `${name} — ${humanState(e?.state, domain, e?.attributes)}`,
-    appearance: { emoji: def.emoji },
+    appearance: { emoji: def.emoji, ...(glowFor(domain, e?.state) ? { glow: glowFor(domain, e?.state) } : {}) },
     state: {
       ha_bridge: true, ha_instance: HA_INSTANCE, ha_entity: entityId, ha_domain: domain,
       ha_state: e?.state ?? 'unknown',

@@ -12,7 +12,7 @@ import { ObjectActions } from "./core/ObjectActions.js"
 import { Toast } from "./core/Toast.js"
 import { PositionSmoother } from "./core/PositionSmoother.js"
 import { encStyleOf } from "./core/wifiStyle.js"
-import { shapeOf, emojiOf, colorOf, radiusOf } from "./core/Appearance.js"
+import { shapeOf, emojiOf, colorOf, radiusOf, glowOf } from "./core/Appearance.js"
 import { interactionReply, describeRequires } from "./core/InteractionReply.js"
 import { spawnRandomAndEdit, directorSpawnItems } from "./core/SpawnHere.js"
 import { InterestArea } from "./core/InterestArea.js"
@@ -253,10 +253,16 @@ function markerIconFor(obj) {
   // Heuristik: WLAN-Verschlüsselungssymbol bzw. das Typ-Emoji.
   const emoji = emojiOf(obj)
     || (type === 'wifi' ? encStyleOf(obj).symbol : (def ? def.emoji : '❌'))
+  // Glow (appearance.glow, z. B. eingeschaltetes HA-Gerät): Halo ums Symbol.
+  // glowOf validiert strikt auf Hex — der Wert landet in einem style-Attribut.
+  const glow = glowOf(obj)
+  const glyph = glow
+    ? `<span style="text-shadow:0 0 5px ${glow},0 0 11px ${glow},0 0 18px ${glow}">${emoji}</span>`
+    : emoji
   // UWB-Anker: Node-ID + Höhe statt Name (3D-Höhe auch auf der 2D-Karte sichtbar).
   const html = type === 'uwb_anchor'
     ? `⚓ #${obj.state?.uwb?.nodeId ?? '?'} · ${(obj.altitude ?? 0).toFixed(1)}m`
-    : `${emoji} ${obj.name}`
+    : `${glyph} ${obj.name}`
   return window.L.divIcon({
     className: def ? `map-marker ${def.cls}` : 'map-marker',
     iconSize: [28, 28],

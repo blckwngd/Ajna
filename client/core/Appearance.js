@@ -10,6 +10,9 @@
 //   color   : CSS/Hex-Farbe (Füllung/Strich/Tönung)
 //   radius  : Pixel-Radius für die Map-`circle`; sonst aus `scale`/Default
 //   texture : optionaler Render-Hinweis (vom Client interpretiert, falls bekannt)
+//   glow    : Hex-Farbe — Objekt "leuchtet" (Karte: Halo ums Symbol, AR:
+//             pulsierende Aura). Agents nutzen es für Zustände wie "Gerät an";
+//             Feld weglassen/entfernen = kein Leuchten.
 //
 // Auflösung:
 //   • Map  → nutzt nur `shape`(+emoji/color/radius), ignoriert `gltf`
@@ -48,6 +51,14 @@ export function emojiOf(record) {
 export function colorOf(record) {
   const a = appearanceOf(record)
   return a && typeof a.color === 'string' && a.color ? a.color : null
+}
+
+/** Glow-Farbe (validiertes Hex) oder null. Strikte Validierung, weil der Wert
+ *  auf der Karte in ein style-Attribut wandert — kein Freitext durchlassen. */
+export function glowOf(record) {
+  const a = appearanceOf(record)
+  const g = a && typeof a.glow === 'string' ? a.glow.trim() : ''
+  return /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(g) ? g : null
 }
 
 /** Positiver Pixel-Radius oder null. */

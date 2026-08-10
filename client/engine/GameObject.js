@@ -189,6 +189,11 @@ export class GameObject {
     // das Verhalten der Szene darf davon nicht abhängen.
     this.#createPlaceholder()
 
+    // appearance.glow (Hex): pulsierende Aura — hängt am root, unabhängig vom
+    // Platzhalter/Modell-Tausch. Appearance-Änderungen bauen das GameObject
+    // ohnehin neu auf (Reconcile-Signatur) → an/aus wirkt live.
+    this.#applyGlow()
+
     // Figuren (und Objekte mit 3D-Modell) werfen echte Schatten (Babylon
     // ShadowGenerator; die Meshes werden in #loadModel als Caster registriert).
     // POI/WLAN/Hints nicht.
@@ -665,6 +670,34 @@ export class GameObject {
     }
   }
 
+  // Aura für appearance.glow: emissive, halbtransparente Kugel um das Objekt.
+  // Bewusst NICHT in this.meshes (kein Picking, überlebt #disposePlaceholder);
+  // Puls läuft in update(). Ungültige Farben werden still ignoriert.
+  #applyGlow() {
+    const g = this._appearance && typeof this._appearance.glow === 'string' ? this._appearance.glow.trim() : ''
+    if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(g)) return
+    let color
+    try { color = BABYLON.Color3.FromHexString(g.length === 9 ? g.slice(0, 7) : g) } catch { return }
+    const mesh = BABYLON.MeshBuilder.CreateSphere(`glow_${this.id}`, { diameter: 0.95, segments: 10 }, this.scene)
+    const mat = new BABYLON.StandardMaterial(`glowmat_${this.id}`, this.scene)
+    mat.emissiveColor = color
+    mat.diffuseColor = BABYLON.Color3.Black()
+    mat.specularColor = BABYLON.Color3.Black()
+    mat.disableLighting = true
+    mat.alpha = 0.28
+    mat.backFaceCulling = false
+    mesh.material = mat
+    mesh.isPickable = false
+    // Auf halber Objekthöhe — passt für die Item-/Primitive-Platzhalter; ein
+    // appearance.ar.y-Offset (schwebende Objekte) wird übernommen.
+    const arY = Number(this._appearance?.ar?.y ?? this._appearance?.y)
+    mesh.position.y = Number.isFinite(arY) ? arY : 0.5
+    mesh.parent = this.root
+    this._glowMesh = mesh
+    this._glowMat = mat
+    this._glowT = 0
+  }
+
   #disposePlaceholder() {
     const remaining = []
     for (const mesh of this.meshes) {
@@ -754,6 +787,12 @@ export class GameObject {
 
     // Kosmetischer Spin um die Y-Achse (rein lokal, unsynchronisiert).
     if (this._spinNode && this._spinRad) this._spinNode.rotation.y += this._spinRad * delta
+
+    // Glow-Puls: sanftes Atmen der Aura (~2,5 s Periode), rein kosmetisch.
+    if (this._glowMat) {
+      this._glowT += delta
+      this._glowMat.alpha = 0.22 + 0.12 * Math.sin(this._glowT * 2.5)
+    }
 
     // Smoother VOR den Components abtasten, damit GeospatialComponent.update
     // im selben Frame mit den frisch interpolierten lat/lon arbeitet.
