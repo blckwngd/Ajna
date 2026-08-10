@@ -37,6 +37,10 @@ module.exports = {
       interpreter: 'none',                  // natives Binary, kein Node
       cwd: ROOT,
       autorestart: true,
+      // Graceful-Shutdown-Fenster: pm2 killt sonst nach 1,6 s hart — PB braucht
+      // beim Beenden Zeit für den SQLite-WAL-Checkpoint. Ein abgewürgter
+      // Checkpoint = minutenlange, stumme WAL-Recovery beim nächsten Boot.
+      kill_timeout: 30000,
       time: true,
     },
     {

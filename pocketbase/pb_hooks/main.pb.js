@@ -91,6 +91,22 @@ onRecordAfterDeleteSuccess((e) => {
 
 
 // ---------------------------------------------------------------------
+// WAL-Checkpoint-Cron: hält das SQLite-Write-Ahead-Log klein. Ohne das
+// wächst es unter Dauer-Schreiblast (Agents!) unbegrenzt, und nach einem
+// UNSAUBEREN Shutdown (OOM-Kill) muss PB beim Boot das komplette WAL
+// wiederherstellen — minutenlang stumm vor "Server started" (VPS-Vorfall
+// 2026-08-10: pm2 "online", Port nie gebunden). TRUNCATE checkpointet und
+// stutzt die Datei auf 0.
+// ---------------------------------------------------------------------
+cronAdd("wal_checkpoint", "*/15 * * * *", () => {
+  try {
+    $app.db().newQuery("PRAGMA wal_checkpoint(TRUNCATE)").execute()
+  } catch (err) {
+    console.log("[wal_checkpoint] error: " + (err && err.message ? err.message : err))
+  }
+})
+
+// ---------------------------------------------------------------------
 // groups update/delete: alle Objekte, deren ACEs (direkt oder via
 // Vorfahren-Gruppe) diese Gruppe referenzieren, brauchen Cache-Refresh.
 // ---------------------------------------------------------------------
