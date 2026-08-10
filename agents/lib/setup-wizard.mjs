@@ -21,6 +21,44 @@ import os from 'node:os'
 const AGENTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)))
 export const REPO_ROOT = resolve(AGENTS_DIR, '..')
 
+// ─── Darstellung (Farben nur am TTY, NO_COLOR respektiert) ────────────────
+
+const USE_COLOR = !!process.stdout.isTTY && !process.env.NO_COLOR
+const sgr = (n) => (USE_COLOR ? `\x1b[${n}m` : '')
+export const C = {
+  reset: sgr(0), bold: sgr(1), dim: sgr(2),
+  red: sgr(31), green: sgr(32), yellow: sgr(33), cyan: sgr(36),
+}
+
+/** Titelzeile des Wizards. */
+export function banner(title, subtitle = '') {
+  console.log(`\n${C.cyan}${C.bold}══ ${title} ${'═'.repeat(Math.max(2, 56 - title.length))}${C.reset}`)
+  if (subtitle) hint(subtitle)
+  console.log('')
+}
+
+/** Schritt-Überschrift, z. B. header('Schritt 2/6 · Gateway-Benutzer'). */
+export function header(title) {
+  console.log(`\n${C.cyan}${C.bold}── ${title} ──${C.reset}`)
+}
+
+/** Gedimmte Erklärzeile(n) unter Headern/vor Fragen — bricht auf Terminalbreite um. */
+export function hint(text) {
+  const width = Math.max(40, Math.min(96, process.stdout.columns || 80)) - 4
+  let line = ''
+  const flush = () => { if (line) { console.log(`${C.dim}   ${line}${C.reset}`); line = '' } }
+  for (const word of String(text).split(/\s+/)) {
+    if (line && (line.length + 1 + word.length) > width) flush()
+    line = line ? `${line} ${word}` : word
+  }
+  flush()
+}
+
+export const ok = (msg) => console.log(`${C.green}✓${C.reset} ${msg}`)
+export const warnLine = (msg) => console.log(`${C.yellow}⚠${C.reset} ${msg}`)
+export const failLine = (msg) => console.log(`${C.red}✗${C.reset} ${msg}`)
+export const infoLine = (msg) => console.log(`${C.cyan}ℹ${C.reset} ${msg}`)
+
 // ─── Prompts ──────────────────────────────────────────────────────────────
 
 export function makeRl() {
@@ -40,32 +78,37 @@ export function makeRl() {
   return rl
 }
 
-/** Frage mit Default (Enter = Default übernehmen). */
+/** Frage mit Default (Enter = Default übernehmen). Kurz halten — Erklärungen
+ *  gehören in eine hint()-Zeile darüber, nicht in die Frage selbst. */
 export async function ask(rl, question, def = '') {
-  const suffix = def ? ` [${def}]` : ''
-  const a = (await rl.question(`${question}${suffix}: `)).trim()
+  const suffix = def ? ` ${C.dim}[${def}]${C.reset}` : ''
+  const a = (await rl.question(`${C.bold}${question}${C.reset}${suffix}: `)).trim()
   return a || def
 }
 
 /** Ja/Nein-Frage. */
 export async function confirm(rl, question, def = true) {
-  const a = (await rl.question(`${question} ${def ? '[J/n]' : '[j/N]'}: `)).trim().toLowerCase()
+  const suffix = ` ${C.dim}[${def ? 'J/n' : 'j/N'}]${C.reset}`
+  const a = (await rl.question(`${C.bold}${question}${C.reset}${suffix}: `)).trim().toLowerCase()
   if (!a) return def
   return ['j', 'ja', 'y', 'yes'].includes(a)
 }
 
-/** Auswahl aus einer Liste; gibt den Index zurück. */
+/** Auswahl aus einer Liste; gibt den Index zurück. Default mit ❯ markiert. */
 export async function choose(rl, question, options, defIndex = 0) {
-  console.log(question)
-  options.forEach((o, i) => console.log(`  ${i + 1}) ${o}`))
-  const a = (await rl.question(`Auswahl [${defIndex + 1}]: `)).trim()
+  console.log(`${C.bold}${question}${C.reset}`)
+  options.forEach((o, i) => {
+    const mark = i === defIndex ? `${C.cyan}❯${C.reset}` : ' '
+    console.log(` ${mark} ${C.cyan}${i + 1})${C.reset} ${o}`)
+  })
+  const a = (await rl.question(`Auswahl ${C.dim}[${defIndex + 1}]${C.reset}: `)).trim()
   const n = a ? parseInt(a, 10) - 1 : defIndex
   return (Number.isInteger(n) && n >= 0 && n < options.length) ? n : defIndex
 }
 
 /** Verdeckte Eingabe (Passwörter) — Echo komplett aus (kein Sternchen-Leak). */
 export async function askHidden(rl, question) {
-  process.stdout.write(`${question}: `)
+  process.stdout.write(`${C.bold}${question}${C.reset} ${C.dim}(Eingabe bleibt unsichtbar)${C.reset}: `)
   rl._muted = true
   try {
     const v = await rl.question('')
@@ -88,12 +131,13 @@ export const randomSecret = (bytes = 18) => randomBytes(bytes).toString('base64u
  * erhalten. Direkt als `setup`-Option für bootAgent verwendbar:
  *   bootAgent('ais', { setup: simpleSetup('ais', { required: […], optional: […] }) })
  */
-export function simpleSetup(agent, { required = [], optional = [], header = '' } = {}) {
+export function simpleSetup(agent, { required = [], optional = [], note = '' } = {}) {
   return {
     need: required,
     run: async () => {
       const rl = makeRl()
-      console.log(`\n══ Ajna · ${agent} — Einrichtung ══\n`)
+      banner(`Ajna · ${agent} — Einrichtung`,
+        'Enter übernimmt den [Vorschlag]. Passwörter/Tokens bleiben bei der Eingabe unsichtbar.')
       const entries = { ...readAgentEnv(agent) }
       for (const key of [...required, ...optional]) {
         const must = required.includes(key)
@@ -112,9 +156,11 @@ export function simpleSetup(agent, { required = [], optional = [], header = '' }
         if (v) entries[key] = v
       }
       const path = writeAgentEnv(agent, entries,
-        header || `${agent} — erneut konfigurieren mit --setup`)
+        note || `${agent} — erneut konfigurieren mit --setup`)
       rl.close()
-      console.log(`\n✓ Konfiguration gespeichert: ${path}\n`)
+      console.log('')
+      ok(`Konfiguration gespeichert: ${path}`)
+      console.log('')
       return { exit: false }   // direkt weiterlaufen
     },
   }
@@ -178,12 +224,12 @@ export async function probeLocalAjna(extra = []) {
   for (const { url, source } of candidates) {
     const health = await httpGet(`${url}/api/health`, { insecure: true })
     if (!health || health.status !== 200) {
-      console.log(`[probe] ${url} (${source}) → health: ${health?.error || `HTTP ${health?.status}`}`)
+      console.log(`${C.dim}   ${url} (${source}) → health: ${health?.error || `HTTP ${health?.status}`}${C.reset}`)
       continue
     }
     const objects = await httpGet(`${url}/api/collections/objects/records?perPage=1`, { insecure: true })
     const isAjna = objects?.status === 200
-    console.log(`[probe] ${url} (${source}) → health ok, objects: ${isAjna ? 'ok' : (objects?.error || `HTTP ${objects?.status}`)}${isAjna ? '' : ' → kein Ajna-Fingerprint'}`)
+    console.log(`${C.dim}   ${url} (${source}) → health ok, objects: ${isAjna ? 'ok' : (objects?.error || `HTTP ${objects?.status}`)}${isAjna ? '' : ' → kein Ajna-Fingerprint'}${C.reset}`)
     found.push({ url, source, health: true, isAjna })
   }
   return found

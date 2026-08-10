@@ -96,12 +96,20 @@ export class ObjectActions {
   trigger(record, actionKey) { return this._triggerAction(record, actionKey) }
 
   // record = PocketBase-Record. x/y = Viewport-Pixelposition (für Menü).
-  showFor(record, x, y) {
+  async showFor(record, x, y) {
     if (!record) return
 
-    // Owner-Check: nur Besitzer dürfen Berechtigungen verwalten.
+    // Besitzer ODER User-/Gruppen-ACE mit owner-Recht dürfen Berechtigungen
+    // verwalten und löschen (Server-Regeln seit Migration owner_right_in_rules).
+    // myRights liest den effective_permissions-Cache — schnell und best effort:
+    // schlägt die Abfrage fehl, bleibt es beim Besitzer-Check.
     const me = this._meFor(record)
     const isOwner = !!me && !!record.owner && me.id === record.owner
+    let ownerRight = isOwner
+    if (!ownerRight && me) {
+      const r = await this.ajna.myRights?.(record.id)?.catch?.(() => null)
+      ownerRight = !!(r?.rights || []).includes('owner')
+    }
 
     // Einsammeln: eigene Objekte immer, fremde nur wenn `portable`. Nicht,
     // wenn das Objekt schon getragen wird. Server prüft die Rechte final.
@@ -112,9 +120,9 @@ export class ObjectActions {
     const items = [
       { label: 'Bearbeiten',     onClick: () => this.editorUI?.fillEditor?.(record) },
       this.onGizmo && { label: '✥ Verschieben/Drehen', onClick: () => this.onGizmo(record) },
-      isOwner && { label: 'Berechtigungen', onClick: () => this.permissionDialog?.open(record) },
+      ownerRight && { label: 'Berechtigungen', onClick: () => this.permissionDialog?.open(record) },
       collectible && { label: '🎒 Einsammeln', onClick: () => this._pickup(record) },
-      isOwner && { label: 'Löschen', danger: true, onClick: () => this._confirmDelete(record) },
+      ownerRight && { label: 'Löschen', danger: true, onClick: () => this._confirmDelete(record) },
       { separator: true },
       { sectionLabel: 'Interaktionen' },
       ...shownActions.map(a => ({
