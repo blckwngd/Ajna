@@ -35,8 +35,13 @@
 import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { bootAgent, die, envStr } from './lib/agent-base.mjs'
+import { simpleSetup } from './lib/setup-wizard.mjs'
+import { ensureObject } from '../client/core/ensureObject.js'
 
-const { ajna } = await bootAgent('uwb-anchors', { connect: true })
+const { ajna } = await bootAgent('uwb-anchors', {
+  connect: true,
+  setup: simpleSetup('uwb-anchors', { required: ['AJNA_USER', 'AJNA_PASS'], optional: ['AJNA_URL', 'UWB_ANCHORS_FILE'] }),
+})
 const FILE = envStr('UWB_ANCHORS_FILE', 'uwb-anchors.json') || 'uwb-anchors.json'
 
 const path = resolve(process.cwd(), FILE)
@@ -60,67 +65,50 @@ if (Array.isArray(defs)) {
 }
 if (!anchorDefs.length && !networkDefs.length) die('Anker-Datei enthält weder anchors noch networks')
 
-const existing = new Map()     // nodeId -> uwb_anchor object
-const existingNets = new Map() // String(networkId) -> uwb_network object
-for (const o of ajna.getObjects()) {
-  if (o?.type === 'uwb_anchor' && Number.isFinite(o?.state?.uwb?.nodeId)) {
-    existing.set(o.state.uwb.nodeId, o)
-  } else if (o?.type === 'uwb_network' && o?.state?.uwb_network?.networkId != null) {
-    existingNets.set(String(o.state.uwb_network.networkId), o)
-  }
-}
+const warn = (...a) => console.warn('[uwb-anchors]', ...a)
+// Sichtbar für alle eingeloggten User (ensureObject garantiert die ACE per
+// Union-Merge — kollidiert nicht mit materialisierten default_permissions).
+const VIEW_ACE = { subject_type: 'authenticated', rights: ['view'], interact_actions: [] }
 
 // Networks first (idempotent over networkId), so anchors can reference them.
 for (const nd of networkDefs) {
   const pan = nd.networkId ?? nd.panId
-  if (pan == null) { console.warn('[uwb-anchors] Netz ohne networkId übersprungen:', nd); continue }
-  const fields = {
-    name: nd.name || `UWB-Netz ${pan}`,
-    type: 'uwb_network',
-    lat: nd.lat || 0, lon: nd.lon || 0, altitude: nd.altitude || 0,
-    state: { uwb_network: { networkId: pan } }
-  }
-  const found = existingNets.get(String(pan))
+  if (pan == null) { warn('Netz ohne networkId übersprungen:', nd); continue }
   try {
-    if (found) {
-      await ajna.updateObject(found.id, fields)
-      console.log(`[uwb-anchors] Netz aktualisiert  pan=${pan}  ${fields.name}`)
-    } else {
-      const obj = await ajna.createObject(fields)
-      try { await ajna.addPermission(obj.id, { subject_type: 'authenticated', rights: ['view'], interact_actions: [] }) }
-      catch (e) { console.warn('[uwb-anchors] Netz-ACE fehlgeschlagen:', e?.message || e) }
-      console.log(`[uwb-anchors] Netz angelegt      pan=${pan}  ${fields.name}`)
-    }
-  } catch (e) { console.warn(`[uwb-anchors] Netz pan=${pan} fehlgeschlagen:`, e?.message || e) }
+    const { created } = await ensureObject(ajna, {
+      match: o => o?.type === 'uwb_network' && String(o?.state?.uwb_network?.networkId ?? '') === String(pan),
+      fields: {
+        name: nd.name || `UWB-Netz ${pan}`,
+        type: 'uwb_network',
+        lat: nd.lat || 0, lon: nd.lon || 0, altitude: nd.altitude || 0,
+        state: { uwb_network: { networkId: pan } }
+      },
+      update: true, ace: VIEW_ACE, warn,
+    })
+    console.log(`[uwb-anchors] Netz ${created ? 'angelegt    ' : 'aktualisiert'}  pan=${pan}`)
+  } catch (e) { warn(`Netz pan=${pan} fehlgeschlagen:`, e?.message || e) }
 }
 
 for (const d of anchorDefs) {
   if (!Number.isFinite(d.nodeId) || !Number.isFinite(d.lat) || !Number.isFinite(d.lon)) {
-    console.warn('[uwb-anchors] überspringe ungültige Definition:', d); continue
+    warn('überspringe ungültige Definition:', d); continue
   }
   const uwb = { nodeId: d.nodeId, local: d.local || { x: 0, y: 0, z: 0 } }
   if (d.network != null) uwb.network = d.network   // PANS network membership
-  const fields = {
-    name: d.name || `UWB-Anker ${d.nodeId}`,
-    type: 'uwb_anchor',
-    lat: d.lat, lon: d.lon, altitude: d.altitude || 0,
-    state: { uwb }
-  }
-  const found = existing.get(d.nodeId)
   try {
-    if (found) {
-      await ajna.updateObject(found.id, fields)
-      console.log(`[uwb-anchors] aktualisiert  nodeId=${d.nodeId}  ${fields.name}`)
-    } else {
-      const obj = await ajna.createObject(fields)
-      // Sichtbar für alle eingeloggten User.
-      try {
-        await ajna.addPermission(obj.id, { subject_type: 'authenticated', rights: ['view'], interact_actions: [] })
-      } catch (e) { console.warn('[uwb-anchors] ACE fehlgeschlagen:', e?.message || e) }
-      console.log(`[uwb-anchors] angelegt      nodeId=${d.nodeId}  ${fields.name}`)
-    }
+    const { created } = await ensureObject(ajna, {
+      match: o => o?.type === 'uwb_anchor' && o?.state?.uwb?.nodeId === d.nodeId,
+      fields: {
+        name: d.name || `UWB-Anker ${d.nodeId}`,
+        type: 'uwb_anchor',
+        lat: d.lat, lon: d.lon, altitude: d.altitude || 0,
+        state: { uwb }
+      },
+      update: true, ace: VIEW_ACE, warn,
+    })
+    console.log(`[uwb-anchors] ${created ? 'angelegt    ' : 'aktualisiert'}  nodeId=${d.nodeId}`)
   } catch (e) {
-    console.warn(`[uwb-anchors] nodeId=${d.nodeId} fehlgeschlagen:`, e?.message || e)
+    warn(`nodeId=${d.nodeId} fehlgeschlagen:`, e?.message || e)
   }
 }
 

@@ -45,9 +45,19 @@
 // Beenden: Ctrl+C.
 
 import { bootAgent, envNum, envInt, envStr, publishManifest } from './lib/agent-base.mjs'
+import { bboxAroundKm, centerOf, flatDistKm, KM_PER_DEG_LAT } from '../client/core/geoMath.js'
+import { watchInterestAreas } from '../client/core/interestAreas.js'
+
+import { simpleSetup } from './lib/setup-wizard.mjs'
 
 // Login + geschichtete .env (Env > agents/.env.adsb > Root-.env) + System-CA.
-const { ajna } = await bootAgent('adsb')
+// Erststart ohne Pflichtwerte (oder --setup): Mini-Wizard fragt sie ab.
+const { ajna } = await bootAgent('adsb', {
+  setup: simpleSetup('adsb', {
+    required: ['AJNA_USER', 'AJNA_PASS'],
+    optional: ['AJNA_URL', 'OPENSKY_CLIENT_ID', 'OPENSKY_CLIENT_SECRET'],
+  }),
+})
 
 const OS_CLIENT_ID     = envStr('OPENSKY_CLIENT_ID')
 const OS_CLIENT_SECRET = envStr('OPENSKY_CLIENT_SECRET')
@@ -63,7 +73,6 @@ const MIN_CREDITS = envInt('ADSB_MIN_CREDITS', 25)
 const OS_STATES_URL = 'https://opensky-network.org/api/states/all'
 const OS_TOKEN_URL  = 'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token'
 
-const KM_PER_DEG_LAT = 111
 const AUTHED = !!(OS_CLIENT_ID && OS_CLIENT_SECRET)
 
 console.log(`[adsb] Zentrum ${CENTER_LAT.toFixed(3)}, ${CENTER_LON.toFixed(3)} · Radius ${RADIUS_KM} km · Poll ${(POLL_MS/1000)|0} s`)
@@ -120,36 +129,21 @@ async function getToken() {
   return token
 }
 
-// ─── Geo-Helfer ────────────────────────────────────────────────────────────
-function boxAround(lat, lon, km) {
-  const dLat = km / KM_PER_DEG_LAT
-  const dLon = km / (KM_PER_DEG_LAT * Math.cos(lat * Math.PI / 180))
-  return { latMin: lat - dLat, latMax: lat + dLat, lonMin: lon - dLon, lonMax: lon + dLon, cLat: lat, cLon: lon }
-}
-function distKm(aLat, aLon, bLat, bLon) {
-  const dLat = (bLat - aLat) * KM_PER_DEG_LAT
-  const dLon = (bLon - aLon) * KM_PER_DEG_LAT * Math.cos(aLat * Math.PI / 180)
-  return Math.hypot(dLat, dLon)
-}
-
 // Aktive Interessensbereiche → 50-km-Abfragekästen um ihre Mittelpunkte.
 // Nahe beieinander liegende Bereiche kollabieren auf denselben Kasten (dedupe
 // über die gerundete Mitte), damit nicht jeder Spieler einen eigenen Credit
-// kostet. Ohne Bereiche: Fallback-Zentrum.
-async function currentBoxes() {
-  let areas = []
-  try { areas = await ajna.fetchInterestAreas('opensky') }
-  catch (err) { console.warn(`[adsb] interest-areas: ${err?.message || err} → Fallback Zentrum`) }
-  if (!areas.length) return { boxes: [boxAround(CENTER_LAT, CENTER_LON, RADIUS_KM)], fromAreas: false }
+// kostet. Ohne Bereiche: Fallback-Zentrum. (Geo-Mathe: client/core/geoMath.js)
+function boxesFrom(areas) {
+  if (!areas.length) return { boxes: [bboxAroundKm(CENTER_LAT, CENTER_LON, RADIUS_KM)], fromAreas: false }
 
   const seen = new Set(); const boxes = []
   for (const a of areas) {
-    const cLat = (a.latMin + a.latMax) / 2, cLon = (a.lonMin + a.lonMax) / 2
+    const { lat: cLat, lon: cLon } = centerOf(a)
     // Auf ~halben Radius runden → benachbarte Spieler teilen sich einen Kasten.
     const key = `${(cLat / (RADIUS_KM / KM_PER_DEG_LAT / 2)).toFixed(0)}:${(cLon / (RADIUS_KM / KM_PER_DEG_LAT / 2)).toFixed(0)}`
     if (seen.has(key)) continue
     seen.add(key)
-    boxes.push(boxAround(cLat, cLon, RADIUS_KM))
+    boxes.push(bboxAroundKm(cLat, cLon, RADIUS_KM))
     if (boxes.length >= MAX_AREAS) break
   }
   return { boxes, fromAreas: true }
@@ -217,7 +211,7 @@ function describe(a) {
 const degToYaw = deg => (deg * Math.PI / 180) - Math.PI / 2
 
 // ─── Reconcile ─────────────────────────────────────────────────────────────
-async function tick() {
+async function tick(areas) {
   const now = Date.now()
   if (now < pausedUntil) return                       // 429/Budget-Pause
   if (creditsLeft !== null && creditsLeft < MIN_CREDITS) {
@@ -227,7 +221,7 @@ async function tick() {
     return
   }
 
-  const { boxes, fromAreas } = await currentBoxes()
+  const { boxes, fromAreas } = boxesFrom(areas)
 
   // Alle Kästen abfragen, per icao24 vereinen. Distanz zum nächsten Kasten-
   // Zentrum merken → für den MAX_AIRCRAFT-Deckel (nächste zuerst).
@@ -240,7 +234,7 @@ async function tick() {
       const a = parseState(s)
       if (!a || !a.icao24) continue
       a.measuredAt = res.time ? res.time * 1000 : now
-      const d = distKm(box.cLat, box.cLon, a.lat, a.lon)
+      const d = flatDistKm(box.cLat, box.cLon, a.lat, a.lon)
       const prev = byIcao.get(a.icao24)
       if (!prev || d < prev._d) { a._d = d; byIcao.set(a.icao24, a) }
     }
@@ -339,10 +333,10 @@ async function cleanup() {
 }
 
 // ─── Loops ─────────────────────────────────────────────────────────────────
-await tick().catch(err => console.warn(`[adsb] tick: ${err?.message || err}`))
-setInterval(() => tick().catch(err => console.warn(`[adsb] tick: ${err?.message || err}`)), POLL_MS)
+// Area-Watcher = Poll-Takt: liefert pro Tick die aktiven Interessensbereiche
+// (Fallback-Zentrum entscheidet boxesFrom). Kein maxAreas hier — adsb deckelt
+// selbst NACH dem Dedupe (sonst fielen Bereiche weg, die ohnehin kollabieren).
+const areaWatch = watchInterestAreas(ajna, 'opensky', { intervalMs: POLL_MS }, tick)
 setInterval(() => cleanup().catch(err => console.warn(`[adsb] cleanup: ${err?.message || err}`)), 30_000)
+await areaWatch.first
 console.log('[adsb] bereit. (Strg+C zum Beenden)')
-
-// SIGINT übernimmt bootAgent; SIGTERM (pm2/systemd-Stop) zusätzlich hier.
-process.on('SIGTERM', () => { console.log('[adsb] SIGTERM — exit'); process.exit(0) })

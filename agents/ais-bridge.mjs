@@ -40,10 +40,18 @@
 // Beenden: Ctrl+C.
 
 import WebSocket from 'ws'
-import { bootAgent, die, envNum, envStr, publishManifest } from './lib/agent-base.mjs'
+import { bootAgent, die, envNum, envInt, envStr, publishManifest } from './lib/agent-base.mjs'
+import { bboxAroundKm } from '../client/core/geoMath.js'
+import { watchInterestAreas } from '../client/core/interestAreas.js'
+
+import { simpleSetup } from './lib/setup-wizard.mjs'
 
 // Login + geschichtete .env (Env > agents/.env.ais > Root-.env) + System-CA.
-const { ajna } = await bootAgent('ais', { require: ['AISSTREAM_API_KEY'] })
+// Erststart ohne Pflichtwerte (oder --setup): Mini-Wizard fragt sie ab.
+const { ajna } = await bootAgent('ais', {
+  require: ['AISSTREAM_API_KEY'],
+  setup: simpleSetup('ais', { required: ['AJNA_USER', 'AJNA_PASS', 'AISSTREAM_API_KEY'], optional: ['AJNA_URL'] }),
+})
 
 const AIS_KEY   = envStr('AISSTREAM_API_KEY')
 const CENTER_LAT = envNum('AIS_CENTER_LAT', 53.5511)
@@ -59,12 +67,10 @@ if (RADIUS_KM <= 0) die('Ungültiger Radius')
 //  BoundingBox berechnen (Quadrat um Center, das den Kreis-Radius enthält)
 // ───────────────────────────────────────────────────────────────────────
 
-const KM_PER_DEG_LAT = 111
-const dLat = RADIUS_KM / KM_PER_DEG_LAT
-const dLon = RADIUS_KM / (KM_PER_DEG_LAT * Math.cos(CENTER_LAT * Math.PI / 180))
+const BB = bboxAroundKm(CENTER_LAT, CENTER_LON, RADIUS_KM)
 const BBOX = [
-  [CENTER_LAT - dLat, CENTER_LON - dLon],
-  [CENTER_LAT + dLat, CENTER_LON + dLon]
+  [BB.latMin, BB.lonMin],
+  [BB.latMax, BB.lonMax]
 ]
 
 console.log(`[ais] center: ${CENTER_LAT.toFixed(4)}, ${CENTER_LON.toFixed(4)}  radius: ${RADIUS_KM} km`)
@@ -130,33 +136,21 @@ try {
 // ───────────────────────────────────────────────────────────────────────
 
 const AIS_WS_URL = 'wss://stream.aisstream.io/v0/stream'
-const MAX_AREAS = parseInt(process.env.AIS_MAX_AREAS || '12', 10)
-const AREA_REFRESH_MS = parseFloat(process.env.AIS_AREA_REFRESH_S || '60') * 1000
+const MAX_AREAS = envInt('AIS_MAX_AREAS', 12)
+const AREA_REFRESH_MS = envNum('AIS_AREA_REFRESH_S', 60) * 1000
 let ws = null
 let reconnectMs = 1000
 let lastBoxesKey = null
 const MAX_RECONNECT_MS = 60000
 
-// Aktive (anonymisierte) Interessensbereiche der Spieler, die AIS eingeblendet
-// haben. Leer → Fallback konfiguriertes Zentrum.
-async function fetchActiveAreas() {
-  // Über die Ajna-Library (Base-URL + Auth + /ajnaapi zentral aufgelöst).
-  return ajna.fetchInterestAreas('aisstream')
-}
+// aisstream-BBOX-Format: [[swLat,swLon],[neLat,neLon]]. Demand-getrieben aus
+// den aktiven Interessensbereichen; ohne Bereiche → konfiguriertes Zentrum.
+const boxesFrom = (areas) => areas.length
+  ? areas.map(a => [[a.latMin, a.lonMin], [a.latMax, a.lonMax]])
+  : [BBOX]
 
-// aisstream-BBOX-Format: [[swLat,swLon],[neLat,neLon]]. Demand-getrieben aus den
-// aktiven Bereichen; ohne Bereiche → konfiguriertes Zentrum.
-async function currentBoundingBoxes() {
-  let areas = []
-  try { areas = await fetchActiveAreas() }
-  catch (err) { console.warn(`[ais] interest-areas: ${err?.message || err} → Fallback Zentrum`) }
-  if (!areas.length) return [BBOX]
-  if (areas.length > MAX_AREAS) {
-    console.warn(`[ais] ${areas.length} Bereiche → auf ${MAX_AREAS} begrenzt`)
-    areas = areas.slice(0, MAX_AREAS)
-  }
-  return areas.map(a => [[a.latMin, a.lonMin], [a.latMax, a.lonMax]])
-}
+// Letzter Watcher-Stand — der on-open-Handler braucht die Boxen synchron.
+let currentBoxes = [BBOX]
 
 function sendSubscription(boxes) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return false
@@ -171,12 +165,11 @@ function sendSubscription(boxes) {
 function connect() {
   ws = new WebSocket(AIS_WS_URL)
 
-  ws.addEventListener('open', async () => {
+  ws.addEventListener('open', () => {
     console.log('[ws] verbunden, sende Subscription')
     reconnectMs = 1000
-    const boxes = await currentBoundingBoxes()
-    sendSubscription(boxes)
-    console.log(`[ais] abonniert: ${boxes.length} Box(en) (${lastBoxesKey === JSON.stringify([BBOX]) ? 'Zentrum' : 'interest-areas'})`)
+    sendSubscription(currentBoxes)
+    console.log(`[ais] abonniert: ${currentBoxes.length} Box(en) (${lastBoxesKey === JSON.stringify([BBOX]) ? 'Zentrum' : 'interest-areas'})`)
   })
 
   ws.addEventListener('message', ev => {
@@ -371,19 +364,19 @@ function degToYaw(deg) {
 
 // Subscription periodisch an die aktiven Bereiche anpassen (Spieler bewegen
 // sich / kommen + gehen). Nur neu senden, wenn sich die BBOX-Menge ändert.
-setInterval(async () => {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return
-  const boxes = await currentBoundingBoxes()
-  if (JSON.stringify(boxes) !== lastBoxesKey && sendSubscription(boxes)) {
-    console.log(`[ais] Subscription aktualisiert: ${boxes.length} Box(en)`)
-  }
-}, AREA_REFRESH_MS)
+const areaWatch = watchInterestAreas(ajna, 'aisstream',
+  { intervalMs: AREA_REFRESH_MS, maxAreas: MAX_AREAS },
+  (areas) => {
+    currentBoxes = boxesFrom(areas)
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    if (JSON.stringify(currentBoxes) !== lastBoxesKey && sendSubscription(currentBoxes)) {
+      console.log(`[ais] Subscription aktualisiert: ${currentBoxes.length} Box(en)`)
+    }
+  })
 
 // ───────────────────────────────────────────────────────────────────────
-//  Start
+//  Start — erst die Areas einmal laden, dann verbinden.
 // ───────────────────────────────────────────────────────────────────────
 
+await areaWatch.first
 connect()
-
-// SIGINT übernimmt bootAgent; SIGTERM (pm2/systemd-Stop) zusätzlich hier.
-process.on('SIGTERM', () => { console.log('[ais] SIGTERM — exit'); process.exit(0) })

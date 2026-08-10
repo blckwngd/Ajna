@@ -136,7 +136,10 @@ export async function bootAgent(name, opts = {}) {
   if (opts.connect) await ajna.connect()
 
   if (opts.sigint !== false) {
-    process.on('SIGINT', () => { console.log(`\n[${tag}] beende.`); process.exit(0) })
+    process.on('SIGINT',  () => { console.log(`\n[${tag}] beende.`); process.exit(0) })
+    // pm2/systemd stoppen per SIGTERM — ohne Handler stürbe der Agent zwar
+    // auch, aber ohne Log-Zeile und mit Exit-Code ≠ 0.
+    process.on('SIGTERM', () => { console.log(`[${tag}] beende (SIGTERM).`); process.exit(0) })
   }
 
   return { ajna, url, log, warn }

@@ -24,7 +24,7 @@
 //   node tools/ajna.mjs create-object '{"name":"Test","lat":52.5,"lon":13.4,"altitude":0}'
 //   node tools/ajna.mjs update-object abc123def456ghi '{"lat":52.51}'
 //   node tools/ajna.mjs delete-object abc123def456ghi
-//   node tools/ajna.mjs add-permission abc123 '{"subject_type":"authenticated","rights":["read"]}'
+//   node tools/ajna.mjs add-permission abc123 '{"subject_type":"authenticated","rights":["view"]}'
 //   node tools/ajna.mjs debug-view abc123def456ghi
 //
 // Env (oder `.env` im CWD):
@@ -77,7 +77,7 @@ Commands:
   add-permission <objectId> <ace>  ACE auf Objekt setzen. ACE-JSON:
                                      subject_type: user|group|authenticated|anonymous|everyone
                                      subject:      ID des Users/der Gruppe (bei implizit leer)
-                                     rights:       Array, z. B. ["read","write","delete"]
+                                     rights:       Array, view | edit | move | owner, z. B. ["view"]
                                      interact_actions: Array von Aktion-Keys (optional)
 
 Env (oder .env im CWD):
@@ -91,7 +91,7 @@ Beispiele:
   node tools/ajna.mjs create-object '{"name":"Test","lat":52.5,"lon":13.4,"altitude":0}'
   node tools/ajna.mjs update-object abc123def456ghi '{"lat":52.51}'
   node tools/ajna.mjs delete-object abc123def456ghi
-  node tools/ajna.mjs add-permission abc123 '{"subject_type":"authenticated","rights":["read"]}'`)
+  node tools/ajna.mjs add-permission abc123 '{"subject_type":"authenticated","rights":["view"]}'`)
   process.exit(2)
 }
 
@@ -232,7 +232,7 @@ async function cmdAddPermission(pb, [objectId, aceRaw]) {
     die(`subject_type "${ace.subject_type}" braucht eine subject-ID`)
   }
   if (!Array.isArray(ace.rights) || ace.rights.length === 0) {
-    die('rights muss ein nicht-leeres Array sein, z. B. ["read"]')
+    die('rights muss ein nicht-leeres Array sein, z. B. ["view"]')
   }
 
   await login(pb)

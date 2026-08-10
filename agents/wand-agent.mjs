@@ -26,25 +26,24 @@
 // Start:  node agents/wand-agent.mjs   bzw.   npm run wand-agent
 
 import { bootAgent, envNum } from './lib/agent-base.mjs'
+import { simpleSetup } from './lib/setup-wizard.mjs'
+import { ensureObject } from '../client/core/ensureObject.js'
 
-const { ajna } = await bootAgent('wand-agent', { connect: true })
+const { ajna } = await bootAgent('wand-agent', {
+  connect: true,
+  setup: simpleSetup('wand-agent', { required: ['AJNA_USER', 'AJNA_PASS'], optional: ['AJNA_URL', 'WAND_LAT', 'WAND_LON'] }),
+})
 const WAND_LAT = envNum('WAND_LAT', 50.3569)
 const WAND_LON = envNum('WAND_LON', 7.5890)
 
 const WAND_ACTIONS = ['wand_press', 'wand_long', 'wand_gesture', 'wand_effect']
 
 // ─── Demo-Zielobjekt sicherstellen (idempotent über state.wand_demo) ─────
-function findDemoTarget() {
-  for (const o of ajna.getObjects()) {
-    if (o?.state?.wand_demo === true) return o
-  }
-  return null
-}
-
-let target = findDemoTarget()
-if (!target) {
-  console.log('[wand-agent] lege Demo-Zielobjekt an …')
-  target = await ajna.createObject({
+// ensureObject garantiert die authenticated-ACE per Union-Merge — kollidiert
+// damit nicht mehr mit einer aus default_permissions materialisierten ACE.
+const { obj: target, created } = await ensureObject(ajna, {
+  match: o => o?.state?.wand_demo === true,
+  fields: {
     name: 'Zauberstab-Ziel',
     type: 'npc',
     lat: WAND_LAT,
@@ -52,18 +51,12 @@ if (!target) {
     altitude: 0,
     animation_state: 'idle',
     state: { wand_demo: true }
-  })
+  },
   // Jeder eingeloggte User darf sehen + die Wand-Aktionen auslösen.
-  try {
-    await ajna.addPermission(target.id, {
-      subject_type: 'authenticated',
-      rights: ['view'],
-      interact_actions: WAND_ACTIONS
-    })
-  } catch (err) {
-    console.warn('[wand-agent] ACE setzen fehlgeschlagen:', err?.message || err)
-  }
-}
+  ace: { subject_type: 'authenticated', rights: ['view'], interact_actions: WAND_ACTIONS },
+  warn: (...a) => console.warn('[wand-agent]', ...a),
+})
+if (created) console.log('[wand-agent] Demo-Zielobjekt angelegt')
 console.log(`[wand-agent] Zielobjekt: ${target.id} @ ${WAND_LAT.toFixed(4)}, ${WAND_LON.toFixed(4)}`)
 
 // ─── interact-Events abonnieren und reagieren ────────────────────────────

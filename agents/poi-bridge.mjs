@@ -40,8 +40,13 @@
 import { bootAgent, die, envNum, envStr, publishManifest } from './lib/agent-base.mjs'
 import { AjnaGeo } from '../client/core/AjnaGeo.js'
 
+import { simpleSetup } from './lib/setup-wizard.mjs'
+
 // Login + geschichtete .env (Env > agents/.env.poi > Root-.env) + System-CA.
-const { ajna } = await bootAgent('poi')
+// Erststart ohne Pflichtwerte (oder --setup): Mini-Wizard fragt sie ab.
+const { ajna } = await bootAgent('poi', {
+  setup: simpleSetup('poi', { required: ['AJNA_USER', 'AJNA_PASS'], optional: ['AJNA_URL'] }),
+})
 const geo = new AjnaGeo(ajna)
 
 const CENTER_LAT = envNum('POI_CENTER_LAT', 50.3569)
@@ -264,8 +269,7 @@ if (REFRESH_MS > 0) {
   setInterval(() => {
     syncPois().catch(err => console.warn(`[poi] refresh error: ${err?.message || err}`))
   }, REFRESH_MS)
-  // SIGINT übernimmt bootAgent; SIGTERM (pm2/systemd-Stop) zusätzlich hier.
-  process.on('SIGTERM', () => { console.log('[poi] SIGTERM — exit');  process.exit(0) })
+  // SIGINT/SIGTERM übernimmt bootAgent.
 } else {
   console.log('[poi] initial sync abgeschlossen, beende.')
   process.exit(0)

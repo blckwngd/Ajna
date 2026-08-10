@@ -43,9 +43,21 @@
 
 import { bootAgent, die, envNum, envInt, envBool, envStr, publishManifest } from './lib/agent-base.mjs'
 import { encCategory, ENC_STYLE, wifiManifestLayers } from '../client/core/wifiStyle.js'
+import { bboxAroundM, centerOf } from '../client/core/geoMath.js'
+import { watchInterestAreas } from '../client/core/interestAreas.js'
+
+import { simpleSetup } from './lib/setup-wizard.mjs'
 
 // Login + geschichtete .env (Env > agents/.env.wigle > Root-.env) + System-CA.
-const { ajna } = await bootAgent('wigle')
+// Erststart ohne Pflichtwerte (oder --setup): Mini-Wizard fragt sie ab. Die
+// WiGLE-Keys sind hier "optional", weil auch die Legacy-Namen API_NAME/API_TOKEN
+// gelten (unten geprüft) — ein need-Trigger darauf würde solche Setups brechen.
+const { ajna } = await bootAgent('wigle', {
+  setup: simpleSetup('wigle', {
+    required: ['AJNA_USER', 'AJNA_PASS'],
+    optional: ['WIGLE_API_NAME', 'WIGLE_API_TOKEN', 'AJNA_URL'],
+  }),
+})
 
 // Akzeptiert beide Namenskonventionen: WIGLE_API_NAME/TOKEN (kanonisch) und
 // API_NAME/API_TOKEN (wie auf wigle.net und in mancher .env).
@@ -74,13 +86,7 @@ const DETAIL_FLOOR_M = 10
 
 if (!API_NAME || !API_TOKEN) die('WIGLE_API_NAME und WIGLE_API_TOKEN fehlen (wigle.net → Account → API)')
 
-// BoundingBox (RADIUS_M) um ein beliebiges Zentrum — für den Zentrum-Fallback
-// und pro aktivem Interessensbereich (dessen Mittelpunkt).
-function bboxAround(lat, lon) {
-  const dla = RADIUS_M / 111000
-  const dlo = RADIUS_M / (111000 * Math.cos(lat * Math.PI / 180))
-  return { latMin: lat - dla, latMax: lat + dla, lonMin: lon - dlo, lonMax: lon + dlo }
-}
+// BoundingBox (RADIUS_M) um ein Zentrum: bboxAroundM aus client/core/geoMath.js.
 
 const WIGLE_URL = 'https://api.wigle.net/api/v2/network/search'
 const AUTH = 'Basic ' + Buffer.from(`${API_NAME}:${API_TOKEN}`).toString('base64')
@@ -235,27 +241,11 @@ async function fetchNetworks(bbox) {
   return out.length > MAX_NETS ? out.slice(0, MAX_NETS) : out
 }
 
-// Aktive (anonymisierte) Interessensbereiche der Spieler, die WLANs eingeblendet
-// haben. Leer → niemand da (oder Opt-out) → Fallback konfiguriertes Zentrum.
-async function fetchActiveAreas() {
-  // Über die Ajna-Library (Base-URL + Auth + /ajnaapi zentral aufgelöst).
-  return ajna.fetchInterestAreas('wigle')
-}
-
 // Aktive Ziele: Mittelpunkte der Interessensbereiche, sonst Fallback-Zentrum.
-// `key` dient dem Änderungs-Vergleich (WiGLE nur bei Änderung neu abfragen).
-async function getTargets() {
-  let areas = []
-  try { areas = await fetchActiveAreas() }
-  catch (err) { console.warn(`[wigle] interest-areas: ${err?.message || err} → Fallback Zentrum`) }
-  if (!areas.length) return { centers: [{ lat: CENTER_LAT, lon: CENTER_LON }], key: 'center', fromAreas: false }
-  if (areas.length > MAX_AREAS) {
-    console.warn(`[wigle] ${areas.length} Bereiche → auf ${MAX_AREAS} begrenzt (WiGLE-Quota)`)
-    areas = areas.slice(0, MAX_AREAS)
-  }
-  const centers = areas.map(a => ({ lat: (a.latMin + a.latMax) / 2, lon: (a.lonMin + a.lonMax) / 2 }))
-  const key = centers.map(c => `${c.lat.toFixed(4)},${c.lon.toFixed(4)}`).sort().join('|')
-  return { centers, key, fromAreas: true }
+// (Abruf/Deckelung/Änderungs-Erkennung: watchInterestAreas, client/core.)
+function centersFrom(areas) {
+  if (!areas.length) return { centers: [{ lat: CENTER_LAT, lon: CENTER_LON }], fromAreas: false }
+  return { centers: areas.map(centerOf), fromAreas: true }
 }
 
 // WiGLE pro Ziel abfragen (RADIUS_M um den Mittelpunkt), Union, Bestand abgleichen.
@@ -263,7 +253,7 @@ async function queryReconcile(centers, fromAreas) {
   const byNet = new Map()
   for (const c of centers) {
     try {
-      for (const n of await fetchNetworks(bboxAround(c.lat, c.lon))) if (n.netid) byNet.set(String(n.netid), n)
+      for (const n of await fetchNetworks(bboxAroundM(c.lat, c.lon, RADIUS_M))) if (n.netid) byNet.set(String(n.netid), n)
     } catch (err) {
       console.warn(`[wigle] fetch fehlgeschlagen: ${err?.message || err}`)
     }
@@ -397,26 +387,23 @@ async function queryReconcile(centers, fromAreas) {
   console.log(`[wigle] ${created} neu, ${skipped} bereits vorhanden, ${deleted} entfernt, ${failed} Fehler${detailNote} — Bestand: ${nets.size}`)
 }
 
-// Demand-getriebene Schleife: Bereiche häufig + billig pollen, WiGLE nur
-// abfragen, wenn sich die Ziele geändert haben (gedrosselt) ODER periodisch
-// (Staleness) — schont das WiGLE-Tageslimit, folgt aber zügig dem Spieler.
-let lastKey = null, lastQueryAt = 0
-async function tick() {
-  const { centers, key, fromAreas } = await getTargets()
-  const now = Date.now()
-  const changed = key !== lastKey
-  const stale = (now - lastQueryAt) >= INTERVAL_MS
-  if (lastKey === null || stale || (changed && (now - lastQueryAt) >= QUERY_MIN_MS)) {
-    if (changed && lastKey !== null) {
-      console.log(`[wigle] Ziel geändert → WiGLE-Abfrage (${fromAreas ? `${centers.length} Bereich(e)` : 'Zentrum'})`)
+// Demand-getriebene Schleife: Bereiche häufig + billig pollen (watchInterestAreas),
+// WiGLE nur abfragen, wenn sich die Ziele geändert haben (gedrosselt) ODER
+// periodisch (Staleness) — schont das WiGLE-Tageslimit, folgt aber zügig dem Spieler.
+let lastQueryAt = 0
+const areaWatch = watchInterestAreas(ajna, 'wigle',
+  { intervalMs: POLL_MS, maxAreas: MAX_AREAS },
+  async (areas, { changed }) => {
+    const { centers, fromAreas } = centersFrom(areas)
+    const now = Date.now()
+    const stale = (now - lastQueryAt) >= INTERVAL_MS
+    if (stale || (changed && (now - lastQueryAt) >= QUERY_MIN_MS)) {
+      if (changed && lastQueryAt) {
+        console.log(`[wigle] Ziel geändert → WiGLE-Abfrage (${fromAreas ? `${centers.length} Bereich(e)` : 'Zentrum'})`)
+      }
+      lastQueryAt = now
+      await queryReconcile(centers, fromAreas)
     }
-    lastKey = key; lastQueryAt = now
-    await queryReconcile(centers, fromAreas)
-  }
-}
-await tick()
-setInterval(() => { tick().catch(err => console.warn(`[wigle] tick: ${err?.message || err}`)) }, POLL_MS)
+  })
+await areaWatch.first
 console.log(`[wigle] bereit — Bereichs-Poll alle ${(POLL_MS / 1000) | 0} s, WiGLE-Query min. alle ${(QUERY_MIN_MS / 1000) | 0} s, Re-Query alle ${(INTERVAL_MS / 1000) | 0} s. (Strg+C)`)
-
-// SIGINT übernimmt bootAgent.
-process.on('SIGTERM', () => { console.log('[wigle] SIGTERM — exit'); process.exit(0) })

@@ -76,9 +76,12 @@ export async function runHaSetup() {
       'Alle (everyone, auch anonym)',
       'Niemand (Rechte später manuell vergeben)',
     ], 0)
+    // Gültige rights: view/edit/move/owner — Interaktion läuft NICHT über ein
+    // "interact"-Recht, sondern ausschließlich über interact_actions (Schema +
+    // canInteract in pb_hooks/permissions.js).
     const defaults = aud === 2 ? [] : [{
       subject_type: aud === 1 ? 'everyone' : 'authenticated', subject: '',
-      rights: ['view', 'interact'], interact_actions: ['*'],
+      rights: ['view'], interact_actions: ['*'],
     }]
     try {
       await pb.collection('users').create({
@@ -203,6 +206,11 @@ Einstellungen → Geräte & Dienste → Integration hinzufügen → **MQTT**:
 ${tlsMode === 'none' ? '| Verschlüsselung | aus (nur LAN!) |' : '| Verschlüsselung | **aktivieren** |'}
 ${tlsMode === 'auto' ? '\n> Selbstsigniertes Zertifikat: beim Verbinden das Zertifikat akzeptieren/pinnen\n> (Fingerprint zeigt das Gateway beim Start an).' : ''}
 
+> Empfehlung für die MQTT-Optionen: **Discovery deaktivieren** (Ajna nutzt kein
+> MQTT-Discovery) und Birth-/Will-Topic auf \`ajna/ha/${haInstance}/status\`
+> stellen. Pflicht ist beides nicht — der Broker toleriert die Defaults
+> (lehnt sie nur still ab) —, es hält aber Log und Verkehr sauber.
+
 ## 2. Zustände nach Ajna spiegeln (configuration.yaml)
 \`\`\`yaml
 mqtt_statestream:
@@ -218,19 +226,24 @@ Danach HA neu starten. Die freigegebenen Entitäten erscheinen automatisch in Aj
 
 ## 3. Kommandos aus Ajna ausführen (Automation)
 Ajna publisht Kommandos auf \`ajna/ha/${haInstance}/<domain>/<entity>/set\`
-als JSON \`{"service": "...", "data": {...}}\`. Eine generische Automation:
+als JSON \`{"service": "...", "data": {...}}\`. Eine generische Automation —
+**in die \`automations.yaml\` eintragen** (ohne \`automation:\`-Schlüssel!) und
+danach unter Entwicklerwerkzeuge → YAML die Automationen neu laden:
 \`\`\`yaml
-automation:
-  - alias: "Ajna: MQTT-Kommandos ausführen"
-    trigger:
-      - platform: mqtt
-        topic: "ajna/ha/${haInstance}/+/+/set"
-    action:
-      - service: "{{ trigger.topic.split('/')[3] }}.{{ (trigger.payload | from_json).service }}"
-        target:
-          entity_id: "{{ trigger.topic.split('/')[3] }}.{{ trigger.topic.split('/')[4] }}"
-        data: "{{ (trigger.payload | from_json).data | default({}) }}"
+- alias: "Ajna: MQTT-Kommandos ausführen"
+  trigger:
+    - platform: mqtt
+      topic: "ajna/ha/${haInstance}/+/+/set"
+  action:
+    - service: "{{ trigger.topic.split('/')[3] }}.{{ (trigger.payload | from_json).service }}"
+      target:
+        entity_id: "{{ trigger.topic.split('/')[3] }}.{{ trigger.topic.split('/')[4] }}"
+      data: "{{ (trigger.payload | from_json).data | default({}) }}"
 \`\`\`
+> NICHT als eigener \`automation:\`-Block in die \`configuration.yaml\` — der
+> kollidiert mit dem üblichen \`automation: !include automations.yaml\`
+> (Duplikat-Key): Die Automation lädt dann nie und die Traces bleiben leer.
+> Prüfen: Einstellungen → Automationen — der Eintrag muss dort auftauchen.
 
 ## Sicherheit
 - Der Broker sperrt diesen Zugang auf den Namespace \`ajna/ha/${haInstance}/#\`.

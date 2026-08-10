@@ -6,6 +6,7 @@
 // und pm2-Erkennung/-Registrierung. Agent-spezifische Flows (z. B.
 // ha-setup.mjs) komponieren daraus ihren Fragenkatalog.
 
+import { readAgentEnv, writeAgentEnv } from './env.mjs'
 import { existsSync, readFileSync, readdirSync, statSync, accessSync, constants } from 'node:fs'
 import { resolve, join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -77,6 +78,47 @@ export async function askHidden(rl, question) {
 
 /** URL-sicheres Zufalls-Passwort. */
 export const randomSecret = (bytes = 18) => randomBytes(bytes).toString('base64url')
+
+// ─── Generischer Mini-Wizard ──────────────────────────────────────────────
+
+/**
+ * Erststart-Setup für Agents OHNE eigenen Wizard-Flow: fragt die angegebenen
+ * Env-Keys interaktiv ab (…PASS/…TOKEN/…SECRET/…KEY verdeckt) und schreibt
+ * agents/.env.<agent>. Vorhandene, nicht abgefragte Keys der Datei bleiben
+ * erhalten. Direkt als `setup`-Option für bootAgent verwendbar:
+ *   bootAgent('ais', { setup: simpleSetup('ais', { required: […], optional: […] }) })
+ */
+export function simpleSetup(agent, { required = [], optional = [], header = '' } = {}) {
+  return {
+    need: required,
+    run: async () => {
+      const rl = makeRl()
+      console.log(`\n══ Ajna · ${agent} — Einrichtung ══\n`)
+      const entries = { ...readAgentEnv(agent) }
+      for (const key of [...required, ...optional]) {
+        const must = required.includes(key)
+        const secret = /(PASS|TOKEN|SECRET|KEY)$/i.test(key)
+        const cur = process.env[key] || entries[key] || ''
+        let v = ''
+        do {
+          if (secret) {
+            v = await askHidden(rl, `${key}${must ? '' : ' (optional)'}${cur ? ' — Enter = aktuellen Wert behalten' : ''}`)
+            if (!v && cur) v = cur
+          } else {
+            v = await ask(rl, `${key}${must ? '' : ' (optional)'}`, cur)
+          }
+          if (must && !v) console.log(`  ${key} ist Pflicht.`)
+        } while (must && !v)
+        if (v) entries[key] = v
+      }
+      const path = writeAgentEnv(agent, entries,
+        header || `${agent} — erneut konfigurieren mit --setup`)
+      rl.close()
+      console.log(`\n✓ Konfiguration gespeichert: ${path}\n`)
+      return { exit: false }   // direkt weiterlaufen
+    },
+  }
+}
 
 // ─── HTTP-Probe (auch gegen selbstsignierte lokale Zertifikate) ───────────
 

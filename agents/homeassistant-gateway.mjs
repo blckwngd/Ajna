@@ -208,10 +208,27 @@ async function startEmbeddedBroker() {
     if (username === MQTT_HA_USER && pass === MQTT_HA_PASS) { client._ajnaInstance = HA_INSTANCE; return cb(null, true) }
     const err = new Error('Auth failed'); err.returnCode = 4; cb(err, false)
   }
-  broker.authorizePublish = (client, packet, cb) =>
-    topicInNamespace(client, packet.topic) ? cb(null) : cb(new Error('publish denied'))
-  broker.authorizeSubscribe = (client, sub, cb) =>
-    topicInNamespace(client, sub.topic) ? cb(null, sub) : cb(new Error('subscribe denied'))
+  // ACL OHNE Verbindungsabbruch: Ein Error in authorizePublish/-Subscribe
+  // trennt bei aedes die VERBINDUNG — HA publisht aber per Default seine
+  // Birth/Will-Message auf homeassistant/status und abonniert homeassistant/#
+  // (Discovery), beides außerhalb des Namespace → Reconnect-Schleife
+  // (verbunden/getrennt im 10-s-Takt). Stattdessen: Subscribe sanft ablehnen
+  // (SUBACK-Failure, cb(null, null)), Publish in ein totes $-Topic umleiten
+  // ($-Präfix liegt außerhalb JEDES Namespace → niemand kann es abonnieren).
+  broker.authorizePublish = (client, packet, cb) => {
+    if (topicInNamespace(client, packet.topic)) return cb(null)
+    if (packet.topic !== 'homeassistant/status') {   // HAs Birth/Will — erwartet, nicht loggen
+      console.log(`[ha-gateway] ACL: Publish außerhalb des Namespace ignoriert: ${client?.id} → ${packet.topic}`)
+    }
+    packet.topic = '$ajna/denied'
+    packet.retain = false
+    cb(null)
+  }
+  broker.authorizeSubscribe = (client, sub, cb) => {
+    if (topicInNamespace(client, sub.topic)) return cb(null, sub)
+    console.log(`[ha-gateway] ACL: Subscribe außerhalb des Namespace abgelehnt: ${client?.id} → ${sub.topic}`)
+    cb(null, null)
+  }
 
   const tlsMat = resolveTlsMaterial()
   const useTls = !!tlsMat

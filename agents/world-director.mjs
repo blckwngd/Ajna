@@ -61,10 +61,15 @@ import { findLandingSpot } from './lib/landing-spots.mjs'
 import { stepAlongPath, buildWayGraph, nearestNodeKey, randomReachableTarget, shortestPath, haversine, bearingRad } from '../client/core/StreetNav.js'
 import { animalNameFor } from '../client/core/animalNames.js'
 
+import { simpleSetup } from './lib/setup-wizard.mjs'
+
 // Login + geschichtete .env (Env > agents/.env.director > Root-.env) + System-CA.
 // Die WD_*-Konstanten unten lesen process.env erst NACH diesem await — die
 // Schichten sind dann geladen.
-const { ajna } = await bootAgent('director', { tag: 'director' })
+const { ajna } = await bootAgent('director', {
+  tag: 'director',
+  setup: simpleSetup('director', { required: ['AJNA_USER', 'AJNA_PASS'], optional: ['AJNA_URL'] }),
+})
 
 const CENTER_LAT  = parseFloat(process.env.WD_CENTER_LAT || '50.3569')
 const CENTER_LON  = parseFloat(process.env.WD_CENTER_LON || '7.5890')
@@ -1255,4 +1260,4 @@ setInterval(() => { publishManifest() }, HEARTBEAT_MS)
 console.log('[director] bereit. (Strg+C zum Beenden)')
 
 // SIGINT übernimmt bootAgent.
-process.on('SIGTERM', () => { console.log('[director] SIGTERM — exit'); process.exit(0) })
+// SIGINT/SIGTERM übernimmt bootAgent.

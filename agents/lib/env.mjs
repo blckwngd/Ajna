@@ -32,6 +32,10 @@ function parseEnvFile(path) {
   return out
 }
 
+/** Liest die Agent-.env als Objekt (leer, wenn sie fehlt) — ohne process.env anzufassen. */
+export const readAgentEnv = (agent) =>
+  existsSync(agentEnvPath(agent)) ? parseEnvFile(agentEnvPath(agent)) : {}
+
 /**
  * Lädt die Env-Schichten des Agenten in process.env (ohne Überschreiben).
  * @returns {{[key:string]: string}} key → Quelldatei (für Diagnose)
