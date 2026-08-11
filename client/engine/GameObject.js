@@ -185,6 +185,17 @@ export class GameObject {
     // nicht synchronisiert.
     this._spinRad = (Number(this._appearance?.spin) || 0) * Math.PI / 180
 
+    // Agent-definierte Animations-/Ausrichtungs-Parameter (appearance-Contract,
+    // reine DATEN mit Validierung — Interpretation ausschließlich hier):
+    //   yaw (rad, übersteuert MODEL_YAW_RAD), animSpeed (Playback, 0.1–4),
+    //   anim (Alias-Map Zustand → Clip-Name, nur gegen eigene Groups gematcht).
+    const apYaw = Number(this._appearance?.yaw)
+    this._modelYaw = Number.isFinite(apYaw) ? apYaw : null
+    const apSpeed = Number(this._appearance?.animSpeed)
+    this._animSpeed = Number.isFinite(apSpeed) ? Math.min(4, Math.max(0.1, apSpeed)) : 1
+    const aliases = this._appearance?.anim
+    this._animAliases = (aliases && typeof aliases === 'object' && !Array.isArray(aliases)) ? aliases : null
+
     // Immer einen Platzhalter — das Modell-Loading ist ein nice-to-have,
     // das Verhalten der Szene darf davon nicht abhängen.
     this.#createPlaceholder()
@@ -315,7 +326,9 @@ export class GameObject {
       // getrennt von root, damit die geo-Rotation (Agent/Editor) unberührt bleibt.
       let parent = this.root
       const file = (url.split(/[?#]/)[0].split("/").pop() || "")
-      const yaw = MODEL_YAW_RAD[file]
+      // appearance.yaw (Agent-Daten) übersteuert die Default-Tabelle für
+      // mitgelieferte Modelle — auch explizit 0 (= Korrektur abschalten).
+      const yaw = this._modelYaw ?? MODEL_YAW_RAD[file]
       if (yaw) {
         const yawNode = new BABYLON.TransformNode(`yawfix_${this.id}`, this.scene)
         yawNode.rotation.y = yaw
@@ -435,6 +448,13 @@ export class GameObject {
     const groups = this.animationGroups
     if (!state) return groups[0]
     const lower = String(state).toLowerCase()
+    // Agent-definierte Alias-Map (appearance.anim) hat Vorrang: exakter
+    // Clip-Name, gematcht NUR gegen die Groups dieses Modells.
+    const mapped = this._animAliases?.[lower] ?? this._animAliases?.[state]
+    if (typeof mapped === 'string' && mapped) {
+      const g = groups.find(x => (x.name || '').toLowerCase() === mapped.toLowerCase())
+      if (g) return g
+    }
     const exact = groups.find(g => (g.name || "").toLowerCase() === lower)
     if (exact) return exact
     for (const needle of (ANIM_ALIASES[lower] || [lower])) {
@@ -463,6 +483,11 @@ export class GameObject {
     const next = this._resolveAnimGroup(state)
     if (this._activeAnim === next) return
 
+    // Distanz-LOD-Pause (main.js ajnaPerf) verwerfen: Der Zustandswechsel macht
+    // die gemerkte Pause-Liste ungültig — sonst spielt die LOD beim Wieder-
+    // eintritt in den Radius die ALTEN Clips über die neue Animation.
+    this._pausedAnims = null
+
     // Vorherige stoppen — Babylon spielt sonst beide gleichzeitig.
     this.animationGroups.forEach(g => g.stop())
     // Bones auf Ruhelage, BEVOR die neue Group startet: manche Clips animieren
@@ -472,7 +497,7 @@ export class GameObject {
     // Group — der gelandete Drache bliebe mit den aus GlideFlight/FlapFlight
     // gespreizten Flügeln stehen, während nur Rumpf/Schwanz idle-atmen.
     this.skeletons?.forEach(sk => { try { sk.returnToRest() } catch {} })
-    next.start(true)
+    next.start(true, this._animSpeed)   // Playback-Faktor aus appearance.animSpeed
     this._activeAnim = next
   }
 
@@ -492,7 +517,7 @@ export class GameObject {
     this._reactionAnim = group
     this.animationGroups.forEach(g => g.stop())
     this._activeAnim = group
-    try { group.start(false) } catch { this._reactionAnim = null; return }   // One-Shot
+    try { group.start(false, this._animSpeed) } catch { this._reactionAnim = null; return }   // One-Shot
 
     const revert = () => {
       if (this._reactionAnim !== group) return
@@ -550,6 +575,31 @@ export class GameObject {
     //    "sphere"), rendern wir es direkt mit Farbe, Transparenz (opacity) und
     //    Schwebehöhe (y) aus appearance. So braucht der Viewer kein Typ-Wissen.
     const ar = arViewOf(this._appearance)
+
+    // Bildtafel (shape "image" + https-texture, z. B. Commons-Fotos): Foto als
+    // beidseitige, gleichmäßig helle Plane, die sich zum Betrachter dreht.
+    if (ar && (ar.shape || '').toLowerCase() === 'image') {
+      const texUrl = typeof ar.texture === 'string' && /^https:\/\/[^\s"'<>]+$/i.test(ar.texture.trim())
+        ? ar.texture.trim() : null
+      if (texUrl) {
+        const w = Number(ar.width) || 1.2
+        const h = Number(ar.height) || 0.9
+        const plane = BABYLON.MeshBuilder.CreatePlane(phName,
+          { width: w, height: h, sideOrientation: BABYLON.Mesh.DOUBLESIDE }, this.scene)
+        const mat = new BABYLON.StandardMaterial(`mat_${this.id}`, this.scene)
+        mat.emissiveTexture = new BABYLON.Texture(texUrl, this.scene)
+        mat.disableLighting = true          // Fotos gleichmäßig hell, licht-unabhängig
+        mat.backFaceCulling = false
+        plane.material = mat
+        plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_Y
+        const yy = Number(ar.y)
+        plane.position.y = Number.isFinite(yy) ? yy : 1.4
+        plane.parent = this.root
+        this.meshes = [plane]
+        return
+      }
+    }
+
     const apMesh = ar ? this.#primitiveFromShape((ar.shape || '').toLowerCase(), ar, phName) : null
     if (apMesh) {
       const apMat = new BABYLON.StandardMaterial(`mat_${this.id}`, this.scene)
@@ -770,7 +820,7 @@ export class GameObject {
   }
 
   playAllAnimations(loop = true) {
-    this.animationGroups.forEach(anim => anim.start(loop))
+    this.animationGroups.forEach(anim => anim.start(loop, this._animSpeed))
   }
 
   addComponent(component) {

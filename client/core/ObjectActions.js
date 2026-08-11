@@ -14,6 +14,7 @@
 import { renderServerBadgeText } from './ServerBadge.js'
 import { applyInteractionSideEffect } from './InteractionReply.js'
 import { privacy } from './PrivacyPolicy.js'
+import { wikiLinkOf } from './wikiLinks.js'
 
 const FALLBACK_ACTIONS = [
   { key: 'examine', label: 'Untersuchen' }
@@ -117,9 +118,17 @@ export class ObjectActions {
 
     const shownActions = this.actionsFor(record)
 
+    // Wikipedia-/Commons-Link (Sicherheits-Allowlist: nur Wikimedia-Hosts,
+    // nur state.source === "wikipedia" — siehe wikiLinks.js).
+    const wikiUrl = wikiLinkOf(record)
+
     const items = [
       { label: 'Bearbeiten',     onClick: () => this.editorUI?.fillEditor?.(record) },
       this.onGizmo && { label: '✥ Verschieben/Drehen', onClick: () => this.onGizmo(record) },
+      wikiUrl && {
+        label: record.state?.wiki_kind === 'image' ? '🔗 Auf Commons öffnen' : '🔗 Wikipedia öffnen',
+        onClick: () => window.open(wikiUrl, '_blank', 'noopener')
+      },
       ownerRight && { label: 'Berechtigungen', onClick: () => this.permissionDialog?.open(record) },
       collectible && { label: '🎒 Einsammeln', onClick: () => this._pickup(record) },
       ownerRight && { label: 'Löschen', danger: true, onClick: () => this._confirmDelete(record) },

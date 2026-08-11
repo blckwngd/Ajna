@@ -12,7 +12,8 @@ import { ObjectActions } from "./core/ObjectActions.js"
 import { Toast } from "./core/Toast.js"
 import { PositionSmoother } from "./core/PositionSmoother.js"
 import { encStyleOf } from "./core/wifiStyle.js"
-import { shapeOf, emojiOf, colorOf, radiusOf, glowOf } from "./core/Appearance.js"
+import { shapeOf, emojiOf, colorOf, radiusOf, glowOf, textureOf } from "./core/Appearance.js"
+import { isWikimediaUrl } from "./core/wikiLinks.js"
 import { interactionReply, describeRequires } from "./core/InteractionReply.js"
 import { spawnRandomAndEdit, directorSpawnItems } from "./core/SpawnHere.js"
 import { InterestArea } from "./core/InterestArea.js"
@@ -352,7 +353,15 @@ function popupDetail(o) {
     return bits.join('<br>')
   }
   const d = o?.description || o?.state?.note || o?.state?.hint
-  return d ? escHtml(String(d)) : ''
+  if (!d) return ''
+  const esc = escHtml(String(d))
+  // Links anklickbar (neuer Tab) — aus Sicherheitsgründen vorerst NUR bei
+  // Wikipedia-/Commons-Objekten und nur auf Wikimedia-Hosts (wikiLinks.js);
+  // Nutzer-Beschreibungen sollen keine beliebigen Links einschleusen.
+  if (o?.state?.source !== 'wikipedia') return esc
+  return esc.replace(/(https:\/\/[^\s<]+)/g, (m) => isWikimediaUrl(m)
+    ? `<a href="${m}" target="_blank" rel="noopener" style="word-break:break-all">${m}</a>`
+    : m)
 }
 
 function popupHtml(id) {
@@ -369,7 +378,13 @@ function popupHtml(id) {
       + `<br><button type="button" onclick="window.__ajnaEditObj&&window.__ajnaEditObj('${id}')" style="margin-top:6px;cursor:pointer">✏️ Bearbeiten</button>`
   }
   const detail = popupDetail(o)
-  return `<strong>${escHtml(name)}</strong><br>${detail || `${lat}, ${lon}`}`
+  // Bildtafel-Objekte (appearance.texture, z. B. Commons-Fotos): Thumbnail im
+  // Popup. textureOf validiert strikt auf https ohne Quote-Zeichen (Attribut!).
+  const img = textureOf(o)
+  const imgHtml = img
+    ? `<a href="${img}" target="_blank" rel="noopener"><img src="${img}" alt="" loading="lazy" style="max-width:220px;max-height:160px;display:block;margin:4px 0;border-radius:4px"></a>`
+    : ''
+  return `<strong>${escHtml(name)}</strong><br>${imgHtml}${detail || `${lat}, ${lon}`}`
 }
 
 function addMarker(obj) {

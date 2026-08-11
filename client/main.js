@@ -855,9 +855,34 @@ async function init() {
   // arResume wirft AUCH das Kamerabild wieder an — nach einem Tab-Wechsel
   // pausiert das <video> im versteckten Subtree (sonst eingefrorenes Bild).
   window.arPause = () => engine.stopRenderLoop()
+  // Kamera zum Spieler holen, wenn sie weit weg steht: Beim Wechsel aus der
+  // Karte parkt die freie Kamera oft noch am Boot-Origin (Dummy-Position),
+  // während der Spieler längst am echten GPS-Fix ist. Der Distanz-Guard
+  // verhindert Rucke bei bloßem Tab-Geflacker; im AR-Player-Modus (Kamera
+  // hat parent) ist nichts zu tun.
+  const snapCameraToPlayerIfFar = (minM = 25) => {
+    try {
+      const cam = scene?.activeCamera
+      if (!player?.root || !cam || cam.parent) return
+      player.root.computeWorldMatrix(true)
+      if (BABYLON.Vector3.Distance(cam.position, player.root.absolutePosition) > minM) {
+        focusCameraOn(scene, player)
+      }
+    } catch { /* Komfort-Feature — nie fatal */ }
+  }
+  // Erster ECHTER Fix (nicht Dummy): der Spieler springt vom Boot-Origin zur
+  // GPS-Position — die Kamera einmalig hinterher (kurz verzögert, damit die
+  // Spieler-Position schon angewendet ist).
+  let _snappedToRealFix = false
+  positionSource.onPosition?.((p) => {
+    if (_snappedToRealFix || !p || p.source === 'dummy') return
+    _snappedToRealFix = true
+    setTimeout(() => snapCameraToPlayerIfFar(), 500)
+  })
   window.arResume = () => {
     engine.runRenderLoop(renderLoop); engine.resize()
     arPassthrough.resume?.().catch(() => {})
+    snapCameraToPlayerIfFar()   // Ansichtswechsel: Kamera übernimmt die Karten-/GPS-Position
   }
   // App minimiert + wieder geöffnet: Android gibt die Kamera im Hintergrund frei
   // (Track endet). Beim Zurückkehren die Kamera neu holen — greift auch für die
@@ -1608,7 +1633,7 @@ async function init() {
   // Bone-Matrizen pro Frame). Ferne Objekte bleiben sichtbar, werfen aber
   // keinen Schatten und stehen still (fällt jenseits der Radien nicht auf).
   // Live tunebar: ajnaPerf.shadowRadiusM / ajnaPerf.animRadiusM (0 = aus).
-  const perfCfg = { shadowRadiusM: 40, animRadiusM: 60 }
+  const perfCfg = { shadowRadiusM: 40, animRadiusM: 150 }
   window.ajnaPerf = perfCfg
   setInterval(() => {
     const cam = scene.activeCamera

@@ -19,7 +19,29 @@
 
 import PocketBase from 'pocketbase'
 
-const OVERPASS_URL = process.env.AJNA_GEO_OVERPASS || 'https://overpass-api.de/api/interpreter'
+// Overpass-Endpunkte in Reihenfolge: erster Treffer gewinnt, bei Ausfall/
+// Rate-Limit (429/504/Netzfehler) wird der nächste probiert. Die öffentliche
+// Haupt-Instanz drosselt pro IP spürbar, sobald mehrere Agents parallel
+// abfragen (Director-Routing + POI-Bridge + Kulisse) — dann rettet ein
+// Spiegel die Szene. Eigene Instanz via AJNA_GEO_OVERPASS setzen (überschreibt
+// die Liste komplett).
+const OVERPASS_URLS = (process.env.AJNA_GEO_OVERPASS
+  ? [process.env.AJNA_GEO_OVERPASS]
+  : [
+      'https://overpass-api.de/api/interpreter',
+      'https://overpass.kumi.systems/api/interpreter',
+      'https://overpass.private.coffee/api/interpreter',
+    ])
+const OVERPASS_URL = OVERPASS_URLS[0]   // für /status + Logs
+// Freie Spiegel sind unter Last LANGSAM (gemessen: 37 s für eine Gebäude-
+// Abfrage im 300-m-Radius) — der Timeout muss das aushalten.
+const OVERPASS_TIMEOUT_MS = parseInt(process.env.AJNA_GEO_TIMEOUT_MS || '90000', 10)
+// Ausgefallene Endpunkte für eine Weile überspringen. Ohne das liefe JEDE
+// Anfrage erst in den Timeout des toten Servers (real erlebt: overpass-api.de
+// sperrt nach zu vielen Anfragen die IP auf TCP-Ebene — keine 429-Antwort
+// mehr, nur noch Verbindungs-Timeouts).
+const OVERPASS_COOLDOWN_MS = parseInt(process.env.AJNA_GEO_COOLDOWN_MS || '300000', 10)
+const overpassDown = new Map()   // url → Zeitpunkt, ab dem wieder probiert wird
 const CACHE_TTL_MS = parseInt(process.env.AJNA_GEO_TTL_MS || '3600000', 10)
 const AUTH_MODE    = (process.env.AJNA_GEO_AUTH || 'authenticated').toLowerCase()
 const PB_URL       = process.env.AJNA_PB_URL || 'http://127.0.0.1:8090'
@@ -35,13 +57,23 @@ const DEFAULT_RADIUS_M = 200
 const FILTER_SETS = {
   ways: {
     walkable: 'way["highway"~"^(footway|path|pedestrian|residential|service|living_street|cycleway|track|unclassified|tertiary)$"]',
-    all:      'way["highway"]'
+    all:      'way["highway"]',
+    // Gewässer als Linien (Fluss-Mittellinie, Bäche, Kanäle) — Orientierungs-
+    // anker Nr. 1 in der 3D-Ansicht. Flächen (natural=water) blieben außen vor:
+    // Polygon-Triangulierung bräuchte earcut als zusätzliche Abhängigkeit.
+    water:    'way["waterway"~"^(river|stream|canal|drain|ditch)$"]',
+    // Schienen getrennt abrufbar (andere Darstellung als Straßen).
+    rail:     'way["railway"~"^(rail|light_rail|subway|tram|narrow_gauge)$"]'
   },
   pois: {
     common:   'node["amenity"~"^(bench|cafe|restaurant|bar|fast_food|fountain|drinking_water|pub|toilets)$"]',
     amenity:  'node["amenity"]',
     shops:    'node["shop"]',
-    tourism:  'node["tourism"]'
+    tourism:  'node["tourism"]',
+    // Funk-/Sendemasten: Mobilfunk, Rundfunk, Richtfunk. Fasst Masten
+    // (man_made=mast) UND Türme (man_made=tower) mit Kommunikations-Zweck
+    // zusammen; "communication" deckt auch Rundfunktürme ab.
+    masts:    'nwr["man_made"~"^(mast|tower|communications_tower)$"]["tower:type"~"communication",i]'
   },
   buildings: {
     all:      'way["building"]'
@@ -108,18 +140,37 @@ async function requireAuth(req, res, next) {
 // ───────────────────────────────────────────────────────────────────────
 
 async function overpassQuery(ql) {
-  const r = await fetch(OVERPASS_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'User-Agent':   USER_AGENT
-    },
-    body: 'data=' + encodeURIComponent(ql)
-  })
-  if (!r.ok) {
-    throw new Error(`Overpass ${r.status}: ${await r.text().catch(() => '')}`)
+  let lastErr = null
+  const now = Date.now()
+  // Erst die Endpunkte ohne aktive Sperrfrist; sind alle gesperrt, trotzdem
+  // alle probieren (besser ein langsamer Versuch als gar keine Daten).
+  const ready = OVERPASS_URLS.filter(u => (overpassDown.get(u) || 0) <= now)
+  for (const url of (ready.length ? ready : OVERPASS_URLS)) {
+    try {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent':   USER_AGENT
+        },
+        body: 'data=' + encodeURIComponent(ql),
+        signal: AbortSignal.timeout(OVERPASS_TIMEOUT_MS)
+      })
+      if (!r.ok) throw new Error(`${r.status}: ${(await r.text().catch(() => '')).slice(0, 200)}`)
+      const j = await r.json()
+      overpassDown.delete(url)                 // wieder gesund
+      if (url !== OVERPASS_URLS[0]) console.warn(`[geo] Ausweich-Endpunkt genutzt: ${new URL(url).host}`)
+      return j
+    } catch (err) {
+      lastErr = err
+      // Nächsten Spiegel probieren — Rate-Limit/Timeout/Netzfehler sind genau
+      // die Fälle, für die die Liste existiert. Endpunkt für die Sperrfrist
+      // notieren, damit nicht jede Anfrage erneut hineinläuft.
+      overpassDown.set(url, Date.now() + OVERPASS_COOLDOWN_MS)
+      console.warn(`[geo] Overpass ${new URL(url).host}: ${err?.message || err} — ${OVERPASS_COOLDOWN_MS / 60000} min übersprungen`)
+    }
   }
-  return r.json()
+  throw new Error(`Overpass nicht erreichbar (${OVERPASS_URLS.length} Endpunkte): ${lastErr?.message || lastErr}`)
 }
 
 // OSM-Element → uniformes Feature für die Ajna-API.
@@ -185,9 +236,21 @@ async function handleQuery(req, res, endpoint, defaultFilter, outDirective = 'ou
   const hit = cacheGet(key)
   if (hit) return res.json({ ...hit, source: 'cache' })
 
-  const ql = `[out:json][timeout:25];
+  // BBOX statt `around:` — Overpass kann die Bounding-Box direkt über seinen
+  // Raum-Index bedienen, während `around:` für jedes Element eine Distanz
+  // rechnet. Auf den (überlasteten) öffentlichen Servern ist das der
+  // Unterschied zwischen Antwort und 504. Die Ecken der Box liegen bis zu
+  // √2·r entfernt — für Kulisse/Kontext unerheblich, der Client zeichnet
+  // ohnehin nur, was in Sicht ist.
+  const dLat = params.radius / 111320
+  const dLon = params.radius / (111320 * Math.cos(params.lat * Math.PI / 180) || 1)
+  const bbox = [
+    (params.lat - dLat).toFixed(6), (params.lon - dLon).toFixed(6),
+    (params.lat + dLat).toFixed(6), (params.lon + dLon).toFixed(6),
+  ].join(',')
+  const ql = `[out:json][timeout:60];
 (
-  ${params.filterQL}(around:${params.radius},${params.lat},${params.lon});
+  ${params.filterQL}(${bbox});
 );
 ${outDirective}`
 

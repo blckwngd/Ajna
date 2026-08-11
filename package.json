@@ -16,6 +16,8 @@
     "stack": "concurrently --kill-others --names pb,wp,api,caddy -c green,yellow,cyan,magenta \"npm:pocketbase\" \"npm:dev\" \"npm:start\" \"npm:caddy\"",
     "stack:all": "concurrently --kill-others --names pb,wp,api,caddy,poi,ais,wigle,director -c green,yellow,cyan,magenta,blue,red,gray,white \"npm:pocketbase\" \"npm:dev\" \"npm:start\" \"npm:caddy\" \"node scripts/wait-stack.mjs && node agents/poi-bridge.mjs\" \"node scripts/wait-stack.mjs && node agents/ais-bridge.mjs\" \"node scripts/wait-stack.mjs && node agents/wigle-bridge.mjs\" \"node scripts/wait-stack.mjs && node agents/world-director.mjs\"",
     "ais": "node agents/ais-bridge.mjs",
+    "ais-vf": "node agents/ais-vesselfinder.mjs",
+    "movebank": "node agents/movebank-bridge.mjs",
     "adsb": "node agents/adsb-bridge.mjs",
     "poi": "node agents/poi-bridge.mjs",
     "wigle": "node agents/wigle-bridge.mjs",

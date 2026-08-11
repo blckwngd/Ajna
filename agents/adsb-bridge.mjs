@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 //
-// agents/adsb-bridge.mjs — ADS-B-Flugzeug-Bridge für Ajna (OpenSky Network)
+// agents/adsb-bridge.mjs — ADS-B-Flugzeug-Bridge für Ajna
 //
-// Analog zur AIS-Bridge (Schiffe), aber für FLUGZEUGE aus dem OpenSky-Network.
-// icao24 (Transponder-Adresse, hex) ist der stabile Identifier; type-Tag
-// "aircraft".
+// Analog zur AIS-Bridge (Schiffe), aber für FLUGZEUGE. icao24 (Transponder-
+// Adresse, hex) ist der stabile Identifier; type-Tag "aircraft".
+//
+// QUELLEN (ADSB_SOURCE): Community-Aggregatoren mit v2-API — kein Key,
+// UNGEFILTERT inkl. Militär (dbFlags-Bit → state.mil + „Militär"-Layer) —
+// oder klassisch OpenSky (OAuth2, serverseitig gefiltert, Credit-Budget):
+//   adsblol (Default) | adsbfi | airplaneslive | opensky
+// Die drei v2-Quellen sind API-kompatibel (gleiche Endpunkt-Form + Felder).
 //
 // UNTERSCHIEDE zu AIS/POI/Wigle — hier steckt die eigentliche Arbeit:
 //
@@ -31,7 +36,8 @@
 //
 // Konfiguration (ENV oder .env im CWD):
 //   AJNA_URL / AJNA_USER / AJNA_PASS   Ajna-Login (Pflicht — dedizierter Agent-User)
-//   OPENSKY_CLIENT_ID / OPENSKY_CLIENT_SECRET  optional — OAuth2 (sonst anonym)
+//   ADSB_SOURCE        adsblol (Default) | adsbfi | airplaneslive | opensky
+//   OPENSKY_CLIENT_ID / OPENSKY_CLIENT_SECRET  nur bei ADSB_SOURCE=opensky (sonst anonym)
 //   ADSB_CENTER_LAT / ADSB_CENTER_LON  Fallback-Zentrum (Default 50.11, 8.68 — Frankfurt)
 //   ADSB_RADIUS_KM     Sichtradius in km (Default: 50)
 //   ADSB_POLL_S        Poll-Intervall in s bei aktiven Bereichen (Default: 30;
@@ -44,7 +50,7 @@
 // Start:  node agents/adsb-bridge.mjs   bzw.   npm run adsb
 // Beenden: Ctrl+C.
 
-import { bootAgent, envNum, envInt, envStr, publishManifest } from './lib/agent-base.mjs'
+import { bootAgent, die, envNum, envInt, envStr, publishManifest } from './lib/agent-base.mjs'
 import { bboxAroundKm, centerOf, flatDistKm, KM_PER_DEG_LAT } from '../client/core/geoMath.js'
 import { watchInterestAreas } from '../client/core/interestAreas.js'
 
@@ -73,21 +79,43 @@ const MIN_CREDITS = envInt('ADSB_MIN_CREDITS', 25)
 const OS_STATES_URL = 'https://opensky-network.org/api/states/all'
 const OS_TOKEN_URL  = 'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token'
 
+// ─── Datenquelle ───────────────────────────────────────────────────────────
+// v2-Quellen: Punkt+Radius (nautische Meilen), Antwort { ac: [...] } mit
+// einheitlichen Feldnamen (hex/flight/t/r/alt_*/gs/track/*_rate/dbFlags).
+const SOURCES = {
+  adsblol:       { label: 'adsb.lol',       v2: (lat, lon, nm) => `https://api.adsb.lol/v2/point/${lat}/${lon}/${nm}` },
+  adsbfi:        { label: 'adsb.fi',        v2: (lat, lon, nm) => `https://opendata.adsb.fi/api/v2/lat/${lat}/lon/${lon}/dist/${nm}` },
+  airplaneslive: { label: 'airplanes.live', v2: (lat, lon, nm) => `https://api.airplanes.live/v2/point/${lat}/${lon}/${nm}` },
+  opensky:       { label: 'OpenSky' },
+}
+const SOURCE_KEY = (envStr('ADSB_SOURCE') || 'adsblol').toLowerCase().replace(/[^a-z]/g, '')
+const SOURCE = SOURCES[SOURCE_KEY]
+if (!SOURCE) die(`ADSB_SOURCE="${SOURCE_KEY}" unbekannt — erlaubt: ${Object.keys(SOURCES).join(' | ')}`)
+const UA = { 'User-Agent': 'ajna-adsb-bridge/1.0' }
+
 const AUTHED = !!(OS_CLIENT_ID && OS_CLIENT_SECRET)
 
-console.log(`[adsb] Zentrum ${CENTER_LAT.toFixed(3)}, ${CENTER_LON.toFixed(3)} · Radius ${RADIUS_KM} km · Poll ${(POLL_MS/1000)|0} s`)
-console.log(`[adsb] Auth: ${AUTHED ? 'OAuth2 (OPENSKY_CLIENT_ID gesetzt)' : 'ANONYM'} · Budget-Puffer ${MIN_CREDITS} Credits · max ${MAX_AIRCRAFT} Flugzeuge`)
+console.log(`[adsb] Quelle ${SOURCE.label} · Zentrum ${CENTER_LAT.toFixed(3)}, ${CENTER_LON.toFixed(3)} · Radius ${RADIUS_KM} km · Poll ${(POLL_MS/1000)|0} s`)
+console.log(SOURCE.v2
+  ? `[adsb] ungefiltert (inkl. Militär) · kein Key nötig · max ${MAX_AIRCRAFT} Flugzeuge`
+  : `[adsb] Auth: ${AUTHED ? 'OAuth2 (OPENSKY_CLIENT_ID gesetzt)' : 'ANONYM'} · Budget-Puffer ${MIN_CREDITS} Credits · max ${MAX_AIRCRAFT} Flugzeuge`)
 
 if (await publishManifest(ajna, {
+  // source bleibt "opensky" als STABILE Agent-Identität (Filter-Auswahlen,
+  // Interest-Area-Quellen, bestehende Objekte) — die tatsächliche Datenquelle
+  // ist per ADSB_SOURCE wählbar und steht in state.provider/Beschreibung.
   source: 'opensky',
   agent_name: 'ADS-B-Bridge',
-  description: `Flugzeuge via OpenSky-Network im Radius ${RADIUS_KM} km`,
+  description: `Flugzeuge via ${SOURCE.label} im Radius ${RADIUS_KM} km${SOURCE.v2 ? ' (ungefiltert inkl. Militär)' : ''}`,
   // Unbegrenztes Render-Budget: sonst zeigt der Client nur die 50 kamera-
   // nächsten (DEFAULT_RENDER_BUDGET) und cullt den Rest per Distanz — bei
   // Flugzeugen ist aber gerade die Weitsicht der Punkt. Die Gesamtzahl deckelt
   // ohnehin ADSB_MAX_AIRCRAFT.
   render_budget: 0,
-  layers: [{ key: 'all', label: 'Alle Flugzeuge', predicate: null }]
+  layers: [
+    { key: 'all', label: 'Alle Flugzeuge', predicate: null },
+    { key: 'mil', label: 'Militär', predicate: { field: 'state.mil', equals: true } },
+  ]
 })) console.log('[ajna] manifest aktualisiert')
 
 // ─── In-Memory: icao24 → { objectId, name, lastSeenMs, inflight } ─────────
@@ -186,6 +214,7 @@ function parseState(s) {
     icao24: String(s[0] || '').trim(),
     callsign: (s[1] || '').trim(),
     country: s[2] || '',
+    reg: null, typeCode: null, mil: false,
     lat, lon,
     altitude: Number.isFinite(s[13]) ? s[13] : (Number.isFinite(s[7]) ? s[7] : 0), // geo bevorzugt, sonst baro
     onGround: !!s[8],
@@ -196,15 +225,65 @@ function parseState(s) {
   }
 }
 
+// v2-Datensatz (adsb.lol/adsb.fi/airplanes.live) → dasselbe handliche Objekt.
+// Einheiten dort: Fuß, Knoten, ft/min — hier alles in Meter/(m/s) normiert.
+function parseV2(p, nowMs) {
+  const lat = Number(p.lat), lon = Number(p.lon)
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
+  const ground = p.alt_baro === 'ground'
+  const altFt = Number.isFinite(p.alt_geom) ? p.alt_geom : (Number.isFinite(p.alt_baro) ? p.alt_baro : 0)
+  const rateFtMin = Number.isFinite(p.geom_rate) ? p.geom_rate : (Number.isFinite(p.baro_rate) ? p.baro_rate : 0)
+  const seenS = Number.isFinite(p.seen_pos) ? p.seen_pos : (Number.isFinite(p.seen) ? p.seen : 0)
+  return {
+    icao24: String(p.hex || '').trim().toLowerCase(),
+    callsign: String(p.flight || '').trim(),
+    country: '',
+    reg: String(p.r || '').trim() || null,           // Registrierung (z. B. D-ABCD)
+    typeCode: String(p.t || '').trim() || null,      // Muster (z. B. A320)
+    mil: (Number(p.dbFlags) & 1) === 1,              // dbFlags-Bit 0 = Militär
+    lat, lon,
+    altitude: ground ? 0 : altFt * 0.3048,
+    onGround: ground,
+    velocity: (Number(p.gs) || 0) * 0.514444,        // kn → m/s
+    track: Number.isFinite(p.track) ? p.track : 0,
+    vrate: rateFtMin * 0.00508,                      // ft/min → m/s
+    category: typeof p.category === 'string' ? p.category : null,
+    measuredAt: nowMs - seenS * 1000,
+  }
+}
+
+// Quellen-agnostischer Abruf: liefert normierte Flugzeuge inkl. measuredAt.
+async function fetchAircraft(box) {
+  if (!SOURCE.v2) {
+    const res = await fetchBox(box)   // OpenSky (BBOX, Token, Credits)
+    const t = res.time ? res.time * 1000 : Date.now()
+    return res.states.map(parseState).filter(Boolean).map(a => ({ ...a, measuredAt: t }))
+  }
+  const nm = Math.max(1, Math.min(250, Math.ceil(RADIUS_KM / 1.852)))
+  const r = await fetch(SOURCE.v2(box.cLat.toFixed(4), box.cLon.toFixed(4), nm), { headers: UA })
+  if (r.status === 429) {
+    const retry = parseInt(r.headers.get('retry-after') || '0', 10)
+    pausedUntil = Date.now() + (Number.isFinite(retry) && retry > 0 ? retry * 1000 : 60_000)
+    throw new Error(`429 — Limit erreicht, Pause ${Math.round((pausedUntil - Date.now()) / 1000)} s`)
+  }
+  if (!r.ok) throw new Error(`${SOURCE.label} ${r.status}`)
+  const data = await r.json()
+  const nowMs = Number.isFinite(data.now) ? data.now : Date.now()
+  return (data.ac || []).map(p => parseV2(p, nowMs)).filter(Boolean)
+}
+
 function describe(a) {
   const parts = [
     a.callsign ? `Flug ${a.callsign}` : `Flugzeug ${a.icao24}`,
     a.onGround ? 'am Boden' : `${Math.round(a.altitude)} m`,
     `${Math.round(a.velocity * 3.6)} km/h`,
   ]
+  if (a.mil) parts.push('MILITÄR')
+  if (a.typeCode) parts.push(a.typeCode)
+  if (a.reg) parts.push(a.reg)
   if (a.country) parts.push(a.country)
   parts.push(`ICAO ${a.icao24}`)
-  return parts.join(' · ') + ' (Quelle: OpenSky)'
+  return parts.join(' · ') + ` (Quelle: ${SOURCE.label})`
 }
 
 // AIS-Konvention: Kompass-Grad (CW von Nord) → Babylon-Yaw.
@@ -227,13 +306,11 @@ async function tick(areas) {
   // Zentrum merken → für den MAX_AIRCRAFT-Deckel (nächste zuerst).
   const byIcao = new Map()
   for (const box of boxes) {
-    let res
-    try { res = await fetchBox(box) }
+    let list
+    try { list = await fetchAircraft(box) }
     catch (err) { console.warn(`[adsb] fetch: ${err?.message || err}`); continue }
-    for (const s of res.states) {
-      const a = parseState(s)
-      if (!a || !a.icao24) continue
-      a.measuredAt = res.time ? res.time * 1000 : now
+    for (const a of list) {
+      if (!a.icao24) continue
       const d = flatDistKm(box.cLat, box.cLon, a.lat, a.lon)
       const prev = byIcao.get(a.icao24)
       if (!prev || d < prev._d) { a._d = d; byIcao.set(a.icao24, a) }
@@ -246,7 +323,7 @@ async function tick(areas) {
     list.sort((x, y) => x._d - y._d)
     list = list.slice(0, MAX_AIRCRAFT)
   }
-  console.log(`[adsb] ${total} Flugzeuge aus OpenSky (${fromAreas ? `${boxes.length} Bereich(e)` : 'Zentrum'})${total > list.length ? `, auf ${list.length} gedeckelt` : ''}${creditsLeft !== null ? ` · ${creditsLeft} Credits übrig` : ''}`)
+  console.log(`[adsb] ${total} Flugzeuge aus ${SOURCE.label} (${fromAreas ? `${boxes.length} Bereich(e)` : 'Zentrum'})${total > list.length ? `, auf ${list.length} gedeckelt` : ''}${creditsLeft !== null ? ` · ${creditsLeft} Credits übrig` : ''}`)
 
   const seen = new Set()
   let created = 0, updated = 0, failed = 0
@@ -259,8 +336,12 @@ async function tick(areas) {
     //   v = Bodengeschwindigkeit (m/s), trk = Kurs (Grad), vrate = Steigrate,
     //   t = Messzeitpunkt (epoch ms), lat0/lon0/alt0 = Position DAZU.
     const state = {
-      source: 'opensky', icao24: a.icao24,
+      // source = stabile Agent-Identität für Filter/Interest-Areas (Manifest-
+      // Key, historisch "opensky") — die echte Datenquelle steht in provider.
+      source: 'opensky', provider: SOURCE_KEY, icao24: a.icao24,
       callsign: a.callsign || null, country: a.country || null,
+      registration: a.reg || null, type_code: a.typeCode || null,
+      ...(a.mil ? { mil: true } : {}),     // Militär-Flag (v2-Quellen, dbFlags)
       on_ground: a.onGround, category: a.category,
       altitude_ref: 'msl',                 // Flughöhe ist über Meeresspiegel
       adsb: { v: a.velocity, trk: a.track, vrate: a.vrate, t: a.measuredAt, lat0: a.lat, lon0: a.lon, alt0: a.altitude }
@@ -280,7 +361,8 @@ async function tick(areas) {
           // größer als ein echtes Flugzeug (~60 m) → aus der Distanz sichtbar.
           // Eine Kugel ist symmetrisch, braucht also kein Billboard.
           appearance: {
-            emoji: '✈️', color: '#39a0ff',
+            // Militär oliv statt blau — Karte färbt das Flugzeug-SVG (colorOf).
+            emoji: '✈️', color: a.mil ? '#7a8b3f' : '#39a0ff',
             ar: { shape: 'sphere', diameter: 120, opacity: 0.55 }
           },
           state

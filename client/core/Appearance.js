@@ -13,6 +13,16 @@
 //   glow    : Hex-Farbe — Objekt "leuchtet" (Karte: Halo ums Symbol, AR:
 //             pulsierende Aura). Agents nutzen es für Zustände wie "Gerät an";
 //             Feld weglassen/entfernen = kein Leuchten.
+//   shape "image" + texture: Bildtafel. Karte: Thumbnail im Popup; AR:
+//             beidseitige Foto-Plane (Billboard-Y). width/height in Metern,
+//             y = Schwebehöhe. texture MUSS https sein (strikt validiert).
+//   yaw     : Ausrichtungs-Korrektur des 3D-Modells in rad (Modell schaut
+//             entlang +Z statt −Z). Übersteuert die Client-Default-Tabelle
+//             für mitgelieferte Modelle.
+//   animSpeed: Playback-Faktor der Animationen (geclampt 0.1–4; 1 = Original).
+//   anim    : Alias-Map logischer Zustand → exakter AnimationGroup-Name des
+//             Modells, z. B. { "walk": "Walk", "fly": "FlapFlight" }. Nur
+//             Namen der eigenen Groups matchen — reine Daten, kein Code.
 //
 // Auflösung:
 //   • Map  → nutzt nur `shape`(+emoji/color/radius), ignoriert `gltf`
@@ -59,6 +69,13 @@ export function glowOf(record) {
   const a = appearanceOf(record)
   const g = a && typeof a.glow === 'string' ? a.glow.trim() : ''
   return /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(g) ? g : null
+}
+
+/** Bild-/Textur-URL (validiertes https, attribut-sicher) oder null. */
+export function textureOf(record) {
+  const a = appearanceOf(record)
+  const t = a && typeof a.texture === 'string' ? a.texture.trim() : ''
+  return /^https:\/\/[^\s"'<>]+$/i.test(t) ? t : null
 }
 
 /** Positiver Pixel-Radius oder null. */

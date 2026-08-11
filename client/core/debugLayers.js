@@ -12,7 +12,8 @@ export const DEBUG_LAYERS = [
   { key: 'grid',      label: 'Bodengitter',       meshes: ['debugGround'] },
   { key: 'axes',      label: 'Koordinatenachsen', meshes: ['axisX', 'axisY', 'axisZ'] },
   { key: 'buildings', label: 'Gebäudeumrisse',    meshes: ['osm_buildings'] },
-  { key: 'ways',      label: 'Straßenzüge',       meshes: ['osm_ways'] },
+  { key: 'ways',      label: 'Straßenzüge',       meshes: ['osm_ways', 'osm_rails'] },
+  { key: 'water',     label: 'Gewässer',          meshes: ['osm_water'] },
 ]
 
 const skey = k => `ajna.debug.layer.${k}`

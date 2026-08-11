@@ -84,6 +84,12 @@ const DETAIL_MIN   = envInt('WIGLE_DETAIL_MIN_SAMPLES', 4)      // darunter nich
 const DETAIL_CAP_M = envNum('WIGLE_DETAIL_CAP_M', 250)          // Deckel gg. mobile/streuende APs
 const DETAIL_FLOOR_M = 10
 
+// Funk-/Sendemasten aus OpenStreetMap (über unsere Geo-API, Overpass-gecacht).
+// Statisch → seltener Sync als die WLAN-Abfragen.
+const MASTS_ON       = envBool('WIGLE_MASTS', true)
+const MASTS_RADIUS_M = envNum('WIGLE_MASTS_RADIUS_M', 3000)
+const MASTS_SYNC_MS  = envNum('WIGLE_MASTS_SYNC_S', 1800) * 1000
+
 if (!API_NAME || !API_TOKEN) die('WIGLE_API_NAME und WIGLE_API_TOKEN fehlen (wigle.net → Account → API)')
 
 // BoundingBox (RADIUS_M) um ein Zentrum: bboxAroundM aus client/core/geoMath.js.
@@ -97,11 +103,18 @@ console.log(DETAIL_ON
   ? `[wigle] Empfangsradius: EMPIRISCH aus Sichtungen (network/detail, max ${DETAIL_MAX} Abfragen/Sync, p${Math.round(DETAIL_PCTL * 100)}, Deckel ${DETAIL_CAP_M} m), Band als Fallback`
   : `[wigle] Empfangsradius: bandbasiert geschätzt (WIGLE_DETAIL_RADIUS=1 für empirische Verfeinerung)`)
 
+// Manifest: WLAN-Layer (je Verschlüsselung) + Funkmasten als eigener Layer.
+// Beide unter derselben Quelle "wigle" — der Agent visualisiert die unsichtbare
+// FUNK-Infrastruktur, WLAN und Mobilfunk/Rundfunk gehören thematisch zusammen.
+const WIFI_LAYERS = wifiManifestLayers()
 if (await publishManifest(ajna, {
   source: 'wigle',
-  agent_name: 'WiGLE-Bridge',
-  description: `WLAN-Netze via WiGLE.net im Radius ${RADIUS_M} m um ${CENTER_LAT.toFixed(3)}, ${CENTER_LON.toFixed(3)}`,
-  layers: wifiManifestLayers()   // "Alle" + ein Filter-Layer je Verschlüsselung
+  agent_name: 'Funk-Infrastruktur',
+  description: `WLAN-Netze (WiGLE.net) + Funk-/Sendemasten (OpenStreetMap) im Radius ${RADIUS_M} m`,
+  layers: [
+    ...WIFI_LAYERS,
+    ...(MASTS_ON ? [{ key: 'masts', label: 'Funkmasten', predicate: { field: 'type', equals: 'mast' } }] : []),
+  ],
 })) console.log('[ajna] manifest aktualisiert')
 
 // ─── In-Memory-Map: netid (BSSID) → { objectId, name, basis, lat, lon } ──
@@ -243,6 +256,9 @@ async function fetchNetworks(bbox) {
 
 // Aktive Ziele: Mittelpunkte der Interessensbereiche, sonst Fallback-Zentrum.
 // (Abruf/Deckelung/Änderungs-Erkennung: watchInterestAreas, client/core.)
+// Zuletzt aktive Zentren — vom WLAN-Tick gesetzt, vom Mast-Sync mitgenutzt.
+let lastCenters = []
+
 function centersFrom(areas) {
   if (!areas.length) return { centers: [{ lat: CENTER_LAT, lon: CENTER_LON }], fromAreas: false }
   return { centers: areas.map(centerOf), fromAreas: true }
@@ -395,6 +411,7 @@ const areaWatch = watchInterestAreas(ajna, 'wigle',
   { intervalMs: POLL_MS, maxAreas: MAX_AREAS },
   async (areas, { changed }) => {
     const { centers, fromAreas } = centersFrom(areas)
+    lastCenters = centers          // auch der Mast-Sync folgt den Spielern
     const now = Date.now()
     const stale = (now - lastQueryAt) >= INTERVAL_MS
     if (stale || (changed && (now - lastQueryAt) >= QUERY_MIN_MS)) {
@@ -407,3 +424,81 @@ const areaWatch = watchInterestAreas(ajna, 'wigle',
   })
 await areaWatch.first
 console.log(`[wigle] bereit — Bereichs-Poll alle ${(POLL_MS / 1000) | 0} s, WiGLE-Query min. alle ${(QUERY_MIN_MS / 1000) | 0} s, Re-Query alle ${(INTERVAL_MS / 1000) | 0} s. (Strg+C)`)
+
+// ───────────────────────────────────────────────────────────────────────
+//  Funk-/Sendemasten (OpenStreetMap via Ajna-Geo-API)
+//
+//  Mobilfunk-, Rundfunk- und Richtfunkmasten sind die sichtbare Hälfte der
+//  Funk-Infrastruktur, die dieser Agent zeigt (WLAN = die unsichtbare).
+//  Quelle bewusst OSM statt OpenCelliD: kein API-Key nötig, und die Masten
+//  stehen ortsfest — ein Sync alle 30 min genügt.
+// ───────────────────────────────────────────────────────────────────────
+const masts = new Map()   // osm_id → { objectId, name }
+
+if (MASTS_ON) {
+  const { AjnaGeo } = await import('../client/core/AjnaGeo.js')
+  const geo = new AjnaGeo(ajna)
+
+  // Bestand adoptieren (idempotent über state.osm_id).
+  for (const o of ajna.getObjects()) {
+    if (o?.type === 'mast' && o?.state?.source === 'wigle' && o?.state?.osm_id) {
+      masts.set(String(o.state.osm_id), { objectId: o.id, name: o.name })
+    }
+  }
+  if (masts.size) console.log(`[masts] ${masts.size} vorhandene Masten adoptiert`)
+
+  // Mast-Typ aus den OSM-Tags lesbar machen.
+  const mastLabel = (t = {}) => {
+    const kind = /mobile|gsm|umts|lte|5g/i.test(`${t['communication:mobile_phone']} ${t.operator} ${t.description}`)
+      ? 'Mobilfunkmast'
+      : t['communication:radio'] || t['communication:television'] ? 'Sendemast (Rundfunk)'
+      : t['man_made'] === 'communications_tower' ? 'Fernmeldeturm' : 'Funkmast'
+    return kind
+  }
+
+  async function syncMasts() {
+    const centers = lastCenters.length ? lastCenters : [{ lat: CENTER_LAT, lon: CENTER_LON }]
+    const byId = new Map()
+    for (const c of centers.slice(0, MAX_AREAS)) {
+      try {
+        const res = await geo.poisNear(c.lat, c.lon, MASTS_RADIUS_M, 'masts')
+        for (const f of (res.features || [])) if (f.id) byId.set(f.id, f)
+      } catch (err) { console.warn(`[masts] Abruf: ${err?.message || err}`); return }
+    }
+    let created = 0
+    for (const f of byId.values()) {
+      if (masts.has(f.id)) continue
+      const coords = Array.isArray(f.coordinates) ? f.coordinates[0] : null
+      if (!coords || !Number.isFinite(coords[0]) || !Number.isFinite(coords[1])) continue
+      const t = f.tags || {}
+      const kind = mastLabel(t)
+      const hoehe = Number(t.height)
+      const name = (t.name || t.operator || kind).slice(0, 32)
+      try {
+        const obj = await ajna.createObject({
+          name,
+          type: 'mast',
+          description: [kind, t.operator ? `Betreiber: ${t.operator}` : null,
+            Number.isFinite(hoehe) ? `${hoehe} m hoch` : null, `OSM ${f.id}`]
+            .filter(Boolean).join(' · '),
+          lat: coords[0], lon: coords[1], altitude: 0,
+          appearance: {
+            emoji: '📡', color: '#b06cd6',
+            // AR: schlanker Pfeiler in echter Masthöhe (sonst 30 m Default) —
+            // macht die Infrastruktur im Stadtbild sichtbar.
+            ar: { shape: 'cylinder', height: Number.isFinite(hoehe) ? hoehe : 30, diameter: 1.2, opacity: 0.5, y: (Number.isFinite(hoehe) ? hoehe : 30) / 2 },
+          },
+          state: { source: 'wigle', osm_id: f.id, osm_tags: t, mast_kind: kind },
+        })
+        masts.set(f.id, { objectId: obj.id, name })
+        created++
+      } catch (err) {
+        console.warn(`[masts] create ${f.id}: ${err?.response?.data?.message || err?.message || err}`)
+      }
+    }
+    console.log(`[masts] ${byId.size} Masten im Umkreis${created ? `, ${created} neu angelegt` : ''} — Bestand ${masts.size}`)
+  }
+
+  await syncMasts()
+  setInterval(() => { syncMasts().catch(err => console.warn(`[masts] sync: ${err?.message || err}`)) }, MASTS_SYNC_MS)
+}

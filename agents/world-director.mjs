@@ -56,6 +56,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { bootAgent, die, envNum } from './lib/agent-base.mjs'
+import { MODEL_PROFILES, profileFor, modelOf, profileAppearance } from './world-director.profiles.mjs'
 import { AjnaGeo } from '../client/core/AjnaGeo.js'
 import { findLandingSpot } from './lib/landing-spots.mjs'
 import { stepAlongPath, buildWayGraph, nearestNodeKey, randomReachableTarget, shortestPath, haversine, bearingRad } from '../client/core/StreetNav.js'
@@ -293,12 +294,12 @@ const MODEL_POOL = {
   hint:   [],  // kein Modell → Viewer nutzt den appearance-/Typ-Platzhalter
   diamond: ['Diamond.glb']
 }
-// Vögel wirken in der Luft natürlicher → leichte Flughöhe, auch wenn der
-// Archetyp (animal) sonst am Boden ist.
-const FLYING_MODELS = new Set(['Flamingo.glb', 'Stork.glb', 'Parrot.glb'])
-// Modelle mit brauchbarer Idle-/Ruhe-Animation → dürfen beim Streifen Pausen
-// einlegen (sonst wirkt die Szene unruhig). Horse/Vögel/CesiumMan haben keine.
-const IDLE_MODELS = new Set(['Soldier.glb', 'RobotExpressive.glb', 'MawGooey.glb', 'Slime.glb', 'Fox.glb', 'AIMonster.glb', 'Dragon.glb', 'wyvern.glb'])
+// Aus den Modell-Profilen abgeleitet (world-director.profiles.mjs — dort ist
+// die eine Quelle der Wahrheit für Physis-Eigenschaften pro Modell):
+// Vögel = leichte Flughöhe/Freiflug trotz Boden-Archetyp; Idle-fähige Modelle
+// dürfen beim Streifen Pausen einlegen.
+const FLYING_MODELS = new Set(Object.keys(MODEL_PROFILES).filter(m => MODEL_PROFILES[m].flying))
+const IDLE_MODELS   = new Set(Object.keys(MODEL_PROFILES).filter(m => MODEL_PROFILES[m].idle))
 
 function targetCount(archetype) {
   const env = process.env[`WD_COUNT_${archetype.toUpperCase()}`]
@@ -338,6 +339,10 @@ function buildSpawn(archetype, center = { lat: CENTER_LAT, lon: CENTER_LON }, op
 
   const state = {
     director: true,
+    // Agent-Filter im Client matcht Objekte über state.source gegen das
+    // Manifest (source "world-director") — ohne das Feld sind die Figuren
+    // nie ausblendbar ("Objekte ohne Quelle = immer sichtbar").
+    source: 'world-director',
     archetype,
     spawn_id: randomUUID(),
     actions: arch.actions          // Menü-Aktionen (Client liest state.actions)
@@ -360,7 +365,10 @@ function buildSpawn(archetype, center = { lat: CENTER_LAT, lon: CENTER_LON }, op
   // bleibt das Feld leer und der Viewer fällt auf den Typ-Platzhalter zurück.
   // sizeScale (Größen-Adjektiv) als appearance.scale mitgeben.
   if (model) {
-    spawn.appearance = { gltf: MODEL_BASE + model }
+    // Darstellungs-Felder aus dem Modell-Profil (yaw/animSpeed/anim) wandern
+    // MIT in die appearance — der Client interpretiert nur diese Daten
+    // (kein Director-Wissen im Viewer, siehe world-director.profiles.mjs).
+    spawn.appearance = { gltf: MODEL_BASE + model, ...profileAppearance(model) }
     if (sizeScale !== 1) spawn.appearance.scale = sizeScale
     if (archetype === 'diamond') {
       spawn.appearance.color = '#8fe3ff'   // Diamant-Cyan (untexturiert → gefärbt)
@@ -385,7 +393,13 @@ async function publishManifest() {
       description: FOLLOW_AREAS
         ? `Automatische Welt-Bevölkerung (Figuren, Hinweise, Items) — folgt deiner Position (Interest-Area), Fallback-Zentrum ${CENTER_LAT.toFixed(3)}, ${CENTER_LON.toFixed(3)}`
         : `Automatische Welt-Bevölkerung (Figuren, Hinweise, Items) im Radius ${RADIUS_M} m um ${CENTER_LAT.toFixed(3)}, ${CENTER_LON.toFixed(3)}`,
-      layers: Object.keys(ARCHETYPES).map(a => ({ key: a, label: a, predicate: null }))
+      // Predicates PRO Archetyp — mit predicate:null wäre jeder gewählte Layer
+      // "all"-artig und Abwählen einzelner Archetypen bliebe wirkungslos.
+      layers: Object.keys(ARCHETYPES).map(a => ({
+        key: a,
+        label: ({ npc: 'NPCs', enemy: 'Gegner', animal: 'Tiere', dragon: 'Drachen', item: 'Items', hint: 'Hinweise', diamond: 'Diamanten' })[a] || a,
+        predicate: { field: 'state.archetype', equals: a },
+      }))
     })
   } catch (err) {
     console.warn('[director] manifest-upsert fehlgeschlagen:', err?.message || err)
@@ -484,6 +498,29 @@ try {
     if (obj?.state?.director !== true) continue
     const a = obj.state.archetype
     if (!(a in existingByArch)) continue
+    // Bestand ans Soll angleichen: fehlendes state.source (Agent-Filter) und
+    // die profilverwalteten appearance-Felder (yaw/animSpeed/anim) — Profil-
+    // Korrekturen wirken so beim nächsten Boot auch auf bestehende Figuren.
+    // Merge, kein Ersatz: fremde appearance-Schlüssel (z. B. glow) bleiben.
+    {
+      const patch = {}
+      if (obj.state.source !== 'world-director') {
+        patch.state = { ...obj.state, source: 'world-director' }
+      }
+      const model = modelOf(obj)
+      if (model) {
+        const cur = (obj.appearance && typeof obj.appearance === 'object') ? obj.appearance : {}
+        const merged = { ...cur, ...profileAppearance(model) }
+        if (JSON.stringify(merged) !== JSON.stringify(cur)) patch.appearance = merged
+      }
+      if (Object.keys(patch).length) {
+        try {
+          await ajna.updateObject(obj.id, patch)
+          if (patch.state) obj.state.source = 'world-director'
+          if (patch.appearance) obj.appearance = patch.appearance
+        } catch (err) { console.warn(`[director] Profil-Heilung ${obj.id}: ${err?.message || err}`) }
+      }
+    }
     // Auf Zuruf erzeugte Objekte stehen bewusst dort, wo jemand hingeklickt hat:
     // NICHT wegen Entfernung despawnen und NICHT zur Soll-Population zählen —
     // sonst spawnt der Director seine eigene Bevölkerung nicht mehr, sobald ein
@@ -547,7 +584,12 @@ console.log(`[director] ${reconciled} Objekte reconciled (ACE + Aktionen). Welt 
 //  ein Retry läuft, statt dass der Director kippt.
 // ─────────────────────────────────────────────────────────────────────────
 const geo = new AjnaGeo(ajna)
-const speedFor = a => (a === 'enemy' ? ENEMY_SPEED : NPC_SPEED)
+// Geschwindigkeit pro FIGUR: Modell-Profil zuerst, sonst globale Env-Regler.
+const speedFor = (obj) => {
+  const p = profileFor(modelOf(obj))
+  if (Number.isFinite(p.speed)) return p.speed
+  return obj?.state?.archetype === 'enemy' ? ENEMY_SPEED : NPC_SPEED
+}
 
 // Wegegraph UM DIE FIGUR (nicht um ein festes Zentrum) — pro grober Zelle
 // (~300 m) gecacht und per TTL erneuert. So funktioniert die Routenplanung
@@ -587,7 +629,7 @@ function makeController(obj) {
     archetype: obj.state.archetype,
     baseState: { ...obj.state },          // Identitätsfelder (ohne walk_path)
     lat: obj.lat, lon: obj.lon,
-    speed: speedFor(obj.state.archetype),
+    speed: speedFor(obj),
     fsm: 'idle',                          // 'idle' | 'planning' | 'walking'
     path: null,
     cursor: { segIdx: 0, segT: 0 },
@@ -629,7 +671,9 @@ function makeRoamer(obj, flying) {
     homeLat: obj.lat, homeLon: obj.lon,
     areaR: flying ? FLY_AREA_M : ROAM_AREA_M,
     heading: Math.random() * Math.PI * 2,
-    speed: flying ? FLY_SPEED : ROAM_SPEED,
+    // Modell-Profil zuerst (z. B. Fuchs flink, Storch gemächlich), sonst
+    // die globalen Env-Regler je Bewegungsmodus.
+    speed: (() => { const s = profileFor(modelOf(obj)).speed; return Number.isFinite(s) ? s : (flying ? FLY_SPEED : ROAM_SPEED) })(),
     altBase: alt,
     altPhase: Math.random() * Math.PI * 2,
     anim: null,

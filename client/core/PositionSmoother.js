@@ -32,12 +32,21 @@
 // (aktuell 500 ms) plus etwas Jitter-Spielraum unterhalb des Caps bleiben.
 const MAX_INTERP_MS = 1500
 
-// Dead-Reckoning (Extrapolation) für Objekte, die state.adsb tragen — Flugzeuge
-// aus dem OpenSky-Agenten. Die kommen wegen des API-Limits nur alle ~30 s, würden
-// also snappen. Statt zwischen zwei Messungen zu INTERPOLIEREN (und damit ein
-// Update hinterherzuhinken) rechnen wir aus der letzten Messung + Geschwindigkeit/
-// Kurs die AKTUELLE Position frameweise VORAUS. Läuft der Agent aus (Budget/stale),
-// friert die Extrapolation nach MAX_DR_MS ein, bis das Stale-Cleanup greift.
+// Dead-Reckoning (Extrapolation) für Objekte mit Bewegungsvektor — QUELLEN-
+// UNABHÄNGIG über `state.motion` (Flugzeuge nutzen historisch `state.adsb`,
+// wird weiter unterstützt). Solche Agenten liefern nur alle 30–60 s (API-Limits),
+// die Objekte würden also springen. Statt zwischen zwei Messungen zu
+// INTERPOLIEREN (und damit ein Update hinterherzuhinken) rechnen wir aus der
+// letzten Messung + Geschwindigkeit/Kurs die AKTUELLE Position frameweise VORAUS.
+// Bleibt der Agent aus, friert die Extrapolation nach MAX_DR_MS ein, bis das
+// Stale-Cleanup greift.
+//
+// Feldformat (alles optional außer v/trk/lat0/lon0):
+//   v     Geschwindigkeit über Grund in m/s
+//   trk   Kurs in Grad (CW von Nord)
+//   vrate Steigrate in m/s (Flugzeuge; bei Bodenobjekten 0)
+//   t     Messzeitpunkt (epoch ms) — kompensiert Poll-/Netz-Latenz
+//   lat0/lon0/alt0  Position ZUR Messung
 const MAX_DR_MS = 150000
 
 export class PositionSmoother {
@@ -122,10 +131,11 @@ function _snapFromRecord(rec, t) {
     },
     t
   }
-  // Extrapolations-Parameter (nur Flugzeuge): letzte Messung + Bewegungsvektor.
-  // age0Ms = wie alt die Messung schon beim Füttern war (Netz-/Poll-Latenz) —
-  // damit die Vorausrechnung die JETZT-Position trifft, nicht die von vorhin.
-  const a = rec.state?.adsb
+  // Extrapolations-Parameter: letzte Messung + Bewegungsvektor. `state.motion`
+  // ist der quellenunabhängige Weg (Schiffe u. a.), `state.adsb` der historische
+  // der Flugzeug-Bridge. age0Ms = wie alt die Messung beim Füttern schon war
+  // (Netz-/Poll-Latenz) — damit die Vorausrechnung die JETZT-Position trifft.
+  const a = rec.state?.motion || rec.state?.adsb
   if (a && Number.isFinite(a.v) && Number.isFinite(a.trk) &&
       Number.isFinite(a.lat0) && Number.isFinite(a.lon0)) {
     const age0 = Number.isFinite(a.t) ? (Date.now() - a.t) : 0
