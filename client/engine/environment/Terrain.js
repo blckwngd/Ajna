@@ -9,6 +9,13 @@
 // GPS-Höhe schwankt um ±10–20 m — als Referenz wäre sie unbrauchbar und
 // würde die Landschaft vertikal springen lassen.)
 //
+// BEWEGLICH: `load()` ist mehrfach aufrufbar, der Flecken zieht mit der Kamera
+// mit (siehe _followScenery in main.js). Der Bezugspunkt bleibt dabei am
+// ORIGIN — hinge er am Ladezentrum, sackte bei jeder Fahrt bergauf die ganze
+// Landschaft ab und alle Objekte sprängen mit. Höhenabfragen laufen deshalb
+// auch nicht über den Sampler DIESES Laufs, sondern über den globalen
+// Kachel-Cache, damit Punkte außerhalb des Fleckens weiter beantwortet werden.
+//
 // DARSTELLUNG: eine beleuchtete, halbtransparente Fläche in gedecktem Grün —
 // die Beleuchtung macht Hänge über Schattierung lesbar, was für die
 // Orientierung mehr bringt als jede Linie. Darüber liegt das Bodengitter,
@@ -22,7 +29,7 @@
 // mit Folgen fürs Gameplay).
 
 import { GridMaterial } from '@babylonjs/materials'
-import { elevationSampler, despike, TERRAIN_Z, metersPerPixel } from '../../core/terrainTiles.js'
+import { elevationSampler, elevationAtCached, despike, TERRAIN_Z, metersPerPixel } from '../../core/terrainTiles.js'
 import { applyLayer } from '../../core/debugLayers.js'
 
 const DEFAULT_RADIUS_M = 1200      // Sichtweite des Reliefs (Hänge ringsum)
@@ -43,20 +50,61 @@ export class Terrain {
     this.segments = Math.max(8, Math.min(200, opts.segments ?? DEFAULT_SEGMENTS))
     this.mesh = null
     this.gridMesh = null
+    /** Mittelpunkt des zuletzt gebauten Fleckens — {lat, lon} oder null. */
+    this.center = null
     this._loaded = false
+    this._originEle = null      // Geländehöhe ü. NN AM GEO-ORIGIN (Nullbezug)
+    this._originRef = null      // …für welchen Origin sie gilt
   }
 
   get isLoaded() { return this._loaded }
 
-  /** Höhe (relativ zum Origin) an einer Weltkoordinate — null vor dem Laden. */
+  /**
+   * Höhe (relativ zur Geländehöhe am Origin) an einer Weltkoordinate.
+   * Antwortet über den globalen Kachel-Cache, also AUCH außerhalb des gerade
+   * gebauten Fleckens — sonst würden Objekte im Rücken der Kamera auf die
+   * Nullebene fallen, sobald das Relief weitergezogen ist.
+   * @returns {number|null} null, solange keine Kachel für den Punkt da ist
+   */
   elevationAt(lat, lon) {
-    if (!this._sampler) return null
-    const e = this._sampler.elevationAt(lat, lon)
+    if (this._originEle == null) return null
+    const e = elevationAtCached(lat, lon, TERRAIN_Z)
     return e == null ? null : e - this._originEle
   }
 
+  /**
+   * Geländehöhe ü. NN AM GEO-ORIGIN — der Nullbezug der ganzen Szene.
+   *
+   * MUSS am Origin hängen, nicht am Ladezentrum: Zöge man ihn mit dem Flecken
+   * mit, sackte bei jeder Kamerafahrt bergauf die komplette Landschaft ab,
+   * alle AGL-Objekte sprängen — und über `groundAltitude` die Flugzeuge gleich
+   * mit. Deshalb einmal abtasten und behalten, bis der Origin selbst wechselt.
+   */
+  async _ensureOriginElevation() {
+    const o = this.geo.origin
+    if (!o) return null
+    const same = this._originRef
+      && Math.abs(this._originRef.lat - o.lat) < 1e-9
+      && Math.abs(this._originRef.lon - o.lon) < 1e-9
+    if (same && this._originEle != null) return this._originEle
+    let e = elevationAtCached(o.lat, o.lon, TERRAIN_Z)
+    if (e == null) {
+      // Origin liegt außerhalb der bisher geladenen Gegend (erster Ladelauf
+      // schon von einer entfernten Kameraposition aus) → genau eine Kachel.
+      try { e = (await elevationSampler(o.lat, o.lon, 1, TERRAIN_Z)).elevationAt(o.lat, o.lon) }
+      catch (err) { console.warn('[terrain] Origin-Höhe nicht ladbar:', err?.message || err); return null }
+    }
+    if (e == null) return null
+    this._originEle = e
+    this._originRef = { lat: o.lat, lon: o.lon }
+    return e
+  }
+
+  /**
+   * Relief um (lat, lon) bauen. Mehrfach aufrufbar — der Flecken zieht mit.
+   * @param {number} lat @param {number} lon
+   */
   async load(lat, lon) {
-    this.dispose()
     let sampler
     try {
       sampler = await elevationSampler(lat, lon, this.radius, TERRAIN_Z)
@@ -64,10 +112,13 @@ export class Terrain {
       console.warn('[terrain] Höhenkacheln nicht ladbar:', err?.message || err)
       return
     }
-    const originEle = sampler.elevationAt(lat, lon)
+    const originEle = await this._ensureOriginElevation()
     if (originEle == null) { console.warn('[terrain] keine Höhe am Origin'); return }
+    // Erst jetzt abräumen: schlägt oben etwas fehl, bleibt das alte Relief
+    // stehen statt zu verschwinden.
+    this._clearMeshes()
     this._sampler = sampler
-    this._originEle = originEle
+    this.center = { lat, lon }
 
     // Gitter in LOKALEN Metern aufspannen und je Knoten die Höhe abtasten.
     // Schrittweite in Grad, damit die Abtastung dem Mercator-Raster folgt.
@@ -201,12 +252,22 @@ export class Terrain {
       + (fixed ? ` · ${fixed} Nadel(n) geglättet (>${spikeLimit.toFixed(0)} m)` : ''))
   }
 
-  dispose() {
+  /**
+   * Nur die Meshes abräumen — für das Umzentrieren. Bewusst OHNE
+   * `applyLayer('grid')`: die flache Ersatzebene würde sonst für den
+   * Sekundenbruchteil bis zum Neuaufbau aufblitzen.
+   */
+  _clearMeshes() {
     try { this.mesh?.dispose() } catch {}
     try { this.gridMesh?.dispose() } catch {}
     this.mesh = null
     this.gridMesh = null
+  }
+
+  dispose() {
+    this._clearMeshes()
     this._sampler = null
+    this.center = null
     this._loaded = false
     // Ohne Relief übernimmt wieder die flache Ersatzebene — mit der zuletzt
     // gewählten Sichtbarkeit der Ebene „Bodengitter".

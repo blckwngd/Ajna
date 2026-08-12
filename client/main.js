@@ -1732,13 +1732,16 @@ async function init() {
     ajnaManager.onObjectsChanged(throttleLatest(objects => pathOverlay.update(objects), 200))
     pathOverlay.update(ajnaManager.getObjectList())
   }
-  const _loadOSM = async () => {
-    if (!geo.origin) return
+  const _loadOSM = async (lat = geo.origin?.lat, lon = geo.origin?.lon) => {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
     // Relief ZUERST: Straßenbänder und Gebäudegrundrisse setzen darauf auf
     // (GeoTransformer.terrainHeightAt). Käme die Kulisse zuerst, klebte sie
     // auf der ebenen Startfläche und würde in Hänge schneiden.
-    if (!terrain.isLoaded) {
-      await terrain.load(geo.origin.lat, geo.origin.lon)
+    const c = terrain.center
+    const moved = !c || Math.abs(c.lat - lat) > 1e-6 || Math.abs(c.lon - lon) > 1e-6
+    const hadTerrain = terrain.isLoaded
+    if (!hadTerrain || moved) {
+      await terrain.load(lat, lon)
         .catch(err => console.warn('[terrain] load failed:', err?.message || err))
       // Bereits platzierte Objekte auf die neue Höhenreferenz nachziehen —
       // sie stünden sonst bis zu ihrem nächsten Realtime-Update in der Luft.
@@ -1747,14 +1750,53 @@ async function init() {
           .catch(() => {})
       }
     }
-    osmContext.load(geo.origin.lat, geo.origin.lon).catch(err =>
+    // Die Drapierung steckt fest in den Kulissen-Vertices. Sie neu zu zeichnen,
+    // nur weil das Relief umgezogen ist, wäre trotzdem verschwendet: der
+    // Kachelsatz der Kulisse (300 m) ist IMMER eine Teilmenge dessen des
+    // Reliefs (1200 m) — gleiches z14-Raster, und lon2tile ist monoton. Die
+    // Höhen unter der Kulisse stehen beim Zeichnen also bereits vollständig
+    // im Kachel-Cache. (Gilt, solange TILE_Z === TERRAIN_Z.) Erzwungen wird
+    // nur der eine Fall, den das nicht abdeckt: die Kulisse wurde flach
+    // gezeichnet, weil das Relief damals gar nicht da war.
+    await osmContext.load(lat, lon, { force: !hadTerrain && terrain.isLoaded }).catch(err =>
       console.warn('[osm] load failed:', err?.message || err)
     )
   }
   _loadOSM()
   ajnaManager.onAuthChanged(user => {
-    if (user && !osmContext.isLoaded) _loadOSM()
+    if (user && !osmContext.isLoaded) _loadOSM(osmContext.center?.lat, osmContext.center?.lon)
   })
+
+  // ── Kulisse folgt der Kamera ────────────────────────────────────────────
+  // Ohne das hängen Relief und Kulisse für immer am Geo-Origin: 300 m Radius
+  // Kulisse, 1200 m Relief — wer weiter fährt, schwebt über einer leeren
+  // Ebene. Gleiches Muster wie die Interest-Areas der Agents, nur an die
+  // Kamera gekoppelt statt an GPS (in XR ist die Kamera ohnehin der Spieler).
+  //
+  // Hysterese statt Dauer-Nachführung: ein Neuaufbau kostet ~230 ms Kulisse
+  // plus Relief-Mesh, das darf nicht bei jedem Schritt passieren. Kein
+  // Origin-Rebasing nötig — Babylon rechnet die Vertices in float32, bei
+  // 10 km Abstand sind das noch ~1 mm Auflösung.
+  const SCENERY_STEP_M = 400
+  const SCENERY_POLL_MS = 2000
+  let _sceneryAt = { x: 0, z: 0 }     // lokale Position des letzten Aufbaus
+  let _sceneryBusy = false
+
+  const _followScenery = () => {
+    if (_sceneryBusy || !geo.origin) return
+    const cam = scene.activeCamera
+    if (!cam) return
+    const p = cam.globalPosition
+    // Kamera steht bereits in lokalen Metern → Distanz ohne Geo-Mathematik.
+    if (_sceneryAt && Math.hypot(p.x - _sceneryAt.x, p.z - _sceneryAt.z) < SCENERY_STEP_M) return
+    _sceneryAt = { x: p.x, z: p.z }
+    const w = geo.toWorld(p.x, 0, p.z)
+    _sceneryBusy = true
+    console.log(`[scenery] Kamera ${Math.round(Math.hypot(p.x, p.z))} m vom Origin`
+      + ` → Kulisse nach ${w.lat.toFixed(5)}, ${w.lon.toFixed(5)}`)
+    _loadOSM(w.lat, w.lon).finally(() => { _sceneryBusy = false })
+  }
+  setInterval(_followScenery, SCENERY_POLL_MS)
 
   const debugScene = buildDebugScene(scene)
 

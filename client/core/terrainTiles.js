@@ -21,6 +21,13 @@ const TTL_MS = 60 * 60 * 1000
 
 const tiles = new Map()      // "z/x/y" → { ts, w, h, data: Float32Array } | Promise
 
+// Deckel gegen unbegrenztes Wachstum beim Umherziehen: eine z14-Kachel ist
+// 256×256 Float32 = 256 KB und deckt bei uns ~2,4 km. 96 Kacheln sind also
+// ~24 MB für gut 550 km² — mehr als jede Sitzung sinnvoll abfährt. Verdrängt
+// wird die ÄLTESTE (nach Ladezeitpunkt); wer eine verdrängte Gegend wieder
+// betritt, lädt sie neu.
+const MAX_TILES = 96
+
 // ─── Kachel-Mathematik (Web-Mercator, gebrochen = inkl. Pixelanteil) ───────
 export const lon2tileF = (lon, z) => (lon + 180) / 360 * 2 ** z
 export const lat2tileF = (lat, z) => (1 - Math.log(
@@ -92,16 +99,65 @@ export function despike(data, w, h, thresh = SPIKE_M) {
   return fix.length
 }
 
+function evictOldest() {
+  while (tiles.size > MAX_TILES) {
+    let oldestKey = null, oldestTs = Infinity
+    for (const [k, v] of tiles) {
+      if (v instanceof Promise) continue          // läuft noch — nicht anfassen
+      if (v.ts < oldestTs) { oldestTs = v.ts; oldestKey = k }
+    }
+    if (!oldestKey) break
+    tiles.delete(oldestKey)
+  }
+}
+
 function loadTile(z, x, y) {
   const key = `${z}/${x}/${y}`
   const hit = tiles.get(key)
   if (hit && !(hit instanceof Promise) && Date.now() - hit.ts < TTL_MS) return Promise.resolve(hit)
   if (hit instanceof Promise) return hit
   const p = decodeTile(TILE_URL.replace('{z}', z).replace('{x}', x).replace('{y}', y))
-    .then(t => { const v = { ...t, ts: Date.now() }; tiles.set(key, v); return v })
+    .then(t => { const v = { ...t, ts: Date.now() }; tiles.set(key, v); evictOldest(); return v })
     .catch(err => { tiles.delete(key); throw err })
   tiles.set(key, p)
   return p
+}
+
+// Bilineare Abtastung innerhalb einer Kachel (an den Kachelrändern geklemmt —
+// der Versatz an Kachelnähten liegt deutlich unter einem Meter).
+// `get(tx, ty)` liefert die Kachel oder null; wer keine hat, bekommt null.
+function sampleBilinear(get, qLat, qLon, z) {
+  const fx = lon2tileF(qLon, z), fy = lat2tileF(qLat, z)
+  const tx = Math.floor(fx), ty = Math.floor(fy)
+  const t = get(tx, ty)
+  if (!t) return null
+  const px = (fx - tx) * t.w - 0.5, py = (fy - ty) * t.h - 0.5
+  const ix = Math.floor(px), iy = Math.floor(py)
+  const rx = px - ix, ry = py - iy
+  const at = (cx, cy) => {
+    const sx = Math.min(t.w - 1, Math.max(0, cx)), sy = Math.min(t.h - 1, Math.max(0, cy))
+    return t.data[sy * t.w + sx]
+  }
+  return (at(ix, iy) * (1 - rx) + at(ix + 1, iy) * rx) * (1 - ry)
+       + (at(ix, iy + 1) * (1 - rx) + at(ix + 1, iy + 1) * rx) * ry
+}
+
+/**
+ * Höhe aus dem GLOBALEN Kachel-Cache — synchron, ohne zu laden, null wenn die
+ * Kachel (noch) nicht da ist.
+ *
+ * Warum getrennt vom Sampler: Der Sampler kennt nur die Kacheln SEINES
+ * Ladelaufs. Wandert das Relief mit der Kamera, liegen Objekte im Rücken
+ * außerhalb — sie bekämen `null` und fielen auf die Nullebene. Der Cache
+ * dagegen antwortet für jede je geladene Gegend weiter. TTL wird hier bewusst
+ * IGNORIERT: eine halbstündig alte Geländehöhe ist unendlich viel besser als
+ * ein Loch (Gelände ändert sich nicht).
+ */
+export function elevationAtCached(lat, lon, z = TERRAIN_Z) {
+  return sampleBilinear((tx, ty) => {
+    const hit = tiles.get(`${z}/${tx}/${ty}`)
+    return hit && !(hit instanceof Promise) ? hit : null
+  }, lat, lon, z)
 }
 
 /**
@@ -125,24 +181,10 @@ export async function elevationSampler(lat, lon, radiusM, z = TERRAIN_Z) {
   }))
   if (!loaded.size) throw new Error('keine Höhenkachel ladbar')
 
-  // Bilineare Interpolation innerhalb der Kachel (an den Rändern geklemmt —
-  // der Versatz an Kachelnähten liegt deutlich unter einem Meter).
-  const elevationAt = (qLat, qLon) => {
-    const fx = lon2tileF(qLon, z), fy = lat2tileF(qLat, z)
-    const tx = Math.floor(fx), ty = Math.floor(fy)
-    const t = loaded.get(`${tx}/${ty}`)
-    if (!t) return null
-    const px = (fx - tx) * t.w - 0.5, py = (fy - ty) * t.h - 0.5
-    const ix = Math.floor(px), iy = Math.floor(py)
-    const rx = px - ix, ry = py - iy
-    const at = (cx, cy) => {
-      const sx = Math.min(t.w - 1, Math.max(0, cx)), sy = Math.min(t.h - 1, Math.max(0, cy))
-      return t.data[sy * t.w + sx]
-    }
-    return (at(ix, iy) * (1 - rx) + at(ix + 1, iy) * rx) * (1 - ry)
-         + (at(ix, iy + 1) * (1 - rx) + at(ix + 1, iy + 1) * rx) * ry
-  }
-  return { elevationAt, tiles: loaded.size }
+  // Abgefragt wird gegen den globalen Cache, nicht gegen `loaded`: die Kacheln
+  // dieses Laufs stecken ohnehin darin, und Punkte außerhalb (Nachbargegend
+  // aus einem früheren Lauf) werden so mitbeantwortet statt zu `null`.
+  return { elevationAt: (qLat, qLon) => elevationAtCached(qLat, qLon, z), tiles: loaded.size }
 }
 
 export function clearTerrainCache() { tiles.clear() }

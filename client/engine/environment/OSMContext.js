@@ -22,7 +22,7 @@
 
 import { buildingHeightM, heightSource } from '../../core/buildingHeight.js'
 import { applyLayer } from '../../core/debugLayers.js'
-import { sceneryNear } from '../../core/vectorTiles.js'
+import { sceneryNear, tilesFor } from '../../core/vectorTiles.js'
 import earcut from 'earcut'
 
 const DEFAULT_RADIUS_M = 300
@@ -84,7 +84,10 @@ export class OSMContext {
     this.radius  = opts.radius ?? DEFAULT_RADIUS_M
     /** @type {BABYLON.Mesh[]} */
     this.meshes  = []
+    /** Mittelpunkt des letzten Ladelaufs — {lat, lon} oder null. */
+    this.center  = null
     this._loaded = false
+    this._tileKey = null      // Kachelsatz des letzten Laufs (s. load)
   }
 
   /** True, wenn der letzte load() ohne Fehler durchgelaufen ist. */
@@ -97,8 +100,20 @@ export class OSMContext {
    * Planet. Overpass bleibt als Fallback verdrahtet, falls die Kacheln mal
    * nicht erreichbar sind.
    */
-  async load(lat, lon) {
+  async load(lat, lon, { force = false } = {}) {
+    // Die Kachelquelle liefert GANZE Kacheln (z14 ≈ 2,4 km bei uns), der Radius
+    // wählt nur aus, WELCHE. Zieht die Kulisse mit der Kamera mit, wäre ein
+    // Neuzeichnen bei jedem Schritt also meist dieselbe Arbeit mit demselben
+    // Ergebnis — teuer (gemessen ~230 ms für eine Kachel) und sichtbar als
+    // Ruckler. Deshalb: nur neu zeichnen, wenn sich der Kachelsatz ändert.
+    // `force` überstimmt das, wenn sich die HÖHENREFERENZ geändert hat (das
+    // Relief ist umgezogen) — die Drapierung steckt fest in den Vertices.
+    const key = tilesFor(lat, lon, this.radius).map(t => `${t.x}/${t.y}`).sort().join(',')
+    if (!force && this._loaded && key === this._tileKey) { this.center = { lat, lon }; return }
+
     this.dispose()
+    this._tileKey = key
+    this.center = { lat, lon }
     try {
       const n = await this._loadFromTiles(lat, lon)
       if (n) { this._finish(n); return }
@@ -106,6 +121,9 @@ export class OSMContext {
     } catch (err) {
       console.warn('[osm] Vektorkacheln fehlgeschlagen:', err?.message || err, '— weiche auf Overpass aus')
     }
+    // Overpass ist radius-, nicht kachelbasiert → Kachelschlüssel verwerfen,
+    // sonst würde ein späterer Lauf am selben Kachelsatz fälschlich übersprungen.
+    this._tileKey = null
     await this._loadFromOverpass(lat, lon)
   }
 
@@ -442,6 +460,7 @@ export class OSMContext {
     }
     this.meshes = []
     this._loaded = false
+    this._tileKey = null
   }
 }
 
