@@ -1,27 +1,29 @@
-// OSMContext — minimale Geo-Kontext-Darstellung in der AR-Szene.
+// OSMContext — Geo-Kontext („Kulisse") in der AR-/3D-Szene.
 //
-// Holt sich Straßen-Polylines und Gebäude-Footprints aus der Ajna-Geo-API
-// (`/ajnaapi/geo/{ways,buildings}`) und zeichnet sie als Wireframe in
-// die Babylon-Szene:
+// QUELLE: OSM-VEKTORKACHELN (client/core/vectorTiles.js) — eine Anfrage,
+// ~0,5 s, liefert Gebäude (inkl. fertiger `render_height`), Wasserflächen,
+// Flüsse, Straßen und Schienen. Fällt das aus, greift der alte Weg über die
+// Overpass-gestützte Geo-API (`/ajnaapi/geo/{ways,buildings}`), der aber
+// spürbar langsamer und rate-limitiert ist.
 //
-//   • Straßen   → CreateLineSystem (eine Mesh-Instanz, viele Polylines)
-//   • Gebäude   → CreateLineSystem mit Footprint + Dach + Vertikalen-Kanten;
-//                 Höhe über client/core/buildingHeight.js — explizite OSM-Höhe,
-//                 sonst Geschosse, sonst geschätzt aus der Gebäudeart
-//                 (`building=church|garage|…`), sonst Default. Dieselbe Quelle
-//                 nutzt die Drachen-Landung, damit er auf dem Dach aufsetzt,
-//                 das man auch sieht.
-//
-// "Simpelstmögliche Darstellung": kein Material-Setup, keine Polygon-
-// Extrusion (das braucht earcut als Dependency), keine Tile-Pyramide.
-// Funktioniert direkt mit @babylonjs/core ohne Zusatzpaket.
+// DARSTELLUNG (auf Orientierung optimiert, nicht auf Realismus):
+//   • Straßen/Bäche → flache BÄNDER auf dem Boden, Breite + Farbe nach Klasse
+//     (Autobahn breit/orange … Trampelpfad schmal/grün). Pro Kategorie EIN
+//     gemergtes Mesh = ein Draw Call; unbeleuchtet, damit sie auch nachts und
+//     gegen das AR-Kamerabild lesbar bleiben.
+//   • Wasserflächen → gefüllte Polygone (earcut-trianguliert) — der Fluss ist
+//     der stärkste Orientierungsanker in der 3D-Ansicht.
+//   • Gebäude → weiterhin Wireframe (Footprint + Dach + Vertikalen). Höhe aus
+//     der Kachel, sonst client/core/buildingHeight.js. Dieselbe Höhenquelle
+//     nutzt die Drachen-Landung, damit er auf dem Dach aufsetzt, das man sieht.
 //
 // Aufruf: `new OSMContext(...).load(lat, lon)` nach Geo-Origin-Fix.
-// Bei Fehlern (Auth-401 etc.) wird einmal still ge-warned, kein Reload-
-// Loop. `dispose()` räumt die Meshes auf.
+// Bei Fehlern wird ge-warned, kein Reload-Loop. `dispose()` räumt auf.
 
 import { buildingHeightM, heightSource } from '../../core/buildingHeight.js'
 import { applyLayer } from '../../core/debugLayers.js'
+import { sceneryNear } from '../../core/vectorTiles.js'
+import earcut from 'earcut'
 
 const DEFAULT_RADIUS_M = 300
 const STREET_Y = 0.05          // leicht über Ground, gegen Z-Fighting
@@ -65,6 +67,7 @@ const WATER_STYLE = {
   ditch:  { w: 1.5, c: '#4dd0e1' },
 }
 const WATER_Y = 0.02           // unter den Straßen (Brücken bleiben lesbar)
+const WATER_AREA_Y = 0.015     // Flächen noch eine Spur tiefer als die Linien
 const RAIL_STYLE = { w: 3, c: '#b0bec5', y: 0.048 }
 
 export class OSMContext {
@@ -88,12 +91,57 @@ export class OSMContext {
   get isLoaded() { return this._loaded }
 
   /**
-   * Lädt + zeichnet Straßen und Gebäude im Radius um (lat, lon).
-   * Bereits gerenderte Geometrie wird vorher entsorgt.
+   * Lädt + zeichnet die Kulisse. Primärquelle sind OSM-VEKTORKACHELN
+   * (client/core/vectorTiles.js): eine Anfrage, ~0,5 s, mit Gebäudehöhen —
+   * gegenüber Overpass (4 Abfragen, im Test 40 s bis Timeout) ein anderer
+   * Planet. Overpass bleibt als Fallback verdrahtet, falls die Kacheln mal
+   * nicht erreichbar sind.
    */
   async load(lat, lon) {
     this.dispose()
+    try {
+      const n = await this._loadFromTiles(lat, lon)
+      if (n) { this._finish(n); return }
+      console.warn('[osm] Vektorkacheln leer — weiche auf Overpass aus')
+    } catch (err) {
+      console.warn('[osm] Vektorkacheln fehlgeschlagen:', err?.message || err, '— weiche auf Overpass aus')
+    }
+    await this._loadFromOverpass(lat, lon)
+  }
 
+  _finish(counts) {
+    // Frisch gezeichnete Meshes an die gespeicherte Debug-Sichtbarkeit angleichen
+    // — sonst käme ein ausgeblendetes Overlay nach jedem Reload zurück.
+    applyLayer(this.scene, 'ways')
+    applyLayer(this.scene, 'water')
+    applyLayer(this.scene, 'buildings')
+    this._loaded = Object.values(counts).some(v => v > 0)
+    console.log('[osm] gezeichnet: ' + Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ')
+      + ` · Radius ${this.radius} m · Quelle ${counts._src || 'Vektorkacheln'}`)
+  }
+
+  /** Kulisse aus Vektorkacheln. @returns {object|null} Zählwerte */
+  async _loadFromTiles(lat, lon) {
+    const s = await sceneryNear(lat, lon, this.radius)
+    const roads = [], rails = []
+    for (const f of (s.transportation || [])) {
+      // OpenMapTiles: `class` grob (motorway…path, rail), `subclass` = der
+      // ursprüngliche OSM-Wert (footway, cycleway …). Schienen getrennt.
+      if (f.tags?.class === 'rail' || f.tags?.class === 'transit') rails.push(f)
+      else roads.push(f)
+    }
+    const counts = {
+      Straßen:  this._drawWays(roads),
+      Gleise:   this._drawRails(rails),
+      Bäche:    this._drawWater(s.waterway || []),
+      'Wasserflächen': this._drawWaterAreas(s.water || []),
+      Gebäude:  this._drawBuildings(s.building || []),
+    }
+    return Object.values(counts).some(v => v > 0) ? counts : null
+  }
+
+  /** Alter Pfad: Kulisse über die Overpass-gestützte Geo-API. */
+  async _loadFromOverpass(lat, lon) {
     // Gewässer + Schienen sind eigene Filter derselben ways-Route. Alle vier
     // Abrufe parallel; jeder darf einzeln fehlschlagen (Overpass-Aussetzer
     // sollen nicht die ganze Kulisse kosten).
@@ -131,14 +179,7 @@ export class OSMContext {
       console.warn('[osm] buildings fetch failed:', buildingsRes.reason?.message || buildingsRes.reason)
     }
 
-    // Frisch gezeichnete Meshes an die gespeicherte Debug-Sichtbarkeit angleichen
-    // — sonst käme ein ausgeblendetes Overlay nach jedem Reload zurück.
-    applyLayer(this.scene, 'ways')
-    applyLayer(this.scene, 'water')
-    applyLayer(this.scene, 'buildings')
-
-    this._loaded = wayCount > 0 || bldgCount > 0 || waterCount > 0
-    console.log(`[osm] drawn: ${wayCount} ways, ${waterCount} Gewässer, ${railCount} Gleise, ${bldgCount} buildings, radius ${this.radius} m`)
+    this._finish({ Straßen: wayCount, Gleise: railCount, Bäche: waterCount, Gebäude: bldgCount, _src: 'Overpass' })
   }
 
   // ───────────────────────────────────────────────────────────────────
@@ -217,7 +258,10 @@ export class OSMContext {
     let n = 0
     for (const f of features) {
       if (!Array.isArray(f.coordinates) || f.coordinates.length < 2) continue
-      const st = CLASS_STYLE[f.tags?.highway] || STREET_FALLBACK
+      // Stil-Schlüssel: OSM-Wert (Overpass: `highway`, Kacheln: `subclass`),
+      // sonst die gröbere Kachel-Klasse.
+      const t = f.tags || {}
+      const st = CLASS_STYLE[t.subclass] || CLASS_STYLE[t.highway] || CLASS_STYLE[t.class] || STREET_FALLBACK
       // Explizite Fahrbahnbreite aus OSM schlägt die Klassen-Schätzung.
       const tagged = parseFloat(f.tags?.width)
       const w = Number.isFinite(tagged) && tagged > 0 ? tagged : st.w
@@ -245,6 +289,68 @@ export class OSMContext {
     const mesh = this._buildRibbonMesh('osm_water', buf)
     if (mesh) mesh.material.alpha = 0.55   // Wasser etwas transparenter
     return mesh ? n : 0
+  }
+
+  // Wasserflächen (Kachel-Layer `water`: Flussbett, Seen, Teiche) als GEFÜLLTE
+  // Flächen — der Rhein wird damit zur erkennbaren Wasserfläche statt zu einer
+  // Linie, was in der 3D-Ansicht der stärkste Orientierungsanker ist.
+  // Triangulierung per earcut (Löcher = Inseln werden mitgeführt).
+  //
+  // HÖHE: zwei Fälle, weil Wasser eben ist, ein Fluss aber Gefälle hat.
+  //  • Kleine Gewässer (Bounding-Box unter LEVEL_MAX_M): EIN gemeinsamer
+  //    Pegel für die ganze Fläche, sonst kippte ein Weiher am Hang mit dem
+  //    Gelände mit. Als Pegel das untere Quantil der Uferhöhen — die Kachel
+  //    tastet am Ufer schon die Böschung mit ab, der Median läge zu hoch.
+  //  • Große/langgestreckte Flächen (Rhein): pro Stützpunkt drapiert, sonst
+  //    läge das eine Ende vergraben und das andere in der Luft.
+  _drawWaterAreas(features) {
+    const positions = [], indices = [], colors = []
+    const col = BABYLON.Color3.FromHexString('#1e88e5')
+    const LEVEL_MAX_M = 300
+    let n = 0
+    for (const f of features) {
+      const rings = f.rings || (f.coordinates ? [f.coordinates] : null)
+      if (!rings?.length || rings[0].length < 3) continue
+      // Alle Ringe in eine flache XZ-Liste; holeIndices markieren die Inseln.
+      // Die Geländehöhe je Stützpunkt wird gleich mitgeführt (Index /2).
+      const flat = [], holes = [], hs = []
+      let vi = 0
+      let xMin = Infinity, xMax = -Infinity, zMin = Infinity, zMax = -Infinity
+      rings.forEach((ring, ri) => {
+        if (ri > 0) holes.push(vi)
+        for (const [rlat, rlon] of ring) {
+          const v = this.geo.toLocal(rlat, rlon, 0)
+          flat.push(v.x, v.z)
+          hs.push(this.geo.terrainHeightAt(rlat, rlon))
+          if (ri === 0) {
+            if (v.x < xMin) xMin = v.x
+            if (v.x > xMax) xMax = v.x
+            if (v.z < zMin) zMin = v.z
+            if (v.z > zMax) zMax = v.z
+          }
+          vi++
+        }
+      })
+      let tris
+      try { tris = earcut(flat, holes.length ? holes : null, 2) } catch { continue }
+      if (!tris?.length) continue
+      const extent = Math.max(xMax - xMin, zMax - zMin)
+      let level = null
+      if (extent <= LEVEL_MAX_M) {
+        const sorted = hs.slice().sort((a, b) => a - b)
+        level = sorted[Math.floor(sorted.length * 0.3)]
+      }
+      const base = positions.length / 3
+      for (let i = 0, k = 0; i < flat.length; i += 2, k++) {
+        positions.push(flat[i], (level ?? hs[k]) + WATER_AREA_Y, flat[i + 1])
+        colors.push(col.r, col.g, col.b, 1)
+      }
+      for (const t of tris) indices.push(base + t)
+      n++
+    }
+    const mesh = this._buildRibbonMesh('osm_water_area', { positions, indices, colors })
+    if (mesh) mesh.material.alpha = 0.45
+    return n
   }
 
   _drawRails(features) {
@@ -276,10 +382,21 @@ export class OSMContext {
         coords = [...coords, first]
       }
 
-      const height = buildingHeightM(f.tags)
-      const src = heightSource(f.tags); srcCount[src] = (srcCount[src] || 0) + 1
+      // Vektorkacheln liefern `render_height` bereits fertig berechnet (aus
+      // height bzw. Geschossen) — besser als unsere Tag-Heuristik. Ohne das
+      // Feld (Overpass-Fallback) greift buildingHeightM wie bisher.
+      const tileH = Number(f.tags?.render_height)
+      const height = Number.isFinite(tileH) && tileH > 0 ? tileH : buildingHeightM(f.tags)
+      const src = Number.isFinite(tileH) && tileH > 0 ? 'tile' : heightSource(f.tags)
+      srcCount[src] = (srcCount[src] || 0) + 1
       const ground = this._toLocalPoints(coords, BUILDING_Y_OFFSET)
-      const roof   = ground.map(p => new BABYLON.Vector3(p.x, height, p.z))
+      // Dach = Gebäudehöhe ÜBER dem jeweiligen Geländepunkt. Der Grundriss
+      // folgt bereits dem Relief (siehe _toLocalPoints); ein flaches Dach auf
+      // absoluter Höhe würde am Hang schief in den Boden laufen. Als
+      // Dachniveau nimmt der höchste Grundrisspunkt — so steht das Gebäude
+      // wie gebaut (waagerechte Traufe), statt sich zu verwinden.
+      const baseY = Math.max(...ground.map(p => p.y))
+      const roof   = ground.map(p => new BABYLON.Vector3(p.x, baseY + height, p.z))
 
       lines.push(ground)
       lines.push(roof)
@@ -289,7 +406,7 @@ export class OSMContext {
       }
     }
     if (Object.keys(srcCount).length) {
-      const legend = { height: 'getaggt', levels: 'Geschosse', type: 'aus Gebäudeart', default: 'Default' }
+      const legend = { tile: 'aus Kachel', height: 'getaggt', levels: 'Geschosse', type: 'aus Gebäudeart', default: 'Default' }
       console.log('[osm] Gebäudehöhen: ' +
         Object.entries(srcCount).sort((a, b) => b[1] - a[1])
           .map(([k, n]) => `${n}× ${legend[k] || k}`).join(', '))
@@ -308,10 +425,14 @@ export class OSMContext {
     return features.filter(f => Array.isArray(f.coordinates) && f.coordinates.length >= 3).length
   }
 
+  // Lokale Punkte MIT Geländehöhe: Straßenbänder und Gebäudegrundrisse folgen
+  // damit dem Relief, statt in Hänge einzuschneiden oder darüber zu schweben.
+  // `y` bleibt der kleine Stapel-Offset gegen Z-Fighting (Wasser < Straße).
+  // Ohne geladenes Relief liefert terrainHeightAt 0 → altes, ebenes Verhalten.
   _toLocalPoints(coords, y) {
     return coords.map(([lat, lon]) => {
       const v = this.geo.toLocal(lat, lon, 0)
-      return new BABYLON.Vector3(v.x, y, v.z)
+      return new BABYLON.Vector3(v.x, this.geo.terrainHeightAt(lat, lon) + y, v.z)
     })
   }
 

@@ -29,6 +29,8 @@ export class GeoTransformer {
     // Bodenhöhe (AMSL) am Spieler — vom PlayerGPSComponent gepflegt. Referenz
     // für die Umrechnung von "über Normalnull"-Objekthöhen (siehe toLocalRef).
     this.groundAltitude = null
+    // Höhenquelle fürs Gelände (setTerrain) — solange null, ist die Welt eben.
+    this.terrain = null
   }
 
   setOrigin(lat, lon, altitude) {
@@ -74,9 +76,36 @@ export class GeoTransformer {
         : (this.origin?.altitude || 0)
       v.y = altitude - ground
     } else {
-      v.y = altitude
+      // AGL: auf das GELÄNDE aufsetzen, nicht auf die Startebene. Ohne
+      // geladenes Relief bleibt es beim alten Verhalten (ebener Boden y=0).
+      v.y = this.terrainHeightAt(lat, lon) + altitude
     }
     return v
+  }
+
+  /**
+   * Geländehöhe (relativ zum Origin-Boden) an einer Weltkoordinate.
+   * Liefert 0, solange kein Relief geladen ist — dann verhält sich alles wie
+   * auf der ebenen Startfläche.
+   * @returns {number} Meter
+   */
+  terrainHeightAt(lat, lon) {
+    const h = this.terrain?.elevationAt?.(lat, lon)
+    return Number.isFinite(h) ? h : 0
+  }
+
+  /**
+   * Höhenquelle setzen — ein Objekt mit `elevationAt(lat, lon)` in Metern
+   * RELATIV zum Origin-Boden (siehe engine/environment/Terrain.js). Damit
+   * folgen alle AGL-Objekte (Figuren, Items, Marker, UWB-Anker) dem Relief,
+   * ohne dass ihre Aufrufer etwas davon wissen müssen.
+   * @param {{elevationAt(lat:number, lon:number): number|null}|null} provider
+   * @param {number} [originAltitudeM]  absolute Geländehöhe am Origin (ü. NN);
+   *        setzt groundAltitude, damit auch 'msl'-Objekte (Flugzeuge) stimmen.
+   */
+  setTerrain(provider, originAltitudeM) {
+    this.terrain = provider || null
+    if (Number.isFinite(originAltitudeM)) this.groundAltitude = originAltitudeM
   }
 
   toWorld(x, y, z) {

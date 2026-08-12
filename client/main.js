@@ -67,6 +67,7 @@ import { ObjectAura } from "./core/ObjectAura.js"
 import { QuickActions } from "./core/QuickActions.js"
 import { UwbAnchorOverlay } from "./core/UwbAnchorOverlay.js"
 import { OSMContext } from "./engine/environment/OSMContext.js"
+import { Terrain } from "./engine/environment/Terrain.js"
 import { PathOverlay } from "./engine/debug/PathOverlay.js"
 
 // Same-Origin: Client und PocketBase laufen hinter Caddy auf demselben
@@ -1396,13 +1397,28 @@ async function init() {
     const ray = scene.createPickingRay(
       scene.pointerX, scene.pointerY, BABYLON.Matrix.Identity(), scene.activeCamera
     )
-    const groundPlane = BABYLON.Plane.FromPositionAndNormal(
-      BABYLON.Vector3.Zero(), new BABYLON.Vector3(0, 1, 0)
-    )
-    const dist = ray.intersectsPlane(groundPlane)
-    if (dist === null || dist < 0) return
-    const point = ray.origin.add(ray.direction.scale(dist))
+    // Zuerst gegen das GELÄNDE picken (isPickable=true) — am Hang liegt der
+    // getroffene Punkt sonst meterweit daneben, weil die gedachte Ebene y=0
+    // den Boden dort gar nicht trifft. Ohne Relief: Ebene wie bisher.
+    let point = null
+    const terrainHit = terrain.mesh
+      ? scene.pickWithRay(ray, m => m === terrain.mesh)
+      : null
+    if (terrainHit?.hit && terrainHit.pickedPoint) {
+      point = terrainHit.pickedPoint
+    } else {
+      const groundPlane = BABYLON.Plane.FromPositionAndNormal(
+        BABYLON.Vector3.Zero(), new BABYLON.Vector3(0, 1, 0)
+      )
+      const dist = ray.intersectsPlane(groundPlane)
+      if (dist === null || dist < 0) return
+      point = ray.origin.add(ray.direction.scale(dist))
+    }
     const geoPos = geo.toWorld(point.x, point.y, point.z)
+    // Höhe für neue Objekte: 0 = AUF dem Boden. Seit das Relief die
+    // AGL-Referenz stellt (GeoTransformer.toLocalRef), setzt der Renderer das
+    // Objekt damit automatisch auf die reale Geländehöhe an dieser Stelle.
+    const spawnAlt = 0
 
     contextMenu.show({
       x: ev.clientX,
@@ -1412,14 +1428,14 @@ async function init() {
         {
           label: 'Neues Objekt…',
           disabled: !ajnaManager.isLoggedIn(),
-          onClick: () => editorUI.startNewObjectAt(geoPos.lat, geoPos.lon, geoPos.altitude)
+          onClick: () => editorUI.startNewObjectAt(geoPos.lat, geoPos.lon, spawnAlt)
         },
         {
           label: 'Zufälliges Objekt (mir gehörend)…',
           disabled: !ajnaManager.isLoggedIn(),
           onClick: () => spawnRandomAndEdit({
             ajna: ajnaManager, editorUI, announcer: _announcer,
-            position: { lat: geoPos.lat, lon: geoPos.lon, altitude: geoPos.altitude }
+            position: { lat: geoPos.lat, lon: geoPos.lon, altitude: spawnAlt }
           }).catch(err => {
             if (!_toast) _toast = new Toast()
             _toast.show(err?.message || 'Spawn fehlgeschlagen', { title: 'Spawn' })
@@ -1696,6 +1712,14 @@ async function init() {
   const osmContext = new OSMContext(scene, geo, window.ajnaGeo)
   window.osm = osmContext
 
+  // Geländerelief aus offenen Höhenkacheln — legt die Landschaft unter die
+  // Szene (Rheintal, Hänge). Rein visuelle Kulisse: Objekte behalten ihre
+  // eigene Höhe. Abschaltbar über die Debug-Ebene „Geländerelief".
+  // Geladen wird zusammen mit der OSM-Kulisse (siehe _loadOSM), sobald der
+  // Geo-Origin steht — die Kacheln brauchen selbst keinen Login.
+  const terrain = new Terrain(scene, geo)
+  window.terrain = terrain
+
   // Debug-Overlay: zeichnet `state.walk_path` jedes Objekts als grüne Linie.
   // Standardmäßig AUS — update() iteriert die KOMPLETTE (ungecappte) Objektliste
   // bei jedem Realtime-Update; bei vielen Objekten (eingeblendete WLANs) war das
@@ -1708,8 +1732,21 @@ async function init() {
     ajnaManager.onObjectsChanged(throttleLatest(objects => pathOverlay.update(objects), 200))
     pathOverlay.update(ajnaManager.getObjectList())
   }
-  const _loadOSM = () => {
+  const _loadOSM = async () => {
     if (!geo.origin) return
+    // Relief ZUERST: Straßenbänder und Gebäudegrundrisse setzen darauf auf
+    // (GeoTransformer.terrainHeightAt). Käme die Kulisse zuerst, klebte sie
+    // auf der ebenen Startfläche und würde in Hänge schneiden.
+    if (!terrain.isLoaded) {
+      await terrain.load(geo.origin.lat, geo.origin.lon)
+        .catch(err => console.warn('[terrain] load failed:', err?.message || err))
+      // Bereits platzierte Objekte auf die neue Höhenreferenz nachziehen —
+      // sie stünden sonst bis zu ihrem nächsten Realtime-Update in der Luft.
+      if (terrain.isLoaded) {
+        Promise.resolve(syncSceneObjects(scene, world, geo, ajnaManager.getObjectList()))
+          .catch(() => {})
+      }
+    }
     osmContext.load(geo.origin.lat, geo.origin.lon).catch(err =>
       console.warn('[osm] load failed:', err?.message || err)
     )

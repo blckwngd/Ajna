@@ -153,6 +153,11 @@ const DETAILS = new Map()          // mmsi → { at, d }
 const DETAIL_TTL = 30 * 60_000
 const DETAIL_NEW_PER_TICK = 8      // neue Schiffe pro Poll anreichern
 const DETAIL_REFRESH_PER_TICK = 3  // veraltete Details pro Poll auffrischen
+// …ABER: derselbe Endpoint liefert auch die LIVE-Fahrtdaten (s. liveMotion).
+// Fahrende Schiffe brauchen die daher jeden Tick — liegende nicht. In der
+// Praxis fahren im 12-km-Umkreis 3–8 Schiffe gleichzeitig, das bleibt im
+// selben Größenbereich wie die ohnehin nötigen Abfragen.
+const DETAIL_LIVE_PER_TICK = 12
 
 async function fetchDetails(mmsi) {
   const r = await fetch(`https://www.vesselfinder.com/api/pub/click/${encodeURIComponent(mmsi)}`, { headers: HEADERS })
@@ -183,14 +188,44 @@ const fmtEta = (ts) => {
   return d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
-// ─── Bewegung: Kurs + Geschwindigkeit aus zwei Messungen ───────────────────
-// Der Massen-Endpoint liefert (in allen brauchbaren Zoomstufen) KEINE SOG/COG-
-// Felder. Statt dafür pro Schiff extra abzufragen, leiten wir den
-// Bewegungsvektor aus aufeinanderfolgenden Positionen ab — der Client
-// extrapoliert damit flüssig zwischen den 60-s-Polls (state.motion →
-// PositionSmoother, gleiche Mechanik wie bei Flugzeugen).
+// ─── Bewegung: Fahrtvektor fürs Dead-Reckoning im Client ───────────────────
+// Der Massen-Endpoint mp2 liefert in KEINER Zoomstufe sog/cog (z10…z17 einzeln
+// nachgemessen: ab z14 kommen zwar 10 Bytes Maße/Heading dazu, aber keine
+// Fahrt). Zwei Wege bleiben, in dieser Reihenfolge:
+//
+//  1. liveMotion() — aus dem Detail-Endpoint: `ss` = Fahrt über Grund in
+//     Knoten, `cu` = Kurs über Grund, `ts` = Zeitpunkt der AIS-Meldung.
+//     EXAKT und sofort gültig (kein Aufwärmen über zwei Polls), und der
+//     Zeitstempel lässt den Client die Meldungslatenz mitrechnen.
+//  2. motionBetween() — aus zwei aufeinanderfolgenden Positionen abgeleitet.
+//     Rückfallebene für Schiffe, deren Details (noch) fehlen.
+//
+// Der Client extrapoliert damit frameweise zwischen den 60-s-Polls
+// (state.motion → PositionSmoother, gleiche Mechanik wie bei Flugzeugen).
 const MAX_SHIP_MPS = 12      // ~23 kn: darüber ist es Datensprung, nicht Fahrt
 const MIN_MOVE_MPS = 0.15    // darunter: liegt fest (kein Drift durch Jitter)
+const KN_TO_MPS = 0.514444
+const AIS_FRESH_MS = 10 * 60_000   // ältere Meldung → Fahrtdaten nicht belastbar
+
+// Fahrtstatus laut AIS (Feld `.ns` im Detail-JSON). Erklärt dem Betrachter,
+// warum ein Schiff steht — „festgemacht" ist eine Information, kein Fehler.
+const NAV_STATUS = {
+  0: 'in Fahrt (Maschine)', 1: 'vor Anker', 2: 'manövrierunfähig',
+  3: 'eingeschränkt manövrierfähig', 4: 'tiefgangsbeschränkt', 5: 'festgemacht',
+  6: 'auf Grund', 7: 'beim Fischen', 8: 'in Fahrt (Segel)',
+  11: 'im Schleppverband', 12: 'im Schleppverband', 14: 'Notruf (AIS-SART)',
+  15: 'unbekannt',
+}
+
+/** Fahrtvektor direkt aus den AIS-Fahrtdaten. @returns {{v:number,trk:number,tMs:number}|null} */
+function liveMotion(d, nowMs) {
+  if (!d || !Number.isFinite(d.ss) || !Number.isFinite(d.cu)) return null
+  const tMs = Number.isFinite(d.ts) && d.ts > 0 ? d.ts * 1000 : null
+  if (tMs && nowMs - tMs > AIS_FRESH_MS) return null
+  const v = d.ss * KN_TO_MPS
+  if (!Number.isFinite(v) || v < 0 || v > MAX_SHIP_MPS * 2) return null
+  return { v: v < MIN_MOVE_MPS ? 0 : v, trk: ((d.cu % 360) + 360) % 360, tMs: tMs || nowMs }
+}
 
 /** @returns {{v:number, trk:number}|null} */
 function motionBetween(prev, lat, lon, tMs) {
@@ -257,7 +292,26 @@ async function tick(areas) {
   const needNew = list.filter(s => !DETAILS.has(s.mmsi)).sort((a, b) => a._d - b._d).slice(0, DETAIL_NEW_PER_TICK)
   const needFresh = list.filter(s => DETAILS.has(s.mmsi) && now - DETAILS.get(s.mmsi).at > DETAIL_TTL)
     .sort((a, b) => a._d - b._d).slice(0, DETAIL_REFRESH_PER_TICK)
-  for (const s of [...needNew, ...needFresh]) {
+  // Fährt das Schiff, sind Kurs/Fahrt nach 60 s veraltet → jeden Tick neu.
+  // „Fährt" heißt: die letzten Fahrtdaten sagten Fahrt ODER die Position hat
+  // sich seit dem vorigen Poll messbar verschoben (fängt Anfahrer ab, deren
+  // Details noch auf „festgemacht" stehen).
+  const underway = (s) => {
+    const d = DETAILS.get(s.mmsi)?.d
+    if (d && Number.isFinite(d.ss)) return d.ss >= 0.3
+    const prev = ships.get(s.mmsi)?.last
+    return !!(prev && haversine(prev.lat, prev.lon, s.lat, s.lon) > 15)
+  }
+  const needLive = list.filter(s => DETAILS.has(s.mmsi) && underway(s))
+    .sort((a, b) => a._d - b._d).slice(0, DETAIL_LIVE_PER_TICK)
+
+  const queue = []
+  const seen = new Set()
+  for (const s of [...needNew, ...needLive, ...needFresh]) {
+    if (seen.has(s.mmsi)) continue
+    seen.add(s.mmsi); queue.push(s)
+  }
+  for (const s of queue) {
     try {
       DETAILS.set(s.mmsi, { at: Date.now(), d: await fetchDetails(s.mmsi) })
     } catch (err) {
@@ -274,10 +328,20 @@ async function tick(areas) {
     const name = s.name || `Schiff ${s.mmsi}`
     const d = DETAILS.get(s.mmsi)?.d || null
     const style = styleForType(d?.type)
-    // Bewegungsvektor aus der vorigen Sichtung (Kurs schlägt den statischen
-    // Detail-Kurs, weil er die tatsächliche Fahrt der letzten Minute abbildet).
-    const motion = motionBetween(known?.last, s.lat, s.lon, now)
+    // Fahrtvektor: echte AIS-Fahrtdaten schlagen die Ableitung aus zwei
+    // Positionen. Deren Zeitstempel (`ts`) nutzen wir nur, wenn die Details
+    // AUS DIESEM Tick stammen — sonst zeigte er auf eine ältere Meldung als
+    // die Position aus mp2 und der Client würde doppelt vorausrechnen.
+    const derived = motionBetween(known?.last, s.lat, s.lon, now)
     if (known) known.last = { lat: s.lat, lon: s.lon, t: now }
+    const live = liveMotion(d, now)
+    const detailFresh = (DETAILS.get(s.mmsi)?.at ?? 0) >= now
+    const motion = live || derived
+    const motionT = live && detailFresh ? live.tMs : now
+    const navStatus = NAV_STATUS[d?.['.ns']] ?? null
+    const speedKn = live ? +(live.v / KN_TO_MPS).toFixed(1)
+      : (s.sog != null ? s.sog
+        : (derived && derived.v > 0 ? +(derived.v * 1.94384).toFixed(1) : null))
     const course = motion && motion.v > 0 ? motion.trk
       : (s.cog != null ? s.cog : (Number.isFinite(d?.cu) ? d.cu : null))
     const eta = fmtEta(d?.etaTS)
@@ -286,10 +350,11 @@ async function tick(areas) {
     const state = {
       source: SOURCE, mmsi: s.mmsi,
       ...(course != null ? { course } : {}),
-      ...(s.sog != null ? { speed_kn: s.sog } : (motion && motion.v > 0 ? { speed_kn: +(motion.v * 1.94384).toFixed(1) } : {})),
+      ...(speedKn != null ? { speed_kn: speedKn } : {}),
+      ...(navStatus ? { nav_status: navStatus } : {}),
       // Dead-Reckoning für den Client (PositionSmoother liest state.motion):
       // zwischen den 60-s-Polls wird die Position frameweise vorausgerechnet.
-      ...(motion ? { motion: { v: motion.v, trk: motion.trk, vrate: 0, t: now, lat0: s.lat, lon0: s.lon, alt0: 0 } } : {}),
+      ...(motion ? { motion: { v: motion.v, trk: motion.trk, vrate: 0, t: motionT, lat0: s.lat, lon0: s.lon, alt0: 0 } } : {}),
       ...(d ? {
         ship_type: d.type || null,
         country: d.country || null,
@@ -301,6 +366,7 @@ async function tick(areas) {
         draught_m: Number.isFinite(d.draught) && d.draught > 0 ? d.draught / 10 : null,
         imo: d.imo || null,
         eni: d.eni || null,          // Europäische Schiffsnummer (Binnenschifffahrt)
+        ais_ts: Number.isFinite(d.ts) && d.ts > 0 ? d.ts : null,   // letzte AIS-Meldung
         photo,
       } : {}),
     }
@@ -312,9 +378,9 @@ async function tick(areas) {
     if (d?.country) bits.push(`${flagEmoji(d.a2)} ${d.country}`.trim())
     if (d?.al && d?.aw) bits.push(`${d.al} × ${d.aw} m`)
     if (d?.dest) bits.push(`Ziel: ${d.dest}${eta ? ` (ETA ${eta})` : ''}`)
-    const kn = s.sog != null ? s.sog : (motion ? motion.v * 1.94384 : null)
-    const fahrt = kn == null ? (course != null ? `${Math.round(course)}°` : '')
-      : (kn < 0.3 ? 'liegt fest' : `${kn.toFixed(1)} kn${course != null ? ` / ${Math.round(course)}°` : ''}`)
+    const fahrt = speedKn == null ? (course != null ? `${Math.round(course)}°` : '')
+      : (speedKn < 0.3 ? (navStatus || 'liegt fest')
+        : `${speedKn.toFixed(1)} kn${course != null ? ` / ${Math.round(course)}°` : ''}`)
     if (fahrt) bits.push(fahrt)
     bits.push(`MMSI ${s.mmsi}`)
     if (d?.eni) bits.push(`ENI ${d.eni}`)

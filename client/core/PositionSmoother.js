@@ -77,7 +77,11 @@ export class PositionSmoother {
    * @param {number} [now=performance.now()]
    */
   isSettled(now = performance.now()) {
-    if (this.curr?.dr) return false          // Flugzeug: extrapoliert dauerhaft
+    // Extrapolierende Objekte gelten nur als „in Bewegung", solange sie
+    // tatsächlich Fahrt haben. Ohne diese Prüfung bliebe jedes festgemachte
+    // Schiff dauerhaft im Pro-Frame-Loop der Karte (v=0 → immer dieselbe
+    // Position) — bei einer Rheinstrecke sind das schnell 30 Marker umsonst.
+    if (this.curr?.dr) return !(this.curr.dr.v > 0)
     if (!this.curr || !this.prev) return true
     const duration = this.curr.t - this.prev.t
     if (duration <= 0 || duration > MAX_INTERP_MS) return true
