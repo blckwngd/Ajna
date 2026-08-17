@@ -10,9 +10,10 @@
 // 2D (E,N): assumes the tag is roughly in the anchor plane (typical RTLS); ≥3
 // anchors with non-collinear geometry required. Pure + dependency-free.
 
-const EARTH_R = 6378137
 
 // Min vertical spread of anchors (m) for a 3D solve to be well-conditioned.
+import { wgs84ToEnu, enuToWgs84 } from './geoMath.js'
+
 const MIN_3D_ALT_SPREAD = 0.5
 
 /**
@@ -212,18 +213,6 @@ function inv3x3(m) {
 
 // ── equirectangular WGS84 ↔ local ENU metres (matches GeoTransformer) ──
 
-function wgs84ToEnu(origin, lat, lon, altitude) {
-  const dLat = (lat - origin.lat) * Math.PI / 180
-  const dLon = (lon - origin.lon) * Math.PI / 180
-  const meanLat = (lat + origin.lat) / 2 * Math.PI / 180
-  return { E: dLon * EARTH_R * Math.cos(meanLat), N: dLat * EARTH_R, U: (altitude || 0) - (origin.altitude || 0) }
-}
 
-function enuToWgs84(origin, E, N, U) {
-  const lat = origin.lat + (N / EARTH_R) * 180 / Math.PI
-  const meanLat = (lat + origin.lat) / 2 * Math.PI / 180
-  const lon = origin.lon + (E / (EARTH_R * Math.cos(meanLat))) * 180 / Math.PI
-  return { lat, lon, altitude: origin.altitude + U }
-}
 
 function mean(arr) { return arr.reduce((s, v) => s + v, 0) / arr.length }

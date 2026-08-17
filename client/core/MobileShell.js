@@ -25,6 +25,8 @@ import { interactionReply } from './InteractionReply.js'
 import { privacy } from './PrivacyPolicy.js'
 import { messageLog, CATS } from './MessageLog.js'
 import { MessageLogPanel } from './MessageLogPanel.js'
+import { RANGE_DEFS, RANGE_EVENT, readRange, writeRange, valueFromSlider, sliderFromValue, formatRange }
+  from './renderRange.js'
 
 // Eingeblendete Agent-Quellen (für den Interest-Area-Publish): alles, was im
 // Agent-Filter nicht explizit deaktiviert ist.
@@ -460,6 +462,13 @@ export class MobileShell {
     const arCompass = (() => { try { return localStorage.getItem('ajna.ar.compass_indicator') !== '0' } catch { return true } })()
     const arAura = (() => { try { return localStorage.getItem('ajna.ar.aura') !== '0' } catch { return true } })()
     const arAuraRange = (() => { try { const v = parseFloat(localStorage.getItem('ajna.ar.aura_range')); return Number.isFinite(v) && v > 0 ? v : 100 } catch { return 100 } })()
+    // Sichtweiten der 3D-Ansicht (siehe renderRange.js)
+    const reichweite = (name) => {
+      const d = RANGE_DEFS[name], v = readRange(name)
+      return `<input type="range" data-field="range-${name}" min="${d.min}" max="${d.max}" step="${d.step}"
+                value="${sliderFromValue(name, v)}" style="flex:1">
+              <span class="meta" data-role="range-${name}-val" style="min-width:52px;text-align:right">${formatRange(v)}</span>`
+    }
 
     root.innerHTML = `
       <section class="settings-section">
@@ -509,6 +518,38 @@ export class MobileShell {
           <input type="checkbox" data-field="wand-audio" ${WandAudioFeedback.isEnabled() ? 'checked' : ''}>
           Audio-Hinweise (Name/Aktion vorlesen)
         </label>
+      </section>
+
+      <section class="settings-section">
+        <h3>Sichtweite</h3>
+        <div class="meta" style="margin-bottom:10px">
+          Begrenzt, was die 3D-/AR-Ansicht zeichnet. Kleinere Werte = weniger Geometrie
+          = flüssigeres Bild auf schwachen Geräten. Wirkt sofort, pro Gerät gespeichert.
+        </div>
+        <label class="meta" style="display:flex;align-items:center;gap:10px">
+          <span style="white-space:nowrap;min-width:74px">Objekte</span>
+          ${reichweite('objects')}
+        </label>
+        <div class="meta" style="margin-top:6px">
+          Horizontale Entfernung zur Kamera. Ganz rechts = unbegrenzt (Vorgabe) —
+          sonst verschwinden Flugzeuge und Schiffe, die naturgemäß weit weg sind.
+        </div>
+        <label class="meta" style="display:flex;align-items:center;gap:10px;margin-top:12px">
+          <span style="white-space:nowrap;min-width:74px">Kulisse</span>
+          ${reichweite('scenery')}
+        </label>
+        <div class="meta" style="margin-top:6px">
+          Gebäude, Straßen, Gewässer und Gleise — ein Regler, weil sie aus derselben
+          Kachelabfrage stammen. Der teuerste Posten der Szene.
+        </div>
+        <label class="meta" style="display:flex;align-items:center;gap:10px;margin-top:12px">
+          <span style="white-space:nowrap;min-width:74px">Gelände</span>
+          ${reichweite('terrain')}
+        </label>
+        <div class="meta" style="margin-top:6px">
+          Höhenrelief ringsum. Je Fläche viel billiger als Gebäude, darf also weiter reichen.
+          Wird automatisch mindestens so groß wie die Kulisse — die legt sich auf das Relief.
+        </div>
       </section>
 
       <section class="settings-section">
@@ -1012,6 +1053,42 @@ export class MobileShell {
       try { localStorage.setItem('ajna.ar.aura_range', String(v)) } catch {}
       window.dispatchEvent(new CustomEvent('ajna:ar-aura-range', { detail: v }))
     })
+
+    // Sichtweiten (Objekte / Kulisse / Gelände) — siehe renderRange.js.
+    const rangeEls = {}
+    for (const name of Object.keys(RANGE_DEFS)) {
+      rangeEls[name] = {
+        el: root.querySelector(`[data-field="range-${name}"]`),
+        val: root.querySelector(`[data-role="range-${name}-val"]`),
+      }
+    }
+    const setRange = (name, value) => {
+      const r = rangeEls[name]
+      if (!r?.el) return
+      r.el.value = sliderFromValue(name, value)
+      if (r.val) r.val.textContent = formatRange(value)
+      writeRange(name, value)
+    }
+    // Ein Kulissen-/Relief-Neubau kostet ~¼ s. Beim Ziehen darf das nicht pro
+    // Rasterschritt losgetreten werden: Anzeige sofort, Wirkung nach der Pause.
+    let rangeTimer = null
+    const rangeAnwenden = () => {
+      clearTimeout(rangeTimer)
+      rangeTimer = setTimeout(() => window.dispatchEvent(new CustomEvent(RANGE_EVENT)), 350)
+    }
+    for (const name of Object.keys(RANGE_DEFS)) {
+      rangeEls[name].el?.addEventListener('input', () => {
+        const v = valueFromSlider(name, rangeEls[name].el.value)
+        if (Number.isNaN(v)) return
+        setRange(name, v)
+        // Die Kulisse legt sich auf den Höhen-Cache des Reliefs — reicht sie
+        // weiter, lägen die äußeren Gebäude flach. Die Kopplung wird hier
+        // SICHTBAR nachgeführt, statt sie still im Hintergrund zu korrigieren.
+        if (name === 'scenery' && Number.isFinite(v) && v > readRange('terrain')) setRange('terrain', v)
+        if (name === 'terrain' && v < readRange('scenery')) setRange('scenery', v)
+        rangeAnwenden()
+      })
+    }
 
     // AR-Nord-Offset: korrigiert einen Kompass↔Daten-Heading-Versatz (z. B. 180°).
     const northInput = root.querySelector('[data-field="ar-north"]')

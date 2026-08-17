@@ -140,6 +140,7 @@ export class AjnaManager {
   logout()                       { return this.defaultClient.logout() }
   isLoggedIn()                   { return this.defaultClient.isLoggedIn() }
   currentUser()                  { return this.defaultClient.currentUser() }
+  updateCurrentUser(fields)      { return this.defaultClient.updateCurrentUser(fields) }
   onAuthChanged(callback)        { return this.defaultClient.onAuthChanged(callback) }
 
   // ===================================================================

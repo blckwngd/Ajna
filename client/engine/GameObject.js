@@ -2,6 +2,7 @@ import { GeospatialComponent } from "./components/GeospatialComponent.js"
 import { TransformComponent } from "./components/TransformComponent.js"
 import { NetworkSyncComponent } from "./components/NetworkSyncComponent.js"
 import { PositionSmoother } from "../core/PositionSmoother.js"
+import { LabelComponent } from "./components/LabelComponent.js"
 import { ENC_STYLE, encCategory } from "../core/wifiStyle.js"
 import { appearanceOf, arViewOf, gltfUrlOf } from "../core/Appearance.js"
 
@@ -76,6 +77,19 @@ export class GameObject {
     this.animationGroups = []
     this.components = []
 
+    // BESITZVERHÄLTNISSE beim Aufräumen — seit dem AssetContainer-Cache
+    // (siehe _loadContainer) gehören Geometrie, Materialien und Texturen eines
+    // GLB NICHT mehr diesem Objekt, sondern allen Objekten desselben Modells.
+    // Wer sie beim Löschen mit freigibt, nimmt sie den anderen weg: die werden
+    // weiß. Deshalb wird beim Aufräumen NUR freigegeben, was hier steht.
+    //
+    //   _ownMaterials    selbst gebaute Materialien (Platzhalter, Bildtafel,
+    //                    Aura) samt eigener Texturen
+    //   _clonedMaterials Klone von Container-Materialien (appearance.color /
+    //                    opacity). Der Klon gehört uns, seine TEXTUREN nicht.
+    this._ownMaterials = []
+    this._clonedMaterials = []
+
     // Frameweise Glättung von eingehenden Realtime-Updates. Bewegt sich
     // ein Objekt mit niedriger Update-Rate (z. B. der 5-Hz-Fox-Walk-
     // Agent), würde es sonst ruckartig springen. Der Smoother lerpt
@@ -128,6 +142,10 @@ export class GameObject {
     if (includeNetworkSync) {
       go.addComponent(new NetworkSyncComponent())
     }
+
+    // Beschriftung (appearance.label). Meldet sich selbst wieder ab, wenn das
+    // Objekt keine Vorlage trägt — kostet dann nichts.
+    go.addComponent(new LabelComponent(data))
 
     // Reverse-Lookup für Pointer-Picking / Hover-Tooltips. Zunächst nur
     // der Placeholder; #loadModel taggt später auch die importierten Meshes.
@@ -297,6 +315,15 @@ export class GameObject {
       meshes: instRoot ? [instRoot, ...instRoot.getChildMeshes(false)] : [],
       animationGroups: inst.animationGroups || [],
       skeletons: inst.skeletons || [],
+    }
+
+    // Wurden Materialien geklont, gehören DIE KLONE diesem Objekt und müssen
+    // beim Aufräumen weg — sonst bleibt pro Spawn eines zurück. Ihre Texturen
+    // bleiben die des Containers und dürfen NICHT mitgehen.
+    if (cloneMats) {
+      for (const m of result.meshes) {
+        if (m.material && !this._clonedMaterials.includes(m.material)) this._clonedMaterials.push(m.material)
+      }
     }
 
     // Race-Guard: kam das GameObject während des Loads aus der Szene
@@ -557,6 +584,7 @@ export class GameObject {
       const h = Number(this._marker.heightM) || w
       const box = BABYLON.MeshBuilder.CreateBox(phName, { width: w, height: h, depth: 0.02 }, this.scene)
       const mMat = new BABYLON.StandardMaterial(`mat_${this.id}`, this.scene)
+      this._ownMaterials.push(mMat)
       const mTex = new BABYLON.Texture(this._marker.image, this.scene)
       mMat.diffuseTexture = mTex
       mMat.emissiveTexture = mTex        // selbstleuchtend → im AR-Bild ohne Szenenlicht sichtbar
@@ -587,6 +615,7 @@ export class GameObject {
         const plane = BABYLON.MeshBuilder.CreatePlane(phName,
           { width: w, height: h, sideOrientation: BABYLON.Mesh.DOUBLESIDE }, this.scene)
         const mat = new BABYLON.StandardMaterial(`mat_${this.id}`, this.scene)
+        this._ownMaterials.push(mat)
         mat.emissiveTexture = new BABYLON.Texture(texUrl, this.scene)
         mat.disableLighting = true          // Fotos gleichmäßig hell, licht-unabhängig
         mat.backFaceCulling = false
@@ -603,6 +632,7 @@ export class GameObject {
     const apMesh = ar ? this.#primitiveFromShape((ar.shape || '').toLowerCase(), ar, phName) : null
     if (apMesh) {
       const apMat = new BABYLON.StandardMaterial(`mat_${this.id}`, this.scene)
+      this._ownMaterials.push(apMat)
       if (typeof ar.color === 'string') {
         try {
           const c = BABYLON.Color3.FromHexString(ar.color)
@@ -626,6 +656,7 @@ export class GameObject {
     // 2) Fallback: type-abhängiger Default-Look (Legacy), wenn appearance kein
     //    bekanntes 3D-Primitiv vorgibt.
     const mat = new BABYLON.StandardMaterial(`mat_${this.id}`, this.scene)
+    this._ownMaterials.push(mat)
     let mesh
 
     switch (this._objectType) {
@@ -730,6 +761,7 @@ export class GameObject {
     try { color = BABYLON.Color3.FromHexString(g.length === 9 ? g.slice(0, 7) : g) } catch { return }
     const mesh = BABYLON.MeshBuilder.CreateSphere(`glow_${this.id}`, { diameter: 0.95, segments: 10 }, this.scene)
     const mat = new BABYLON.StandardMaterial(`glowmat_${this.id}`, this.scene)
+    this._ownMaterials.push(mat)
     mat.emissiveColor = color
     mat.diffuseColor = BABYLON.Color3.Black()
     mat.specularColor = BABYLON.Color3.Black()
@@ -775,6 +807,10 @@ export class GameObject {
   // enthalten: das ist ein seltener Boot-Schritt, nicht der Live-Pfad.
   applyData(data, geo) {
     this.name = data.name || data.id
+
+    // Beschriftung mit dem frischen Datensatz versorgen: Vorlage UND die
+    // eingesetzten Werte (state.*) können sich per Realtime ändern.
+    this.getComponent(LabelComponent)?.setRecord(data)
 
     // Position und Rotation gehen via PositionSmoother — das tatsächliche
     // Schreiben auf root.position / root.rotation passiert pro Frame in
@@ -906,12 +942,27 @@ export class GameObject {
 
   dispose() {
     this.components.forEach(c => c.dispose())
-    // dispose(doNotRecurse=false, disposeMaterialAndTextures=true): gibt beim
-    // Despawn AUCH Materialien + Texturen frei. Sonst leaken sie (jedes Objekt
-    // lädt bislang eine eigene GLTF-Kopie) → RAM wächst bei ständigem
-    // Reconcile-Despawn/Respawn unbegrenzt. (Bei künftigem Instancing mit
-    // geteilten Texturen hier wieder auf false stellen.)
-    this.root.dispose(false, true)
+
+    // NICHT `dispose(false, true)`. Der zweite Parameter gibt Materialien UND
+    // Texturen mit frei — das war richtig, solange jedes Objekt seine eigene
+    // GLB-Kopie parste. Seit dem AssetContainer-Cache teilen sich alle Objekte
+    // desselben Modells diese Texturen: Ein Objekt zu löschen machte ALLE
+    // anderen weiß. Geometrie und Texturen gehören jetzt dem Container und
+    // bleiben, bis der Cache selbst geräumt wird.
+    this.root.dispose(false, false)
+
+    // Was wirklich uns gehört, geben wir gezielt frei — sonst bliebe pro
+    // Spawn/Despawn ein Material liegen.
+    for (const m of this._ownMaterials) {
+      // true = eigene Texturen mit weg (Marker-Bild, Foto-Tafel).
+      try { m.dispose(false, true) } catch { /* Szene evtl. schon weg */ }
+    }
+    // Geklonte Modell-Materialien: der Klon ja, seine Texturen NEIN.
+    for (const m of this._clonedMaterials) {
+      try { m.dispose(false, false) } catch {}
+    }
+    this._ownMaterials = []
+    this._clonedMaterials = []
   }
 
 }

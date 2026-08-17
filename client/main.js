@@ -43,6 +43,8 @@ import { InWorldActionMenu } from "./core/InWorldActionMenu.js"
 import { Toast } from "./core/Toast.js"
 import { interactionReply, isCollectAction } from "./core/InteractionReply.js"
 import { InventoryUI, DRAG_MIME } from "./core/InventoryUI.js"
+import { Minimap } from "./core/Minimap.js"
+import { readAllRanges, effectiveTerrain, RANGE_EVENT } from "./core/renderRange.js"
 import { inventoryDevices } from "./core/inventoryDevices.js"
 import { spawnRandomAndEdit, directorSpawnItems } from "./core/SpawnHere.js"
 import { CameraComponent } from "./engine/components/CameraComponent.js"
@@ -1310,6 +1312,36 @@ async function init() {
   accessories.wand?.onStatusChange?.(() => inventory?.refresh())
   accessories.uwb?.onStatusChange?.(() => inventory?.refresh())
 
+  // ── Minimap ──────────────────────────────────────────────────────────────
+  // Anders als das Inventar wird sie IMMER hier erzeugt (auch in der Shell):
+  // sie gehört ausschließlich zur 3D-Ansicht und hängt deshalb in arRoot — in
+  // der Kartenansicht ist der Container ausgeblendet, damit auch die Minimap.
+  //
+  // Blickrichtung als echter Kompasskurs: statt aus den lokalen Achsen
+  // zurückzurechnen, projizieren wir Kameraposition UND einen Punkt 50 m
+  // davor durch DIESELBE Geo-Transformation. Damit stimmt der Kurs auch mit
+  // `invertNorthSouth`/`invertEastWest` (der AR-Client läuft nord-süd-gespiegelt).
+  // Läuft im Bildtakt der Minimap → wiederverwendeter Ray statt einer neuen
+  // Allokation pro Bild.
+  const _mmRay = new BABYLON.Ray(BABYLON.Vector3.Zero(), BABYLON.Vector3.Zero(), 1)
+  const _minimapView = () => {
+    const cam = scene.activeCamera
+    if (!cam || !geo.origin) return null
+    const p = cam.globalPosition
+    const here = geo.toWorld(p.x, 0, p.z)
+    let heading
+    const dir = cam.getForwardRayToRef ? cam.getForwardRayToRef(_mmRay, 1).direction
+      : cam.getForwardRay?.(1)?.direction
+    if (dir && Math.hypot(dir.x, dir.z) > 1e-4) {   // nicht senkrecht nach oben/unten
+      const ahead = geo.toWorld(p.x + dir.x * 50, 0, p.z + dir.z * 50)
+      const lat = here.lat * Math.PI / 180
+      heading = (Math.atan2((ahead.lon - here.lon) * Math.cos(lat), ahead.lat - here.lat)
+        * 180 / Math.PI + 360) % 360
+    }
+    return { lat: here.lat, lon: here.lon, heading }
+  }
+  const minimap = new Minimap({ container: arRoot, getView: _minimapView })
+
   // Drag&Drop (Desktop): Item aus dem Inventar auf die AR-Szene ablegen.
   canvas.addEventListener('dragover', (e) => {
     if (Array.from(e.dataTransfer?.types || []).includes(DRAG_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }
@@ -1709,7 +1741,10 @@ async function init() {
   // OSM-Kontext (Straßen + Gebäude) als Wireframe um den Origin zeichnen.
   // Die Geo-API ist standardmäßig authenticated-only — wenn beim Boot
   // noch nicht eingeloggt: stiller 401, erneuter Versuch beim Login.
-  const osmContext = new OSMContext(scene, geo, window.ajnaGeo)
+  // Sichtweiten (gerätelokal, über die Einstellungen live änderbar).
+  let _ranges = readAllRanges()
+  _objectRangeM = _ranges.objects
+  const osmContext = new OSMContext(scene, geo, window.ajnaGeo, { radius: _ranges.scenery })
   window.osm = osmContext
 
   // Geländerelief aus offenen Höhenkacheln — legt die Landschaft unter die
@@ -1718,6 +1753,7 @@ async function init() {
   // Geladen wird zusammen mit der OSM-Kulisse (siehe _loadOSM), sobald der
   // Geo-Origin steht — die Kacheln brauchen selbst keinen Login.
   const terrain = new Terrain(scene, geo)
+  terrain.setRadius(effectiveTerrain(_ranges))
   window.terrain = terrain
 
   // Debug-Overlay: zeichnet `state.walk_path` jedes Objekts als grüne Linie.
@@ -1732,7 +1768,7 @@ async function init() {
     ajnaManager.onObjectsChanged(throttleLatest(objects => pathOverlay.update(objects), 200))
     pathOverlay.update(ajnaManager.getObjectList())
   }
-  const _loadOSM = async (lat = geo.origin?.lat, lon = geo.origin?.lon) => {
+  const _loadOSM = async (lat = geo.origin?.lat, lon = geo.origin?.lon, { force = false } = {}) => {
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
     // Relief ZUERST: Straßenbänder und Gebäudegrundrisse setzen darauf auf
     // (GeoTransformer.terrainHeightAt). Käme die Kulisse zuerst, klebte sie
@@ -1740,7 +1776,7 @@ async function init() {
     const c = terrain.center
     const moved = !c || Math.abs(c.lat - lat) > 1e-6 || Math.abs(c.lon - lon) > 1e-6
     const hadTerrain = terrain.isLoaded
-    if (!hadTerrain || moved) {
+    if (!hadTerrain || moved || force) {
       await terrain.load(lat, lon)
         .catch(err => console.warn('[terrain] load failed:', err?.message || err))
       // Bereits platzierte Objekte auf die neue Höhenreferenz nachziehen —
@@ -1752,16 +1788,51 @@ async function init() {
     }
     // Die Drapierung steckt fest in den Kulissen-Vertices. Sie neu zu zeichnen,
     // nur weil das Relief umgezogen ist, wäre trotzdem verschwendet: der
-    // Kachelsatz der Kulisse (300 m) ist IMMER eine Teilmenge dessen des
-    // Reliefs (1200 m) — gleiches z14-Raster, und lon2tile ist monoton. Die
-    // Höhen unter der Kulisse stehen beim Zeichnen also bereits vollständig
-    // im Kachel-Cache. (Gilt, solange TILE_Z === TERRAIN_Z.) Erzwungen wird
-    // nur der eine Fall, den das nicht abdeckt: die Kulisse wurde flach
-    // gezeichnet, weil das Relief damals gar nicht da war.
-    await osmContext.load(lat, lon, { force: !hadTerrain && terrain.isLoaded }).catch(err =>
+    // Kachelsatz der Kulisse ist IMMER eine Teilmenge dessen des Reliefs —
+    // gleiches z14-Raster, lon2tile ist monoton, und der Reliefradius wird über
+    // `effectiveTerrain()` nie kleiner als der Kulissenradius gesetzt (siehe
+    // core/renderRange.js). Die Höhen unter der Kulisse stehen beim Zeichnen
+    // also bereits vollständig im Kachel-Cache. (Gilt, solange
+    // TILE_Z === TERRAIN_Z.) Erzwungen wird nur der eine Fall, den das nicht
+    // abdeckt: die Kulisse wurde flach gezeichnet, weil das Relief damals gar
+    // nicht da war.
+    await osmContext.load(lat, lon, { force: force || (!hadTerrain && terrain.isLoaded) }).catch(err =>
       console.warn('[osm] load failed:', err?.message || err)
     )
   }
+
+  // Aktuelle Kameraposition in WGS84 — Bezugspunkt für einen erzwungenen
+  // Kulissen-/Relief-Neubau (die Kamera ist weiter als der Origin gewandert).
+  const _sceneryCenter = () => {
+    const p = scene.activeCamera?.globalPosition
+    if (p && geo.origin) { const w = geo.toWorld(p.x, 0, p.z); if (Number.isFinite(w.lat)) return w }
+    return terrain.center || osmContext.center || geo.origin || null
+  }
+
+  // Sichtweiten-Regler aus den Einstellungen — wirken sofort, ohne Neuladen.
+  let _rangeReload = Promise.resolve()
+  window.addEventListener(RANGE_EVENT, () => {
+    const next = readAllRanges()
+    const objektGrenzeNeu = next.objects !== _ranges.objects
+    const kulisseNeu = next.scenery !== _ranges.scenery
+    const reliefNeu = effectiveTerrain(next) !== effectiveTerrain(_ranges)
+    _ranges = next
+    _objectRangeM = next.objects
+
+    if (objektGrenzeNeu) {
+      Promise.resolve(syncSceneObjects(scene, world, geo, ajnaManager.getObjectList())).catch(() => {})
+    }
+    if (kulisseNeu || reliefNeu) {
+      osmContext.radius = next.scenery
+      terrain.setRadius(effectiveTerrain(next))
+      const c = _sceneryCenter()
+      // Serialisiert: zwei gleichzeitige Neubauten würden sich beim Abräumen
+      // der Meshes in die Quere kommen.
+      if (c) _rangeReload = _rangeReload
+        .then(() => _loadOSM(c.lat, c.lon, { force: true }))
+        .catch(err => console.warn('[range] Neuaufbau fehlgeschlagen:', err?.message || err))
+    }
+  })
   _loadOSM()
   ajnaManager.onAuthChanged(user => {
     if (user && !osmContext.isLoaded) _loadOSM(osmContext.center?.lat, osmContext.center?.lon)
@@ -1796,7 +1867,23 @@ async function init() {
       + ` → Kulisse nach ${w.lat.toFixed(5)}, ${w.lon.toFixed(5)}`)
     _loadOSM(w.lat, w.lon).finally(() => { _sceneryBusy = false })
   }
-  setInterval(_followScenery, SCENERY_POLL_MS)
+
+  // Objekt-Sichtweite ist kameraabhängig, der Reconcile hängt aber an
+  // DATEN-Änderungen. Ohne das hier bliebe ein Objekt stehen, bis der nächste
+  // Realtime-Event kommt — bei ruhigen Beständen beliebig lange. Nur aktiv,
+  // wenn überhaupt eine Grenze gesetzt ist.
+  const RANGE_RESYNC_M = 25
+  let _rangeSyncAt = null
+  const _followObjectRange = () => {
+    if (!Number.isFinite(_objectRangeM) || !geo.origin) return
+    const p = scene.activeCamera?.globalPosition
+    if (!p) return
+    if (_rangeSyncAt && Math.hypot(p.x - _rangeSyncAt.x, p.z - _rangeSyncAt.z) < RANGE_RESYNC_M) return
+    _rangeSyncAt = { x: p.x, z: p.z }
+    Promise.resolve(syncSceneObjects(scene, world, geo, ajnaManager.getObjectList())).catch(() => {})
+  }
+
+  setInterval(() => { _followScenery(); _followObjectRange() }, SCENERY_POLL_MS)
 
   const debugScene = buildDebugScene(scene)
 
@@ -2123,6 +2210,27 @@ let _capCamPos = null
 const _capKeep = new Map()                          // source → Set<id>
 const CAP_RECOMPUTE_DIST2 = 15 * 15                 // 15 m (quadriert)
 
+// Objekt-Sichtweite in Metern (Einstellungen → „Sichtweite"). Infinity = aus.
+// Modulweit, weil syncSceneObjects keine Closure über init() hat.
+let _objectRangeM = Infinity
+
+// Harte Distanzgrenze für Objekte — ergänzt das Agenten-Budget (Anzahl je
+// Source) um eine Grenze in Metern, die für ALLE Objekte gilt, auch für selbst
+// angelegte. HORIZONTAL gemessen: ein Flugzeug in 11 km Höhe direkt über dem
+// Kopf ist gefühlt „hier" und soll nicht an seiner Flughöhe scheitern.
+function _capByObjectRange(objects, geo, camera) {
+  if (!Number.isFinite(_objectRangeM)) return objects
+  const cam = camera?.globalPosition
+  if (!cam) return objects
+  const r2 = _objectRangeM * _objectRangeM
+  return objects.filter(o => {
+    if (!Number.isFinite(o.lat) || !Number.isFinite(o.lon)) return true   // fängt der Reconcile ab
+    const p = geo.toLocal(o.lat, o.lon, 0)
+    const dx = p.x - cam.x, dz = p.z - cam.z
+    return dx * dx + dz * dz <= r2
+  })
+}
+
 // Sichtweiten-Begrenzung pro Agent: gruppiert die Objekte nach Source und
 // behält je Source nur die `render_budget` kamera-nächsten. Objekte ohne
 // Source (user-created) bleiben immer. Distanz im lokalen Meter-Raum
@@ -2199,7 +2307,9 @@ async function syncSceneObjects(scene, world, geo, objects) {
   // Sichtweiten-Begrenzung: je Agent (Source) nur die X kamera-nächsten
   // Objekte rendern (X = render_budget der Source). Dichte Agents (WiGLE)
   // werden stark vereinfacht, dünne (AIS) bleiben komplett sichtbar.
-  const visibleObjects = _capByAgentBudget(filteredObjects, geo, scene.activeCamera, _agentFilters)
+  const visibleObjects = _capByObjectRange(
+    _capByAgentBudget(filteredObjects, geo, scene.activeCamera, _agentFilters),
+    geo, scene.activeCamera)
 
   const incomingIds = new Set(visibleObjects.map(o => o.id))
 

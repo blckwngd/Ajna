@@ -17,9 +17,10 @@
 // into the AR/UWB ENU frame). The first UWB fix pins the local ENU origin; the
 // output is converted back to WGS84 against that origin.
 
-const EARTH_R = 6378137
 
 // One axis: constant-velocity Kalman filter, state [pos, vel], accel input.
+import { wgs84ToEnu, enuToWgs84 } from './geoMath.js'
+
 class AxisKF {
   constructor(accelVar, measVar) {
     this.qa = accelVar      // process noise: accel uncertainty σ_a² (m/s²)²
@@ -171,16 +172,4 @@ function _now() {
 }
 
 // equirectangular WGS84 ↔ local ENU metres (matches GeoTransformer / model B)
-function wgs84ToEnu(origin, lat, lon, altitude) {
-  const dLat = (lat - origin.lat) * Math.PI / 180
-  const dLon = (lon - origin.lon) * Math.PI / 180
-  const meanLat = (lat + origin.lat) / 2 * Math.PI / 180
-  return { E: dLon * EARTH_R * Math.cos(meanLat), N: dLat * EARTH_R, U: (altitude || 0) - (origin.altitude || 0) }
-}
 
-function enuToWgs84(origin, E, N, U) {
-  const lat = origin.lat + (N / EARTH_R) * 180 / Math.PI
-  const meanLat = (lat + origin.lat) / 2 * Math.PI / 180
-  const lon = origin.lon + (E / (EARTH_R * Math.cos(meanLat))) * 180 / Math.PI
-  return { lat, lon, altitude: (origin.altitude || 0) + U }
-}

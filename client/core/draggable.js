@@ -15,24 +15,43 @@ const clamp = (v, min, max) => Math.max(min, Math.min(max, v))
 
 /**
  * @param {HTMLElement} el
- * @param {{ key: string, onClick?: () => void }} opts  key = localStorage-Schlüssel für {left,top}
+ * @param {{ key: string, onClick?: () => void, handle?: HTMLElement }} opts
+ *        key = localStorage-Schlüssel für {left,top};
+ *        handle = Anfasser (z. B. Kopfzeile eines Panels). Ohne Angabe ist das
+ *        Element selbst der Anfasser — bei einem Panel mit eigenem Inhalt (Karte,
+ *        Liste) würde sonst jeder Griff hinein das Fenster verschieben.
  * @returns {() => void} cleanup (entfernt alle Listener)
  */
-export function makeDraggable(el, { key, onClick } = {}) {
+export function makeDraggable(el, { key, onClick, handle = null } = {}) {
   if (!el) return () => {}
-  el.style.touchAction = 'none'   // Browser-Scroll/Gesten beim Ziehen unterdrücken
+  const grip = handle || el
+  grip.style.touchAction = 'none'   // Browser-Scroll/Gesten beim Ziehen unterdrücken
 
   const applySaved = () => {
     let p = null
     try { p = JSON.parse(localStorage.getItem(key) || 'null') } catch {}
     if (!p || !Number.isFinite(p.left) || !Number.isFinite(p.top)) return
-    const w = el.offsetWidth || 48, h = el.offsetHeight || 48
+    const w = el.offsetWidth, h = el.offsetHeight
+    if (!w || !h) return    // noch kein Layout (ausgeblendet) — der Beobachter unten holt es nach
     el.style.left = clamp(p.left, 4, window.innerWidth - w - 4) + 'px'
     el.style.top = clamp(p.top, 4, window.innerHeight - h - 4) + 'px'
     el.style.right = 'auto'
     el.style.bottom = 'auto'
   }
   requestAnimationFrame(applySaved)   // nach dem Layout (offsetWidth muss stehen)
+
+  // Elemente, die anfangs versteckt sind (Panel hinter einem Auslöser), haben
+  // beim ersten Frame keine Maße — ohne das hier würde die gemerkte Position
+  // gegen 0×0 geklemmt und das Fenster säße beim Öffnen am falschen Fleck.
+  let ro = null
+  if (typeof ResizeObserver !== 'undefined') {
+    ro = new ResizeObserver(() => {
+      if (!el.offsetWidth) return
+      applySaved()
+      ro.disconnect(); ro = null
+    })
+    ro.observe(el)
+  }
 
   let startX = 0, startY = 0, origL = 0, origT = 0, moved = false, dragging = false
 
@@ -63,6 +82,7 @@ export function makeDraggable(el, { key, onClick } = {}) {
   }
   const onDown = (e) => {
     if (e.button != null && e.button !== 0) return   // nur primär/Touch
+    if (dragging) return   // zweiter Finger darf den laufenden Zug nicht kapern
     dragging = true; moved = false
     startX = e.clientX; startY = e.clientY
     const r = el.getBoundingClientRect()
@@ -77,16 +97,17 @@ export function makeDraggable(el, { key, onClick } = {}) {
     onClick?.()
   }
 
-  el.addEventListener('pointerdown', onDown)
-  el.addEventListener('click', onClickH)
+  grip.addEventListener('pointerdown', onDown)
+  grip.addEventListener('click', onClickH)
   window.addEventListener('resize', applySaved)
 
   return () => {
-    el.removeEventListener('pointerdown', onDown)
-    el.removeEventListener('click', onClickH)
+    grip.removeEventListener('pointerdown', onDown)
+    grip.removeEventListener('click', onClickH)
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onUp)
     window.removeEventListener('pointercancel', onUp)
     window.removeEventListener('resize', applySaved)
+    try { ro?.disconnect() } catch {}
   }
 }

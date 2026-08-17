@@ -199,6 +199,28 @@ export class AjnaClient {
     return this.pb.authStore.record || this.pb.authStore.model || null
   }
 
+  /**
+   * Eigenen Nutzerdatensatz ändern (Anzeigename, Telefon, app_data …).
+   *
+   * Anwendungen speichern ihre nutzerbezogenen Daten in `app_data`, unter
+   * ihrem eigenen Schlüssel — genau dafür ist das Feld generisch. Ohne diese
+   * Methode musste jede Anwendung dafür an der Bibliothek vorbei auf das
+   * PocketBase-SDK greifen; das ist der einzige Grund, warum es sie gibt.
+   *
+   * Fremde Nutzer ändert das NICHT: die Rechteregel der users-Collection
+   * lässt nur den eigenen Datensatz zu. Wer das für andere braucht, ist ein
+   * Agent mit Superuser-Rechten und arbeitet ohnehin nicht mit dieser Klasse.
+   *
+   * @param {object} fields  zu ändernde Felder
+   * @returns {Promise<object>} der aktualisierte Datensatz (composite-ID)
+   */
+  async updateCurrentUser(fields) {
+    const me = this.currentUserRaw()
+    if (!me) throw new Error('nicht eingeloggt')
+    const rec = await this.pb.collection('users').update(me.id, fields)
+    return { ...rec, _origin: this.id }
+  }
+
   onAuthChanged(callback) {
     return this.pb.authStore.onChange((_token, record) =>
       callback(record ? { ...record, _origin: this.id } : null)

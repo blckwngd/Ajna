@@ -102,13 +102,19 @@ export class OSMContext {
    */
   async load(lat, lon, { force = false } = {}) {
     // Die Kachelquelle liefert GANZE Kacheln (z14 ≈ 2,4 km bei uns), der Radius
-    // wählt nur aus, WELCHE. Zieht die Kulisse mit der Kamera mit, wäre ein
+    // wählt aus, WELCHE geholt werden — und beschneidet danach zusätzlich die
+    // Features (`_clipToRadius`), sonst wäre die gezeichnete Kulisse auf
+    // Kachelgrenzen gerastert. Zieht die Kulisse mit der Kamera mit, wäre ein
     // Neuzeichnen bei jedem Schritt also meist dieselbe Arbeit mit demselben
     // Ergebnis — teuer (gemessen ~230 ms für eine Kachel) und sichtbar als
     // Ruckler. Deshalb: nur neu zeichnen, wenn sich der Kachelsatz ändert.
     // `force` überstimmt das, wenn sich die HÖHENREFERENZ geändert hat (das
     // Relief ist umgezogen) — die Drapierung steckt fest in den Vertices.
-    const key = tilesFor(lat, lon, this.radius).map(t => `${t.x}/${t.y}`).sort().join(',')
+    // Radius gehört MIT in den Schlüssel: seit `_clipToRadius` bestimmt er das
+    // gezeichnete Ergebnis, nicht nur den Kachelsatz. Ohne ihn bliebe eine
+    // Änderung am Reichweiten-Regler innerhalb derselben Kacheln wirkungslos.
+    const key = `${this.radius}|`
+      + tilesFor(lat, lon, this.radius).map(t => `${t.x}/${t.y}`).sort().join(',')
     if (!force && this._loaded && key === this._tileKey) { this.center = { lat, lon }; return }
 
     this.dispose()
@@ -148,12 +154,13 @@ export class OSMContext {
       if (f.tags?.class === 'rail' || f.tags?.class === 'transit') rails.push(f)
       else roads.push(f)
     }
+    const nah = (f) => this._clipToRadius(f, lat, lon)
     const counts = {
-      Straßen:  this._drawWays(roads),
-      Gleise:   this._drawRails(rails),
-      Bäche:    this._drawWater(s.waterway || []),
-      'Wasserflächen': this._drawWaterAreas(s.water || []),
-      Gebäude:  this._drawBuildings(s.building || []),
+      Straßen:  this._drawWays(nah(roads)),
+      Gleise:   this._drawRails(nah(rails)),
+      Bäche:    this._drawWater(nah(s.waterway || [])),
+      'Wasserflächen': this._drawWaterAreas(nah(s.water || [])),
+      Gebäude:  this._drawBuildings(nah(s.building || [])),
     }
     return Object.values(counts).some(v => v > 0) ? counts : null
   }
@@ -441,6 +448,41 @@ export class OSMContext {
     // Die Anzahl der Gebäude approximieren wir aus der Anzahl an
     // "Footprint+Dach"-Paaren — die Vertikalen-Kanten gehören dazu.
     return features.filter(f => Array.isArray(f.coordinates) && f.coordinates.length >= 3).length
+  }
+
+  // ── Radius-Beschneidung ────────────────────────────────────────────────
+  // Die Kachelquelle liefert GANZE Kacheln (z14 ≈ 2,4 km) — `this.radius` wählt
+  // nur aus, welche geholt werden. Ohne diesen Schritt wäre die gezeichnete
+  // Kulisse also auf Kachelgrenzen gerastert und ein Reichweiten-Regler ohne
+  // spürbare Wirkung: von 300 auf 900 m ändert sich der Kachelsatz oft gar
+  // nicht. Hier fällt alles weg, was echt weiter als `radius` entfernt liegt.
+  // (Der Overpass-Fallback fragt bereits radiusbasiert ab und braucht das nicht.)
+  _clipToRadius(features, lat, lon) {
+    const r = this.radius
+    if (!Number.isFinite(r) || r <= 0) return features
+    const mPerLat = 111320
+    const mPerLon = 111320 * Math.cos(lat * Math.PI / 180) || 1
+    // Punkt→Strecke statt Punkt→Stützpunkt: eine lange gerade Autobahn kann
+    // mitten durch den Kreis laufen, ohne dass ein einziger Stützpunkt drin liegt.
+    const nahGenug = (coords) => {
+      if (!Array.isArray(coords) || !coords.length) return false
+      let px = null, pz = null
+      for (const c of coords) {
+        const x = (c[1] - lon) * mPerLon, z = (c[0] - lat) * mPerLat
+        if (Math.hypot(x, z) <= r) return true
+        if (px !== null) {
+          const dx = x - px, dz = z - pz
+          const len2 = dx * dx + dz * dz
+          if (len2 > 0) {
+            const t = Math.max(0, Math.min(1, -(px * dx + pz * dz) / len2))
+            if (Math.hypot(px + t * dx, pz + t * dz) <= r) return true
+          }
+        }
+        px = x; pz = z
+      }
+      return false
+    }
+    return features.filter(f => nahGenug(f.coordinates))
   }
 
   // Lokale Punkte MIT Geländehöhe: Straßenbänder und Gebäudegrundrisse folgen

@@ -39,3 +39,32 @@ export function flatDistKm(aLat, aLon, bLat, bLon) {
   const dLon = (bLon - aLon) * KM_PER_DEG_LAT * Math.cos(aLat * Math.PI / 180)
   return Math.hypot(dLat, dLon)
 }
+
+// ── ENU (East/North/Up) ──────────────────────────────────────────────────
+// Lokales Meter-Koordinatensystem um einen Ursprung — die Rechengrundlage von
+// UWB-Multilateration, Positionsfilter und Zeige-Auflösung. Erdradius wie im
+// GeoTransformer, damit ENU-Meter und Babylon-Meter dieselbe Skala haben.
+//
+// Lag bis 2026-08-14 in VIER Dateien als Kopie (PointingResolver, PositionFilter,
+// UwbManager, UwbMultilateration) — mit auseinandergelaufenen Fassungen: ohne die
+// `?? 0`-Absicherung liefert eine fehlende Höhe (GPS ohne Altitude) still `NaN`
+// statt 0, und der Fehler wandert dann durch die ganze Positionskette.
+export const EARTH_R_M = 6378137
+
+export function wgs84ToEnu(origin, lat, lon, altitude) {
+  const dLat = (lat - origin.lat) * Math.PI / 180
+  const dLon = (lon - origin.lon) * Math.PI / 180
+  const meanLat = (lat + origin.lat) / 2 * Math.PI / 180
+  return {
+    E: dLon * EARTH_R_M * Math.cos(meanLat),
+    N: dLat * EARTH_R_M,
+    U: (altitude ?? 0) - (origin.altitude ?? 0),
+  }
+}
+
+export function enuToWgs84(origin, E, N, U) {
+  const lat = origin.lat + (N / EARTH_R_M) * 180 / Math.PI
+  const meanLat = (lat + origin.lat) / 2 * Math.PI / 180
+  const lon = origin.lon + (E / (EARTH_R_M * Math.cos(meanLat))) * 180 / Math.PI
+  return { lat, lon, altitude: (origin.altitude ?? 0) + U }
+}

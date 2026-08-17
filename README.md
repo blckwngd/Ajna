@@ -1,5 +1,9 @@
 # Ajna
 
+> **📖 Dokumentation:** [Wiki](wiki/Home.md) — Einstieg für Nutzer, Betreiber und Entwickler,
+> inklusive vollständiger Referenz von [Ajna-Library](wiki/Ajna-Library.md) und
+> [Agent-Library](wiki/Agent-Library.md).
+
 ## Vision
 
 Ajna ist ein Framework für ortsbasierte, persistente Multiplayer-AR/XR-Anwendungen. Reale Orte und Objekte sollen durch digitale Inhalte, Zustände und Interaktionen erweitert werden — langfristig ein digitaler Zwilling der realen Welt mit einer interaktiven digitalen Ebene.
@@ -97,6 +101,7 @@ Alle Endpunkte laufen unter demselben Origin durch Caddy (Same-Origin → kein M
 
 | URL | Zweck |
 |---|---|
+| `https://localhost/`                  | **Haupt-Client** — Tabs Karte / AR / Objekte / Einstellungen (alle Geräte-Einstellungen liegen hier) |
 | `https://localhost/index-ar.html`     | AR-Client (BabylonJS + WebXR) |
 | `https://localhost/index-map.html`    | Map-Client (Leaflet) |
 | `https://localhost/index-agent.html`  | Demo-Agent (Fox-NPC) |
@@ -135,9 +140,17 @@ Der Client kann sich parallel zu mehreren Ajna-Servern verbinden (z. B. "Heim" +
 
 ## Vertiefende Dokumentation
 
-- [**docs/agents.md**](docs/agents.md) — Agenten bauen mit `AjnaManager`, Browser und Node, vollständige API-Referenz, Beispiele.
-- [**docs/permissions.md**](docs/permissions.md) — ACE-Modell, Schema, Resolver, UI-Workflow, Stand und Roadmap.
-- [**docs/dev-setup.md**](docs/dev-setup.md) — Stack-Workflows, Restart-Regeln, Troubleshooting.
+Einstieg für alle drei Zielgruppen: **[Wiki](wiki/Home.md)**
+
+- Benutzen — [Erste Schritte](wiki/Erste-Schritte.md) · [Die App](wiki/Die-App.md) · [Privatsphäre](wiki/Privatsphaere.md)
+- Betreiben — [Server betreiben](wiki/Server-betreiben.md) · [Agents betreiben](wiki/Agents-betreiben.md) · [Berechtigungen](wiki/Berechtigungen.md)
+- Entwickeln — [Einen Agent bauen](wiki/Einen-Agent-bauen.md) · [Ajna-Library](wiki/Ajna-Library.md) · [Agent-Library](wiki/Agent-Library.md) · [Objektmodell](wiki/Objektmodell.md) · [Architektur](wiki/Architektur.md)
+
+Einzelthemen mit eigener Hardware oder eigenem Aufbau bleiben unter `docs/`:
+
+- [**docs/permissions.md**](docs/permissions.md) — ACE-Modell, Schema, Resolver, Einladungen, Roadmap
+- [**docs/dev-setup.md**](docs/dev-setup.md) — Stack-Workflows, Restart-Regeln, Troubleshooting
+- [**docs/deployment.md**](docs/deployment.md) · [**docs/uwb.md**](docs/uwb.md) · [**docs/pointing.md**](docs/pointing.md) · [**docs/homeassistant.md**](docs/homeassistant.md) · [**docs/visual-tracking.md**](docs/visual-tracking.md)
 
 ---
 

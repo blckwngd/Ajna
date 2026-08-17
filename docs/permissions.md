@@ -221,6 +221,17 @@ await ajna.cancelInvitation(id)
 
 Der `GroupDialog` zeigt eingehende Einladungen oben (mit "Annehmen"/"Ablehnen") und pro eigener Gruppe die ausstehenden ausgehenden Einladungen + Cancel-Buttons.
 
+## Selbsttest gegen eine laufende Instanz
+
+[`tools/acl-selftest.mjs`](../tools/acl-selftest.mjs) prüft die Berechtigungs-Kette End-to-End: legt einen Wegwerf-User plus Testobjekt und eine User-ACE an und geht dann als dieser User jeden Regel-Pfad einzeln durch (Cache-Read, `view`, `edit`, ACE-Liste, ACE-Create, `delete`). Räumt das Testobjekt hinterher weg.
+
+```bash
+node tools/acl-selftest.mjs                                    # gegen AJNA_URL
+AJNA_URL=http://127.0.0.1:8090 node tools/acl-selftest.mjs     # an Caddy vorbei
+```
+
+`AJNA_USER`/`AJNA_PASS` sind der Besitzer der Testobjekte; die Env wird geschichtet gelesen wie bei [`tools/ajna.mjs`](../tools/ajna.mjs).
+
 ## Aktueller Stand
 
 - ✅ Schema: `groups`, `object_permissions`, `effective_permissions`, plus `users.default_permissions`

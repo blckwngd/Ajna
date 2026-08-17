@@ -34,6 +34,7 @@ import { applyLayer } from '../../core/debugLayers.js'
 
 const DEFAULT_RADIUS_M = 1200      // Sichtweite des Reliefs (Hänge ringsum)
 const DEFAULT_SEGMENTS = 96        // 96² Felder ≈ 25 m Raster bei 1200 m Radius
+const CELL_TARGET_M = 25           // angestrebte Rasterweite, s. setRadius()
 const TERRAIN_Y = -0.15            // knapp unter Straßenbänder/Bodengitter
 const GRID_LIFT = 0.05             // Gitter minimal über der Fläche (Z-Fighting)
 
@@ -58,6 +59,21 @@ export class Terrain {
   }
 
   get isLoaded() { return this._loaded }
+
+  /**
+   * Sichtweite ändern. Die Segmentzahl wird MITGEFÜHRT, damit die Rasterweite
+   * konstant bei ~25 m bleibt (der Vorgabewert 1200 m/96 Segmente ist genau
+   * das): bei festem Segmentwert würde ein größerer Radius ein grobes,
+   * kantiges Relief liefern und ein kleiner Radius unnötig viele Vertices für
+   * eine Auflösung, die die Höhenkacheln gar nicht hergeben.
+   * Wirkt beim nächsten `load()`.
+   * @param {number} radiusM
+   */
+  setRadius(radiusM) {
+    if (!Number.isFinite(radiusM) || radiusM <= 0) return
+    this.radius = radiusM
+    this.segments = Math.max(24, Math.min(200, Math.round((radiusM * 2) / CELL_TARGET_M)))
+  }
 
   /**
    * Höhe (relativ zur Geländehöhe am Origin) an einer Weltkoordinate.

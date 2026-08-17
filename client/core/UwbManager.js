@@ -15,9 +15,9 @@
 // Model B (later): on-device multilateration from `uwbDistances` (per role).
 
 import { solvePositionFromRanges } from './UwbMultilateration.js'
+import { wgs84ToEnu, enuToWgs84 } from './geoMath.js'
 
 const LOG = '[uwb]'
-const EARTH_R = 6378137 // metres, matches GeoTransformer
 
 // Remembered BLE devices per role → gesture-free reconnect by address on boot.
 // Native BLE (Capacitor plugin) may reconnect by stored address without a user
@@ -423,23 +423,7 @@ export class UwbManager {
 
 // ── equirectangular WGS84 ↔ local ENU metres (matches GeoTransformer) ──
 
-function wgs84ToEnu(origin, lat, lon, altitude) {
-  const dLat = (lat - origin.lat) * Math.PI / 180
-  const dLon = (lon - origin.lon) * Math.PI / 180
-  const meanLat = (lat + origin.lat) / 2 * Math.PI / 180
-  return {
-    E: dLon * EARTH_R * Math.cos(meanLat),
-    N: dLat * EARTH_R,
-    U: altitude - origin.altitude
-  }
-}
 
-function enuToWgs84(origin, E, N, U) {
-  const lat = origin.lat + (N / EARTH_R) * 180 / Math.PI
-  const meanLat = (lat + origin.lat) / 2 * Math.PI / 180
-  const lon = origin.lon + (E / (EARTH_R * Math.cos(meanLat))) * 180 / Math.PI
-  return { lat, lon, altitude: origin.altitude + U }
-}
 
 function centroid(pts) {
   let x = 0, y = 0

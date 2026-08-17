@@ -96,6 +96,16 @@ const STREET_ARCHETYPES = new Set(['npc', 'enemy'])
 // (Nord=-Z) ist das π − heading (die alte Formel heading − π/2 war falsch-händig
 // → Figuren drehten in Kurven falsch herum, vgl. Flieger-Fix). Gilt für
 // Boden-Roamer (advanceRoamer) UND Straßen-NPCs (advanceFor).
+// ACHTUNG — UNGEKLÄRTER WIDERSPRUCH (gefunden 2026-08-14, nicht behoben):
+// Eingang ist ein Kompass-Bearing (0 = Nord, im Uhrzeigersinn) aus
+// StreetNav.bearingRad. Die Fahrzeug-Bridges rechnen aus DEMSELBEN
+// Eingangsformat aber `bearing - π/2` (adsb-bridge, ais-bridge, jeweils
+// `degToYaw`) — das sind 90° Unterschied auf demselben Feld `rotation.y`.
+// Ein Schiff und eine Figur auf gleichem Kurs zeigen also unterschiedlich.
+// Benign wäre das nur, wenn die GLB-Modelle verschiedene Vorderachsen haben;
+// das ist NICHT geprüft. Auflösen heißt: beide Fälle nebeneinander in der
+// Szene ansehen, die richtige Konvention festlegen, dann vereinheitlichen
+// und in docs/world-objects.md dokumentieren.
 const HEADING_TO_YAW = h => Math.PI - h
 
 // ── Freiflug (Drachen/Vögel): sanftes Umherfliegen in einem Areal ──────────

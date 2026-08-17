@@ -9,7 +9,7 @@
 // (E, N, U), matching GeoTransformer/UwbManager conventions; the pointing
 // direction is the world ENU unit vector produced by WandManager.
 
-const EARTH_R = 6378137
+import { wgs84ToEnu, enuToWgs84 } from './geoMath.js'
 
 /**
  * Tolerant target pick with HYSTERESIS to absorb orientation/position
@@ -72,19 +72,5 @@ export function rayEndpointWgs84(origin, direction, rangeM = 30) {
   const E = (direction[0] / dl) * rangeM
   const N = (direction[1] / dl) * rangeM
   const U = (direction[2] / dl) * rangeM
-  const lat = origin.lat + (N / EARTH_R) * 180 / Math.PI
-  const meanLat = (lat + origin.lat) / 2 * Math.PI / 180
-  const lon = origin.lon + (E / (EARTH_R * Math.cos(meanLat))) * 180 / Math.PI
-  return { lat, lon, altitude: (origin.altitude || 0) + U }
-}
-
-function wgs84ToEnu(origin, lat, lon, altitude) {
-  const dLat = (lat - origin.lat) * Math.PI / 180
-  const dLon = (lon - origin.lon) * Math.PI / 180
-  const meanLat = (lat + origin.lat) / 2 * Math.PI / 180
-  return {
-    E: dLon * EARTH_R * Math.cos(meanLat),
-    N: dLat * EARTH_R,
-    U: (altitude || 0) - (origin.altitude || 0)
-  }
+  return enuToWgs84(origin, E, N, U)
 }

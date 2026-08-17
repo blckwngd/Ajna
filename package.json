@@ -31,11 +31,12 @@
     "mobile:open": "cap open android",
     "android:trust-caddy": "node scripts/android-trust-caddy.mjs",
     "deploy": "bash scripts/deploy.sh",
+    "test:unit": "node tests/run-unit.mjs",
     "test:quests": "node tests/run-quests.mjs",
     "test:privacy": "node tests/run-privacy.mjs",
     "test:ui": "node tests/run-ui.mjs",
     "test:landing": "node tests/run-landing.mjs",
-    "test": "npm run test:ui && npm run test:landing && npm run test:quests && npm run test:privacy"
+    "test": "npm run test:unit && npm run test:ui && npm run test:landing && npm run test:quests && npm run test:privacy"
   },
   "dependencies": {
     "@babylonjs/core": "^8.54.3",

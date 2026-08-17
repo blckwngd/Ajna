@@ -62,7 +62,11 @@ mountGeoRoutes(app)
 // Interest-Areas (datenschutzfreundliche Präsenz; in-memory, anonymisiert).
 mountPresenceRoutes(app)
 
-const pb = new PocketBase("http://127.0.0.1:8090")
+// Dieselbe Env-Variable wie server/geo.js und server/presence.js — vorher stand
+// die Adresse hier fest verdrahtet, wodurch sich AUSGERECHNET das Hauptmodul
+// nicht auf eine andere PocketBase-Instanz richten ließ (die beiden anderen
+// schon). Das fällt erst auf, wenn PB nicht mehr lokal auf 8090 liegt.
+const pb = new PocketBase(process.env.AJNA_PB_URL || "http://127.0.0.1:8090")
 
 // Optional: User Token weiterreichen
 async function authMiddleware(req, res, next) {

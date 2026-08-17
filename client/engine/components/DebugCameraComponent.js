@@ -126,10 +126,13 @@ export class DebugCameraComponent extends BaseComponent {
   #createUI() {
     this.button = document.createElement("button")
     this.button.innerText = "Switch Camera"
-    // Bottom-right, damit das Debug-Panel oben rechts nicht überlappt.
+    // Unten LINKS über der Editor/Debug-Leiste. Vorher unten rechts — dort
+    // liegt inzwischen die Spalte der schwebenden Knöpfe (🎒 Inventar, 💬 Chat,
+    // 🧭 Minimap), und der breite Knopf verdeckte das Inventar fast vollständig.
+    // Der Kamera-Umschalter gehört ohnehin zu den Modus-Steuerungen links.
     this.button.style.position = "absolute"
-    this.button.style.bottom = "10px"
-    this.button.style.right = "10px"
+    this.button.style.bottom = "48px"
+    this.button.style.left = "10px"
     this.button.style.zIndex = 1000
     this.button.style.padding = "6px 12px"
     this.button.style.background = "#2c5d8f"
