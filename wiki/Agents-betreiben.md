@@ -1,5 +1,9 @@
 # Agents betreiben
 
+<!-- nav -->
+[← Wiki-Übersicht](Home.md) · Betreiben: [Server betreiben](Server-betreiben.md) · **Agents betreiben** · [Berechtigungen](Berechtigungen.md)
+<!-- /nav -->
+
 Agents sind normale Node-Prozesse, die sich als regulärer Benutzer anmelden und Objekte pflegen. Ein leerer Server ist funktionsfähig, aber leer — die Agents machen die Welt aus.
 
 ## Mitgelieferte Agents
@@ -66,3 +70,9 @@ pm2 logs ajna-director                     # was macht der Agent?
 ```
 
 Jeder Agent protokolliert mit seinem Namen als Präfix, etwa `[director] …`. Bridges melden beim Start ihre Konfiguration — Radius, Taktrate, Grenzen —, sodass Fehlkonfigurationen in der ersten Zeile auffallen.
+
+<!-- navfuss -->
+---
+
+← [Server betreiben](Server-betreiben.md) · [Übersicht](Home.md) · [Berechtigungen](Berechtigungen.md) →
+<!-- /navfuss -->

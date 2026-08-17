@@ -1,5 +1,9 @@
 # Erste Schritte
 
+<!-- nav -->
+[← Wiki-Übersicht](Home.md) · Benutzen: **Erste Schritte** · [Die App](Die-App.md) · [Privatsphäre](Privatsphaere.md)
+<!-- /nav -->
+
 Für alle, die Ajna **benutzen** wollen. Einen eigenen Server brauchst du dafür nicht — nur die Adresse einer Instanz.
 
 ## Was du brauchst
@@ -37,3 +41,9 @@ Für alle, die Ajna **benutzen** wollen. Einen eigenen Server brauchst du dafür
 
 - [Die App](Die-App.md) — was die vier Reiter können
 - [Privatsphäre](Privatsphaere.md) — welche Daten das Gerät verlassen
+
+<!-- navfuss -->
+---
+
+← [Start](Home.md) · [Übersicht](Home.md) · [Die App](Die-App.md) →
+<!-- /navfuss -->

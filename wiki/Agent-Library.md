@@ -1,5 +1,9 @@
 # Agent-Library
 
+<!-- nav -->
+[← Wiki-Übersicht](Home.md) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · [Ajna-Library](Ajna-Library.md) · **Agent-Library** · [Objektmodell](Objektmodell.md) · [Architektur](Architektur.md)
+<!-- /nav -->
+
 Alles, was ein Node-Agent zusätzlich zur [Ajna-Library](Ajna-Library.md) braucht: Hochfahren, Konfiguration, Einrichtungsassistent. Liegt unter `agents/lib/`.
 
 **Abgrenzung, die man kennen muss:** In `agents/lib` steht nur Node-Spezifisches — Dateisystem, Umgebungsvariablen, Prozessneustart. Alles Browserfähige — Geo-Mathematik, PocketBase-Zugriff, Manifeste, Interessensbereiche — liegt in `client/core` und wird von Agents aus **derselben Datei** genutzt. Das ist kein Zufall, sondern hält Client und Agent auf einer Wahrheit.
@@ -309,3 +313,9 @@ log('bereit. (Strg+C zum Beenden)')
 ```
 
 Schritt für Schritt erklärt: [Einen Agent bauen](Einen-Agent-bauen.md).
+
+<!-- navfuss -->
+---
+
+← [Ajna-Library](Ajna-Library.md) · [Übersicht](Home.md) · [Objektmodell](Objektmodell.md) →
+<!-- /navfuss -->

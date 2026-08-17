@@ -1,5 +1,9 @@
 # Einen Agent bauen
 
+<!-- nav -->
+[← Wiki-Übersicht](Home.md) · Entwickeln: **Einen Agent bauen** · [Ajna-Library](Ajna-Library.md) · [Agent-Library](Agent-Library.md) · [Objektmodell](Objektmodell.md) · [Architektur](Architektur.md)
+<!-- /nav -->
+
 Wir bauen eine Bridge, die Daten aus einer externen Quelle als Ajna-Objekte spiegelt. Am Ende steht ein Agent, der nur dort abfragt, wo Spieler sind, Objekte anlegt und pflegt, aufräumt und einen Einrichtungsassistenten mitbringt.
 
 Voraussetzung: eine laufende Instanz ([Server betreiben](Server-betreiben.md)) und ein Benutzerkonto für den Agenten.
@@ -262,3 +266,9 @@ Und optional in `package.json`:
 - [Objektmodell](Objektmodell.md) — `appearance` und `state` im Detail
 
 Als Vorlage eignet sich `agents/poi-bridge.mjs` — die kompakteste vollständige Bridge im Bestand.
+
+<!-- navfuss -->
+---
+
+← [Berechtigungen](Berechtigungen.md) · [Übersicht](Home.md) · [Ajna-Library](Ajna-Library.md) →
+<!-- /navfuss -->

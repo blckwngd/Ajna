@@ -1,5 +1,9 @@
 # Berechtigungen
 
+<!-- nav -->
+[← Wiki-Übersicht](Home.md) · Betreiben: [Server betreiben](Server-betreiben.md) · [Agents betreiben](Agents-betreiben.md) · **Berechtigungen**
+<!-- /nav -->
+
 Rechte werden **pro Objekt** vergeben, ähnlich wie Dateirechte unter NTFS: eine Liste von Einträgen, die einem Subjekt Rechte zuweisen.
 
 ## Rechte
@@ -79,7 +83,7 @@ Mitglied wird man nur über eine angenommene Einladung — niemand wird ungefrag
 
 ```mermaid
 flowchart LR
-  ACE["object_permissions<br/><small>Quelle der Wahrheit</small>"] -->|"Auflöser<br/>transitive Gruppen"| EFF["effective_permissions<br/><small>Zwischenspeicher je (Nutzer, Objekt)</small>"]
+  ACE["object_permissions<br/>Quelle der Wahrheit"] -->|"Auflöser<br/>transitive Gruppen"| EFF["effective_permissions<br/>Zwischenspeicher je (Nutzer, Objekt)"]
   EFF --> RULE["API-Regeln von objects"]
   ACE -->|"implizite Zielgruppen<br/>direkt geprüft"| RULE
 ```
@@ -104,3 +108,9 @@ Legt ein Wegwerf-Konto samt Testobjekt an und geht jeden Regelpfad einzeln durch
 - **Zyklen bei Untergruppen** werden derzeit nur eine Ebene tief verhindert.
 
 Vollständige Beschreibung samt Datenmodell, API-Regeln und Einladungssystem: [`docs/permissions.md`](https://github.com/blckwngd/Ajna/blob/main/docs/permissions.md).
+
+<!-- navfuss -->
+---
+
+← [Agents betreiben](Agents-betreiben.md) · [Übersicht](Home.md) · [Einen Agent bauen](Einen-Agent-bauen.md) →
+<!-- /navfuss -->

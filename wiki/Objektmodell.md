@@ -1,5 +1,9 @@
 # Objektmodell
 
+<!-- nav -->
+[← Wiki-Übersicht](Home.md) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · [Ajna-Library](Ajna-Library.md) · [Agent-Library](Agent-Library.md) · **Objektmodell** · [Architektur](Architektur.md)
+<!-- /nav -->
+
 Ein Objekt ist ein Datensatz der `objects`-Collection. Es ist die einzige Sache, die es in Ajna gibt — Figuren, Schiffe, Punkte von Interesse, Lampen, Aufträge und Inventargegenstände sind alle Objekte.
 
 ## Felder
@@ -178,3 +182,9 @@ const drache = await ajna.createObject({
 
 await ajna.setAnimation(drache.id, 'idle')
 ```
+
+<!-- navfuss -->
+---
+
+← [Agent-Library](Agent-Library.md) · [Übersicht](Home.md) · [Architektur](Architektur.md) →
+<!-- /navfuss -->

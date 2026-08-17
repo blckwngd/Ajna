@@ -1,5 +1,9 @@
 # Die App
 
+<!-- nav -->
+[← Wiki-Übersicht](Home.md) · Benutzen: [Erste Schritte](Erste-Schritte.md) · **Die App** · [Privatsphäre](Privatsphaere.md)
+<!-- /nav -->
+
 Der Haupt-Client liegt unter `/` und hat vier Reiter. Daneben gibt es Einzelseiten für Sonderfälle: `/index-map.html` (nur Karte, Desktop-Editor) und `/index-ar.html` (nur 3D/AR, ohne Reiterleiste).
 
 ## 🗺 Karte
@@ -62,3 +66,9 @@ Drei Regler begrenzen, was die 3D-Ansicht zeichnet — der wirksamste Hebel gege
 ### Mehrere Server gleichzeitig
 
 Unter *Zugang → Server* lassen sich weitere Instanzen hinzufügen. Der Client verbindet sich zu allen und zeigt deren Objekte nebeneinander; Anmeldung, Gruppen und Inventar bleiben **je Server getrennt**. Auch die Standort-Freigabe wird pro Server eingestellt — ein Server, dem du nicht traust, bekommt „Verborgen", während ein anderer „Genau" bekommt.
+
+<!-- navfuss -->
+---
+
+← [Erste Schritte](Erste-Schritte.md) · [Übersicht](Home.md) · [Privatsphäre](Privatsphaere.md) →
+<!-- /navfuss -->

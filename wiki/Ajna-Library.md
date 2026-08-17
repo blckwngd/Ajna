@@ -1,5 +1,9 @@
 # Ajna-Library
 
+<!-- nav -->
+[← Wiki-Übersicht](Home.md) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · **Ajna-Library** · [Agent-Library](Agent-Library.md) · [Objektmodell](Objektmodell.md) · [Architektur](Architektur.md)
+<!-- /nav -->
+
 Eine Bibliothek für Auth, Objekte, Echtzeit, Interaktionen, Rechte, Gruppen, Inventar und Aufträge. Sie ist **isomorph**: derselbe Quelltext läuft im Browser (gebündelt) und in Node (Agents, Werkzeuge, Tests).
 
 ```js
@@ -429,3 +433,9 @@ globalThis.EventSource = EventSource      // nur unterhalb Node 22
 `ajna.pb` ist die darunterliegende PocketBase-Instanz des Standard-Servers — für eigene Collections, Datei-Uploads und alles, was die Bibliothek nicht abdeckt.
 
 Für alles mit einer Objekt-ID trotzdem den Manager nehmen: `pb` löst die Frage nicht, an welchen Server ein Aufruf gehört.
+
+<!-- navfuss -->
+---
+
+← [Einen Agent bauen](Einen-Agent-bauen.md) · [Übersicht](Home.md) · [Agent-Library](Agent-Library.md) →
+<!-- /navfuss -->

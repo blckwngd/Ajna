@@ -1,5 +1,9 @@
 # Architektur
 
+<!-- nav -->
+[← Wiki-Übersicht](Home.md) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · [Ajna-Library](Ajna-Library.md) · [Agent-Library](Agent-Library.md) · [Objektmodell](Objektmodell.md) · **Architektur**
+<!-- /nav -->
+
 Für alle, die eigene Clients bauen oder verstehen wollen, warum die Dinge liegen, wo sie liegen.
 
 ## Überblick
@@ -7,17 +11,15 @@ Für alle, die eigene Clients bauen oder verstehen wollen, warum die Dinge liege
 ```mermaid
 flowchart TB
   subgraph Geräte
-    AR["AR-Ansicht<br/><small>BabylonJS + WebXR</small>"]
-    MAP["Karte<br/><small>Leaflet</small>"]
+    AR["AR-Ansicht<br/>BabylonJS + WebXR"]
+    MAP["Karte<br/>Leaflet"]
     EIG["eigener Client"]
   end
-  subgraph Bibliothek["client/core — isomorph"]
-    LIB["AjnaManager · AjnaClient<br/>AjnaGeo · GeoTransformer<br/>StreetNav · geoMath"]
-  end
+  LIB["client/core (isomorph)<br/>AjnaManager · AjnaClient<br/>AjnaGeo · GeoTransformer<br/>StreetNav · geoMath"]
   subgraph Server
-    CADDY["Caddy<br/><small>HTTPS, ein Origin</small>"]
-    PB[("PocketBase<br/><small>Objekte, Auth, Realtime, Hooks</small>")]
-    EX["Express<br/><small>/ajnaapi — Geo, Präsenz</small>"]
+    CADDY["Caddy<br/>HTTPS, ein Origin"]
+    PB[("PocketBase<br/>Objekte, Auth, Realtime, Hooks")]
+    EX["Express<br/>/ajnaapi — Geo, Präsenz"]
   end
   subgraph Agents["Node-Agents"]
     AG["World-Director · Bridges · eigene"]
@@ -91,7 +93,7 @@ Ein Realtime-Ereignis je Objektänderung würde bei jedem Ereignis einen vollst�
 
 ```mermaid
 flowchart LR
-  ACE["object_permissions<br/><small>Quelle der Wahrheit</small>"] -->|"Auflöser,<br/>transitive Gruppen"| EFF["effective_permissions<br/><small>Zwischenspeicher</small>"]
+  ACE["object_permissions<br/>Quelle der Wahrheit"] -->|"Auflöser,<br/>transitive Gruppen"| EFF["effective_permissions<br/>Zwischenspeicher"]
   EFF --> RULE["API-Regeln von objects"]
   ACE -->|"implizite Zielgruppen<br/>direkt geprüft"| RULE
 ```
@@ -148,3 +150,9 @@ npm run test:unit     # nur Rechnung, kein Server nötig
 ```
 
 `test:unit` findet alle `*.test.mjs` neben ihren Modulen selbst. Die übrigen Suiten (`test:ui`, `test:landing`, `test:quests`, `test:privacy`) brauchen eine erreichbare Instanz.
+
+<!-- navfuss -->
+---
+
+← [Objektmodell](Objektmodell.md) · [Übersicht](Home.md)
+<!-- /navfuss -->

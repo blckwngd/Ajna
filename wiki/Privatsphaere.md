@@ -1,5 +1,9 @@
 # Privatsphäre
 
+<!-- nav -->
+[← Wiki-Übersicht](Home.md) · Benutzen: [Erste Schritte](Erste-Schritte.md) · [Die App](Die-App.md) · **Privatsphäre**
+<!-- /nav -->
+
 Ajna ist ortsbezogen — ohne Standort funktioniert nichts. Deshalb ist genau geregelt, **was das Gerät verlässt** und **wer es erfährt**.
 
 ## Vier Stufen, pro Server
@@ -21,12 +25,12 @@ Die Einstellung liegt **gerätelokal**, mit Absicht: die Regel, die einen Server
 flowchart TD
   GPS["Position auf dem Gerät"] --> Stufe{Stufe je Server}
   Stufe -->|Verborgen| Nichts["— nichts —"]
-  Stufe -->|Gegend| Bereich["Interessensbereich<br/><small>~500 m, gerastert</small>"]
+  Stufe -->|Gegend| Bereich["Interessensbereich<br/>~500 m, gerastert"]
   Stufe -->|Nähe| Bereich
   Stufe -->|Genau| Exakt["exakte Position"]
   Bereich --> Agg[("anonymisiertes Aggregat")]
   Exakt --> Agg
-  Stufe -->|Nähe und höher| Naeh["Nähe-Übergänge<br/><small>nur Objekt-IDs</small>"]
+  Stufe -->|Nähe und höher| Naeh["Nähe-Übergänge<br/>nur Objekt-IDs"]
   Agg --> Agents["Agents"]
   Naeh --> Agents
 ```
@@ -50,3 +54,9 @@ Eine Feinheit mit Absicht: Die Stufe begrenzt nur `enter`, nie `leave`. „Ich b
 ## Was der Betreiber sieht
 
 Ein Server-Betreiber hat Zugriff auf seine Datenbank — also auf alles, was du diesem Server geschickt hast. Die Stufen regeln, *wie viel das ist*, nicht, was er damit tut. Bei „Genau" liegt deine exakte Position dort. Das ist der Grund, warum die Voreinstellung für neue Server „Verborgen" ist.
+
+<!-- navfuss -->
+---
+
+← [Die App](Die-App.md) · [Übersicht](Home.md) · [Server betreiben](Server-betreiben.md) →
+<!-- /navfuss -->

@@ -1,13 +1,17 @@
 # Server betreiben
 
+<!-- nav -->
+[← Wiki-Übersicht](Home.md) · Betreiben: **Server betreiben** · [Agents betreiben](Agents-betreiben.md) · [Berechtigungen](Berechtigungen.md)
+<!-- /nav -->
+
 Eine eigene Ajna-Instanz besteht aus vier Prozessen hinter einem gemeinsamen HTTPS-Eingang.
 
 ```mermaid
 flowchart TD
   B["Browser / Agent"] -->|"HTTPS :443"| C["Caddy"]
-  C -->|"/_/ · /api/*"| PB["PocketBase :8090<br/><small>Objekte, Auth, Realtime, Hooks</small>"]
-  C -->|"/ajnaapi/*"| EX["Express :3000<br/><small>Geo-API, Interessensbereiche</small>"]
-  C -->|"alles andere"| ST["statische Dateien<br/><small>client/ + Webpack-Bundles</small>"]
+  C -->|"/_/ · /api/*"| PB["PocketBase :8090<br/>Objekte, Auth, Realtime, Hooks"]
+  C -->|"/ajnaapi/*"| EX["Express :3000<br/>Geo-API, Interessensbereiche"]
+  C -->|"alles andere"| ST["statische Dateien<br/>client/ + Webpack-Bundles"]
 ```
 
 Warum Caddy davor: PocketBase, Express und die Client-Dateien liegen damit auf **einem Origin**. Kein Mixed-Content, ein Cookie- und Storage-Bereich, und der Client kann `window.location.origin` als Serveradresse nehmen. In Produktion lauscht PocketBase bewusst nur auf Loopback — Caddy ist die einzige öffentliche Schnittstelle.
@@ -117,3 +121,9 @@ Alles Zustandsbehaftete liegt in `pocketbase/pb_data/`. Das Verzeichnis sichern 
 ## Mehrere Anwendungen auf einer Instanz
 
 Eine Instanz kann mehrere unabhängige Anwendungen tragen. Trennung läuft über `type` und `state.source` der Objekte plus die Rechte — nicht über getrennte Datenbanken. Agents räumen nur auf, was ihre eigene `state.source` trägt, und Clients filtern entsprechend.
+
+<!-- navfuss -->
+---
+
+← [Privatsphäre](Privatsphaere.md) · [Übersicht](Home.md) · [Agents betreiben](Agents-betreiben.md) →
+<!-- /navfuss -->
