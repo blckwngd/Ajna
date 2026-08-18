@@ -1,8 +1,12 @@
 # Architektur
 
 <!-- nav -->
-[← Wiki-Übersicht](Home.md) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · [Ajna-Library](Ajna-Library.md) · [Agent-Library](Agent-Library.md) · [Objektmodell](Objektmodell.md) · **Architektur**
+[← Inhalt](Home.md#inhalt) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · [Ajna-Library](Ajna-Library.md) · [Agent-Library](Agent-Library.md) · [Objektmodell](Objektmodell.md) · **Architektur**
 <!-- /nav -->
+
+<!-- seiteninhalt -->
+**Auf dieser Seite:** [Überblick](#überblick) · [Schichten](#schichten) · [Koordinaten](#koordinaten) · [Echtzeit](#echtzeit) · [Rechte](#rechte) · [Federation](#federation) · [Kulisse und Gelände](#kulisse-und-gelände) · [Verzeichnisse](#verzeichnisse) · [Tests](#tests)
+<!-- /seiteninhalt -->
 
 Für alle, die eigene Clients bauen oder verstehen wollen, warum die Dinge liegen, wo sie liegen.
 
@@ -154,5 +158,5 @@ npm run test:unit     # nur Rechnung, kein Server nötig
 <!-- navfuss -->
 ---
 
-← [Objektmodell](Objektmodell.md) · [Übersicht](Home.md)
+← [Objektmodell](Objektmodell.md) · [Inhalt](Home.md#inhalt)
 <!-- /navfuss -->

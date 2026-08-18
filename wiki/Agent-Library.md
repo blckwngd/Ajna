@@ -1,8 +1,12 @@
 # Agent-Library
 
 <!-- nav -->
-[← Wiki-Übersicht](Home.md) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · [Ajna-Library](Ajna-Library.md) · **Agent-Library** · [Objektmodell](Objektmodell.md) · [Architektur](Architektur.md)
+[← Inhalt](Home.md#inhalt) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · [Ajna-Library](Ajna-Library.md) · **Agent-Library** · [Objektmodell](Objektmodell.md) · [Architektur](Architektur.md)
 <!-- /nav -->
+
+<!-- seiteninhalt -->
+**Auf dieser Seite:** [bootAgent(name, opts?)](#bootagentname-opts) · [Umgebungsvariablen lesen](#umgebungsvariablen-lesen) · [Weitere Helfer](#weitere-helfer) · [Konfigurationsdateien — lib/env.mjs](#konfigurationsdateien--libenvmjs) · [Einrichtungsassistent — lib/setup-wizard.mjs](#einrichtungsassistent--libsetup-wizardmjs) · [Interessensbereiche verfolgen](#interessensbereiche-verfolgen) · [Geo-Mathematik](#geo-mathematik) · [Wege über das Straßennetz](#wege-über-das-straßennetz) · [Landeplätze](#landeplätze) · [Vollständiges Gerüst](#vollständiges-gerüst)
+<!-- /seiteninhalt -->
 
 Alles, was ein Node-Agent zusätzlich zur [Ajna-Library](Ajna-Library.md) braucht: Hochfahren, Konfiguration, Einrichtungsassistent. Liegt unter `agents/lib/`.
 
@@ -317,5 +321,5 @@ Schritt für Schritt erklärt: [Einen Agent bauen](Einen-Agent-bauen.md).
 <!-- navfuss -->
 ---
 
-← [Ajna-Library](Ajna-Library.md) · [Übersicht](Home.md) · [Objektmodell](Objektmodell.md) →
+← [Ajna-Library](Ajna-Library.md) · [Inhalt](Home.md#inhalt) · [Objektmodell](Objektmodell.md) →
 <!-- /navfuss -->

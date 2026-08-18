@@ -1,8 +1,12 @@
 # Einen Agent bauen
 
 <!-- nav -->
-[← Wiki-Übersicht](Home.md) · Entwickeln: **Einen Agent bauen** · [Ajna-Library](Ajna-Library.md) · [Agent-Library](Agent-Library.md) · [Objektmodell](Objektmodell.md) · [Architektur](Architektur.md)
+[← Inhalt](Home.md#inhalt) · Entwickeln: **Einen Agent bauen** · [Ajna-Library](Ajna-Library.md) · [Agent-Library](Agent-Library.md) · [Objektmodell](Objektmodell.md) · [Architektur](Architektur.md)
 <!-- /nav -->
+
+<!-- seiteninhalt -->
+**Auf dieser Seite:** [Was ein Agent ist](#was-ein-agent-ist) · [Schritt 1 — Konto vorbereiten](#schritt-1--konto-vorbereiten) · [Schritt 2 — Gerüst](#schritt-2--gerüst) · [Schritt 3 — Nur abfragen, wo Spieler sind](#schritt-3--nur-abfragen-wo-spieler-sind) · [Schritt 4 — Objekte anlegen und pflegen](#schritt-4--objekte-anlegen-und-pflegen) · [Schritt 5 — Aufräumen](#schritt-5--aufräumen) · [Schritt 6 — Bewegung ohne Schreiblast](#schritt-6--bewegung-ohne-schreiblast) · [Schritt 7 — Auf Spieler reagieren](#schritt-7--auf-spieler-reagieren) · [Schritt 8 — Im Filter auftauchen](#schritt-8--im-filter-auftauchen) · [Schritt 9 — Sauber beenden](#schritt-9--sauber-beenden) · [Schritt 10 — Dauerbetrieb](#schritt-10--dauerbetrieb) · [Fallen, die Zeit kosten](#fallen-die-zeit-kosten) · [Weiter](#weiter)
+<!-- /seiteninhalt -->
 
 Wir bauen eine Bridge, die Daten aus einer externen Quelle als Ajna-Objekte spiegelt. Am Ende steht ein Agent, der nur dort abfragt, wo Spieler sind, Objekte anlegt und pflegt, aufräumt und einen Einrichtungsassistenten mitbringt.
 
@@ -270,5 +274,5 @@ Als Vorlage eignet sich `agents/poi-bridge.mjs` — die kompakteste vollständig
 <!-- navfuss -->
 ---
 
-← [Berechtigungen](Berechtigungen.md) · [Übersicht](Home.md) · [Ajna-Library](Ajna-Library.md) →
+← [Berechtigungen](Berechtigungen.md) · [Inhalt](Home.md#inhalt) · [Ajna-Library](Ajna-Library.md) →
 <!-- /navfuss -->

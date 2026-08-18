@@ -1,8 +1,12 @@
 # Objektmodell
 
 <!-- nav -->
-[← Wiki-Übersicht](Home.md) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · [Ajna-Library](Ajna-Library.md) · [Agent-Library](Agent-Library.md) · **Objektmodell** · [Architektur](Architektur.md)
+[← Inhalt](Home.md#inhalt) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · [Ajna-Library](Ajna-Library.md) · [Agent-Library](Agent-Library.md) · **Objektmodell** · [Architektur](Architektur.md)
 <!-- /nav -->
+
+<!-- seiteninhalt -->
+**Auf dieser Seite:** [Felder](#felder) · [appearance — der Darstellungsvertrag](#appearance--der-darstellungsvertrag) · [state — das freie Feld](#state--das-freie-feld) · [Animationen](#animationen) · [Rechte am Objekt](#rechte-am-objekt) · [Vollständiges Beispiel](#vollständiges-beispiel)
+<!-- /seiteninhalt -->
 
 Ein Objekt ist ein Datensatz der `objects`-Collection. Es ist die einzige Sache, die es in Ajna gibt — Figuren, Schiffe, Punkte von Interesse, Lampen, Aufträge und Inventargegenstände sind alle Objekte.
 
@@ -186,5 +190,5 @@ await ajna.setAnimation(drache.id, 'idle')
 <!-- navfuss -->
 ---
 
-← [Agent-Library](Agent-Library.md) · [Übersicht](Home.md) · [Architektur](Architektur.md) →
+← [Agent-Library](Agent-Library.md) · [Inhalt](Home.md#inhalt) · [Architektur](Architektur.md) →
 <!-- /navfuss -->

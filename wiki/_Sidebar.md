@@ -1,3 +1,5 @@
+<!-- Nur für den optionalen Export ins GitHub-Wiki (tools/wiki-publish.mjs).
+     Im Repository navigieren die Seiten über ihre eigenen Kopfzeilen. -->
 ### [Ajna](Home.md)
 
 **Benutzen**

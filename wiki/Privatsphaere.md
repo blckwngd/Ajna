@@ -1,7 +1,7 @@
 # Privatsphäre
 
 <!-- nav -->
-[← Wiki-Übersicht](Home.md) · Benutzen: [Erste Schritte](Erste-Schritte.md) · [Die App](Die-App.md) · **Privatsphäre**
+[← Inhalt](Home.md#inhalt) · Benutzen: [Erste Schritte](Erste-Schritte.md) · [Die App](Die-App.md) · **Privatsphäre**
 <!-- /nav -->
 
 Ajna ist ortsbezogen — ohne Standort funktioniert nichts. Deshalb ist genau geregelt, **was das Gerät verlässt** und **wer es erfährt**.
@@ -58,5 +58,5 @@ Ein Server-Betreiber hat Zugriff auf seine Datenbank — also auf alles, was du 
 <!-- navfuss -->
 ---
 
-← [Die App](Die-App.md) · [Übersicht](Home.md) · [Server betreiben](Server-betreiben.md) →
+← [Die App](Die-App.md) · [Inhalt](Home.md#inhalt) · [Server betreiben](Server-betreiben.md) →
 <!-- /navfuss -->

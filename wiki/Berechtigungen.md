@@ -1,8 +1,12 @@
 # Berechtigungen
 
 <!-- nav -->
-[← Wiki-Übersicht](Home.md) · Betreiben: [Server betreiben](Server-betreiben.md) · [Agents betreiben](Agents-betreiben.md) · **Berechtigungen**
+[← Inhalt](Home.md#inhalt) · Betreiben: [Server betreiben](Server-betreiben.md) · [Agents betreiben](Agents-betreiben.md) · **Berechtigungen**
 <!-- /nav -->
+
+<!-- seiteninhalt -->
+**Auf dieser Seite:** [Rechte](#rechte) · [Subjekte](#subjekte) · [Standard-Rechte](#standard-rechte) · [Gruppen](#gruppen) · [Wie es intern funktioniert](#wie-es-intern-funktioniert) · [Prüfen](#prüfen) · [Grenzen](#grenzen)
+<!-- /seiteninhalt -->
 
 Rechte werden **pro Objekt** vergeben, ähnlich wie Dateirechte unter NTFS: eine Liste von Einträgen, die einem Subjekt Rechte zuweisen.
 
@@ -112,5 +116,5 @@ Vollständige Beschreibung samt Datenmodell, API-Regeln und Einladungssystem: [`
 <!-- navfuss -->
 ---
 
-← [Agents betreiben](Agents-betreiben.md) · [Übersicht](Home.md) · [Einen Agent bauen](Einen-Agent-bauen.md) →
+← [Agents betreiben](Agents-betreiben.md) · [Inhalt](Home.md#inhalt) · [Einen Agent bauen](Einen-Agent-bauen.md) →
 <!-- /navfuss -->

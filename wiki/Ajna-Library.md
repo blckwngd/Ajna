@@ -1,8 +1,12 @@
 # Ajna-Library
 
 <!-- nav -->
-[← Wiki-Übersicht](Home.md) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · **Ajna-Library** · [Agent-Library](Agent-Library.md) · [Objektmodell](Objektmodell.md) · [Architektur](Architektur.md)
+[← Inhalt](Home.md#inhalt) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · **Ajna-Library** · [Agent-Library](Agent-Library.md) · [Objektmodell](Objektmodell.md) · [Architektur](Architektur.md)
 <!-- /nav -->
+
+<!-- seiteninhalt -->
+**Auf dieser Seite:** [Zwei Klassen](#zwei-klassen) · [Einstieg](#einstieg) · [Anmeldung](#anmeldung) · [Lebenszyklus](#lebenszyklus) · [Objekte lesen](#objekte-lesen) · [Objekte schreiben](#objekte-schreiben) · [Echtzeit](#echtzeit) · [Interaktionen](#interaktionen) · [Inventar](#inventar) · [Aufträge](#aufträge) · [Rechte](#rechte) · [Gruppen und Einladungen](#gruppen-und-einladungen) · [Standard-Rechte](#standard-rechte) · [Interessensbereiche](#interessensbereiche) · [Agent-Manifeste](#agent-manifeste) · [Mehrere Server](#mehrere-server) · [Geo-API](#geo-api) · [Eigenen Client bauen](#eigenen-client-bauen) · [Roher Zugriff](#roher-zugriff)
+<!-- /seiteninhalt -->
 
 Eine Bibliothek für Auth, Objekte, Echtzeit, Interaktionen, Rechte, Gruppen, Inventar und Aufträge. Sie ist **isomorph**: derselbe Quelltext läuft im Browser (gebündelt) und in Node (Agents, Werkzeuge, Tests).
 
@@ -437,5 +441,5 @@ Für alles mit einer Objekt-ID trotzdem den Manager nehmen: `pb` löst die Frage
 <!-- navfuss -->
 ---
 
-← [Einen Agent bauen](Einen-Agent-bauen.md) · [Übersicht](Home.md) · [Agent-Library](Agent-Library.md) →
+← [Einen Agent bauen](Einen-Agent-bauen.md) · [Inhalt](Home.md#inhalt) · [Agent-Library](Agent-Library.md) →
 <!-- /navfuss -->

@@ -1,7 +1,7 @@
 # Die App
 
 <!-- nav -->
-[← Wiki-Übersicht](Home.md) · Benutzen: [Erste Schritte](Erste-Schritte.md) · **Die App** · [Privatsphäre](Privatsphaere.md)
+[← Inhalt](Home.md#inhalt) · Benutzen: [Erste Schritte](Erste-Schritte.md) · **Die App** · [Privatsphäre](Privatsphaere.md)
 <!-- /nav -->
 
 Der Haupt-Client liegt unter `/` und hat vier Reiter. Daneben gibt es Einzelseiten für Sonderfälle: `/index-map.html` (nur Karte, Desktop-Editor) und `/index-ar.html` (nur 3D/AR, ohne Reiterleiste).
@@ -70,5 +70,5 @@ Unter *Zugang → Server* lassen sich weitere Instanzen hinzufügen. Der Client 
 <!-- navfuss -->
 ---
 
-← [Erste Schritte](Erste-Schritte.md) · [Übersicht](Home.md) · [Privatsphäre](Privatsphaere.md) →
+← [Erste Schritte](Erste-Schritte.md) · [Inhalt](Home.md#inhalt) · [Privatsphäre](Privatsphaere.md) →
 <!-- /navfuss -->

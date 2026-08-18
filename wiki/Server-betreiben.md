@@ -1,8 +1,12 @@
 # Server betreiben
 
 <!-- nav -->
-[← Wiki-Übersicht](Home.md) · Betreiben: **Server betreiben** · [Agents betreiben](Agents-betreiben.md) · [Berechtigungen](Berechtigungen.md)
+[← Inhalt](Home.md#inhalt) · Betreiben: **Server betreiben** · [Agents betreiben](Agents-betreiben.md) · [Berechtigungen](Berechtigungen.md)
 <!-- /nav -->
+
+<!-- seiteninhalt -->
+**Auf dieser Seite:** [Voraussetzungen](#voraussetzungen) · [Einrichten](#einrichten) · [Starten](#starten) · [Erste Konfiguration](#erste-konfiguration) · [Umgebungsvariablen](#umgebungsvariablen) · [Dauerbetrieb](#dauerbetrieb) · [Sichern](#sichern) · [Mehrere Anwendungen auf einer Instanz](#mehrere-anwendungen-auf-einer-instanz)
+<!-- /seiteninhalt -->
 
 Eine eigene Ajna-Instanz besteht aus vier Prozessen hinter einem gemeinsamen HTTPS-Eingang.
 
@@ -125,5 +129,5 @@ Eine Instanz kann mehrere unabhängige Anwendungen tragen. Trennung läuft über
 <!-- navfuss -->
 ---
 
-← [Privatsphäre](Privatsphaere.md) · [Übersicht](Home.md) · [Agents betreiben](Agents-betreiben.md) →
+← [Privatsphäre](Privatsphaere.md) · [Inhalt](Home.md#inhalt) · [Agents betreiben](Agents-betreiben.md) →
 <!-- /navfuss -->

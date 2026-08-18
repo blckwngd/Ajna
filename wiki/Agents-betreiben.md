@@ -1,7 +1,7 @@
 # Agents betreiben
 
 <!-- nav -->
-[← Wiki-Übersicht](Home.md) · Betreiben: [Server betreiben](Server-betreiben.md) · **Agents betreiben** · [Berechtigungen](Berechtigungen.md)
+[← Inhalt](Home.md#inhalt) · Betreiben: [Server betreiben](Server-betreiben.md) · **Agents betreiben** · [Berechtigungen](Berechtigungen.md)
 <!-- /nav -->
 
 Agents sind normale Node-Prozesse, die sich als regulärer Benutzer anmelden und Objekte pflegen. Ein leerer Server ist funktionsfähig, aber leer — die Agents machen die Welt aus.
@@ -74,5 +74,5 @@ Jeder Agent protokolliert mit seinem Namen als Präfix, etwa `[director] …`. B
 <!-- navfuss -->
 ---
 
-← [Server betreiben](Server-betreiben.md) · [Übersicht](Home.md) · [Berechtigungen](Berechtigungen.md) →
+← [Server betreiben](Server-betreiben.md) · [Inhalt](Home.md#inhalt) · [Berechtigungen](Berechtigungen.md) →
 <!-- /navfuss -->

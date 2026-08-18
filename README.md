@@ -3,6 +3,11 @@
 > **📖 Dokumentation:** [Wiki](wiki/Home.md) — Einstieg für Nutzer, Betreiber und Entwickler,
 > inklusive vollständiger Referenz von [Ajna-Library](wiki/Ajna-Library.md) und
 > [Agent-Library](wiki/Agent-Library.md).
+>
+> Die Seiten liegen versioniert unter `wiki/` und werden hier im Repository gelesen —
+> Einstieg und Inhaltsverzeichnis sind [wiki/Home.md](wiki/Home.md#inhalt). Navigation und
+> Inhaltsverzeichnisse erzeugt `node tools/wiki-nav.mjs` aus einer Gliederung.
+> Optional lässt sich derselbe Ordner ins GitHub-Wiki spiegeln: `node tools/wiki-publish.mjs`.
 
 ## Vision
 

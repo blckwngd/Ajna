@@ -1,7 +1,7 @@
 # Erste Schritte
 
 <!-- nav -->
-[← Wiki-Übersicht](Home.md) · Benutzen: **Erste Schritte** · [Die App](Die-App.md) · [Privatsphäre](Privatsphaere.md)
+[← Inhalt](Home.md#inhalt) · Benutzen: **Erste Schritte** · [Die App](Die-App.md) · [Privatsphäre](Privatsphaere.md)
 <!-- /nav -->
 
 Für alle, die Ajna **benutzen** wollen. Einen eigenen Server brauchst du dafür nicht — nur die Adresse einer Instanz.
@@ -45,5 +45,5 @@ Für alle, die Ajna **benutzen** wollen. Einen eigenen Server brauchst du dafür
 <!-- navfuss -->
 ---
 
-← [Start](Home.md) · [Übersicht](Home.md) · [Die App](Die-App.md) →
+← [Start](Home.md) · [Inhalt](Home.md#inhalt) · [Die App](Die-App.md) →
 <!-- /navfuss -->
