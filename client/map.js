@@ -613,16 +613,19 @@ async function init() {
     throw new Error('DOM-Element #map nicht gefunden')
   }
 
-  // Falls eine Dummy-Position hinterlegt ist (gemeinsamer Storage mit dem
-  // AR-Client), wird die Karte direkt darauf zentriert — sonst Deutschland-
-  // Übersicht. Bei aktivem Dummy-Modus wird zusätzlich autoCenter des
-  // Leaflet-GPS-Controls abgeschaltet, damit die echte Position die
-  // Karte nicht ungewollt verschiebt.
-  const dummy = gpsConfig.getDummyPosition()
+  // Startpunkt wie im AR-Client: zuletzt gesehene echte Position, sonst eine
+  // von Hand gesetzte Dummy-Position, sonst Deutschland-Übersicht. Bewusst
+  // über getStartPosition() statt direkt über die Dummy-Position — sonst
+  // begänne die Karte nach jedem Neuladen wieder am zuletzt von Hand
+  // gesetzten Punkt, während die 3D-Ansicht schon richtig steht.
+  // Bei aktivem Dummy-Modus wird zusätzlich autoCenter des Leaflet-GPS-
+  // Controls abgeschaltet, damit die echte Position die Karte nicht
+  // ungewollt verschiebt.
+  const start = gpsConfig.getStartPosition()
   const dummyMode = gpsConfig.isDummyMode()
 
-  const center = dummy ? [dummy.lat, dummy.lon] : [51.1657, 10.4515]
-  const zoom = dummy ? 16 : 14
+  const center = start ? [start.lat, start.lon] : [51.1657, 10.4515]
+  const zoom = start ? 16 : 14
 
   // preferCanvas: Vektor-Layer (v. a. die vielen WLAN-Abdeckungskreise) rendern
   // auf einem Canvas statt als einzelne SVG-Elemente → skaliert auf hunderte.

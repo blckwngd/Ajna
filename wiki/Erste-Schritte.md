@@ -4,6 +4,8 @@
 [← Inhalt](Home.md#inhalt) · Benutzen: **Erste Schritte** · [Die App](Die-App.md) · [Privatsphäre](Privatsphaere.md)
 <!-- /nav -->
 
+
+
 Für alle, die Ajna **benutzen** wollen. Einen eigenen Server brauchst du dafür nicht — nur die Adresse einer Instanz.
 
 ## Was du brauchst
@@ -32,6 +34,8 @@ Für alle, die Ajna **benutzen** wollen. Einen eigenen Server brauchst du dafür
 |---|---|
 | Karte leer, keine Objekte | Nicht angemeldet, oder nichts in der Nähe für „alle" freigegeben. Anmelden und die Objektliste prüfen. |
 | Alles steht am selben Fleck | Kein Standort-Fix. Standortfreigabe im Browser prüfen; in Gebäuden dauert der erste Fix. |
+| Die Szene startet am falschen Ort und springt später | Normal: bis der erste Fix da ist, beginnt Ajna an der **zuletzt gesehenen** Position (Anzeige „GPS (zuletzt)“). Kommt der Fix, ziehen Kamera, Kulisse und Figuren nach. Springt es weit, war das Gerät zwischenzeitlich woanders. |
+| Keine Gebäude und Straßen | Die Kulisse kommt aus öffentlichen OpenStreetMap-Diensten. Sind die überlastet, meldet der Verlauf „Gebäude und Straßen fehlen“; sobald sie wieder antworten, baut sich die Kulisse von selbst auf. |
 | AR zeigt kein Kamerabild | Kein immersives WebXR in diesem Browser. In Chrome öffnen (die App bietet den Wechsel an und nimmt Anmeldung und Filter mit). |
 | Welt ist nord-süd verdreht | Kompass-Versatz. *Einstellungen → AR-Ansicht → Nord-Offset*, Knopf „↺ 180°". |
 | Objekte liegen schräg im Bild | *Einstellungen → AR-Ansicht → Blickfeld (FOV)* nachziehen. Der Wert gilt pro Gerät. |

@@ -1,5 +1,16 @@
 const STORAGE_KEY_MODE = "ajna.gps.dummyMode"
 const STORAGE_KEY_POSITION = "ajna.gps.dummyPosition"
+// Zuletzt gesehene ECHTE Position. Beim nächsten Start beginnt die Szene dort,
+// statt am Standard-Dummy: der Geo-Ursprung steht damit sofort ungefähr richtig,
+// Kulisse und Interessensbereich werden gleich für die richtige Gegend geholt.
+// Ohne das startete jeder Hard-Reload am zuletzt von Hand gesetzten Punkt — und
+// alles sprang erst beim ersten Fix mehrere Kilometer weit.
+const STORAGE_KEY_LAST = "ajna.gps.lastKnown"
+// Schreiben kostet Zeit im Hauptthread; ein Fix pro Sekunde muss nicht jedes
+// Mal auf die Platte. Gespeichert wird, was sich lohnt: alle 15 s ODER nach
+// 25 m Bewegung.
+const PERSIST_MS = 15_000
+const PERSIST_MOVE_M = 25
 
 // Wird benutzt, wenn dummyMode aktiv ist (Boot oder Toggle), aber noch
 // keine eigene Dummy-Position über das Debug-UI gesetzt wurde. Ohne
@@ -29,6 +40,8 @@ export class GPSProvider {
     // hinweg als schneller Startpunkt genutzt werden.
     this.dummyMode = this._readBool(STORAGE_KEY_MODE, false)
     this.dummyPosition = this._readJSON(STORAGE_KEY_POSITION, null)
+    this.lastKnown = this._lesePosition(STORAGE_KEY_LAST)
+    this._persistAt = 0
 
     // Invariante: dummyMode aktiv ⇒ dummyPosition existiert. Sonst
     // hätten weder Boot noch späterer Toggle eine Position zum Broadcasten.
@@ -36,13 +49,11 @@ export class GPSProvider {
       this._setDefaultDummyPosition()
     }
 
-    // Letzte bekannte Position. Bei vorhandenem Dummy bereits vorbelegt,
-    // damit getWorldPosition() ohne Wartezeit eine sinnvolle Antwort hat.
-    // Source explizit setzen — wird sonst erst beim ersten _applyData
-    // markiert.
-    this.data = this.dummyPosition
-      ? { source: "dummy", ...this.dummyPosition }
-      : null
+    // Startpunkt der Szene, damit getWorldPosition() ohne Wartezeit eine
+    // sinnvolle Antwort hat. Source explizit setzen — wird sonst erst beim
+    // ersten _applyData markiert.
+    const start = this._startPosition()
+    this.data = start ? { ...start } : null
 
     if (!("geolocation" in navigator)) {
       console.error("GPSProvider: Geolocation API not supported in this browser.")
@@ -61,8 +72,9 @@ export class GPSProvider {
     // Dummy zuerst broadcasten: löst waitForFirstFix() sofort aus und
     // erlaubt main.js, Origin zu setzen und Objekte zu laden, ohne auf
     // den realen GPS-Fix zu warten.
-    if (this.dummyPosition) {
-      this._applyData(this.dummyPosition)
+    const start = this._startPosition()
+    if (start) {
+      this._applyData(start)
     }
 
     if (!this.dummyMode) {
@@ -121,6 +133,74 @@ export class GPSProvider {
       altitudeAccuracy: coords.altitudeAccuracy,
       source: "real"
     })
+
+    this._merkePosition(coords)
+  }
+
+  // ── Startpunkt über Neustarts hinweg ────────────────────────────────────
+
+  /**
+   * Womit die Szene startet, bevor der erste echte Fix da ist.
+   *
+   * Reihenfolge mit Absicht:
+   *   1. Dummy-Modus an → die von Hand gesetzte Position. Sie IST die Ansage
+   *      des Anwenders und darf von nichts überstimmt werden.
+   *   2. Sonst die zuletzt gesehene echte Position — der beste Schätzwert
+   *      dafür, wo das Gerät gleich sein wird.
+   *   3. Sonst eine gesetzte Dummy-Position (immer noch besser als nichts).
+   *
+   * @returns {{lat:number, lon:number, altitude:number, source:string}|null}
+   */
+  _startPosition() {
+    if (this.dummyMode && this.dummyPosition) return { source: "dummy", ...this.dummyPosition }
+    if (this.lastKnown) return { source: "last", ...this.lastKnown }
+    if (this.dummyPosition) return { source: "dummy", ...this.dummyPosition }
+    return null
+  }
+
+  /** Echte Position sichern — gedrosselt nach Zeit UND Weg. */
+  _merkePosition(coords) {
+    const jetzt = Date.now()
+    const weit = !this.lastKnown || this._abstandM(this.lastKnown, coords) >= PERSIST_MOVE_M
+    if (!weit && jetzt - this._persistAt < PERSIST_MS) return
+    this._persistAt = jetzt
+    const pos = {
+      lat: coords.latitude,
+      lon: coords.longitude,
+      altitude: coords.altitude ?? 0,
+      t: jetzt,
+    }
+    this.lastKnown = pos
+    this._writeJSON(STORAGE_KEY_LAST, pos)
+  }
+
+  /**
+   * Öffentlicher Startpunkt für Ansichten, die vor dem ersten Fix schon etwas
+   * zeigen müssen (Karten-Zentrum, Szenen-Ursprung). Dieselbe Rangfolge wie
+   * intern — wichtig, damit Karte und 3D-Ansicht am selben Ort beginnen.
+   * @returns {{lat:number, lon:number, altitude:number, source:string}|null}
+   */
+  getStartPosition() { return this._startPosition() }
+
+  /** Gespeicherte Position lesen und auf Plausibilität prüfen. */
+  _lesePosition(key) {
+    const p = this._readJSON(key, null)
+    if (!p || !Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return null
+    if (Math.abs(p.lat) > 90 || Math.abs(p.lon) > 180) return null
+    return p
+  }
+
+  /** Grobe Meter-Distanz — reicht für eine Schreibschwelle völlig. */
+  _abstandM(a, b) {
+    const bLat = b.lat ?? b.latitude, bLon = b.lon ?? b.longitude
+    return Math.hypot((bLat - a.lat) * 111320,
+      (bLon - a.lon) * 111320 * Math.cos(a.lat * Math.PI / 180))
+  }
+
+  /** Gemerkte Position verwerfen (Debug-UI / Ortswechsel von Hand). */
+  clearLastKnown() {
+    this.lastKnown = null
+    try { localStorage.removeItem(STORAGE_KEY_LAST) } catch { /* privater Modus */ }
   }
 
   _handleError(error) {

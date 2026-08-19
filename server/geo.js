@@ -10,14 +10,32 @@
 //
 // Konfiguration via Umgebungsvariablen:
 //   AJNA_GEO_AUTH      "authenticated" (Default) oder "anonymous"
-//   AJNA_GEO_TTL_MS    Cache-TTL in ms (Default 3600000 = 1 h)
+//   AJNA_GEO_TTL_MS    Cache-TTL in ms (Default 43200000 = 12 h)
 //   AJNA_GEO_OVERPASS  Overpass-URL (Default: https://overpass-api.de/api/interpreter)
+//   AJNA_GEO_CACHE_DIR Ablage des Platten-Caches (Default: .cache/geo im Projekt)
+//   AJNA_GEO_CACHE_MAX Höchstzahl Dateien im Platten-Cache (Default 4000)
+//
+// Cache-Strategie (die öffentlichen Overpass-Instanzen sind unzuverlässig und
+// zeitweise minutenlang nicht erreichbar):
+//   1. Speicher-Cache   — schnellster Weg, überlebt keinen Neustart
+//   2. Platten-Cache    — überlebt Neustarts; im Betrieb startet der Server
+//                         sonst nach jedem Deploy wieder mit leerem Cache
+//   3. Notnagel         — schlägt Overpass fehl, wird ein ABGELAUFENER Eintrag
+//                         ausgeliefert statt eines 502. Gebäude und Straßen
+//                         ändern sich in Stunden nicht; eine alte Kulisse ist
+//                         allemal besser als gar keine.
+//   4. Bündelung        — gleiche Anfrage mehrfach parallel (Client + Agents)
+//                         läuft als EIN Overpass-Aufruf
 //
 // Filter sind serverseitig **vordefiniert** (keine freie Overpass-QL-
 // Durchreichung) — vermeidet Injection und hält die Cache-Key-Vielfalt
 // im Griff. Neue Filter erweitern wir hier zentral im FILTER_SETS-Objekt.
 
 import PocketBase from 'pocketbase'
+import { createHash } from 'node:crypto'
+import { mkdir, readFile, writeFile, readdir, stat, unlink } from 'node:fs/promises'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 // Overpass-Endpunkte in Reihenfolge: erster Treffer gewinnt, bei Ausfall/
 // Rate-Limit (429/504/Netzfehler) wird der nächste probiert. Die öffentliche
@@ -42,7 +60,10 @@ const OVERPASS_TIMEOUT_MS = parseInt(process.env.AJNA_GEO_TIMEOUT_MS || '90000',
 // mehr, nur noch Verbindungs-Timeouts).
 const OVERPASS_COOLDOWN_MS = parseInt(process.env.AJNA_GEO_COOLDOWN_MS || '300000', 10)
 const overpassDown = new Map()   // url → Zeitpunkt, ab dem wieder probiert wird
-const CACHE_TTL_MS = parseInt(process.env.AJNA_GEO_TTL_MS || '3600000', 10)
+// 12 h statt 1 h: Gebäude, Straßen und POIs ändern sich in Monaten, nicht in
+// Stunden. Die kurze Frist kostete nur Anfragen an ohnehin überlastete
+// Fremdserver — und schickte den Client bei deren Ausfall auf eine leere Ebene.
+const CACHE_TTL_MS = parseInt(process.env.AJNA_GEO_TTL_MS || '43200000', 10)
 const AUTH_MODE    = (process.env.AJNA_GEO_AUTH || 'authenticated').toLowerCase()
 const PB_URL       = process.env.AJNA_PB_URL || 'http://127.0.0.1:8090'
 const USER_AGENT   = 'Ajna/0.1 (https://github.com/blckwngd/Ajna)'
@@ -104,12 +125,84 @@ function cacheGet(key) {
 }
 
 function cachePut(key, payload) {
-  cache.set(key, { ts: Date.now(), payload })
+  const eintrag = { ts: Date.now(), payload }
+  cache.set(key, eintrag)
   // simple Size-Cap, evictet ältesten Eintrag
   if (cache.size > 500) {
     const oldest = cache.keys().next().value
     cache.delete(oldest)
   }
+  plattePut(key, eintrag)   // fire and forget
+}
+
+// ───────────────────────────────────────────────────────────────────────
+//  Platten-Cache
+// ───────────────────────────────────────────────────────────────────────
+// Warum überhaupt: Der Speicher-Cache ist nach jedem Neustart leer, und im
+// Entwicklungsbetrieb startet der Server oft. Danach lief jede erste Anfrage
+// wieder in die Wartezeiten der öffentlichen Overpass-Instanzen — bei deren
+// aktueller Verfassung minutenlang oder gar nicht. Die Antworten sind ein paar
+// hundert Kilobyte und ändern sich in Monaten kaum; sie gehören auf Platte.
+
+const HIER = dirname(fileURLToPath(import.meta.url))
+const CACHE_DIR = process.env.AJNA_GEO_CACHE_DIR || join(HIER, '..', '.cache', 'geo')
+const CACHE_MAX_DATEIEN = parseInt(process.env.AJNA_GEO_CACHE_MAX || '4000', 10)
+
+const dateiFuer = (key) => join(CACHE_DIR, createHash('sha1').update(key).digest('hex') + '.json')
+
+/**
+ * Eintrag von Platte lesen — OHNE Ablauf-Prüfung. Die macht der Aufrufer:
+ * frisch wird normal ausgeliefert, abgelaufen dient als Notnagel.
+ * @returns {{ts:number, payload:object}|null}
+ */
+async function plattenGet(key) {
+  try {
+    const roh = await readFile(dateiFuer(key), 'utf8')
+    const e = JSON.parse(roh)
+    return (e && Number.isFinite(e.ts) && e.payload) ? e : null
+  } catch { return null }   // nicht vorhanden oder kaputt — beides „kein Treffer"
+}
+
+let _aufraeumen = 0
+async function plattePut(key, eintrag) {
+  try {
+    await mkdir(CACHE_DIR, { recursive: true })
+    await writeFile(dateiFuer(key), JSON.stringify(eintrag), 'utf8')
+  } catch (err) {
+    console.warn(`[geo] Platten-Cache nicht schreibbar: ${err?.message || err}`)
+    return
+  }
+  // Nicht bei jedem Schreiben aufräumen — jede 50. Ablage reicht.
+  if (++_aufraeumen % 50 !== 0) return
+  try {
+    const dateien = await readdir(CACHE_DIR)
+    if (dateien.length <= CACHE_MAX_DATEIEN) return
+    const mitAlter = await Promise.all(dateien.map(async f => {
+      try { return { f, t: (await stat(join(CACHE_DIR, f))).mtimeMs } } catch { return null }
+    }))
+    const sortiert = mitAlter.filter(Boolean).sort((a, b) => a.t - b.t)
+    for (const { f } of sortiert.slice(0, sortiert.length - CACHE_MAX_DATEIEN)) {
+      await unlink(join(CACHE_DIR, f)).catch(() => {})
+    }
+  } catch (err) {
+    console.warn(`[geo] Platten-Cache aufräumen: ${err?.message || err}`)
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────
+//  Bündelung gleichzeitiger Anfragen
+// ───────────────────────────────────────────────────────────────────────
+// Kulisse, POI-Bridge und Director fragen dieselbe Gegend gern gleichzeitig ab.
+// Ohne Bündelung wären das drei Overpass-Aufrufe, die sich gegenseitig ins
+// Rate-Limit treiben — und drei Wartezeiten statt einer.
+const laufend = new Map()   // key → Promise<osm-JSON>
+
+function overpassGebuendelt(key, ql) {
+  const da = laufend.get(key)
+  if (da) return da
+  const p = overpassQuery(ql).finally(() => laufend.delete(key))
+  laufend.set(key, p)
+  return p
 }
 
 // ───────────────────────────────────────────────────────────────────────
@@ -236,6 +329,14 @@ async function handleQuery(req, res, endpoint, defaultFilter, outDirective = 'ou
   const hit = cacheGet(key)
   if (hit) return res.json({ ...hit, source: 'cache' })
 
+  // Platte vor Netz: nach einem Neustart ist der Speicher-Cache leer, die
+  // Antworten von gestern liegen aber noch da.
+  const vonPlatte = await plattenGet(key)
+  if (vonPlatte && (Date.now() - vonPlatte.ts) <= CACHE_TTL_MS) {
+    cache.set(key, vonPlatte)
+    return res.json({ ...vonPlatte.payload, source: 'cache-disk' })
+  }
+
   // BBOX statt `around:` — Overpass kann die Bounding-Box direkt über seinen
   // Raum-Index bedienen, während `around:` für jedes Element eine Distanz
   // rechnet. Auf den (überlasteten) öffentlichen Servern ist das der
@@ -256,8 +357,15 @@ ${outDirective}`
 
   let osm
   try {
-    osm = await overpassQuery(ql)
+    osm = await overpassGebuendelt(key, ql)
   } catch (err) {
+    // Notnagel: lieber alte Daten als eine leere Ebene. Overpass fällt
+    // regelmäßig für Minuten aus; Gebäude und Straßen sind derweil unverändert.
+    if (vonPlatte) {
+      const alterMin = Math.round((Date.now() - vonPlatte.ts) / 60000)
+      console.warn(`[geo] Overpass aus — liefere ${alterMin} min alten Cache für ${endpoint}`)
+      return res.json({ ...vonPlatte.payload, source: 'cache-stale', staleMinutes: alterMin })
+    }
     return res.status(502).json({ error: `overpass: ${err.message}` })
   }
 

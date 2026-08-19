@@ -878,12 +878,13 @@ async function init() {
       }
     } catch { /* Komfort-Feature — nie fatal */ }
   }
-  // Erster ECHTER Fix (nicht Dummy): der Spieler springt vom Boot-Origin zur
-  // GPS-Position — die Kamera einmalig hinterher (kurz verzögert, damit die
-  // Spieler-Position schon angewendet ist).
+  // Erster ECHTER Fix (weder Dummy noch die gemerkte Startposition): der
+  // Spieler springt vom Boot-Origin zur GPS-Position — die Kamera einmalig
+  // hinterher (kurz verzögert, damit die Spieler-Position schon angewendet ist).
+  const BOOT_QUELLEN = new Set(['dummy', 'last'])
   let _snappedToRealFix = false
   positionSource.onPosition?.((p) => {
-    if (_snappedToRealFix || !p || p.source === 'dummy') return
+    if (_snappedToRealFix || !p || BOOT_QUELLEN.has(p.source)) return
     _snappedToRealFix = true
     setTimeout(() => snapCameraToPlayerIfFar(), 500)
   })
@@ -1856,9 +1857,13 @@ async function init() {
     // TILE_Z === TERRAIN_Z.) Erzwungen wird nur der eine Fall, den das nicht
     // abdeckt: die Kulisse wurde flach gezeichnet, weil das Relief damals gar
     // nicht da war.
-    await osmContext.load(lat, lon, { force: force || (!hadTerrain && terrain.isLoaded) }).catch(err =>
-      console.warn('[osm] load failed:', err?.message || err)
-    )
+    // Fehler werden hier geloggt UND zurückgegeben: die meisten Aufrufer
+    // interessiert nur, dass es weitergeht — die Kamera-Nachführung meldet einen
+    // Ausfall dagegen an den Spieler, sonst steht er ratlos auf leerer Ebene.
+    let fehler = null
+    await osmContext.load(lat, lon, { force: force || (!hadTerrain && terrain.isLoaded) })
+      .catch(err => { fehler = err; console.warn('[osm] load failed:', err?.message || err) })
+    return { ok: !fehler, error: fehler }
   }
 
   // Aktuelle Kameraposition in WGS84 — Bezugspunkt für einen erzwungenen
@@ -1910,8 +1915,15 @@ async function init() {
   // 10 km Abstand sind das noch ~1 mm Auflösung.
   const SCENERY_STEP_M = 400
   const SCENERY_POLL_MS = 2000
+  // Darüber ist es kein Gehen mehr, sondern ein ORTSWECHSEL: typisch der
+  // Moment beim Start, wenn der letzte bekannte Standort durch den ersten
+  // echten GPS-Fix ersetzt wird. Dann darf die alte Kulisse nicht stehen
+  // bleiben, bis irgendwann ein Nachbau fertig ist — sie zeigt sonst die
+  // Häuser des vorigen Ortes an der Stelle des neuen.
+  const SCENERY_JUMP_M = 1500
   let _sceneryAt = { x: 0, z: 0 }     // lokale Position des letzten Aufbaus
   let _sceneryBusy = false
+  let _sceneryFehler = 0              // Fehlschläge in Folge (für EINE Meldung)
 
   const _followScenery = () => {
     if (_sceneryBusy || !geo.origin) return
@@ -1919,13 +1931,36 @@ async function init() {
     if (!cam) return
     const p = cam.globalPosition
     // Kamera steht bereits in lokalen Metern → Distanz ohne Geo-Mathematik.
-    if (_sceneryAt && Math.hypot(p.x - _sceneryAt.x, p.z - _sceneryAt.z) < SCENERY_STEP_M) return
+    const weg = _sceneryAt ? Math.hypot(p.x - _sceneryAt.x, p.z - _sceneryAt.z) : Infinity
+    if (weg < SCENERY_STEP_M) return
+    const sprung = weg >= SCENERY_JUMP_M
     _sceneryAt = { x: p.x, z: p.z }
     const w = geo.toWorld(p.x, 0, p.z)
     _sceneryBusy = true
     console.log(`[scenery] Kamera ${Math.round(Math.hypot(p.x, p.z))} m vom Origin`
-      + ` → Kulisse nach ${w.lat.toFixed(5)}, ${w.lon.toFixed(5)}`)
-    _loadOSM(w.lat, w.lon).finally(() => { _sceneryBusy = false })
+      + ` → Kulisse nach ${w.lat.toFixed(5)}, ${w.lon.toFixed(5)}`
+      + (sprung ? ` (Ortswechsel um ${Math.round(weg)} m — alte Kulisse wird sofort abgeräumt)` : ''))
+    if (sprung) {
+      // Lieber leer als falsch: erst weg, dann neu holen. Der Neuaufbau kann
+      // dauern (oder scheitern, wenn die OSM-Quelle gerade nicht antwortet).
+      try { osmContext.dispose() } catch (err) { console.warn('[scenery] Abräumen:', err?.message || err) }
+    }
+    _loadOSM(w.lat, w.lon, { force: sprung })
+      .then(({ ok, error } = {}) => {
+        if (ok) {
+          if (_sceneryFehler) { _sceneryFehler = 0; window.ajnaLog?.push('Kulisse wieder da.', 'system') }
+          return
+        }
+        // Ohne Meldung sieht der Spieler nur eine leere Ebene und hält die App
+        // für kaputt. Nur die ERSTE Meldung je Störung — sonst Dauerfeuer.
+        if (_sceneryFehler++ === 0) {
+          const grund = /overpass|502|timeout|erreichbar/i.test(String(error?.message || error))
+            ? 'Kartendaten (OpenStreetMap) gerade nicht erreichbar'
+            : (error?.message || String(error))
+          window.ajnaLog?.push(`Gebäude und Straßen fehlen — ${grund}.`, 'system')
+        }
+      })
+      .finally(() => { _sceneryBusy = false })
   }
 
   // Objekt-Sichtweite ist kameraabhängig, der Reconcile hängt aber an
@@ -2714,9 +2749,10 @@ function setupPositionSourceHud(positionSource, arRoot = document.body, gps = nu
   arRoot.appendChild(el)
 
   const render = () => {
-    // activeSource: 'uwb' | 'real' | 'dummy' | 'gps' | null. Der GPSProvider
-    // liefert 'real' (echtes GPS) bzw. 'dummy' (Fallback-Position), NICHT 'gps'
-    // — deshalb hier alle echten Quellen behandeln, sonst stünde dauerhaft
+    // activeSource: 'uwb' | 'real' | 'dummy' | 'last' | 'gps' | null. Der
+    // GPSProvider liefert 'real' (echtes GPS), 'dummy' (von Hand gesetzt) bzw.
+    // 'last' (zuletzt gemerkte echte Position beim Start), NICHT 'gps' —
+    // deshalb hier alle echten Quellen behandeln, sonst stünde dauerhaft
     // "kein Fix" trotz aktivem GPS.
     const src = positionSource.activeSource
     if (src === 'uwb') {
@@ -2726,6 +2762,9 @@ function setupPositionSourceHud(positionSource, arRoot = document.body, gps = nu
     } else if (src === 'dummy') {
       el.style.background = 'rgba(120,80,0,0.7)'
       el.textContent = 'GPS (Dummy)'
+    } else if (src === 'last') {
+      el.style.background = 'rgba(120,80,0,0.7)'
+      el.textContent = 'GPS (zuletzt)'
     } else if (src) {
       el.style.background = 'rgba(0,0,0,0.55)'
       el.textContent = 'GPS'

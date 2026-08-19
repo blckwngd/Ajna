@@ -238,10 +238,16 @@ check('weit entferntes Objekt wird nicht gezeichnet', !m1._markers.has('fern'))
 check('Symbol ist ein DivIcon ohne Beschriftung',
   /ajna-mm-glyph/.test(m1._markers.get('a')._opts.icon._icon.html))
 const tipA = m1._markers.get('a')._tip
-check('Name haengt als Tooltip daran', /^Nr a/.test(tipA.textContent))
-check('Objekt-ID steht ebenfalls im Tooltip', tipA.textContent.includes('a'))
-check('Servername standardmaessig NICHT im Tooltip',
-  !/testserver/i.test(tipA.textContent))
+check('Name haengt als Tooltip daran', tipA.textContent === 'Nr a')
+check('Objekt-ID standardmaessig NICHT im Tooltip', !tipA.textContent.includes('obj'))
+check('Servername standardmaessig NICHT im Tooltip', !/testserver/i.test(tipA.textContent))
+// Mit Schalter erscheint die ID.
+localStorage.setItem('ajna.minimap.tooltipId', '1')
+const mitId = mkMini([obj('a', 0)])
+mitId._syncObjects(MITTE, true)
+check('mit Schalter steht die Objekt-ID im Tooltip',
+  mitId._markers.get('a')._tip.textContent.includes('a'))
+localStorage.removeItem('ajna.minimap.tooltipId')
 check('kein Klick-/Kontextmenue verdrahtet',
   Object.keys(m1._markers.get('a')).every(k => !/^on/i.test(k)))
 
@@ -358,6 +364,103 @@ check('Handeinstellung bleibt beim Steigen erhalten',
 const z4 = mkZoom(19)
 z4._folgeHoehe({ lat: 50 }, true)
 check('ohne Hoehenangabe kein Auto-Zoom', z4._map.getZoom() === 19 && z4._map._gesetzt.length === 0)
+
+// ── World-Director: Ortswechsel erkennen ─────────────────────────────────
+// Die Regel entscheidet, ob der teure Reconcile sofort laufen muss. Zu locker
+// → er laeuft dauernd; zu streng → die Figuren bleiben nach dem ersten echten
+// GPS-Fix am alten Ort stehen.
+console.log('\n── World-Director: Sprung-Wächter')
+{
+  const R = 6371000, rad = d => d * Math.PI / 180
+  const hav = (aLat, aLon, bLat, bLon) => {
+    const dLat = rad(bLat - aLat), dLon = rad(bLon - aLon)
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(rad(aLat)) * Math.cos(rad(bLat)) * Math.sin(dLon / 2) ** 2
+    return 2 * R * Math.asin(Math.sqrt(a))
+  }
+  // Dieselbe Regel wie im Director (agents/world-director.mjs).
+  const weitBewegt = (alt, neu, grenze) => {
+    if (!alt || !neu) return false
+    if (alt.length !== neu.length) return true
+    return neu.some(n => !alt.some(a => hav(a.lat, a.lon, n.lat, n.lon) <= grenze))
+  }
+  const A = [{ lat: 50.4513, lon: 7.5363 }]
+  const nahebei = [{ lat: 50.4515, lon: 7.5365 }]          // ~26 m
+  const woanders = [{ lat: 50.3939, lon: 7.5116 }]         // ~6,6 km
+
+  check('Schlendern loest keinen Sofort-Reconcile aus', weitBewegt(A, nahebei, 400) === false)
+  check('Ortswechsel loest ihn aus', weitBewegt(A, woanders, 400) === true)
+  check('zusaetzlicher Spieler loest ihn aus', weitBewegt(A, [...A, ...woanders], 400) === true)
+  check('weggefallener Spieler loest ihn aus', weitBewegt([...A, ...woanders], A, 400) === true)
+  check('ohne Vorwissen kein Reconcile', weitBewegt(null, woanders, 400) === false)
+  check('gleiche Lage in anderer Reihenfolge ist kein Wechsel',
+    weitBewegt([...A, ...woanders], [...woanders, ...A], 400) === false)
+}
+
+// ── GPSProvider: Startpunkt über Neustarts ───────────────────────────────
+// Beim Hard-Reload steht noch kein Fix an. Womit die Szene startet, entscheidet
+// darüber, wo Ursprung, Kulisse und Interessensbereich zuerst hinzeigen — ein
+// falscher Startpunkt lässt beim ersten echten Fix alles um Kilometer springen.
+console.log('\n── GPSProvider: gemerkter Startpunkt')
+// Node liefert ein eigenes `navigator` ohne Geolocation und ohne Setter —
+// deshalb die Eigenschaft ergänzen statt das Objekt zu ersetzen.
+if (!('geolocation' in globalThis.navigator)) {
+  Object.defineProperty(globalThis.navigator, 'geolocation', {
+    value: { watchPosition: () => 1, clearWatch: () => {} }, configurable: true,
+  })
+}
+const { GPSProvider } = await import('../client/core/GPSProvider.js')
+
+const K_MODE = 'ajna.gps.dummyMode', K_DUMMY = 'ajna.gps.dummyPosition', K_LAST = 'ajna.gps.lastKnown'
+const lagerLeeren = () => { for (const k of [K_MODE, K_DUMMY, K_LAST]) localStorage.removeItem(k) }
+const DUMMY = { lat: 50.4513, lon: 7.5363, altitude: 0 }
+const ZULETZT = { lat: 50.3939, lon: 7.5116, altitude: 0, t: 1 }
+
+lagerLeeren()
+check('ohne alles kein Startpunkt', new GPSProvider()._startPosition() === null)
+
+lagerLeeren()
+localStorage.setItem(K_DUMMY, JSON.stringify(DUMMY))
+localStorage.setItem(K_LAST, JSON.stringify(ZULETZT))
+const g1 = new GPSProvider()
+check('ohne Dummy-Modus gewinnt die zuletzt gesehene echte Position',
+  g1._startPosition().lat === ZULETZT.lat && g1._startPosition().source === 'last')
+
+lagerLeeren()
+localStorage.setItem(K_MODE, 'true')
+localStorage.setItem(K_DUMMY, JSON.stringify(DUMMY))
+localStorage.setItem(K_LAST, JSON.stringify(ZULETZT))
+const g2 = new GPSProvider()
+check('im Dummy-Modus gewinnt die Handeinstellung',
+  g2._startPosition().lat === DUMMY.lat && g2._startPosition().source === 'dummy')
+
+lagerLeeren()
+localStorage.setItem(K_DUMMY, JSON.stringify(DUMMY))
+const g3 = new GPSProvider()
+check('ohne gemerkte Position dient der Dummy als Startpunkt', g3._startPosition().lat === DUMMY.lat)
+// Die Karte benutzt den öffentlichen Weg — beide müssen dasselbe liefern,
+// sonst beginnen Karte und 3D-Ansicht an verschiedenen Orten.
+check('getStartPosition() entspricht der internen Regel',
+  JSON.stringify(g3.getStartPosition()) === JSON.stringify(g3._startPosition()))
+
+lagerLeeren()
+localStorage.setItem(K_LAST, JSON.stringify({ lat: 'quatsch', lon: null }))
+check('unbrauchbarer Speicherinhalt wird verworfen', new GPSProvider()._startPosition() === null)
+
+// Drosselung: nicht jeder Fix darf schreiben.
+lagerLeeren()
+const g4 = new GPSProvider()
+g4._merkePosition({ latitude: 50.0, longitude: 7.0, altitude: 0 })
+check('erster echter Fix wird sofort gemerkt', !!g4.lastKnown && g4.lastKnown.lat === 50.0)
+const standAlt = g4.lastKnown
+g4._merkePosition({ latitude: 50.00005, longitude: 7.0, altitude: 0 })   // ~5,6 m
+check('kleine Bewegung kurz danach schreibt nicht erneut', g4.lastKnown === standAlt)
+g4._merkePosition({ latitude: 50.0005, longitude: 7.0, altitude: 0 })    // ~56 m
+check('größere Bewegung schreibt sofort', g4.lastKnown !== standAlt && g4.lastKnown.lat === 50.0005)
+check('gemerkte Position liegt auch im Speicher',
+  JSON.parse(localStorage.getItem(K_LAST)).lat === 50.0005)
+g4.clearLastKnown()
+check('clearLastKnown räumt beides weg', g4.lastKnown === null && !localStorage.getItem(K_LAST))
+lagerLeeren()
 
 const failed = results.filter(r => !r.ok)
 console.log(`\n${'═'.repeat(60)}`)

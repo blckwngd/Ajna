@@ -165,3 +165,6 @@ vite.config.ts.timestamp-*
 # Android Studio Workspace-State — wir entwickeln VSCode-first, Studio
 # nur als SDK-/Emulator-Lieferant. Kein gemeinsamer IntelliJ-State.
 .idea/
+
+# Serverseitiger Geo-Cache (Overpass-Antworten, siehe server/geo.js)
+.cache/

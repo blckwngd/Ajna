@@ -68,11 +68,15 @@ const OBJ_SYNC_MS   = 200
 const OBJ_MAX       = 250    // Obergrenze gezeichneter Marker, nächste zuerst
 const OBJ_MOVE_EPS_M = 0.5   // darunter kein setLatLng (spart Layout-Arbeit)
 
-// Servername im Tooltip: standardmäßig AUS. Er hilft nur, wenn wirklich mehrere
-// Instanzen verbunden sind, und verlängert die Zeile sonst ohne Nutzen.
-// Umschalten ohne Neubau:  localStorage.setItem('ajna.minimap.tooltipServer','1')
+// Zusatzangaben im Tooltip. Beide standardmäßig AUS: im Alltag will man den
+// Namen lesen, nicht eine ID entziffern. Für die Fehlersuche jederzeit
+// einschaltbar, ohne Neubau:
+//   localStorage.setItem('ajna.minimap.tooltipId', '1')       Objekt-ID
+//   localStorage.setItem('ajna.minimap.tooltipServer', '1')   Herkunfts-Server
 const TOOLTIP_SERVER_DEFAULT = false
+const TOOLTIP_ID_DEFAULT     = false
 const KEY_TIP_SERVER = 'ajna.minimap.tooltipServer'
+const KEY_TIP_ID     = 'ajna.minimap.tooltipId'
 
 // Gleiche Version + Hashes wie in index.html / index-map.html — beim Aktualisieren
 // alle drei Stellen mitziehen, sonst lädt die Seite zwei Leaflet-Versionen.
@@ -388,11 +392,10 @@ export class Minimap {
    * Tooltip-Inhalt als DOM statt HTML-String: Name und ID sind Fremddaten und
    * dürfen kein Markup werden.
    *
-   * Zeile 1: Name (plus Server, falls eingeschaltet — siehe TOOLTIP_SERVER_DEFAULT)
-   * Zeile 2: Objekt-ID. Klein und zurückgenommen, aber da: nur damit lässt sich
-   *          eine Figur zwischen 3D-Ansicht, Editor, Log und Datenbank sicher
-   *          wiederfinden. Namen taugen dafür nicht — der World-Director vergibt
-   *          sie aus Pools und dieselbe Kombination kommt mehrfach vor.
+   * Zeile 1: Name, dahinter optional der Server.
+   * Zeile 2: optional die Objekt-ID — für die Fehlersuche, wenn Namen nicht
+   *          eindeutig sind (der World-Director vergibt sie aus Pools).
+   * Beide Zusätze hängen an Schaltern, siehe TOOLTIP_*_DEFAULT oben.
    */
   _tipFor(record) {
     const el = document.createElement('span')
@@ -411,7 +414,7 @@ export class Minimap {
       }
     }
 
-    if (record?.id) {
+    if (record?.id && this._tooltipId()) {
       const id = document.createElement('span')
       id.className = 'mm-tip-id'
       id.textContent = String(record.id)
@@ -424,6 +427,12 @@ export class Minimap {
   _tooltipServer() {
     const v = read(KEY_TIP_SERVER, null)
     return v === null ? TOOLTIP_SERVER_DEFAULT : v === '1'
+  }
+
+  /** Objekt-ID im Tooltip zeigen? Gleiche Mechanik, eigener Schalter. */
+  _tooltipId() {
+    const v = read(KEY_TIP_ID, null)
+    return v === null ? TOOLTIP_ID_DEFAULT : v === '1'
   }
 
   /**

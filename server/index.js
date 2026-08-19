@@ -113,4 +113,7 @@ app.post("/ajnaapi/update-position", authMiddleware, async (req, res) => {
   res.json({ ok: true })
 })
 
-app.listen(3000)
+// Port aus der Umgebung: im Normalbetrieb 3000 (so erwartet es der Caddyfile),
+// beim Testen eine freie Nummer, damit ein laufender Stack nicht im Weg steht.
+const PORT = parseInt(process.env.PORT || '3000', 10)
+app.listen(PORT)

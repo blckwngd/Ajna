@@ -1148,11 +1148,13 @@ async function fetchCenters() {
 
 let reconcileBusy = false
 let _lastCentersKey = null
+let _letzteZentren = null      // für den Sprung-Wächter (siehe unten)
 async function reconcile() {
   if (reconcileBusy) return
   reconcileBusy = true
   try {
     const centers = await fetchCenters()
+    _letzteZentren = centers
     // Bereichs-Übergang protokollieren (nur bei Änderung — kein Spam).
     const centersKey = centers.map(c => `${c.lat.toFixed(4)},${c.lon.toFixed(4)}`).sort().join(' | ')
     if (centersKey !== _lastCentersKey) {
@@ -1212,10 +1214,44 @@ async function reconcile() {
   } finally { reconcileBusy = false }
 }
 
+// Sprung-Wächter: Der volle Reconcile ist teuer (Wegegraph, Spawns, Despawns)
+// und läuft deshalb gemächlich. Ein ORTSWECHSEL soll aber nicht bis zu einer
+// dreiviertel Minute warten — typisch beim App-Start, wenn der letzte bekannte
+// Standort durch den ersten echten GPS-Fix ersetzt wird und der Spieler
+// plötzlich woanders steht.
+//
+// Der Wächter fragt nur die Interessensbereiche ab (ein günstiger GET) und
+// stößt den Reconcile an, sobald sich ein Zentrum deutlich verschoben hat.
+// Bewegt sich niemand, kostet er nichts weiter.
+const AREA_WATCH_MS = envNum('WD_AREA_WATCH_S', 8) * 1000
+const AREA_JUMP_M   = envNum('WD_AREA_JUMP_M', 400)
+
+/** Hat sich mindestens ein Zentrum weiter als `grenze` bewegt (oder deren Zahl geändert)? */
+function zentrenWeitBewegt(alt, neu, grenze) {
+  if (!alt || !neu) return false
+  if (alt.length !== neu.length) return true
+  // Für jedes NEUE Zentrum: gibt es ein altes in der Nähe? Wenn nicht, ist es
+  // ein Ortswechsel und kein Schlendern.
+  return neu.some(n => !alt.some(a => haversine(a.lat, a.lon, n.lat, n.lon) <= grenze))
+}
+
 if (FOLLOW_AREAS && AUTONOMY) {
-  console.log(`[director] folgt Interest-Areas (Quelle "${WD_SOURCE || '*'}", alle ${(RECONCILE_MS / 1000) | 0} s; Fallback-Zentrum ${CENTER_LAT.toFixed(4)}, ${CENTER_LON.toFixed(4)})`)
+  console.log(`[director] folgt Interest-Areas (Quelle "${WD_SOURCE || '*'}", alle ${(RECONCILE_MS / 1000) | 0} s`
+    + `, Sprung-Wächter alle ${(AREA_WATCH_MS / 1000) | 0} s ab ${AREA_JUMP_M} m`
+    + `; Fallback-Zentrum ${CENTER_LAT.toFixed(4)}, ${CENTER_LON.toFixed(4)})`)
   reconcile()
   setInterval(() => { reconcile() }, RECONCILE_MS)
+  setInterval(async () => {
+    if (reconcileBusy || !_letzteZentren) return
+    try {
+      const jetzt = await fetchCenters()
+      if (!zentrenWeitBewegt(_letzteZentren, jetzt, AREA_JUMP_M)) return
+      console.log('[director] ⇢ Ortswechsel erkannt — Reconcile sofort statt beim nächsten Takt')
+      await reconcile()
+    } catch (err) {
+      console.warn(`[director] Sprung-Wächter: ${err?.message || err}`)
+    }
+  }, AREA_WATCH_MS)
 }
 
 // ─── Spawn auf Zuruf ─────────────────────────────────────────────────────

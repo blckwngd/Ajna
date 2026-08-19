@@ -10,6 +10,9 @@
 
 
 
+
+
+
 Der Haupt-Client liegt unter `/` und hat vier Reiter. Daneben gibt es Einzelseiten für Sonderfälle: `/index-map.html` (nur Karte, Desktop-Editor) und `/index-ar.html` (nur 3D/AR, ohne Reiterleiste).
 
 ## 🗺 Karte
@@ -35,7 +38,7 @@ Dieselbe Welt in 3D, am selben Ort stehend. Mit immersivem WebXR mit Kamerabild,
 - **Beschriftungen** schweben über den Objekten, an einer schmalen Säule zum Boden verankert. Sie skalieren mit der Entfernung; die angeschaute Tafel wird größer. Was draufsteht, bestimmt der Agent über `appearance.label` ([Objektmodell](Objektmodell.md)).
 - **Kulisse**: Straßen, Gebäude und Gewässer aus OSM als Drahtgitter, dazu ein Höhenrelief. Beides zieht mit der Kamera mit.
 - **Minimap** (🧭): runde Karte des aktuellen Kamerastandorts, nordorientiert, mit Blickkegel. Ziehen verschiebt sie, die vier Eckknöpfe schalten Kartenstil, Zoom und Schließen.
-  Objekte im sichtbaren Umkreis erscheinen als reines Symbol und laufen live mit; den Namen und die Objekt-ID zeigt ein Tooltip beim Überfahren (am Telefon beim Antippen). Anfassen lässt sich dort nichts — gehandelt wird in der AR-Ansicht oder auf der großen Karte. Der Inhaltsfilter gilt auch hier.
+  Objekte im sichtbaren Umkreis erscheinen als reines Symbol und laufen live mit; den Namen zeigt ein Tooltip beim Überfahren (am Telefon beim Antippen). Anfassen lässt sich dort nichts — gehandelt wird in der AR-Ansicht oder auf der großen Karte. Der Inhaltsfilter gilt auch hier.
   Der Ausschnitt folgt der Flughöhe: je höher die Kamera, desto weiter der abgedeckte Radius. Zoomst du von Hand, gilt dein Abstand zur automatischen Stufe weiter — beim Steigen und Sinken zoomt die Karte dann entsprechend mit.
 - **Inventar** (🎒) und **Verlauf** (💬) liegen als schwebende Knöpfe daneben.
 - **Schnellzugriff**: das anvisierte Objekt zeigt am rechten Rand seine wichtigsten Aktionen.
