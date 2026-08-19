@@ -13,6 +13,11 @@
 
 
 
+
+
+
+
+
 Figuren, mit denen man reden kann — ohne Sprachmodell, ohne Netzabhängigkeit,
 ohne laufende Kosten. Die Gespräche laufen über **Parley**, eine kleine
 Dialogsprache in JSON, die als eigenständiges Paket unter [`/parley`](../parley/README.md)

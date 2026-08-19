@@ -12,6 +12,7 @@
 
 
 
+
 Eine Bibliothek für Auth, Objekte, Echtzeit, Interaktionen, Rechte, Gruppen, Inventar und Aufträge. Sie ist **isomorph**: derselbe Quelltext läuft im Browser (gebündelt) und in Node (Agents, Werkzeuge, Tests).
 
 ```js

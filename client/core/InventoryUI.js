@@ -14,17 +14,12 @@
 // Selbst-enthaltend: erzeugt einen schwebenden 🎒-Button + das Overlay-Fenster
 // und injiziert eigenes CSS. Der Host reicht nur Callbacks herein.
 
-import { emojiOf } from './Appearance.js'
+import { iconOf } from './Appearance.js'
 import { makeDraggable } from './draggable.js'
 
 export const DRAG_MIME = 'application/x-ajna-inventory-item'
 
-// Fallback-Emoji je Typ (wenn appearance.emoji fehlt) — spiegelt die Karte.
-const TYPE_EMOJI = {
-  npc: '🧑', enemy: '👹', animal: '🐾', dragon: '🐉',
-  item: '💎', hint: '💡', poi: '📍', wifi: '📶',
-}
-const iconFor = (obj) => emojiOf(obj) || TYPE_EMOJI[(obj.type || '').toLowerCase()] || '📦'
+const iconFor = (obj) => iconOf(obj)
 
 export class InventoryUI {
   /**

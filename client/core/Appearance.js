@@ -62,6 +62,36 @@ export function emojiOf(record) {
   return a && typeof a.emoji === 'string' && a.emoji ? a.emoji : null
 }
 
+// Rückfall-Symbol je Objekttyp, wenn der Agent kein `appearance.emoji` setzt.
+// Liegt hier und nicht in der Karte, weil inzwischen drei Ansichten dasselbe
+// Symbol zeigen (grosse Karte, Inventar, Minimap) — vorher stand die Tabelle
+// zweimal im Baum und lief bereits auseinander (uwb_anchor/call fehlten).
+export const TYPE_EMOJI = {
+  poi: '📍', npc: '🧑', enemy: '👹', animal: '🐾', dragon: '🐉',
+  item: '💎', hint: '💡', wifi: '📶', uwb_anchor: '⚓', call: '📣',
+}
+
+/**
+ * Anzeige-Symbol eines Objekts: `appearance.emoji` schlägt Typ-Tabelle schlägt
+ * Rückfall.
+ *
+ * Das Ergebnis ist auf vier Zeichen gekürzt und HTML-sicher gemacht — der Wert
+ * kommt vom Agent und landet in mehreren Ansichten in `innerHTML`. „Daten,
+ * niemals Code" gilt auch für ein Emoji-Feld.
+ *
+ * @param {object} record
+ * @param {string} [fallback]
+ * @returns {string}
+ */
+export function iconOf(record, fallback = '📦') {
+  const roh = emojiOf(record) || TYPE_EMOJI[String(record?.type || '').toLowerCase()] || fallback
+  // Nach Code-Punkten schneiden, nicht nach Code-Einheiten: ein zusammengesetztes
+  // Emoji (Familie, Flagge) würde sonst mitten im Surrogatpaar zerfallen.
+  return [...String(roh)].slice(0, 4).join('')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
 /** CSS/Hex-Farbe oder null. */
 export function colorOf(record) {
   const a = appearanceOf(record)

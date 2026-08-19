@@ -26,6 +26,7 @@ import { privacy } from './PrivacyPolicy.js'
 import { messageLog, CATS } from './MessageLog.js'
 import { MessageLogPanel } from './MessageLogPanel.js'
 import { Minimap } from './Minimap.js'
+import { isMultiServer, serverLabelFor } from './ServerBadge.js'
 import { RANGE_DEFS, RANGE_EVENT, readRange, writeRange, valueFromSlider, sliderFromValue, formatRange }
   from './renderRange.js'
 
@@ -141,6 +142,14 @@ export class MobileShell {
         const p = _nbPos()
         return p && Number.isFinite(p.lat) ? { lat: p.lat, lon: p.lon } : null
       },
+      // Objekte als Symbole. Dieselbe Quelle und derselbe Inhaltsfilter wie
+      // die Objektliste — was dort ausgeblendet ist, taucht hier nicht auf.
+      getObjects: () => this.ajna.getObjects(),
+      filters: window.agentFilters || null,
+      // Bei mehreren Servern die Herkunft in den Tooltip — zwei Instanzen
+      // erzeugen Figuren aus denselben Namenspools.
+      serverNameFor: (rec) => isMultiServer(this.ajna)
+        ? serverLabelFor(this.ajna, rec?._origin) : null,
     })
     this._minimap.setVisible(MINIMAP_TABS.has(this.activeTab))
 

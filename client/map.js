@@ -12,7 +12,7 @@ import { ObjectActions } from "./core/ObjectActions.js"
 import { Toast } from "./core/Toast.js"
 import { PositionSmoother } from "./core/PositionSmoother.js"
 import { encStyleOf } from "./core/wifiStyle.js"
-import { shapeOf, emojiOf, colorOf, radiusOf, glowOf, textureOf } from "./core/Appearance.js"
+import { shapeOf, emojiOf, iconOf, colorOf, radiusOf, glowOf, textureOf } from "./core/Appearance.js"
 import { isWikimediaUrl } from "./core/wikiLinks.js"
 import { interactionReply, describeRequires } from "./core/InteractionReply.js"
 import { spawnRandomAndEdit, directorSpawnItems } from "./core/SpawnHere.js"
@@ -234,26 +234,29 @@ function tickMarkerSmoothers() {
 // Renderer im 3D-Client (GameObject.#createPlaceholder) und auf der
 // Karte konsistent unterschieden werden. Emoji + CSS-Klasse pro Typ;
 // die Klasse wird in injectHighlightStyles() eingefärbt.
+// Nur noch die CSS-Klassen je Typ — das Symbol kommt aus der geteilten
+// Tabelle in core/Appearance.js (iconOf), die auch Inventar und Minimap nutzen.
 const MARKER_TYPES = {
-  poi:    { emoji: '📍', cls: 'map-marker-poi' },
-  npc:    { emoji: '🧑', cls: 'map-marker-npc' },
-  enemy:  { emoji: '👹', cls: 'map-marker-enemy' },
-  animal: { emoji: '🐾', cls: 'map-marker-animal' },
-  dragon: { emoji: '🐉', cls: 'map-marker-dragon' },
-  item:   { emoji: '💎', cls: 'map-marker-item' },
-  hint:   { emoji: '💡', cls: 'map-marker-hint' },
-  wifi:   { emoji: '📶', cls: 'map-marker-wifi' },
-  uwb_anchor: { emoji: '⚓', cls: 'map-marker-anchor' },
-  call:   { emoji: '📣', cls: 'map-marker-call' }
+  poi:    { cls: 'map-marker-poi' },
+  npc:    { cls: 'map-marker-npc' },
+  enemy:  { cls: 'map-marker-enemy' },
+  animal: { cls: 'map-marker-animal' },
+  dragon: { cls: 'map-marker-dragon' },
+  item:   { cls: 'map-marker-item' },
+  hint:   { cls: 'map-marker-hint' },
+  wifi:   { cls: 'map-marker-wifi' },
+  uwb_anchor: { cls: 'map-marker-anchor' },
+  call:   { cls: 'map-marker-call' }
 }
 
 function markerIconFor(obj) {
   const type = (obj.type || '').toLowerCase()
   const def = MARKER_TYPES[type]
   // Agent-definiertes Emoji (appearance.emoji) hat Vorrang; sonst die Legacy-
-  // Heuristik: WLAN-Verschlüsselungssymbol bzw. das Typ-Emoji.
-  const emoji = emojiOf(obj)
-    || (type === 'wifi' ? encStyleOf(obj).symbol : (def ? def.emoji : '❌'))
+  // Heuristik: WLAN-Verschlüsselungssymbol bzw. das Typ-Emoji (iconOf).
+  const emoji = type === 'wifi' && !emojiOf(obj)
+    ? encStyleOf(obj).symbol
+    : iconOf(obj, '❌')
   // Glow (appearance.glow, z. B. eingeschaltetes HA-Gerät): Halo ums Symbol.
   // glowOf validiert strikt auf Hex — der Wert landet in einem style-Attribut.
   const glow = glowOf(obj)

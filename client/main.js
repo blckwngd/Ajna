@@ -44,6 +44,7 @@ import { Toast } from "./core/Toast.js"
 import { interactionReply, isCollectAction } from "./core/InteractionReply.js"
 import { InventoryUI, DRAG_MIME } from "./core/InventoryUI.js"
 import { Minimap } from "./core/Minimap.js"
+import { isMultiServer, serverLabelFor } from './core/ServerBadge.js'
 import { readAllRanges, effectiveTerrain, RANGE_EVENT } from "./core/renderRange.js"
 import { inventoryDevices } from "./core/inventoryDevices.js"
 import { spawnRandomAndEdit, directorSpawnItems } from "./core/SpawnHere.js"
@@ -1347,7 +1348,13 @@ async function init() {
       heading = (Math.atan2((ahead.lon - here.lon) * Math.cos(lat), ahead.lat - here.lat)
         * 180 / Math.PI + 360) % 360
     }
-    return { lat: here.lat, lon: here.lon, heading }
+    // Höhe ÜBER GRUND, nicht über dem Geo-Ursprung: die Minimap leitet daraus
+    // ihre Zoomstufe ab, und über einem Berg soll sie nicht weiter aufziehen
+    // als über der Ebene. Ohne Gelände ist terrainHeightAt 0 — dann ist es
+    // schlicht die Kamerahöhe.
+    const grund = geo.terrainHeightAt?.(here.lat, here.lon) ?? 0
+    const hoehe = Math.max(0, p.y - (Number.isFinite(grund) ? grund : 0))
+    return { lat: here.lat, lon: here.lon, heading, hoehe }
   }
   // Kamerablick für die Minimap bereitstellen. In der Shell GEHÖRT die Minimap
   // nicht mehr hierher: sie soll auch im Objekte-Tab erscheinen, und der lädt
@@ -1355,7 +1362,45 @@ async function init() {
   // Blick über diesen Haken — sobald die 3D-Szene existiert, folgt die Karte
   // der Kamera, vorher der GPS-Position.
   window.ajnaCameraView = _minimapView
-  const minimap = _inShell ? null : new Minimap({ container: arRoot, getView: _minimapView })
+  const minimap = _inShell ? null : new Minimap({
+    container: arRoot,
+    getView: _minimapView,
+    getObjects: () => ajnaManager.getObjects(),
+    filters: agentFilters,
+    serverNameFor: (rec) => isMultiServer(ajnaManager)
+      ? serverLabelFor(ajnaManager, rec?._origin) : null,
+  })
+
+  // ── Diagnose ───────────────────────────────────────────────────────────
+  // `ajnaDiag()` in der Browser-Konsole vergleicht, was die 3D-Szene ZEIGT,
+  // mit dem, was der Datensatz SAGT. Gedacht für den Fall „Figur heisst in AR
+  // anders als auf der Karte": die Antwort ist entweder „die Szene stellt
+  // Objekte versetzt dar" (Abstand > 0) oder „die Szene ist korrekt, es sind
+  // schlicht zwei verschiedene Objekte" (alle Abstände ≈ 0).
+  window.ajnaDiag = (maxZeilen = 20) => {
+    const raus = []
+    for (const [id, go] of objectMap) {
+      const rec = ajnaManager.getObjectById(id)
+      const p = go?.root?.position
+      if (!rec || !p) { raus.push({ id, name: go?.name, hinweis: rec ? 'keine Position' : 'kein Datensatz' }); continue }
+      const gezeigt = geo.toWorld(p.x, p.y, p.z)
+      const dLat = (gezeigt.lat - rec.lat) * 111320
+      const dLon = (gezeigt.lon - rec.lon) * 111320 * Math.cos(rec.lat * Math.PI / 180)
+      raus.push({
+        id, szene: go.name, datensatz: rec.name,
+        nameGleich: go.name === rec.name,
+        versatzM: +Math.hypot(dLat, dLon).toFixed(1),
+        nordM: +dLat.toFixed(1), ostM: +dLon.toFixed(1),
+      })
+    }
+    raus.sort((a, b) => (b.versatzM || 0) - (a.versatzM || 0))
+    const schief = raus.filter(r => r.versatzM > 5 || r.nameGleich === false)
+    console.log(`[ajnaDiag] ${raus.length} Objekte in der Szene, ${schief.length} auffällig`)
+    console.table((schief.length ? schief : raus).slice(0, maxZeilen))
+    const cam = scene.activeCamera?.globalPosition
+    if (cam) console.log('[ajnaDiag] Kamera:', geo.toWorld(cam.x, cam.y, cam.z), 'Ursprung:', geo.origin)
+    return raus
+  }
 
   // Drag&Drop (Desktop): Item aus dem Inventar auf die AR-Szene ablegen.
   canvas.addEventListener('dragover', (e) => {
@@ -2170,6 +2215,10 @@ async function init() {
 // ==========================================================
 
 const objectMap = new Map()
+// IDs, für die gerade ein GameObject gebaut wird. Verhindert, dass zwei
+// gleichzeitig laufende syncSceneObjects-Durchläufe dasselbe Objekt doppelt
+// erzeugen (siehe „Geister-Schutz" in syncSceneObjects).
+const _creating = new Set()
 
 // Pro Objekt eine Realtime-Subscription auf "interact:<id>". Die Federation
 // (AjnaManager) routet die Subscription an den richtigen PB-Server anhand
@@ -2365,8 +2414,26 @@ async function syncSceneObjects(scene, world, geo, objects) {
         // Neu ODER Darstellung geändert (Farbe/Modell/Symbol/Größe) → (neu)
         // aufbauen, damit Appearance-Änderungen SOFORT wirken (Modell-Reload).
         // Position/Rotation liefen sonst über applyData.
-        if (existing) { unsubscribeInteract(obj.id); existing.dispose(); objectMap.delete(obj.id) }
-        const go = await GameObject.createFromPBData(scene, obj, geo, true)
+        //
+        // GEISTER-SCHUTZ: createFromPBData wartet auf das Modell (Netz!), und
+        // dieser Reconcile läuft aus fünf Stellen (Daten-Throttle, Kamera-
+        // Bewegung, Sichtweiten-Regler, Boot). Zwei Durchläufe konnten so
+        // dasselbe Objekt gleichzeitig bauen: der zweite überschrieb die Map,
+        // der erste blieb als NIE aktualisiertes, NIE entsorgtes GameObject in
+        // der Szene stehen — mit dem Namen, dem Typ und der Position von damals.
+        // Genau das sah man als „Figur heisst in AR anders als auf der Karte".
+        // Deshalb den Platz VOR dem await reservieren.
+        if (_creating.has(obj.id)) continue
+        _creating.add(obj.id)
+        let go
+        try {
+          if (existing) { unsubscribeInteract(obj.id); existing.dispose(); objectMap.delete(obj.id) }
+          go = await GameObject.createFromPBData(scene, obj, geo, true)
+        } finally { _creating.delete(obj.id) }
+        // Zweiter Riegel: hat in der Zwischenzeit doch jemand eines gesetzt,
+        // gewinnt das bestehende — unseres wandert sofort wieder raus.
+        const inzwischen = objectMap.get(obj.id)
+        if (inzwischen && inzwischen !== go) { go.dispose(); continue }
         go._appearanceSig = sig
         objectMap.set(obj.id, go)
         // Stehendes Realtime-Abo nur für als realtime markierte Objekte (z. B.

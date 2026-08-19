@@ -3,6 +3,7 @@ import { TransformComponent } from "./components/TransformComponent.js"
 import { NetworkSyncComponent } from "./components/NetworkSyncComponent.js"
 import { PositionSmoother } from "../core/PositionSmoother.js"
 import { LabelComponent } from "./components/LabelComponent.js"
+import { tagMeshOwner } from "./meshOwner.js"
 import { ENC_STYLE, encCategory } from "../core/wifiStyle.js"
 import { appearanceOf, arViewOf, gltfUrlOf } from "../core/Appearance.js"
 
@@ -800,11 +801,10 @@ export class GameObject {
 
   #tagMeshes() {
     // Reverse-Lookup für Pointer-Picking / Hover-Tooltips (siehe
-    // setupHoverSystem in main.js).
-    for (const mesh of this.meshes) {
-      if (!mesh.metadata) mesh.metadata = {}
-      mesh.metadata.gameObject = this
-    }
+    // setupHoverSystem in main.js). tagMeshOwner legt bewusst ein EIGENES
+    // metadata-Objekt an — Instanzen desselben Modells teilen sich sonst den
+    // Eintrag des Containers (siehe meshOwner.js).
+    for (const mesh of this.meshes) tagMeshOwner(mesh, this)
   }
 
   // Wendet einen frischen PB-Record auf ein bereits existierendes GameObject

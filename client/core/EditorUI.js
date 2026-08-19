@@ -105,6 +105,7 @@ export class EditorUI {
     this.container.innerHTML = `
       <header class="ed-header">
         <h3>Editor</h3>
+        <code class="ed-objid" data-role="objid" title="Objekt-ID — zum Kopieren anklicken" hidden></code>
       </header>
 
       ${(this.onFocusPlayer || this.onToggleArMode) ? `
@@ -315,6 +316,19 @@ export class EditorUI {
         text-transform: uppercase;
         color: #f1c40f;
       }
+      /* Objekt-ID: zum Nachschlagen da, nicht zum Lesen — deshalb klein und
+         zurückgenommen, aber auswählbar und mit einem Klick kopierbar. */
+      .editor-panel .ed-objid {
+        display: block;
+        margin: -4px 0 8px;
+        font: 10px/1.4 ui-monospace, Menlo, Consolas, monospace;
+        color: #7f8796;
+        cursor: pointer;
+        user-select: all;
+        overflow-wrap: anywhere;
+      }
+      .editor-panel .ed-objid:hover { color: #aab4c4; }
+      .editor-panel .ed-objid[hidden] { display: none; }
       .editor-panel h4 {
         margin: 0 0 6px;
         font-size: 11px;
@@ -1075,6 +1089,28 @@ export class EditorUI {
   _openEditor()  { if (this.editorOverlay) this.editorOverlay.hidden = false }
   _closeEditor() { if (this.editorOverlay) this.editorOverlay.hidden = true }
 
+  /**
+   * Objekt-ID in der Kopfzeile zeigen. Bei mehreren Servern ist es die
+   * zusammengesetzte Form („<server>:<id>") — genau die braucht man, um ein
+   * Objekt zwischen Ansichten, Log und Datenbank wiederzufinden. Klick kopiert.
+   * @param {string} id  leer = neues Objekt, dann ausblenden
+   */
+  _zeigeObjektId(id) {
+    const el = this.container?.querySelector('[data-role="objid"]')
+    if (!el) return
+    el.textContent = id || ''
+    el.hidden = !id
+    if (!id || el._verdrahtet) return
+    el._verdrahtet = true
+    el.addEventListener('click', () => {
+      const text = el.textContent || ''
+      if (!text) return
+      navigator.clipboard?.writeText(text)
+        .then(() => this.setStatus('Objekt-ID kopiert'))
+        .catch(() => {})
+    })
+  }
+
   // Baut das appearance-Objekt aus den Editor-Feldern (Merge mit dem Bestand,
   // damit shape/ar/… erhalten bleiben). Leere Felder entfernen den Schlüssel.
   _appearanceFromForm() {
@@ -1103,6 +1139,7 @@ export class EditorUI {
     this.onEditorActivate?.()
     const f = this.editorForm
     f.objectId.value = obj.id
+    this._zeigeObjektId(obj.id)
     f.name.value = obj.name || ''
     this._setTypeField(obj.type)
     // UWB-Anker brauchen mehr Nachkommastellen (cm-Genauigkeit ≈ 8 Stellen).
@@ -1144,6 +1181,7 @@ export class EditorUI {
     if (!this.ajna.isLoggedIn()) { this.setStatus('Zum Anlegen bitte einloggen.'); return }
     const f = this.editorForm
     f.objectId.value = ''
+    this._zeigeObjektId('')
     f.name.value = ''
     this._setTypeField('default')
     f.lat.value = lat.toFixed(6)

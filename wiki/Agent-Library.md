@@ -12,6 +12,7 @@
 
 
 
+
 Alles, was ein Node-Agent zusätzlich zur [Ajna-Library](Ajna-Library.md) braucht: Hochfahren, Konfiguration, Einrichtungsassistent. Liegt unter `agents/lib/`.
 
 **Abgrenzung, die man kennen muss:** In `agents/lib` steht nur Node-Spezifisches — Dateisystem, Umgebungsvariablen, Prozessneustart. Alles Browserfähige — Geo-Mathematik, PocketBase-Zugriff, Manifeste, Interessensbereiche — liegt in `client/core` und wird von Agents aus **derselben Datei** genutzt. Das ist kein Zufall, sondern hält Client und Agent auf einer Wahrheit.

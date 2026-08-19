@@ -19,7 +19,10 @@ const mkEl = (tag = 'div') => ({
   tagName: tag, children: [], style: {}, attrs: {}, _text: '', isConnected: false,
   classList: { _s: new Set(), add(c) { this._s.add(c) }, contains(c) { return this._s.has(c) } },
   set className(v) { this._cls = v }, get className() { return this._cls || '' },
-  set textContent(v) { this._text = v }, get textContent() { return this._text },
+  // Wie im echten DOM: textContent liefert auch den Text der Kinder. Ohne das
+  // sieht ein Test einen zusammengesetzten Tooltip als leer.
+  set textContent(v) { this._text = v; this.children = [] },
+  get textContent() { return this._text + this.children.map(c => c.textContent ?? '').join('') },
   setAttribute(k, v) { this.attrs[k] = v }, getAttribute(k) { return this.attrs[k] },
   appendChild(c) { this.children.push(c); c.parent = this; c.isConnected = this.isConnected; return c },
   remove() { this.isConnected = false; if (this.parent) this.parent.children = this.parent.children.filter(x => x !== this) },
@@ -188,6 +191,173 @@ check('wieder unten angekommen → haftet erneut', panel._listEl.scrollTop === 1
 panel._listEl = null
 panel._scrollToBottom()
 check('geschlossenes Fenster: kein Fehler', panel._istUnten() === true)
+
+// ── Minimap: welche Objekte bekommen ein Symbol? ─────────────────────────
+// Die Minimap ist wenige Zentimeter gross und laeuft im Bildtakt ueber der
+// 3D-Ansicht. Zeichnete sie alles, was der Server kennt, kostete sie auf einem
+// WLAN-reichen Server Bildrate. Geprueft wird deshalb die Auswahl (Umkreis,
+// Inhaltsfilter, Obergrenze) und dass bewegte Objekte nachgefuehrt statt neu
+// gebaut werden — ein neu gebauter Marker verliert seinen offenen Tooltip.
+console.log('\n── Minimap: Objekt-Symbole')
+const { Minimap } = await import('../client/core/Minimap.js')
+
+const fakeL = {
+  divIcon: (o) => ({ _icon: o }),
+  marker: (ll, opts) => ({
+    _ll: { lat: ll[0], lng: ll[1] }, _opts: opts, _tip: null, _setz: 0, _icons: 0,
+    getLatLng() { return this._ll },
+    setLatLng(x) { this._ll = { lat: x[0], lng: x[1] }; this._setz++ },
+    bindTooltip(c, o) { this._tip = c; this._tipOpts = o; return this },
+    setTooltipContent(c) { this._tip = c },
+    setIcon() { this._icons++ },
+  }),
+}
+globalThis.window.L = fakeL
+
+const mkMini = (objekte, filters = null) => {
+  const mm = Object.create(Minimap.prototype)
+  mm.getObjects = () => objekte
+  mm.filters = filters
+  mm._markers = new Map()
+  mm._objSyncAt = 0
+  mm._radiusM = () => 250          // 250 m sichtbarer Radius
+  const geleg = new Set()
+  mm._objLayer = { addLayer: (l) => geleg.add(l), removeLayer: (l) => geleg.delete(l) }
+  mm._gelegt = geleg
+  return mm
+}
+// ~111 m je 0.001° Breite
+const obj = (id, dLat, extra = {}) =>
+  ({ id, name: 'Nr ' + id, type: 'npc', lat: 50 + dLat, lon: 7, ...extra })
+const MITTE = { lat: 50, lon: 7 }
+
+const m1 = mkMini([obj('a', 0), obj('b', 0.001), obj('fern', 0.02)])
+m1._syncObjects(MITTE, true)
+check('Objekte im Umkreis bekommen ein Symbol', m1._markers.size === 2)
+check('weit entferntes Objekt wird nicht gezeichnet', !m1._markers.has('fern'))
+check('Symbol ist ein DivIcon ohne Beschriftung',
+  /ajna-mm-glyph/.test(m1._markers.get('a')._opts.icon._icon.html))
+const tipA = m1._markers.get('a')._tip
+check('Name haengt als Tooltip daran', /^Nr a/.test(tipA.textContent))
+check('Objekt-ID steht ebenfalls im Tooltip', tipA.textContent.includes('a'))
+check('Servername standardmaessig NICHT im Tooltip',
+  !/testserver/i.test(tipA.textContent))
+check('kein Klick-/Kontextmenue verdrahtet',
+  Object.keys(m1._markers.get('a')).every(k => !/^on/i.test(k)))
+
+// Getragenes Objekt ist im Inventar, nicht in der Welt.
+const m2 = mkMini([obj('a', 0), obj('imBeutel', 0, { carried_by: 'u1' })])
+m2._syncObjects(MITTE, true)
+check('getragenes Objekt erscheint nicht', m2._markers.size === 1)
+
+// Inhaltsfilter des Spielers gilt auch hier.
+const m3 = mkMini([obj('a', 0), obj('b', 0)], { matches: (o) => o.id !== 'b' })
+m3._syncObjects(MITTE, true)
+check('ausgeblendete Quelle erscheint nicht', m3._markers.size === 1 && !m3._markers.has('b'))
+
+// Obergrenze: die naechsten gewinnen.
+const viele = Array.from({ length: 400 }, (_, i) => obj('o' + i, i * 0.000005))
+const m4 = mkMini(viele)
+m4._syncObjects(MITTE, true)
+check('Obergrenze greift (250 Marker)', m4._markers.size === 250)
+check('die naechsten Objekte gewinnen', m4._markers.has('o0') && !m4._markers.has('o399'))
+
+// Live: bewegtes Objekt wird nachgefuehrt, nicht neu gebaut.
+const bewegt = [obj('x', 0)]
+const m5 = mkMini(bewegt)
+m5._syncObjects(MITTE, true)
+const marker = m5._markers.get('x')
+bewegt[0] = obj('x', 0.0005)               // ~55 m weiter
+m5._syncObjects(MITTE, true)
+check('bewegtes Objekt: Marker bleibt derselbe', m5._markers.get('x') === marker)
+check('bewegtes Objekt: Position wurde nachgefuehrt', marker._setz === 1)
+bewegt[0] = obj('x', 0.0005)               // unveraendert
+m5._syncObjects(MITTE, true)
+check('unbewegtes Objekt: kein zweites setLatLng', marker._setz === 1)
+
+// Verschwundenes Objekt: Marker weg.
+bewegt.length = 0
+m5._syncObjects(MITTE, true)
+check('verschwundenes Objekt: Marker entfernt', m5._markers.size === 0)
+
+// Taktbremse: ohne force passiert zwischen zwei Bildern nichts.
+const m6 = mkMini([obj('a', 0)])
+m6._syncObjects(MITTE, true)
+m6._objSyncAt = (typeof performance !== 'undefined' ? performance.now() : Date.now())
+const vorher = m6._markers.size
+m6.getObjects = () => [obj('a', 0), obj('neu', 0)]
+m6._syncObjects(MITTE, false)
+check('Taktbremse: kein Abgleich im selben Moment', m6._markers.size === vorher)
+m6._syncObjects(MITTE, true)
+check('mit force wird sofort abgeglichen', m6._markers.size === 2)
+
+// ── Minimap: Zoom folgt der Flughoehe ────────────────────────────────────
+// Gewuenscht: aus der Hoehe ergibt sich der abgedeckte Radius; zoomt der Nutzer
+// selbst, gilt sein ABSTAND zur automatischen Stufe weiter — nicht die absolute
+// Stufe. Sonst waere die Handeinstellung beim naechsten Steigen wieder weg.
+console.log('\n── Minimap: Zoom nach Flughoehe')
+
+const fakeMap = (zoom = 17, paneY = 150, lat = 50) => ({
+  _z: zoom, _gesetzt: [],
+  getSize: () => ({ x: paneY, y: paneY }),
+  getZoom() { return this._z },
+  setZoom(z) { this._z = z; this._gesetzt.push(z) },
+  getCenter: () => ({ lat }),
+  distance: () => 55,
+  containerPointToLatLng: () => ({ lat, lng: 7 }),
+})
+const mkZoom = (zoom = 17) => {
+  const mm = Object.create(Minimap.prototype)
+  mm._map = fakeMap(zoom)
+  mm._zoom = zoom
+  mm._zoomOffset = 0
+  mm._autoZooming = false
+  mm._lastHoehe = null
+  mm._objLayer = null
+  mm.getObjects = null
+  return mm
+}
+
+const z0 = mkZoom()
+const amBoden = z0._autoZoomFor(0, 50)
+const auf100 = z0._autoZoomFor(100, 50)
+const auf1000 = z0._autoZoomFor(1000, 50)
+check(`am Boden bleibt es beim bisherigen Ausschnitt (${amBoden})`, amBoden === 17)
+check(`100 m Hoehe zoomt heraus (${auf100})`, auf100 < amBoden && auf100 >= 15)
+check(`1000 m Hoehe zoomt weiter heraus (${auf1000})`, auf1000 < auf100)
+check('unter der Kartengroesse null statt Unsinn', mkZoom()._autoZoomFor.call({ _map: null }, 100, 50) === null)
+
+// Steigen zieht die Karte auf.
+const z1 = mkZoom()
+z1._folgeHoehe({ lat: 50, hoehe: 0 }, true)
+const nachBoden = z1._map.getZoom()
+z1._folgeHoehe({ lat: 50, hoehe: 300 }, false)
+check('Steigen zoomt heraus', z1._map.getZoom() < nachBoden)
+z1._folgeHoehe({ lat: 50, hoehe: 0 }, false)
+check('Sinken zoomt wieder heran', z1._map.getZoom() === nachBoden)
+
+// Winzige Hoehenaenderung darf nicht zappeln.
+const z2 = mkZoom()
+z2._folgeHoehe({ lat: 50, hoehe: 100 }, true)
+const zoomVorher = z2._map._gesetzt.length
+z2._folgeHoehe({ lat: 50, hoehe: 101 }, false)
+check('1 m Hoehenaenderung loest kein Zoomen aus', z2._map._gesetzt.length === zoomVorher)
+
+// Handeinstellung: der ABSTAND bleibt, nicht die Stufe.
+const z3 = mkZoom()
+z3._folgeHoehe({ lat: 50, hoehe: 0 }, true)
+z3._zoomOffset = -2                       // Nutzer hat zweimal herausgezoomt
+z3._lastHoehe = null
+z3._folgeHoehe({ lat: 50, hoehe: 0 }, true)
+check('Handeinstellung wirkt am Boden', z3._map.getZoom() === amBoden - 2)
+z3._folgeHoehe({ lat: 50, hoehe: 300 }, false)
+check('Handeinstellung bleibt beim Steigen erhalten',
+  z3._map.getZoom() === Math.max(12, z3._autoZoomFor(300, 50) - 2))
+
+// Ohne Hoehenangabe (Objekte-Tab, nur GPS) bleibt die Stufe unangetastet.
+const z4 = mkZoom(19)
+z4._folgeHoehe({ lat: 50 }, true)
+check('ohne Hoehenangabe kein Auto-Zoom', z4._map.getZoom() === 19 && z4._map._gesetzt.length === 0)
 
 const failed = results.filter(r => !r.ok)
 console.log(`\n${'═'.repeat(60)}`)
