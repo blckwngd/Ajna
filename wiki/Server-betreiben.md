@@ -77,7 +77,9 @@ Das Zertifikat deckt zusätzlich `ajna.localhost` und den Rechnernamen ab — ei
 
 **1. Administrator anlegen.** `https://localhost/_/` öffnen, PocketBase führt durch die Ersteinrichtung.
 
-**2. Benutzer anlegen.** In der `users`-Collection. Eine offene Selbstregistrierung ist nicht vorgesehen — Konten legt der Betreiber an.
+**2. Benutzer anlegen.** In der `users`-Collection.
+
+> **Registrierung ist offen, bis du sie schließt.** PocketBase erlaubt Selbstregistrierung per Voreinstellung; das Projekt schränkt sie nicht ein. Für eine geschlossene Instanz die `createRule` der `users`-Collection in der Administration auf leer (= niemand) setzen und Konten selbst anlegen. Das ist keine Kosmetik: Wer ein Konto hat, kann Objekte anlegen, die sich als fremde Datenquelle ausgeben — siehe [Objektmodell](Objektmodell.md).
 
 **3. Standard-Rechte setzen.** Damit angelegte Objekte für andere sichtbar sind, braucht der Benutzer `default_permissions`, z. B.:
 
@@ -87,7 +89,11 @@ Das Zertifikat deckt zusätzlich `ajna.localhost` und den Rechnernamen ab — ei
 
 Ohne das sieht nur der Eigentümer selbst, was er anlegt. Mehr dazu unter [Berechtigungen](Berechtigungen.md).
 
-**4. Prüfen.** Die Berechtigungskette lässt sich end-to-end testen:
+**4. Agent-Konten bestätigen.** Damit Spieler einen Agenten als *offiziell* angezeigt bekommen, setze in der Administration am jeweiligen Konto das Feld `agent_seal` auf wahr. Ohne das erscheint der Agent lediglich mit seinem Handle — kein Verdacht, aber auch keine Bestätigung.
+
+Das Siegel ist deine Aussage über das Konto und **nur** über die Administration setzbar: ein Hook weist jeden Versuch eines Kontos ab, es sich selbst zu geben. Das gilt in beide Richtungen — auch Entfernen geht nur über die Administration.
+
+**5. Prüfen.** Die Berechtigungskette lässt sich end-to-end testen:
 
 ```bash
 node tools/acl-selftest.mjs

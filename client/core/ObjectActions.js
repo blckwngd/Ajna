@@ -12,6 +12,7 @@
 // Verhalten. Alle anderen Optionen sollen das Objekt selbst beisteuern.
 
 import { renderServerBadgeText } from './ServerBadge.js'
+import { provenanceText } from './Provenance.js'
 import { applyInteractionSideEffect } from './InteractionReply.js'
 import { privacy } from './PrivacyPolicy.js'
 import { wikiLinkOf } from './wikiLinks.js'
@@ -144,7 +145,11 @@ export class ObjectActions {
     // den Header per textContent rendert (kein HTML-Badge möglich).
     // Suffix ist leer, wenn nur ein Server registriert ist.
     const originSuffix = renderServerBadgeText(this.ajna, record._origin)
-    const title = (record.name || record.id) + (originSuffix ? `  ${originSuffix}` : '')
+    // Herkunft nur, wenn sie NICHT stimmt — im Menütitel ist Platz knapp, und
+    // eine Bestätigung, die immer dasteht, liest niemand mehr.
+    const provWarn = provenanceText(window.agentFilters || null, record)
+    const title = (provWarn ? `${provWarn}  ` : '')
+      + (record.name || record.id) + (originSuffix ? `  ${originSuffix}` : '')
 
     this.contextMenu.show({
       x, y,

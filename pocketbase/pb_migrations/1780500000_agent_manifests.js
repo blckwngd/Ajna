@@ -66,7 +66,8 @@ migrate((app) => {
         cascadeDelete: true,
         maxSelect: 1
       },
-      // System-Felder (created/updated) werden von PB automatisch ergänzt.
+      // created/updated werden NICHT automatisch ergänzt (PB 0.36 verlangt
+      // explizite autodate-Felder) — nachgereicht in 1787000000_agent_manifests_autodate.js
     ],
     indexes: [
       // (source, owner) als unique, damit ein Agent-User pro Source genau

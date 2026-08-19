@@ -157,10 +157,28 @@ export class Minimap {
 
   toggle() { this._open ? this.close() : this.open() }
 
+  /**
+   * Die ganze Minimap ein-/ausblenden — Knopf UND Fenster. Getrennt von
+   * open()/close(): DAS ist die Entscheidung des Nutzers und bleibt gemerkt,
+   * während setVisible() nur sagt, ob die Ansicht sie überhaupt anbietet.
+   *
+   * Gebraucht, seit die Minimap nicht mehr in einem einzelnen View-Container
+   * hängt: sie soll in der 3D- UND der Objekte-Ansicht erscheinen, aber nicht
+   * über der Karte — dort wäre eine Minikarte sinnlos.
+   */
+  setVisible(on) {
+    this._hidden = !on
+    if (this.fab) this.fab.style.display = on ? '' : 'none'
+    // Das Fenster folgt der Nutzer-Entscheidung, aber nur solange sichtbar.
+    if (this._panel) this._panel.hidden = !on || !this._open
+    if (on) { if (this._open) { this._startLoop(); this._map?.invalidateSize(); this._tick(true) } }
+    else this._stopLoop()
+  }
+
   open() {
     if (this._open) return
     this._open = true
-    this._panel.hidden = false
+    if (!this._hidden) this._panel.hidden = false
     this.fab.classList.add('active')
     write(KEY_OPEN, '1')
     this._ensureMap().then(() => { this._map?.invalidateSize(); this._syncRadius(); this._tick(true) })

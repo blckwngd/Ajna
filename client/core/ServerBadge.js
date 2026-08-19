@@ -90,7 +90,7 @@ export function renderServerBadgeText(ajna, originId) {
   return `[${serverLabelFor(ajna, originId)}]`
 }
 
-function escapeHtml(s) {
+export function escapeHtml(s) {
   return String(s).replace(/[<>&"']/g, c => ({
     '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;'
   })[c])

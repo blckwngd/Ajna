@@ -156,10 +156,22 @@ export class AjnaManager {
    * manuell verbinden muss.
    */
   async connect() {
-    await this.defaultClient.connect()
+    // Auch der Standard-Server bleibt getrennt, wenn der Nutzer ihn getrennt
+    // hat. Früher wurde er bedingungslos verbunden — bei einer Instanz mit nur
+    // einem Server war „Trennen“ damit nach jedem Reload wirkungslos, also
+    // genau der gemeldete Fehler. Die Ansicht bleibt dann leer, das ist die
+    // gewollte Folge; über die Server-Verwaltung ist sie mit einem Griff
+    // rückgängig zu machen, und `isDisconnected` sagt der Oberfläche warum.
+    if (!this.registry?.isDisconnected(this._defaultId)) {
+      await this.defaultClient.connect()
+    }
     for (const c of this.clients.values()) {
       if (c.id === this._defaultId) continue
       if (!c.isLoggedIn()) continue
+      // Bewusst getrennte Server bleiben getrennt. Ohne diese Prüfung wäre
+      // „Trennen“ nur bis zum nächsten Reload wirksam — die Anmeldung besteht
+      // ja weiter, und ein gültiges Token genügte früher als Verbindungsgrund.
+      if (this.registry?.isDisconnected(c.id)) continue
       c.connect().catch(err =>
         console.warn(`[AjnaManager] connect "${c.label}" failed:`, err?.message || err)
       )
@@ -173,13 +185,19 @@ export class AjnaManager {
   async connectServer(serverId) {
     const c = this.clients.get(serverId)
     if (!c) throw new Error(`AjnaManager: unknown server "${serverId}"`)
-    return c.connect()
+    this.registry?.setDisconnected(serverId, false)
+    try { return await c.connect() }
+    finally { this._emitServersChanged() }
   }
 
   async disconnectServer(serverId) {
     const c = this.clients.get(serverId)
     if (!c) return
-    return c.disconnect()
+    // Absicht festhalten, nicht nur die Verbindung kappen — sonst käme sie
+    // beim nächsten connect() von selbst zurück.
+    this.registry?.setDisconnected(serverId, true)
+    try { return await c.disconnect() }
+    finally { this._emitServersChanged() }
   }
 
   // ===================================================================
@@ -188,7 +206,7 @@ export class AjnaManager {
 
   /**
    * Liefert die bekannten Server inkl. Live-Status (Login + Verbindung).
-   * @returns {Array<{id, url, label, isDefault, isLoggedIn, currentUser, isConnected}>}
+   * @returns {Array<{id, url, label, isDefault, isLoggedIn, currentUser, isConnected, isDisconnected}>}
    */
   getServers() {
     const entries = this.registry
@@ -204,7 +222,10 @@ export class AjnaManager {
         isDefault: e.id === this._defaultId,
         isLoggedIn: c?.isLoggedIn() ?? false,
         currentUser: c?.currentUser() ?? null,
-        isConnected: c?._realtimeReady ?? false
+        isConnected: c?._realtimeReady ?? false,
+        // Bewusst getrennt (überdauert den Reload) — unterscheidet „aus“ von
+        // „noch nicht verbunden“, was in der Server-Liste sonst gleich aussieht.
+        isDisconnected: !!e.disconnected
       }
     })
   }

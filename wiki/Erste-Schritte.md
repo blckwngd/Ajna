@@ -20,7 +20,7 @@ Für alle, die Ajna **benutzen** wollen. Einen eigenen Server brauchst du dafür
 
 **2. Umsehen ohne Konto.** Viele Instanzen zeigen anonym schon etwas — alles, was für „alle" freigegeben ist. Zum Anlegen und Interagieren brauchst du ein Konto.
 
-**3. Anmelden.** *Einstellungen → Zugang*. Die Zugangsdaten bekommst du vom Betreiber der Instanz; eine offene Selbstregistrierung ist nicht vorgesehen.
+**3. Anmelden.** *Einstellungen → Zugang*. Ob du dich selbst registrieren kannst oder Zugangsdaten vom Betreiber bekommst, entscheidet die Instanz — PocketBase erlaubt Selbstregistrierung per Voreinstellung.
 
 **4. Standort-Stufe wählen.** *Einstellungen → Privatsphäre*. Voreinstellung für neue Server ist **Verborgen** — bewusst die zurückhaltendste. Solange sie steht, erfährt der Server deine Position nicht, und Agents bevölkern die Welt nicht um dich herum. Wer belebte Umgebung will, stellt mindestens auf **Gegend**. Die vier Stufen erklärt [Privatsphäre](Privatsphaere.md).
 

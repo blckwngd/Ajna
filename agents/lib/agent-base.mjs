@@ -63,6 +63,29 @@ export function envBool(key, def = false) {
   return /^(1|true|yes|on)$/i.test(raw)
 }
 
+/**
+ * Darf dieser Absender dem Agenten Kommandos geben?
+ *
+ * `/api/agents/{source}/command` nimmt Kommandos von JEDEM angemeldeten Konto
+ * entgegen — der Server prüft nur, DASS jemand angemeldet ist. Immerhin setzt
+ * er `evt.source` auf die Konto-ID des Absenders, und die ist fälschungssicher.
+ * Nur hat sie bisher niemand gelesen.
+ *
+ * Voreinstellung ist bewusst „jeder darf“: Kommandos wie „spawn“ sind Teil des
+ * Spiels, und die Agents begrenzen sie ohnehin über Abklingzeiten und Obergrenzen.
+ * Wer es enger will, gibt eine Liste an — dann gilt sie strikt.
+ *
+ * @param {{source?: string}} evt   Ereignis aus onAgentCommand (source = Konto-ID)
+ * @param {string|string[]} [allow] Erlaubte Konto-IDs; leer/undefiniert = alle
+ * @returns {boolean}
+ */
+export function commandAllowed(evt, allow) {
+  const liste = (Array.isArray(allow) ? allow : String(allow || '').split(','))
+    .map(x => String(x).trim()).filter(Boolean)
+  if (!liste.length) return true
+  return liste.includes(String(evt?.source || ''))
+}
+
 /** Agent-Manifest publishen — best effort (Fehler nur warnen, nie sterben). */
 export async function publishManifest(ajna, manifest, warn = console.warn) {
   try { await ajna.upsertAgentManifest(manifest); return true }
@@ -78,6 +101,9 @@ export async function publishManifest(ajna, manifest, warn = console.warn) {
  * @param {string}   [opts.tag]      Log-Prefix (Default: name)
  * @param {string[]} [opts.require]  zusätzliche Pflicht-Env-Keys
  * @param {boolean}  [opts.login=true]    AJNA_USER/PASS verlangen + einloggen
+ * @param {string}   [opts.handle]   gewünschter Konto-Handle (users.username).
+ *                                   Wird nur gesetzt, wenn das Konto noch keinen
+ *                                   hat; ein vorhandener bleibt unangetastet.
  * @param {boolean}  [opts.connect=false] nach Login ajna.connect() (Objekt-
  *                                        Cache + Realtime-Subscription)
  * @param {boolean}  [opts.sigint=true]   Standard-SIGINT-Handler (Log + Exit 0);
@@ -133,6 +159,27 @@ export async function bootAgent(name, opts = {}) {
     catch (err) { die(`Ajna-Login fehlgeschlagen: ${err?.response?.data?.message || err?.message || err}`) }
     log(`eingeloggt als ${ajna.currentUser()?.email || process.env.AJNA_USER} @ ${url}`)
   }
+  // Handle am Konto setzen — NUR, wenn dort noch keiner steht. Ein bestehender
+  // Name wird nie überschrieben: Umbenennen ist eine Entscheidung des Menschen,
+  // dem das Konto gehört, nicht des Programms, das gerade startet.
+  //
+  // Das Betreiber-Siegel (`agent_seal`) setzt der Agent ausdrücklich NICHT —
+  // es ist die Aussage des Betreibers, nicht die des Agenten über sich selbst.
+  if (doLogin && opts.handle) {
+    const me = ajna.currentUser()
+    if (!me?.username) {
+      try {
+        await ajna.updateCurrentUser({ username: opts.handle })
+        log(`Handle gesetzt: @${opts.handle}`)
+      } catch (err) {
+        const msg = err?.response?.data?.username?.message || err?.message || err
+        warn(`Handle "@${opts.handle}" nicht gesetzt (${msg}) — der Agent läuft trotzdem.`)
+      }
+    } else if (me.username !== opts.handle) {
+      warn(`Konto führt bereits @${me.username}, gewünscht war @${opts.handle} — unverändert gelassen.`)
+    }
+  }
+
   if (opts.connect) await ajna.connect()
 
   if (opts.sigint !== false) {

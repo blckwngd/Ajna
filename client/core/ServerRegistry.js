@@ -145,6 +145,29 @@ export class ServerRegistry {
     return true
   }
 
+  /**
+   * Merkt, dass ein Server BEWUSST getrennt wurde. Ohne das wäre die Trennung
+   * nur zur Laufzeit gültig: `AjnaManager.connect()` verbindet beim nächsten
+   * Start jeden Server wieder, für den noch ein gültiges Token vorliegt — der
+   * Nutzer trennt, lädt neu und ist wieder verbunden.
+   *
+   * Bewusst getrennt vom Abmelden: die Anmeldung bleibt bestehen, nur die
+   * Verbindung ruht. Erneutes Verbinden braucht dann kein Passwort.
+   */
+  setDisconnected(id, disconnected) {
+    const s = this.byId(id)
+    if (!s) return false
+    if (disconnected) s.disconnected = true
+    else delete s.disconnected
+    this._write()
+    return true
+  }
+
+  /** True, wenn dieser Server bewusst getrennt wurde. */
+  isDisconnected(id) {
+    return !!this.byId(id)?.disconnected
+  }
+
   /** Storage-Key des Auth-Tokens für diesen Server — wird an LocalAuthStore gegeben. */
   tokenKey(id) {
     return `${TOKEN_KEY_PREFIX}${id}`

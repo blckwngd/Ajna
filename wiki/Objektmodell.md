@@ -90,13 +90,53 @@ Sicherheit ist hier baulich gelöst: Das Ergebnis geht in einen Textknoten, nie 
 
 | Schlüssel | Bedeutung |
 |---|---|
-| `source` | **Wichtigster Schlüssel.** Marke „von diesem Agenten angelegt". Schützt fremde Objekte vor dem Aufräumen und speist den Inhaltsfilter |
+| `source` | **Wichtigster Schlüssel.** Marke „von diesem Agenten angelegt". Schützt fremde Objekte vor dem Aufräumen und speist den Inhaltsfilter. **Eine Selbstauskunft — siehe unten** |
 | `motion` | Bewegungsvektor zur Vorausberechnung — siehe unten |
 | `walk_path` | Geplanter Weg als `[[lat, lon], …]`; die Debug-Ebene zeichnet ihn |
 | `call` | Auftragszustand; wird von den Auftragsmethoden gepflegt |
 | `stackable` | Gleichartige Gegenstände im Inventar stapeln |
 
 Alles andere ist frei. Eigene Schlüssel sollten einen Namensraum tragen, damit zwei Anwendungen auf einer Instanz sich nicht ins Gehege kommen.
+
+### `state.source` ist eine Behauptung, kein Beweis
+
+Der Server schreibt das Feld nicht — jedes angemeldete Konto kann ein Objekt als „von poi-bridge“ ausgeben. Und die Registrierung ist per Voreinstellung offen, ein Konto hat man also schnell.
+
+Zugeschrieben wird deshalb über **`owner`**, die unveränderliche, serverseitig gesetzte Konto-ID. Zwei Dinge kommen aus dem Konto dazu:
+
+| | |
+|---|---|
+| **`username`** | Optionaler, selbstgewählter, eindeutiger Handle — das lesbare Etikett (`@poi-bridge`). Darf geändert werden und dient zugleich als Login-Kennung neben der E-Mail |
+| **`agent_seal`** | Bestätigung des **Betreibers**: „dieses Konto ist ein offizieller Agent dieser Instanz“. Nur über die Administration setzbar |
+
+Warum getrennt: Ein Handle darf frei werden und neu vergeben werden. Technisch bleibt das harmlos — alte Objekte lösen weiter auf ihr ursprüngliches Konto auf — aber **Menschen merken sich Namen, nicht IDs**. Hätte das Vertrauen am Namen gehängt, erbte der neue Inhaber es mit. Am Siegel hängt es nicht: ein neu gegriffener Name trägt schlicht keins.
+
+Daraus ergeben sich fünf Zustände:
+
+| Anzeige | Bedeutung |
+|---|---|
+| *(nichts)* | Kein `state.source` — ein gewöhnliches Nutzerobjekt, das nichts behauptet |
+| **✓ @handle** | Der Owner ist der Inhaber der Quelle **und** vom Betreiber bestätigt |
+| **@handle** | Der Owner ist der Inhaber der Quelle, aber ohne Siegel. Kein Verdacht — nur keine Bestätigung |
+| **? quelle** | Die Quelle ist auf diesem Server nicht registriert. Kein Alarm: der Agent lief vielleicht nie |
+| **⚠ angeblich @handle** | Die Quelle gehört einem anderen Konto. Der Inhalt ist unbelegt |
+
+Angezeigt wird das im AR-Callout, in der Objektliste und im Tap-Menü — in Listen nur die Warnung, damit sie nicht in Bestätigungen untergeht.
+
+Ein Source-Name gehört je Server dem Konto, das ihn **zuerst** registriert hat; spätere Manifeste anderer Konten für denselben Namen werden verworfen. Handle und Siegel stempelt ein Server-Hook aus dem Konto ins Manifest — ein Agent kann sich also weder einen fremden Handle geben noch sich selbst bestätigen.
+
+**Der Server setzt das durch.** Ein Schreibversuch mit einer Quelle, die einem anderen Konto gehört, wird mit **403** abgewiesen — beim Anlegen wie beim nachträglichen Ändern:
+
+```
+Die Quelle "poi-bridge" gehört einem anderen Konto.
+Registriere einen eigenen Namen über das Agent-Manifest.
+```
+
+Ein Name, den **niemand** registriert hat, bleibt bewusst erlaubt: Agents müssten sonst ihr Manifest vor dem ersten Objekt veröffentlichen, und Agents ganz ohne Manifest könnten nichts mehr schreiben. Einen unbeanspruchten Namen zu nutzen ist auch keine Täuschung — solche Objekte zeigt der Client als „Quelle nicht registriert“.
+
+Geprüft wird gegen den **Eigentümer** des Datensatzes, nicht gegen den Aufrufer: Wer fremde Objekte bearbeiten darf, ändert damit nichts an deren Herkunft.
+
+> **Noch offen:** OIDC als Quelle des Siegels statt der Betreiber-Bestätigung.
 
 ### `state.motion` — Bewegung ohne Schreiblast
 

@@ -9,16 +9,23 @@
 // Reine Anzeige. Der Fokus (welches Objekt) kommt vom Aufrufer via setTarget().
 
 import { emojiOf } from './Appearance.js'
+import { provenanceInfo } from './Provenance.js'
 import { TYPE_LABEL } from './SpawnHere.js'
 import { describeRequires } from './InteractionReply.js'
 
 const FLAG_KEY = 'ajna.ar.aura'   // '0' blendet aus; Default an
 
 export class ObjectAura {
-  /** @param {{ parent?:HTMLElement, getMe?:()=>({id?:string}|null) }} opts */
-  constructor({ parent = document.body, getMe = () => null } = {}) {
+  /**
+   * @param {{ parent?:HTMLElement, getMe?:()=>({id?:string}|null),
+   *           getFilters?:()=>object|null }} opts
+   *   getFilters liefert die AgentFilters-Instanz — nur sie weiß, wem ein
+   *   Source-Name gehört, und damit, ob die Herkunft eines Objekts stimmt.
+   */
+  constructor({ parent = document.body, getMe = () => null, getFilters = () => null } = {}) {
     this.parent = parent
     this.getMe = getMe
+    this.getFilters = getFilters
     this._active = false     // AR-Modus an?
     this._card = null
     this._reticle = null
@@ -112,6 +119,9 @@ export class ObjectAura {
 
     // Chips — nur was vorhanden ist (wächst mit Reputation/Fraktion/Tags).
     const chips = []
+    // Herkunft zuerst — sie entscheidet, wie der Rest zu lesen ist.
+    const prov = provenanceInfo(this.getFilters?.(), record)
+    if (prov) chips.push({ t: prov.text, c: prov.color, title: prov.title })
     const me = this.getMe?.()
     if (me?.id && record?.owner && me.id === record.owner) chips.push({ t: 'Deins', c: '#5b8dd6' })
     if (record?.state?.portable) chips.push({ t: '🎒 tragbar', c: '#6fae7a' })
@@ -148,6 +158,7 @@ export class ObjectAura {
       for (const c of chips) {
         const s = document.createElement('span')
         s.style.cssText = `font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.1);border-left:3px solid ${c.c}`
+        if (c.title) s.title = c.title
         s.textContent = c.t
         row.appendChild(s)
       }

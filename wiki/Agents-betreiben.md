@@ -4,6 +4,10 @@
 [← Inhalt](Home.md#inhalt) · Betreiben: [Server betreiben](Server-betreiben.md) · **Agents betreiben** · [Berechtigungen](Berechtigungen.md)
 <!-- /nav -->
 
+<!-- seiteninhalt -->
+**Auf dieser Seite:** [Mitgelieferte Agents](#mitgelieferte-agents) · [Erststart](#erststart) · [Interessensbereiche](#interessensbereiche) · [Wer darf Agents Kommandos geben?](#wer-darf-agents-kommandos-geben) · [Dauerbetrieb](#dauerbetrieb) · [Läuft es?](#läuft-es)
+<!-- /seiteninhalt -->
+
 Agents sind normale Node-Prozesse, die sich als regulärer Benutzer anmelden und Objekte pflegen. Ein leerer Server ist funktionsfähig, aber leer — die Agents machen die Welt aus.
 
 ## Mitgelieferte Agents
@@ -47,6 +51,18 @@ Ohne diesen Eintrag legt der Agent fleißig Objekte an, die niemand sieht — de
 Die meisten Bridges fragen ihre Quelle **nur dort ab, wo Spieler sind**. Grundlage ist das anonymisierte Aggregat der Interessensbereiche ([Privatsphäre](Privatsphaere.md)).
 
 Das hat eine Folge, die man kennen sollte: **Steht kein Spieler mit Freigabe „Gegend" oder höher auf dem Server, tun diese Agents nichts** — und das ist richtig so. Wer zum Ausprobieren trotzdem Daten sehen will, setzt einen festen Mittelpunkt, etwa `ADSB_CENTER_LAT`/`ADSB_CENTER_LON`, der als Rückfallposition dient.
+
+## Wer darf Agents Kommandos geben?
+
+Spieler können laufenden Agents Kommandos schicken (etwa `spawn` an den World-Director). Der Server prüft dabei nur, **dass** jemand angemeldet ist — die Auswahl trifft der Agent.
+
+Voreinstellung ist „jeder Angemeldete“; Abklingzeiten und Obergrenzen begrenzen den Schaden. Enger geht über eine Liste von Konto-IDs:
+
+```ini
+WD_COMMAND_USERS=p48f2t9sf416mdo,ls01i6k496eb1q3
+```
+
+Abgelehnte Kommandos landen mit Absender im Protokoll.
 
 ## Dauerbetrieb
 

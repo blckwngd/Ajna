@@ -55,7 +55,7 @@
 // Start:  node agents/world-director.mjs   bzw.   npm run director
 
 import { randomUUID } from 'node:crypto'
-import { bootAgent, die, envNum } from './lib/agent-base.mjs'
+import { bootAgent, die, envNum, envStr, commandAllowed } from './lib/agent-base.mjs'
 import { MODEL_PROFILES, profileFor, modelOf, profileAppearance } from './world-director.profiles.mjs'
 import { AjnaGeo } from '../client/core/AjnaGeo.js'
 import { findLandingSpot } from './lib/landing-spots.mjs'
@@ -1303,7 +1303,18 @@ async function handleSpawnCommand(evt) {
   }
 }
 
+// Wer darf dem Director Kommandos geben? Leer = jeder Angemeldete (Abklingzeit
+// und Obergrenze begrenzen den Schaden ohnehin); WD_COMMAND_USERS grenzt es auf
+// bestimmte Konto-IDs ein. Der Absender steht serverseitig in `evt.source` und
+// ist damit nicht fälschbar — bislang hat ihn nur niemand gelesen.
+const CMD_ALLOW = envStr('WD_COMMAND_USERS', '')
+if (CMD_ALLOW) console.log(`[director] Kommandos nur von: ${CMD_ALLOW}`)
+
 ajna.onAgentCommand(WD_SOURCE || 'world-director', (evt) => {
+  if (!commandAllowed(evt, CMD_ALLOW)) {
+    console.warn(`[director] Kommando "${evt?.command}" von ${evt?.source} abgelehnt (nicht in WD_COMMAND_USERS)`)
+    return
+  }
   if (evt?.command === 'spawn') handleSpawnCommand(evt)
   else console.log(`[director] unbekanntes Kommando "${evt?.command}" — ignoriert`)
 }).then(() => console.log(`[director] hört auf Kommandos (agent:${WD_SOURCE || 'world-director'}) · Cooldown ${CMD_COOLDOWN_MS / 1000} s, max ${CMD_MAX_ON_DEMAND} Objekte auf Zuruf`))

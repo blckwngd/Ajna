@@ -14,6 +14,7 @@
 // Bild — die Zeige-Logik kann das später direkt füttern.
 
 import { renderServerBadge, injectServerBadgeStyles } from './ServerBadge.js'
+import { renderProvenanceBadge, injectProvenanceStyles } from './Provenance.js'
 
 const MAX_ROWS = 20
 const DATA_THROTTLE_MS = 500     // In-Place-Updates bündeln
@@ -46,7 +47,10 @@ export class NearbyList {
    *   actions = ObjectActions-Instanz (actionsFor/trigger — gleiche Quelle wie
    *   Kontextmenü/Quick-Actions, damit die Listen nicht auseinanderlaufen).
    */
-  constructor({ ajna, container, getPosition, actions, onShowOnMap, onEdit }) {
+  constructor({ ajna, container, getPosition, actions, onShowOnMap, onEdit, filters = null }) {
+    // `filters` (AgentFilters) nur für die Herkunftsprüfung — ohne sie bleibt
+    // die Liste unverändert, das Badge entfällt schlicht.
+    this.filters = filters
     this.ajna = ajna
     this.container = container
     this.getPosition = getPosition
@@ -54,6 +58,7 @@ export class NearbyList {
     this.onShowOnMap = onShowOnMap
     this.onEdit = onEdit
     injectServerBadgeStyles()
+    injectProvenanceStyles()
     this._rows = new Map()        // id → {el, nameEl, distEl, descEl, btnBox, actSig}
     this._order = []              // aktuell dargestellte Reihenfolge (ids)
     this._active = false
@@ -72,11 +77,17 @@ export class NearbyList {
     this._active = on
     if (on) {
       this._unsub = this.ajna.onObjectsChanged(() => this._scheduleData())
+      // Filter-Auswahl ändert die Liste, ohne dass sich Objekte ändern — ohne
+      // dieses Abo bliebe die alte Auswahl stehen, bis zufällig etwas anderes
+      // die Liste anfasst.
+      this._unsubFilters = this.filters?.onChange?.(() => this._resort()) || null
       this._resortTimer = setInterval(() => this._resort(), RESORT_INTERVAL_MS)
       this._resort()   // sofort frisch aufbauen
     } else {
       try { this._unsub?.() } catch {}
+      try { this._unsubFilters?.() } catch {}
       this._unsub = null
+      this._unsubFilters = null
       clearInterval(this._resortTimer); this._resortTimer = null
       clearTimeout(this._dataTimer); this._dataTimer = null
     }
@@ -105,6 +116,12 @@ export class NearbyList {
     if (!pos || !Number.isFinite(pos.lat)) return { pos: null, list: [] }
     const list = (this.ajna.getObjectList?.() || [])
       .filter(o => o && Number.isFinite(o.lat) && Number.isFinite(o.lon) && !o.carried_by)
+      // Inhaltsfilter wie in Karte und 3D-Szene — was der Nutzer ausgeblendet
+      // hat, gehört auch nicht in die Liste. BEWUSST NUR dieser Filter: das
+      // Agenten-Budget je Quelle und die Objekt-Sichtweite begrenzen, was die
+      // SZENE zeichnen kann; die Liste ist gerade dann nützlich, wenn etwas
+      // nicht sichtbar ist.
+      .filter(o => !this.filters?.matches || this.filters.matches(o))
       .map(o => ({ o, d: distM(pos.lat, pos.lon, o.lat, o.lon) }))
       .sort((a, b) => a.d - b.d)
       .slice(0, MAX_ROWS)
@@ -190,10 +207,15 @@ export class NearbyList {
     row.distEl.textContent = fmtDist(d)
     // Badges: Typ (NPC/Gegner/…) + Ursprungs-Server (leer bei nur einem Server).
     const tl = typeLabel(o.type)
-    const badgeSig = `${tl}|${o._origin || ''}`
+    // Herkunft: in der Liste NUR Auffälligkeiten. Die meisten Einträge stammen
+    // von Agents; ein grüner Haken an jedem wäre Rauschen, in dem die eine
+    // Warnung untergeht.
+    const prov = renderProvenanceBadge(this.filters, o, { onlyWarnings: true })
+    const badgeSig = `${tl}|${o._origin || ''}|${prov}`
     if (badgeSig !== row.badgeSig) {
       row.badgeSig = badgeSig
-      row.badgeEl.innerHTML = (tl ? `<span class="nb-type">${tl}</span>` : '') + renderServerBadge(this.ajna, o._origin)
+      row.badgeEl.innerHTML = (tl ? `<span class="nb-type">${tl}</span>` : '')
+        + renderServerBadge(this.ajna, o._origin) + prov
     }
     // Rechte-abhängige Aktionen: Bearbeiten nur als Besitzer; Einsammeln wie im
     // Kontextmenü (eigene immer, fremde nur portable; nie wenn schon getragen).

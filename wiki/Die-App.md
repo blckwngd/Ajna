@@ -36,6 +36,19 @@ Dieselbe Welt in 3D, am selben Ort stehend. Mit immersivem WebXR mit Kamerabild,
 
 Liste der nächstgelegenen Objekte mit Entfernung — nützlich, wenn ein Objekt hinter einer Hauswand liegt oder die Karte zu voll ist. Von hier aus lassen sich dieselben Aktionen auslösen wie auf der Karte.
 
+## Woher ein Objekt stammt
+
+Objekte tragen ein Feld, in dem der anlegende Agent seine Quelle nennt — das ist eine **Selbstauskunft**, kein Nachweis. Die App prüft sie gegen das Konto, dem die Quelle gehört, und zeigt das Ergebnis im AR-Callout, in der Objektliste und im Tap-Menü:
+
+| | |
+|---|---|
+| **✓ @handle** | Bestätigter Agent dieser Instanz |
+| **@handle** | Der Inhaber der Quelle — vom Betreiber aber nicht bestätigt |
+| **? quelle** | Quelle auf diesem Server nicht registriert. Kein Verdacht, nur keine Bestätigung |
+| **⚠ angeblich @handle** | Gibt sich als fremde Quelle aus. **Inhalt als unbelegt behandeln** |
+
+In Listen erscheint nur die Warnung — sonst ginge sie in Häkchen unter. Gewöhnliche Nutzerobjekte tragen nichts, sie behaupten ja auch nichts.
+
 ## ⚙️ Einstellungen
 
 Alle Einstellungen gelten **pro Gerät** und liegen lokal im Browser.

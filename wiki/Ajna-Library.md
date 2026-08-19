@@ -5,7 +5,7 @@
 <!-- /nav -->
 
 <!-- seiteninhalt -->
-**Auf dieser Seite:** [Zwei Klassen](#zwei-klassen) · [Einstieg](#einstieg) · [Anmeldung](#anmeldung) · [Lebenszyklus](#lebenszyklus) · [Objekte lesen](#objekte-lesen) · [Objekte schreiben](#objekte-schreiben) · [Echtzeit](#echtzeit) · [Interaktionen](#interaktionen) · [Inventar](#inventar) · [Aufträge](#aufträge) · [Rechte](#rechte) · [Gruppen und Einladungen](#gruppen-und-einladungen) · [Standard-Rechte](#standard-rechte) · [Interessensbereiche](#interessensbereiche) · [Agent-Manifeste](#agent-manifeste) · [Mehrere Server](#mehrere-server) · [Geo-API](#geo-api) · [Eigenen Client bauen](#eigenen-client-bauen) · [Roher Zugriff](#roher-zugriff)
+**Auf dieser Seite:** [Zwei Klassen](#zwei-klassen) · [Einstieg](#einstieg) · [Anmeldung](#anmeldung) · [Lebenszyklus](#lebenszyklus) · [Objekte lesen](#objekte-lesen) · [Objekte schreiben](#objekte-schreiben) · [Echtzeit](#echtzeit) · [Interaktionen](#interaktionen) · [Inventar](#inventar) · [Aufträge](#aufträge) · [Rechte](#rechte) · [Gruppen und Einladungen](#gruppen-und-einladungen) · [Standard-Rechte](#standard-rechte) · [Interessensbereiche](#interessensbereiche) · [Herkunft eines Objekts](#herkunft-eines-objekts) · [Agent-Manifeste](#agent-manifeste) · [Mehrere Server](#mehrere-server) · [Geo-API](#geo-api) · [Eigenen Client bauen](#eigenen-client-bauen) · [Roher Zugriff](#roher-zugriff)
 <!-- /seiteninhalt -->
 
 Eine Bibliothek für Auth, Objekte, Echtzeit, Interaktionen, Rechte, Gruppen, Inventar und Aufträge. Sie ist **isomorph**: derselbe Quelltext läuft im Browser (gebündelt) und in Node (Agents, Werkzeuge, Tests).
@@ -69,6 +69,8 @@ Im Browser ist fast immer `location.origin` richtig — Caddy reicht `/api` an P
 | `await verifyServerSession(serverId)` | Token **gegen den Server** prüfen |
 
 `verifyServerSession` liefert `'logged-out' | 'confirmed' | 'revoked' | 'unreachable'`. Anders als `isLoggedIn()` ist das eine echte Aussage über Erreichbarkeit; bei `'revoked'` wird das lokale Token geleert.
+
+**`username`** ist der optionale, eindeutige Handle — zugleich zweite Login-Kennung neben der E-Mail. Erlaubt sind `[a-z0-9_-]`, 2–32 Zeichen; die Eindeutigkeit ist case-insensitiv. `agent_seal` lässt sich hier**nicht** setzen, das ist dem Betreiber vorbehalten.
 
 **`app_data`** ist das generische Feld für anwendungseigene Nutzerdaten. Jede Anwendung legt dort ihren eigenen Schlüssel ab:
 
@@ -317,6 +319,32 @@ await ajna.setMyDefaultPermissions([
 | `await fetchInterestAreas(source?, serverId?)` | Anonymisiertes Aggregat lesen — **für Agents** |
 
 Agents nehmen dafür meist nicht diese Methoden direkt, sondern `watchInterestAreas()` aus der [Agent-Library](Agent-Library.md).
+
+## Herkunft eines Objekts
+
+`state.source` ist eine Selbstauskunft — belastbar ist nur `owner`. Die Bewertung macht `AgentFilters`, die Darstellung `Provenance`:
+
+```js
+import { provenanceInfo } from './client/core/Provenance.js'
+
+const p = filters.provenanceOf(record)
+// { status: 'user' | 'agent' | 'unsealed' | 'unregistered' | 'mismatch',
+//   source, agentName, handle, sealed }
+
+const info = provenanceInfo(filters, record)   // null bei Nutzerobjekten
+// { status, text: '✓ @poi-bridge', color: '#6fae7a', title: '…' }
+```
+
+| Funktion | Beschreibung |
+|---|---|
+| `filters.provenanceOf(record)` | Urteil über die Herkunft |
+| `filters.ownerFor(source, origin)` | Konto, dem ein Source-Name auf einem Server gehört |
+| `provenanceInfo(filters, record)` | Anzeige-Angaben oder `null` |
+| `renderProvenanceBadge(filters, record, { onlyWarnings })` | Badge als HTML |
+| `provenanceText(filters, record)` | Klartext für Kopfzeilen |
+| `isProvenanceWarning(info)` | Verdient das Aufmerksamkeit? |
+
+Bedeutung der Zustände und warum Handle und Siegel getrennt sind: [Objektmodell](Objektmodell.md).
 
 ## Agent-Manifeste
 

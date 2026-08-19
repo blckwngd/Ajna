@@ -729,7 +729,11 @@ async function init() {
 
   // Objekt-Aura („Call-Out") — schwebende Identität/Metadaten des fokussierten
   // Objekts in der AR (D-Raum-Vorbild). Fokus liefert der Gaze-Loop unten.
-  const objectAura = new ObjectAura({ parent: arRoot, getMe: () => ajnaManager.currentUser?.() })
+  const objectAura = new ObjectAura({
+    parent: arRoot,
+    getMe: () => ajnaManager.currentUser?.(),
+    getFilters: () => _agentFilters,
+  })
   window.arAura = objectAura
   window.addEventListener('ajna:ar-aura', ev => objectAura.setVisible(!!ev.detail))
   // Callout-Reichweite (Meter), pro Gerät + live über das Einstellungs-Slider.
@@ -1340,7 +1344,13 @@ async function init() {
     }
     return { lat: here.lat, lon: here.lon, heading }
   }
-  const minimap = new Minimap({ container: arRoot, getView: _minimapView })
+  // Kamerablick für die Minimap bereitstellen. In der Shell GEHÖRT die Minimap
+  // nicht mehr hierher: sie soll auch im Objekte-Tab erscheinen, und der lädt
+  // dieses Bündel womöglich nie. Dort baut MobileShell sie und holt sich den
+  // Blick über diesen Haken — sobald die 3D-Szene existiert, folgt die Karte
+  // der Kamera, vorher der GPS-Position.
+  window.ajnaCameraView = _minimapView
+  const minimap = _inShell ? null : new Minimap({ container: arRoot, getView: _minimapView })
 
   // Drag&Drop (Desktop): Item aus dem Inventar auf die AR-Szene ablegen.
   canvas.addEventListener('dragover', (e) => {

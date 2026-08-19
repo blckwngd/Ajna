@@ -5,7 +5,7 @@
 <!-- /nav -->
 
 <!-- seiteninhalt -->
-**Auf dieser Seite:** [bootAgent(name, opts?)](#bootagentname-opts) · [Umgebungsvariablen lesen](#umgebungsvariablen-lesen) · [Weitere Helfer](#weitere-helfer) · [Konfigurationsdateien — lib/env.mjs](#konfigurationsdateien--libenvmjs) · [Einrichtungsassistent — lib/setup-wizard.mjs](#einrichtungsassistent--libsetup-wizardmjs) · [Interessensbereiche verfolgen](#interessensbereiche-verfolgen) · [Geo-Mathematik](#geo-mathematik) · [Wege über das Straßennetz](#wege-über-das-straßennetz) · [Landeplätze](#landeplätze) · [Vollständiges Gerüst](#vollständiges-gerüst)
+**Auf dieser Seite:** [bootAgent(name, opts?)](#bootagentname-opts) · [Umgebungsvariablen lesen](#umgebungsvariablen-lesen) · [Identität des Agenten](#identität-des-agenten) · [Weitere Helfer](#weitere-helfer) · [Kommandos autorisieren](#kommandos-autorisieren) · [Konfigurationsdateien — lib/env.mjs](#konfigurationsdateien--libenvmjs) · [Einrichtungsassistent — lib/setup-wizard.mjs](#einrichtungsassistent--libsetup-wizardmjs) · [Interessensbereiche verfolgen](#interessensbereiche-verfolgen) · [Geo-Mathematik](#geo-mathematik) · [Wege über das Straßennetz](#wege-über-das-straßennetz) · [Landeplätze](#landeplätze) · [Vollständiges Gerüst](#vollständiges-gerüst)
 <!-- /seiteninhalt -->
 
 Alles, was ein Node-Agent zusätzlich zur [Ajna-Library](Ajna-Library.md) braucht: Hochfahren, Konfiguration, Einrichtungsassistent. Liegt unter `agents/lib/`.
@@ -42,6 +42,7 @@ Erledigt der Reihe nach:
 |---|---|---|
 | `tag` | `name` | Präfix der Protokollzeilen |
 | `require` | `[]` | Zusätzliche Pflicht-Umgebungsvariablen |
+| `handle` | — | Gewünschter Konto-Handle (`users.username`). Wird **nur** gesetzt, wenn das Konto noch keinen hat |
 | `login` | `true` | `AJNA_USER`/`AJNA_PASS` verlangen und anmelden |
 | `connect` | `false` | Nach der Anmeldung `connect()` — Objektspeicher und Echtzeit-Abo |
 | `sigint` | `true` | Standard-Handler für Strg+C; `false` für eigenes Aufräumen |
@@ -88,12 +89,29 @@ const DEBUG     = envBool('MEIN_DEBUG')
 const SCHLUESSEL = envStr('MEIN_API_KEY')
 ```
 
+## Identität des Agenten
+
+Ein Agent zeigt sich den Spielern über zwei Dinge am **Konto**, nicht über `state.source`:
+
+```js
+const { ajna, log } = await bootAgent('poi-bridge', { handle: 'poi-bridge' })
+```
+
+`handle` setzt `users.username` — aber nur, wenn dort noch keiner steht. Ein vorhandener Name bleibt unangetastet: Umbenennen ist eine Entscheidung des Menschen, dem das Konto gehört, nicht des Programms, das gerade startet. Ist der Name schon vergeben, läuft der Agent trotzdem und meldet es als Warnung.
+
+Der Handle ist eindeutig (case-insensitiv), optional und darf später geändert werden. Erlaubt sind `[a-z0-9_-]`, 2–32 Zeichen — der enge Zeichensatz hält Verwechslungen wie `poi-bridge` gegen `poi-bridqe` klein.
+
+**Das Betreiber-Siegel setzt der Agent NICHT.** `users.agent_seal` ist die Aussage des Betreibers über ein Konto, nicht die des Kontos über sich selbst; ein Server-Hook weist jeden Versuch ab, es sich selbst zu geben. Wie ein Betreiber es vergibt, steht unter [Server betreiben](Server-betreiben.md).
+
+Handle und Siegel landen automatisch im Manifest — ein Hook stempelt sie beim Veröffentlichen aus dem Konto ein. Als Agent musst du dazu nichts tun; `owner_handle` und `owner_sealed` selbst zu setzen ist wirkungslos.
+
 ## Weitere Helfer
 
 | Funktion | Beschreibung |
 |---|---|
 | `die(msg)` | Fehlermeldung und Abbruch mit Code 1 — einheitliches Sterben |
 | `await publishManifest(ajna, manifest, warn?)` | Manifest veröffentlichen; Fehler warnen nur, sie töten nicht |
+| `commandAllowed(evt, allow)` | Darf dieser Absender Kommandos geben? |
 
 ```js
 await publishManifest(ajna, {
@@ -105,6 +123,26 @@ await publishManifest(ajna, {
 ```
 
 ---
+
+## Kommandos autorisieren
+
+`/api/agents/{source}/command` nimmt Kommandos von **jedem angemeldeten Konto** entgegen — der Server prüft nur, dass überhaupt jemand angemeldet ist. Immerhin setzt er `evt.source` auf die Konto-ID des Absenders, und die ist nicht fälschbar.
+
+```js
+import { commandAllowed, envStr } from './lib/agent-base.mjs'
+
+const ERLAUBT = envStr('MEIN_COMMAND_USERS', '')   // leer = jeder
+
+await ajna.onAgentCommand('mein-agent', (evt) => {
+  if (!commandAllowed(evt, ERLAUBT)) {
+    warn(`Kommando "${evt.command}" von ${evt.source} abgelehnt`)
+    return
+  }
+  // …
+})
+```
+
+Leere Liste heisst „jeder darf“ — das ist die Vorgabe, weil Kommandos wie „spawn“ Teil des Spiels sind und die Agents sie ohnehin über Abklingzeiten begrenzen. Der World-Director nutzt dafür `WD_COMMAND_USERS`.
 
 ## Konfigurationsdateien — `lib/env.mjs`
 

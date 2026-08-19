@@ -32,6 +32,124 @@ onRecordCreateRequest((e) => {
 
 
 // ---------------------------------------------------------------------
+// state.source DURCHSETZEN (BEFORE, objects create+update).
+//
+// Bis hierher war `state.source` eine Selbstauskunft, die der Client nur noch
+// sichtbar machte. Jetzt weist der Server sie ab: Ein Source-Name gehört dem
+// Konto, das ihn per Manifest registriert hat — wer ein Objekt unter fremdem
+// Namen anlegen will, bekommt 403.
+//
+// BEWUSST ERLAUBT bleibt ein Name, den NIEMAND registriert hat. Sonst müssten
+// Agents ihr Manifest vor dem ersten Objekt veröffentlichen, und Agents ohne
+// Manifest könnten gar nichts mehr schreiben — eine Verhaltensänderung, die
+// bestehende Installationen bricht, ohne einen Angriff zu verhindern: einen
+// unbeanspruchten Namen zu nutzen ist keine Täuschung. Solche Objekte zeigt
+// der Client als „Quelle nicht registriert“.
+//
+// Verglichen wird gegen den OWNER des Datensatzes, nicht gegen den Aufrufer:
+// Wer fremde Objekte bearbeiten darf (`edit`), ändert damit nichts an deren
+// Herkunft — sie bleibt die des Eigentümers.
+// ---------------------------------------------------------------------
+function pruefeQuellenanspruch(e) {
+  try {
+    // JSON-Felder kommen im JSVM je nach Pfad als Objekt, als STRING oder als
+    // Byte-Array an — `parseState` deckt alle drei ab. Meine erste Fassung
+    // prüfte nur auf Objekt und ließ dadurch JEDE Behauptung durch: der Hook
+    // lief, fand `source` aber nie.
+    const { parseState } = require(`${__hooks}/quests.js`)
+    const src = parseState(e.record).source
+    if (src && typeof src === "string") {
+      // Auf CREATE setzt der Owner-Hook oben bereits `owner`; als Netz der
+      // Aufrufer, falls die Reihenfolge einmal wechselt.
+      const owner = e.record.get("owner") || (e.auth ? e.auth.id : "")
+      let inhaber = null
+      try {
+        const m = $app.findFirstRecordByFilter("agent_manifests", "source = {:s}", { s: src })
+        inhaber = m ? m.get("owner") : null
+      } catch (err) { inhaber = null }   // 404 = niemand hat den Namen
+
+      if (inhaber && inhaber !== owner) {
+        throw new ForbiddenError(
+          `Die Quelle "${src}" gehört einem anderen Konto. `
+          + `Registriere einen eigenen Namen über das Agent-Manifest.`)
+      }
+    }
+  } catch (err) {
+    if (err instanceof ForbiddenError) throw err
+    console.log("[objects.source] " + (err && err.message ? err.message : err))
+  }
+  e.next()
+}
+onRecordCreateRequest(pruefeQuellenanspruch, "objects")
+onRecordUpdateRequest(pruefeQuellenanspruch, "objects")
+
+
+// ---------------------------------------------------------------------
+// agent_manifests: Identität des Eigentümers EINSTEMPELN (BEFORE).
+//
+// `owner_handle` und `owner_sealed` sind abgeleitet — sie kommen aus dem
+// Konto, nie aus der Anfrage. Ein Agent kann sich also weder einen fremden
+// Handle geben noch sich selbst das Betreiber-Siegel ausstellen. Deshalb
+// werden die Werte hier bedingungslos überschrieben, auch wenn der Client
+// etwas mitgeschickt hat.
+//
+// Der Handle darf sich ändern (Umbenennung). Laufende Agents veröffentlichen
+// ihr Manifest periodisch neu (Heartbeat), die Kopie heilt sich damit von
+// selbst; für dauerhaft gestoppte Agents bleibt der letzte Stand stehen.
+// ---------------------------------------------------------------------
+function stampeManifestIdentitaet(e) {
+  try {
+    const ownerId = e.record.get("owner")
+    if (ownerId) {
+      const u = $app.findRecordById("users", ownerId)
+      e.record.set("owner_handle", u ? (u.get("username") || "") : "")
+      e.record.set("owner_sealed", u ? !!u.get("agent_seal") : false)
+    } else {
+      e.record.set("owner_handle", "")
+      e.record.set("owner_sealed", false)
+    }
+  } catch (err) {
+    // Kein Grund, das Manifest scheitern zu lassen — ohne Handle zeigt der
+    // Client eben „nicht bestätigt", was die sichere Vorgabe ist.
+    console.log("[manifest.stamp] " + (err && err.message ? err.message : err))
+    e.record.set("owner_handle", "")
+    e.record.set("owner_sealed", false)
+  }
+  e.next()
+}
+// ---------------------------------------------------------------------
+// users.agent_seal ist eine Aussage des BETREIBERS über ein Konto — niemals
+// eine Aussage des Kontos über sich selbst.
+//
+// Die Rechteregel der users-Collection erlaubt jedem, seinen EIGENEN Datensatz
+// zu ändern, und PocketBase kennt keine Schreibrechte je Feld. Ohne diesen
+// Hook konnte sich also jedes Konto per `updateCurrentUser({agent_seal:true})`
+// selbst zum bestätigten Agenten erklären — gemessen, nicht vermutet.
+//
+// Nur Superuser (Administration) dürfen das Feld setzen. Alle anderen bekommen
+// den gespeicherten Wert zurückgeschrieben; das schlägt nicht fehl, sondern
+// ignoriert die Aussage stillschweigend.
+// ---------------------------------------------------------------------
+onRecordCreateRequest((e) => {
+  if (!e.hasSuperuserAuth()) e.record.set("agent_seal", false)
+  e.next()
+}, "users")
+
+onRecordUpdateRequest((e) => {
+  if (!e.hasSuperuserAuth()) {
+    let alt = false
+    try { alt = !!$app.findRecordById("users", e.record.id).get("agent_seal") } catch (err) {}
+    e.record.set("agent_seal", alt)
+  }
+  e.next()
+}, "users")
+
+
+onRecordCreateRequest(stampeManifestIdentitaet, "agent_manifests")
+onRecordUpdateRequest(stampeManifestIdentitaet, "agent_manifests")
+
+
+// ---------------------------------------------------------------------
 // Nach erfolgreichem Object-Create: Default-Permissions des Owners
 // materialisieren + Cache neu berechnen.
 // ---------------------------------------------------------------------

@@ -25,6 +25,7 @@ import { interactionReply } from './InteractionReply.js'
 import { privacy } from './PrivacyPolicy.js'
 import { messageLog, CATS } from './MessageLog.js'
 import { MessageLogPanel } from './MessageLogPanel.js'
+import { Minimap } from './Minimap.js'
 import { RANGE_DEFS, RANGE_EVENT, readRange, writeRange, valueFromSlider, sliderFromValue, formatRange }
   from './renderRange.js'
 
@@ -40,6 +41,10 @@ function enabledSourcesFrom(filters) {
 
 const ALIGN_KEY = 'ajna_wand_alignment'  // persisted manual north-alignment offset (deg)
 const UWB_NET_KEY = 'ajna_uwb_network'   // persisted active PANS network id
+
+// Tabs, in denen die Minimap angeboten wird. Auf der großen Karte wäre eine
+// Minikarte sinnlos, in den Einstellungen stört sie nur.
+const MINIMAP_TABS = new Set(['ar', 'nearby'])
 
 const TAB_DEFS = [
   { id: 'map',      icon: '🗺️', label: 'Karte' },
@@ -115,6 +120,24 @@ export class MobileShell {
       },
       onInteractError: (rec, key, msg) => { this._logEvent(`interact ${key} abgelehnt: ${msg}`); this._flashNotice(msg) },
     })
+    // Minimap auf body-Ebene, nicht in einem View-Container: sie gehört in die
+    // 3D- UND die Objekte-Ansicht, aber nicht über die große Karte. Welche Tabs
+    // sie anbieten, entscheidet switchTo().
+    //
+    // Blickquelle: die AR-Kamera, sobald das 3D-Bündel geladen ist — sonst die
+    // GPS-Position. Im Objekte-Tab ist Letzteres sogar das Richtige, dort geht
+    // es um „was ist um MICH herum“.
+    this._minimap = new Minimap({
+      container: document.body,
+      getView: () => {
+        const cam = window.ajnaCameraView?.()
+        if (cam && Number.isFinite(cam.lat)) return cam
+        const p = _nbPos()
+        return p && Number.isFinite(p.lat) ? { lat: p.lat, lon: p.lon } : null
+      },
+    })
+    this._minimap.setVisible(MINIMAP_TABS.has(this.activeTab))
+
     const _nbRoot = document.querySelector('.shell-view[data-view="nearby"] .nearby-root')
     if (_nbRoot) {
       this._nearby = new NearbyList({
@@ -122,6 +145,9 @@ export class MobileShell {
         container: _nbRoot,
         getPosition: _nbPos,
         actions: this._nearbyActions,
+        // Geteilte AgentFilters-Instanz (map.js legt sie an, main.js übernimmt
+        // sie) — nur für die Herkunftsprüfung; fehlt sie, entfällt das Badge.
+        filters: window.agentFilters || null,
         onShowOnMap: (rec) => {
           this.switchTo('map')
           try { window.map?.setView([rec.lat, rec.lon], 18) } catch {}
@@ -308,6 +334,8 @@ export class MobileShell {
     if (tabId === 'map' && window.map?.invalidateSize) {
       requestAnimationFrame(() => window.map.invalidateSize())
     }
+
+    this._minimap?.setVisible(MINIMAP_TABS.has(tabId))
 
     // AR-View: nur wenn immersives WebXR hier unterstützt wird (Headset/Quest-
     // Browser/Android XR), die Babylon-Szene direkt im Tab laden. Sonst Hinweis
@@ -523,32 +551,29 @@ export class MobileShell {
       <section class="settings-section">
         <h3>Sichtweite</h3>
         <div class="meta" style="margin-bottom:10px">
-          Begrenzt, was die 3D-/AR-Ansicht zeichnet. Kleinere Werte = weniger Geometrie
-          = flüssigeres Bild auf schwachen Geräten. Wirkt sofort, pro Gerät gespeichert.
+          Begrenzt, was die 3D-/AR-Ansicht zeichnet. Kleinere Werte = flüssigeres Bild.
+          Wirkt sofort, pro Gerät gespeichert.
         </div>
         <label class="meta" style="display:flex;align-items:center;gap:10px">
           <span style="white-space:nowrap;min-width:74px">Objekte</span>
           ${reichweite('objects')}
         </label>
         <div class="meta" style="margin-top:6px">
-          Horizontale Entfernung zur Kamera. Ganz rechts = unbegrenzt (Vorgabe) —
-          sonst verschwinden Flugzeuge und Schiffe, die naturgemäß weit weg sind.
+          Horizontale Entfernung zur Kamera. Ganz rechts = unbegrenzt (Vorgabe).
         </div>
         <label class="meta" style="display:flex;align-items:center;gap:10px;margin-top:12px">
           <span style="white-space:nowrap;min-width:74px">Kulisse</span>
           ${reichweite('scenery')}
         </label>
         <div class="meta" style="margin-top:6px">
-          Gebäude, Straßen, Gewässer und Gleise — ein Regler, weil sie aus derselben
-          Kachelabfrage stammen. Der teuerste Posten der Szene.
+          Gebäude, Straßen, Gewässer und Gleise.
         </div>
         <label class="meta" style="display:flex;align-items:center;gap:10px;margin-top:12px">
           <span style="white-space:nowrap;min-width:74px">Gelände</span>
           ${reichweite('terrain')}
         </label>
         <div class="meta" style="margin-top:6px">
-          Höhenrelief ringsum. Je Fläche viel billiger als Gebäude, darf also weiter reichen.
-          Wird automatisch mindestens so groß wie die Kulisse — die legt sich auf das Relief.
+          Höhenrelief ringsum. Mindestens so groß wie die Kulisse.
         </div>
       </section>
 
@@ -591,31 +616,32 @@ export class MobileShell {
           </select>
         </label>
         <div class="meta" style="margin-top:6px">
-          Wirkt sofort, auch in laufender AR-Ansicht. Marker ohne SLAM = reine
-          Bild-Erkennung (läuft auch ohne Bewegungssensoren).
+          Wirkt sofort, auch in laufender AR-Ansicht. Marker ohne SLAM funktioniert
+          auch ohne Bewegungssensoren.
         </div>
         <label class="meta" style="display:flex;align-items:center;gap:8px;margin-top:12px">
           <input type="checkbox" data-field="ar-abs-yaw" ${arAbsYaw ? 'checked' : ''}>
           AR-Blickrichtung am absoluten Kompass referenzieren
         </label>
         <div class="meta" style="margin-top:6px">
-          Korrigiert den sitzungsabhängigen Nullpunkt der relativen Sensorik langsam
-          auf echtes Nord — der Nord-Offset oben wird damit sessionstabil (Fein-Trim).
+          Zieht die Blickrichtung langsam auf echtes Nord nach. Der Nord-Offset oben
+          bleibt dann über Sitzungen hinweg gültig.
         </div>
         <label class="meta" style="display:flex;align-items:center;gap:10px;margin-top:12px">
           <span style="white-space:nowrap">Karten-Kompass-Offset (°)</span>
           <input type="number" data-field="map-north" value="${mapNorth}" step="1" style="width:80px">
         </label>
         <div class="meta" style="margin-top:6px">
-          Korrigiert den Blickrichtungs-Kegel auf der Karte. Getrennt vom AR-Offset —
-          Karte (absoluter Kompass) und AR (relative Sensorik) kalibrieren unterschiedlich.
+          Korrigiert den Blickrichtungs-Kegel auf der Karte. Wird getrennt vom
+          AR-Offset eingestellt.
         </div>
         <label class="meta" style="display:flex;align-items:center;gap:10px;margin-top:12px">
           <span style="white-space:nowrap">Augenhöhe (m)</span>
           <input type="number" data-field="ar-eye-height" value="${arEyeHeight}" step="0.05" min="0.5" max="2.5" style="width:80px">
         </label>
         <div class="meta" style="margin-top:6px">
-          Reale Höhe der Gerätekamera über dem Boden — bestimmt, auf welcher Höhe exakt platzierte Objekte (Anker/Marker) im Bild erscheinen. Pro Gerät gespeichert.
+          Reale Höhe der Gerätekamera über dem Boden. Bestimmt, auf welcher Höhe
+          exakt platzierte Objekte im Bild erscheinen. Pro Gerät gespeichert.
         </div>
         <label class="meta" style="display:flex;align-items:center;gap:8px;margin-top:12px">
           <input type="checkbox" data-field="ar-compass" ${arCompass ? 'checked' : ''}>

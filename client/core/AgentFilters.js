@@ -32,6 +32,8 @@ export class AgentFilters {
     this.ajna = ajna
     /** @type {Record<string, any[]>}  source → manifest.layers (gemerged) */
     this._layersBySource = {}
+    /** @type {Record<string, Record<string, object>>}  source → { origin: Inhaber-Manifest } */
+    this._ownerBySource = {}
     /** @type {Record<string, string[]>}  source → ausgewählte Layer-Keys */
     this._selection = this._loadSelection()
     this._listeners = new Set()
@@ -42,19 +44,53 @@ export class AgentFilters {
   // ───────────────────────────────────────────────────────────────────
 
   /**
-   * Lädt alle Manifests vom Server und merged sie pro `source`. Mehrere
-   * Manifests gleicher Source (z. B. zwei Owner) werden zu einer
-   * vereinten Layer-Liste verschmolzen (dedup nach key).
+   * Lädt die Manifests und ordnet sie den Sources zu.
+   *
+   * NAMENSINHABER: Auf EINEM Server gehört ein Source-Name genau EINEM Konto —
+   * dem, das ihn zuerst registriert hat (frühestes `created`). Manifeste
+   * desselben Servers mit gleicher Source, aber anderem Owner, sind
+   * Namensanmaßungen und werden verworfen. Vorher wurden sie verschmolzen
+   * („der letzte Owner gewinnt"), womit ein beliebiges Konto Anzeigename,
+   * Beschreibung, Ebenen und Render-Budget einer fremden Quelle überschreiben
+   * konnte. Der Unique-Index der Collection ist `(source, owner)` und
+   * verhindert das nicht — die Regel lebt hier.
+   *
+   * ÜBER SERVER HINWEG wird weiter verschmolzen: dass „poi-bridge" auf zwei
+   * Servern läuft, ist der Normalfall, und der Filterdialog soll dafür EINEN
+   * Eintrag zeigen. Der Namensinhaber wird deshalb JE SERVER geführt — genau
+   * so prüft `provenanceOf()` später die Herkunft eines Objekts.
    */
   async refreshManifests() {
     const manifests = await this.ajna.listAgentManifests().catch(err => {
       console.warn('[filters] manifest fetch failed:', err?.message || err)
       return []
     })
-    const bySource = {}
+
+    // 1) Je (Server, Source) den frühesten Eintrag bestimmen.
+    const inhaber = new Map()          // JSON.stringify([origin, source]) → Manifest
+    const verworfen = []
     for (const m of manifests) {
+      if (!m?.source) continue
+      const schluessel = JSON.stringify([m._origin || '', m.source])
+      const bisher = inhaber.get(schluessel)
+      if (!bisher) { inhaber.set(schluessel, m); continue }
+      // Frühestes `created` gewinnt; bei Gleichstand die kleinere ID (stabil).
+      const frueher = (m.created || '') < (bisher.created || '')
+        || ((m.created || '') === (bisher.created || '') && String(m.id) < String(bisher.id))
+      if (frueher) { verworfen.push(bisher); inhaber.set(schluessel, m) }
+      else verworfen.push(m)
+    }
+    for (const m of verworfen) {
+      console.warn(`[filters] Manifest für "${m.source}" verworfen — der Name gehört`
+        + ` auf diesem Server einem anderen Konto (Owner ${m.owner}).`)
+    }
+
+    // 2) Nur die Namensinhaber zu Sources verschmelzen (über Server hinweg).
+    const bySource = {}
+    const ownerBySource = {}           // source → { [origin]: ownerId }
+    const sortiert = [...inhaber.values()].sort((a, b) => (a.created || '').localeCompare(b.created || ''))
+    for (const m of sortiert) {
       const src = m.source
-      if (!src) continue
       if (!bySource[src]) {
         bySource[src] = {
           source: src,
@@ -65,8 +101,11 @@ export class AgentFilters {
           render_budget: Number.isFinite(Number(m.render_budget)) ? Number(m.render_budget) : undefined,
           layers: []
         }
+        ownerBySource[src] = {}
       }
-      // Layer dedup nach key (späterer überschreibt — der letzte Owner gewinnt)
+      // Ganzes Inhaber-Manifest merken: Herkunft braucht Owner, Handle und Siegel.
+      ownerBySource[src][m._origin || ''] = m
+      // Layer dedup nach key — hier nur noch über SERVER hinweg, nicht über Owner.
       const existingKeys = new Set(bySource[src].layers.map(l => l.key))
       for (const layer of (m.layers || [])) {
         if (!layer?.key) continue
@@ -75,8 +114,63 @@ export class AgentFilters {
         existingKeys.add(layer.key)
       }
     }
+
     this._layersBySource = bySource
+    this._ownerBySource = ownerBySource
     this._emit()
+  }
+
+  /**
+   * Inhaber-Manifest eines Source-Namens auf einem bestimmten Server.
+   * @returns {object|null} Manifest oder null, wenn dort niemand registriert ist
+   */
+  _inhaberFor(source, origin = '') {
+    return this._ownerBySource?.[source]?.[origin] ?? null
+  }
+
+  /**
+   * Konto, dem ein Source-Name auf einem Server gehört.
+   * @returns {string|null} Owner-ID oder null
+   */
+  ownerFor(source, origin = '') {
+    return this._inhaberFor(source, origin)?.owner ?? null
+  }
+
+  /**
+   * Herkunft eines Objekts — beantwortet „stammt das wirklich von dem Agenten,
+   * als der es sich ausgibt?".
+   *
+   * `state.source` ist eine ungeprüfte Selbstauskunft: der Server schreibt sie
+   * nicht, jedes Konto kann sie setzen. Belastbar ist ausschließlich `owner`
+   * (serverseitig in `onRecordCreateRequest` gesetzt). Verglichen wird deshalb
+   * der Owner des Objekts mit dem Owner des Manifests — und zwar auf DEMSELBEN
+   * Server, weil Konto-IDs nur dort etwas bedeuten.
+   *
+   * @returns {{status:'user'|'agent'|'unregistered'|'mismatch',
+   *            source:string|null, agentName:string|null}}
+   */
+  provenanceOf(record) {
+    const source = record?.state?.source
+    if (!source) return { status: 'user', source: null, agentName: null, handle: null, sealed: false }
+
+    const origin = record?._origin || ''
+    const inhaber = this._inhaberFor(source, origin)
+    if (!inhaber) {
+      return { status: 'unregistered', source, agentName: null, handle: null, sealed: false }
+    }
+
+    // Objekt-Owner ist roh (Fremdschlüssel werden nicht umgeschrieben),
+    // Manifest-Owner ebenso — direkter Vergleich ist also korrekt.
+    const passt = record.owner === inhaber.owner
+    const handle = inhaber.owner_handle || null
+    const agentName = inhaber.agent_name || source
+    if (!passt) return { status: 'mismatch', source, agentName, handle, sealed: !!inhaber.owner_sealed }
+
+    // Der Handle stimmt — aber erst das Betreiber-Siegel macht daraus eine
+    // Bestätigung. Ohne Siegel ist es nur ein Konto, das diesen Namen führt.
+    return inhaber.owner_sealed
+      ? { status: 'agent', source, agentName, handle, sealed: true }
+      : { status: 'unsealed', source, agentName, handle, sealed: false }
   }
 
   /**

@@ -118,7 +118,8 @@ Ehrlichkeit spart Enttäuschung:
 - **Kein fertiges Spiel.** Es gibt Aufträge, Inventar und Interaktionen, aber keine Kampagne und keine Balance.
 - **Positionsangaben sind nicht beweisbar.** Der Client ist die einzige Positionsquelle und kann lügen. Für Belebung reicht das, für „war nachweislich dort" nicht — dafür braucht es einen zweiten Faktor (UWB-Anker, signierter Sensor-Report). Siehe [Privatsphäre](Privatsphaere.md).
 - **Federation ist einseitig.** Ein Client kann sich mit mehreren Servern gleichzeitig verbinden und sieht deren Inhalte nebeneinander; die Server selbst reden nicht miteinander.
-- **Keine offene Registrierung.** Konten legt der Betreiber an.
+- **Registrierung ist per Voreinstellung OFFEN.** PocketBase erlaubt Selbstregistrierung, solange der Betreiber die `createRule` der `users`-Collection nicht einschränkt. Wer eine geschlossene Instanz will, muss das aktiv tun.
+- **`state.source` ist eine Selbstauskunft.** Jedes Konto kann ein Objekt als „von Agent XY“ ausgeben; belastbar ist nur `owner`. Der Client markiert Objekte, deren Herkunft nicht zum registrierten Agenten passt — siehe [Objektmodell](Objektmodell.md).
 
 ---
 
