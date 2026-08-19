@@ -1,0 +1,29 @@
+{
+  "name": "parley",
+  "version": "0.1.0",
+  "description": "Kleine, JSON-native Dialogsprache für NPCs, Chatbots und Assistenten — ohne Abhängigkeiten, läuft in Node und im Browser.",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "src",
+    "README.md"
+  ],
+  "keywords": [
+    "dialogue",
+    "chatbot",
+    "npc",
+    "aiml",
+    "rivescript",
+    "conversation"
+  ],
+  "author": "blckwngd",
+  "license": "MIT",
+  "sideEffects": false,
+  "scripts": {
+    "test": "node test/parley.test.mjs"
+  }
+}

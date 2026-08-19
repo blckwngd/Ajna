@@ -11,8 +11,8 @@
 // den niemand startet, ist keine Absicherung, sondern eine Behauptung.
 //
 // Auffinden statt Aufzählen: eine feste Liste würde beim nächsten neuen Test
-// wieder veralten. Alles unter `client/` und `agents/`, was auf `.test.mjs`
-// endet, läuft mit.
+// wieder veralten. Alles unter `client/`, `agents/` und `parley/`, was auf
+// `.test.mjs` endet, läuft mit.
 
 import { readdirSync, statSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
@@ -20,7 +20,7 @@ import { join, dirname, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const SUCHE = ['client', 'agents']
+const SUCHE = ['client', 'agents', 'parley']
 const UEBERSPRINGEN = new Set(['node_modules', 'dist', 'poc'])
 
 function sammeln(dir, out = []) {

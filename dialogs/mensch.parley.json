@@ -1,0 +1,227 @@
+{
+  "name": "mensch",
+  "extends": "basis",
+  "_note": "Menschliche Figuren (Archetyp npc). Was hier nicht passt, beantwortet der Grundfundus.",
+  "input": "auto",
+  "vars": {
+    "art": "Mensch",
+    "gerede": 0
+  },
+  "lists": {
+    "gegend": [
+      "gegend",
+      "hier",
+      "in der naehe",
+      "in der umgebung",
+      "um uns herum",
+      "diese stadt",
+      "dieser ort"
+    ]
+  },
+  "rules": [
+    {
+      "label": "vertraulich",
+      "when": [
+        "* was gibt es @gegend *",
+        "* was ist hier los *"
+      ],
+      "if": {
+        "gerede": {
+          ">=": 3
+        }
+      },
+      "then": [
+        "Also gut, unter uns: Ich stehe hier nicht zufällig. Ich warte auf jemanden. Frag mich in ein paar Tagen nochmal, dann weiß ich vielleicht auf wen."
+      ],
+      "once": true,
+      "suggest": false,
+      "_note": "Steht VOR gegend: gleiche Muster, engere Bedingung."
+    },
+    {
+      "_note": "Der Hauptfaden: nach der Gegend fragen. Jede Antwort schiebt 'gerede' hoch, ab drei wird die Figur vertraulich.",
+      "label": "gegend",
+      "when": [
+        "* wie ist es @gegend *",
+        "* was gibt es @gegend *",
+        "* erzaehl mir was ueber *",
+        "* was ist hier los *",
+        "* kennst du dich hier aus *"
+      ],
+      "then": [
+        "Ruhig. Zu ruhig, sagen die Leute — aber die sagen das überall.",
+        "Ganz nett hier. Man gewöhnt sich an die Wege, und die Wege gewöhnen sich an einen.",
+        "Es gibt schlechtere Gegenden. Ich war in keiner, aber es muss sie geben."
+      ],
+      "set": {
+        "gerede": {
+          "+": 1
+        },
+        "topic": "gegend"
+      },
+      "suggest": "was gibt es hier"
+    },
+    {
+      "label": "geruecht",
+      "when": [
+        "* gerucht *",
+        "* geruecht *",
+        "* was erzaehlt man *",
+        "* neuigkeiten *",
+        "* gibt es neues *"
+      ],
+      "then": [
+        "Man erzählt sich, dass hier nachts etwas Großes über die Dächer zieht. Ich hab nur den Schatten gesehen. Und den Schreck.",
+        "Es heißt, jemand hätte etwas Glänzendes im Gras gefunden. Seitdem läuft die halbe Gegend mit gesenktem Blick herum.",
+        "Angeblich verschwinden Dinge, wenn man sie zu lange ansieht. Ich sehe deshalb nur noch kurz hin."
+      ],
+      "set": {
+        "gerede": {
+          "+": 1
+        },
+        "topic": "gegend"
+      },
+      "suggest": "gibt es neues"
+    },
+    {
+      "_note": "Anschlussregel: greift nur direkt nach einem Gerücht.",
+      "label": "geruecht_nach",
+      "after": [
+        "geruecht"
+      ],
+      "when": [
+        "* wirklich *",
+        "* im ernst *",
+        "* echt *",
+        "* glaubst du das *",
+        "* stimmt das *"
+      ],
+      "then": [
+        "Keine Ahnung. Aber es erzählt sich gut, und darauf kommt es an.",
+        "Ich glaube alles, was mir jemand zweimal erzählt. Beim ersten Mal bin ich skeptisch.",
+        "Wenn es nicht stimmt, ist es trotzdem eine gute Geschichte."
+      ],
+      "suggest": "im ernst"
+    },
+    {
+      "label": "drachen",
+      "when": [
+        "* drache *",
+        "* drachen *",
+        "* etwas am himmel *",
+        "* was fliegt da *"
+      ],
+      "then": [
+        "Die ziehen ihre eigenen Bahnen, ganz ohne Straßen. Muss praktisch sein.",
+        "Ich winke immer. Zurückgewinkt hat noch keiner.",
+        "Solange sie oben bleiben, bin ich ihr größter Fan."
+      ],
+      "do": [
+        "anim:wave"
+      ],
+      "suggest": "was fliegt da oben"
+    },
+    {
+      "label": "gestalten",
+      "when": [
+        "* gestalt *",
+        "* gefaehrlich *",
+        "* gefahr *",
+        "* muss ich aufpassen *",
+        "* sind hier feinde *"
+      ],
+      "then": [
+        "Ein paar zwielichtige Typen laufen herum. Die gucken böse, aber laufen auch nur im Kreis. Wie wir alle.",
+        "Halt Abstand zu denen, die dich nicht grüßen. Bewährte Regel.",
+        "Gefährlich ist hier höchstens die Langeweile. Und die kriegt jeden."
+      ],
+      "suggest": "ist es hier gefährlich"
+    },
+    {
+      "label": "tiere",
+      "when": [
+        "* tier *",
+        "* tiere *",
+        "* fuchs *",
+        "* reh *",
+        "* was lebt hier *"
+      ],
+      "then": [
+        "Die halten sich auf den Freiflächen. Und von mir fern, was ich ihnen nicht verdenke.",
+        "Ein Fuchs schaut manchmal vorbei. Reden will er nicht, fressen schon."
+      ],
+      "suggest": "welche tiere gibt es hier"
+    },
+    {
+      "label": "glaenzendes",
+      "when": [
+        "* diamant *",
+        "* glaenzend *",
+        "* schatz *",
+        "* wertvoll *"
+      ],
+      "then": [
+        "Wenn du etwas Glänzendes findest — behalt es. Und erzähl es nicht weiter. Außer mir.",
+        "Angeblich kann man die stapeln. Ich hab noch keinen, meine Stapel sind rein gedanklich."
+      ],
+      "suggest": "gibt es hier etwas wertvolles"
+    },
+    {
+      "label": "beruf",
+      "when": [
+        "* was arbeitest du *",
+        "* was bist du von beruf *",
+        "* hast du arbeit *"
+      ],
+      "then": [
+        "Ich bin von Beruf hier. Ganztags.",
+        "Wegbegleiter. Ich begleite Wege. Sie merken es nicht, aber ich bin da."
+      ],
+      "suggest": "was arbeitest du"
+    },
+    {
+      "label": "hunger",
+      "when": [
+        "* hunger *",
+        "* essen *",
+        "* durst *",
+        "* etwas zu trinken *"
+      ],
+      "then": [
+        "Hast du was dabei? Ich frage seit Wochen jeden, und langsam wird es peinlich.",
+        "Ich hätte gern etwas Warmes. Oder etwas Kaltes. Ich bin da nicht wählerisch, nur hungrig."
+      ],
+      "suggest": "hast du hunger"
+    },
+    {
+      "label": "folgen",
+      "when": [
+        "* komm mit *",
+        "* folge mir *",
+        "* begleite mich *"
+      ],
+      "then": [
+        "Gern — sobald ich weiß, wohin. Und sobald ich mich traue. Also: gleich.",
+        "Ich habe hier eine Route. Die läuft sich nicht von allein. Aber schön, dass du fragst."
+      ],
+      "suggest": "komm mit"
+    }
+  ],
+  "fallback": [
+    {
+      "_note": "Fällt vor den Grundfundus-Fallback, weil eigene Dokumente zuerst dran sind.",
+      "when": [
+        "*"
+      ],
+      "if": {
+        "gerede": {
+          ">=": 2
+        }
+      },
+      "then": [
+        "Puh. Wir reden schon eine Weile, und jetzt überforderst du mich.",
+        "Da komm ich nicht mit. Frag mich lieber nochmal nach der Gegend, da bin ich Fachmann."
+      ],
+      "suggest": false
+    }
+  ]
+}

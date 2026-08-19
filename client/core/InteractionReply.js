@@ -31,8 +31,12 @@ const randomOf = arr => arr[Math.floor(Math.random() * arr.length)]
 /**
  * Gesprächs-Antwort: zufällig aus `state.dialogs` (Reihe von Antworten), sonst
  * das einzelne `state.dialog`, sonst eine generische Zeile. Bewusst NICHT die
- * Objekt-Beschreibung (die gehört zu "untersuchen"). Später ersetzt ein echtes
- * Dialog-System diese Auswahl.
+ * Objekt-Beschreibung (die gehört zu "untersuchen").
+ *
+ * NICHT MEHR der Hauptweg: „Sprechen" öffnet seit dem Chat-Umbau ein echtes
+ * Gespräch (Parley, siehe wiki/Dialoge.md). Diese Einzeiler bleiben als
+ * Rückfallebene für Clients ohne Chatfenster und für Figuren, deren Besitzer
+ * nicht antwortet.
  */
 export function talkResponse(record) {
   const dialogs = record?.state?.dialogs

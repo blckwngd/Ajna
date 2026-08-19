@@ -142,6 +142,53 @@ privacy.setLevel('srvD', 'area')
 const f1 = privacy.positionFor('srvD', POS), f2 = privacy.positionFor('srvD', POS)
 check('Vergröberung ist deterministisch (kein Herausmitteln)', f1.lat === f2.lat && f1.lon === f2.lon)
 
+// ── Chatfenster: mitlaufen oder in Ruhe lassen ───────────────────────────
+// Die Regel, um die es geht: neue Zeilen holen die Ansicht nach unten — ausser
+// der Leser ist selbst hochgescrollt, um etwas nachzulesen. Ein Fenster, das
+// einem beim Lesen wegspringt, ist schlimmer als eines, das nicht nachzieht.
+//
+// Geprüft wird die Entscheidung, nicht das Rendern: eine Instanz ohne
+// Konstruktor (der bräuchte das ganze Overlay), dafür mit einer nachgebauten
+// Liste, deren Masse wir frei setzen können.
+console.log('\n── MessageLogPanel: Scrollverhalten')
+const { MessageLogPanel } = await import('../client/core/MessageLogPanel.js')
+
+const liste = (scrollTop, scrollHeight = 1000, clientHeight = 300) =>
+  ({ scrollTop, scrollHeight, clientHeight })
+const panel = Object.create(MessageLogPanel.prototype)
+panel._stickToBottom = true
+
+panel._listEl = liste(700)          // 1000 - 700 - 300 = 0 → ganz unten
+check('ganz unten gilt als unten', panel._istUnten() === true)
+panel._listEl = liste(680)          // 20 px Abstand — innerhalb der Toleranz
+check('20 px über dem Rand gilt noch als unten', panel._istUnten() === true)
+panel._listEl = liste(500)          // 200 px Abstand — der Leser liest oben
+check('200 px über dem Rand gilt als „liest nach"', panel._istUnten() === false)
+
+// Neue Zeile, während der Leser unten steht → Ansicht zieht nach.
+panel._listEl = liste(700)
+panel._stickToBottom = true
+panel._scrollToBottom()
+check('haftend: neue Zeile zieht ans Ende', panel._listEl.scrollTop === 1000)
+
+// Neue Zeile, während der Leser oben liest → Position bleibt.
+panel._listEl = liste(120)
+panel._stickToBottom = false
+panel._scrollIfSticking()
+check('nicht haftend: Position bleibt, wo sie ist', panel._listEl.scrollTop === 120)
+
+// Zurück nach unten gescrollt → haftet wieder.
+panel._listEl = liste(700)
+panel._stickToBottom = panel._istUnten()
+panel._listEl = liste(0, 1400)
+panel._scrollIfSticking()
+check('wieder unten angekommen → haftet erneut', panel._listEl.scrollTop === 1400)
+
+// Ohne Liste (Fenster zu) darf nichts krachen.
+panel._listEl = null
+panel._scrollToBottom()
+check('geschlossenes Fenster: kein Fehler', panel._istUnten() === true)
+
 const failed = results.filter(r => !r.ok)
 console.log(`\n${'═'.repeat(60)}`)
 console.log(`UI: ${results.length - failed.length} bestanden, ${failed.length} fehlgeschlagen`)

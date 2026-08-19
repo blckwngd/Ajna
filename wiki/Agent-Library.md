@@ -1,12 +1,16 @@
 # Agent-Library
 
 <!-- nav -->
-[← Inhalt](Home.md#inhalt) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · [Ajna-Library](Ajna-Library.md) · **Agent-Library** · [Objektmodell](Objektmodell.md) · [Architektur](Architektur.md)
+[← Inhalt](Home.md#inhalt) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · [Ajna-Library](Ajna-Library.md) · **Agent-Library** · [Objektmodell](Objektmodell.md) · [Dialoge](Dialoge.md) · [Architektur](Architektur.md)
 <!-- /nav -->
 
 <!-- seiteninhalt -->
-**Auf dieser Seite:** [bootAgent(name, opts?)](#bootagentname-opts) · [Umgebungsvariablen lesen](#umgebungsvariablen-lesen) · [Identität des Agenten](#identität-des-agenten) · [Weitere Helfer](#weitere-helfer) · [Kommandos autorisieren](#kommandos-autorisieren) · [Konfigurationsdateien — lib/env.mjs](#konfigurationsdateien--libenvmjs) · [Einrichtungsassistent — lib/setup-wizard.mjs](#einrichtungsassistent--libsetup-wizardmjs) · [Interessensbereiche verfolgen](#interessensbereiche-verfolgen) · [Geo-Mathematik](#geo-mathematik) · [Wege über das Straßennetz](#wege-über-das-straßennetz) · [Landeplätze](#landeplätze) · [Vollständiges Gerüst](#vollständiges-gerüst)
+**Auf dieser Seite:** [bootAgent(name, opts?)](#bootagentname-opts) · [Umgebungsvariablen lesen](#umgebungsvariablen-lesen) · [Identität des Agenten](#identität-des-agenten) · [Weitere Helfer](#weitere-helfer) · [Kommandos autorisieren](#kommandos-autorisieren) · [Konfigurationsdateien — lib/env.mjs](#konfigurationsdateien--libenvmjs) · [Einrichtungsassistent — lib/setup-wizard.mjs](#einrichtungsassistent--libsetup-wizardmjs) · [Interessensbereiche verfolgen](#interessensbereiche-verfolgen) · [Geo-Mathematik](#geo-mathematik) · [Wege über das Straßennetz](#wege-über-das-straßennetz) · [Landeplätze](#landeplätze) · [Dialoge](#dialoge) · [Vollständiges Gerüst](#vollständiges-gerüst)
 <!-- /seiteninhalt -->
+
+
+
+
 
 Alles, was ein Node-Agent zusätzlich zur [Ajna-Library](Ajna-Library.md) braucht: Hochfahren, Konfiguration, Einrichtungsassistent. Liegt unter `agents/lib/`.
 
@@ -295,6 +299,46 @@ setInterval(async () => {
 | `distM(aLat, aLon, bLat, bLon)` | Distanz in Metern |
 
 `rng` ist einspeisbar — damit sind Tests deterministisch.
+
+---
+
+## Dialoge
+
+`agents/lib/dialogs.mjs` — der Node-Teil von [Parley](Dialoge.md): die
+mitgelieferten Dialogsätze liegen als JSON in `/dialogs`.
+
+| Funktion | Beschreibung |
+|---|---|
+| `npcParley(opts?)` | fertige Dialogmaschine mit allen Sätzen aus `/dialogs` |
+| `loadDialogSets(dir?, warn?)` | nur die Dokumente lesen; kaputte Dateien werden gemeldet und übersprungen |
+| `DIALOG_DIR` | Pfad des Standardordners |
+
+`opts`: `dir` (anderer Ordner), `extra` (weitere Dokumente), `rng`,
+`maxChoices`, `warn`.
+
+```js
+import { npcParley } from './lib/dialogs.mjs'
+import { dialogNameFor, dialogVarsFor, talkSessionId } from '../client/core/Parley.js'
+
+const parley = npcParley()
+
+await ajna.onChat(async (msg) => {
+  const figur = meineObjekte.find(o => o.id === msg.object)
+  if (!figur) return
+  const chat = parley.open(dialogNameFor(figur), talkSessionId(msg.from, figur.id),
+                           { vars: dialogVarsFor(figur) })
+  const a = chat.say(msg.text)
+  if (a.text) await ajna.sendChat(msg.from, {
+    text: a.text, object: figur.id,
+    meta: a.choices ? { choices: a.choices, input: a.input } : null,
+  })
+})
+
+setInterval(() => parley.sweep(15 * 60_000), 60_000)   // alte Gespräche vergessen
+```
+
+Zuordnung, Sitzungsschlüssel und Objektvariablen kommen aus der
+[Ajna-Library](Ajna-Library.md#dialoge) — dieselbe Datei nutzt auch der Client.
 
 ---
 

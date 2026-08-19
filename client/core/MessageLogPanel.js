@@ -9,26 +9,110 @@
 
 import { messageLog, CATS } from './MessageLog.js'
 import { makeDraggable } from './draggable.js'
+import { Toast } from './Toast.js'
 
 const FILTER_KEY = 'ajna.msglog.filter'   // 'player' | 'all'
+// Abstand zum unteren Rand, bis zu dem die Liste noch als „unten" gilt. Etwas
+// Spiel, damit ein Rundungsfehler oder ein kurzer Wisch nicht schon als
+// „liest weiter oben nach" zählt.
+const BOTTOM_TOLERANZ = 48
 const STYLE_ID = 'ajna-msglog-style'
 
 const fmtTime = (t) => { try { return new Date(t).toTimeString().slice(0, 5) } catch { return '' } }
 
 export class MessageLogPanel {
-  constructor({ parent = document.body } = {}) {
+  constructor({ parent = document.body, ajna = null, toast = null } = {}) {
     this.parent = parent
+    this.ajna = ajna
+    // Eingehende Sätze laufen zusätzlich als Toast über den Bildschirm — sonst
+    // stünde die Antwort einer Figur nur im geschlossenen Verlaufsfenster.
+    // Der Toast-Container ist seitenweit geteilt, eine eigene Instanz stapelt
+    // sich also sauber mit den übrigen.
+    this._toast = toast || new Toast()
+    this._partner = null
+    this._choices = null
+    this._choiceMode = 'choice'
     this._open = false
     this._unread = 0
+    // Haftet die Liste am unteren Rand? Solange ja, holt jede neue Zeile die
+    // Ansicht nach unten. Scrollt der Leser selbst hoch, um etwas nachzulesen,
+    // schaltet das ab — nichts ist ärgerlicher als ein Fenster, das einem beim
+    // Lesen wegspringt.
+    this._stickToBottom = true
     this._filter = (() => { try { return localStorage.getItem(FILTER_KEY) === 'all' ? 'all' : 'player' } catch { return 'player' } })()
     this._injectStyles()
     this._buildLauncher()
     // Live: Badge hochzählen (geschlossen) bzw. Liste ergänzen (offen).
     this._unsub = messageLog.onChange((entry) => this._onLog(entry))
+    this._subscribeChat()
+  }
+
+  /**
+   * Eingehende Nachrichten in den Verlauf schreiben. Läuft unabhängig vom
+   * Gesprächsmodus — wer angesprochen wird, soll es auch sehen, wenn das
+   * Fenster geschlossen ist (der Zähler am Knopf springt dann an).
+   */
+  async _subscribeChat() {
+    if (!this.ajna?.onChat) return
+    const abo = async () => {
+      try { this._chatOff?.() } catch {}
+      this._chatOff = null
+      if (!this.ajna.isLoggedIn?.()) return
+      try {
+        this._chatOff = await this.ajna.onChat((m) => this._onChat(m))
+      } catch (err) { console.warn('[chat] Abo fehlgeschlagen:', err?.message || err) }
+    }
+    abo()
+    // Nach Anmeldung neu abonnieren: das Thema hängt an der eigenen Konto-ID,
+    // vor dem Login gibt es keine.
+    this.ajna.onAuthChanged?.(() => abo())
+  }
+
+  _onChat(m) {
+    const name = this._nameFor(m)
+
+    // Gehört die Nachricht zu einer Figur, mit der gerade kein Gespräch läuft,
+    // dann ist SIE jetzt das Gegenüber. Ohne das bliebe die Eingabezeile
+    // verborgen, sobald „Sprechen" aus einer View kam, die den Chat nicht
+    // selbst öffnet (AR- und Kartenansicht) — und im Verlauf stünde die
+    // Konto-ID statt des Namens.
+    if (m.object && this._partner?.objectId !== m.object) {
+      this.talkTo({ userId: m.from, name, objectId: m.object, serverId: m._origin || null },
+                  { open: false })
+    }
+
+    messageLog.push(`${name}: ${m.text}`, 'dialog')
+    // `log: false` — die Zeile steht schon als Gespräch im Verlauf.
+    try { this._toast?.show(m.text, { title: name, log: false }) } catch {}
+
+    // Auswahlantworten nur übernehmen, wenn sie vom aktuellen Partner kommen —
+    // sonst überschriebe eine fremde Nachricht die Knöpfe des Gesprächs.
+    if (this._partner?.userId === m.from) {
+      this.setChoices(m.meta?.choices || null, m.meta?.input || 'choice')
+    }
+  }
+
+  /**
+   * Anzeigename des Absenders. Bevorzugt die FIGUR (steckt als `object` in der
+   * Nachricht), denn geschrieben hat zwar deren Besitzer-Konto, gesprochen hat
+   * aber die Figur. Erst danach der laufende Gesprächspartner, zuletzt die
+   * rohe Konto-ID.
+   */
+  _nameFor(m) {
+    if (m?.object) {
+      try {
+        const obj = this.ajna?.getObjectById?.(m.object)
+        if (obj?.name) return obj.name
+      } catch { /* Objekt (noch) nicht im Zwischenspeicher */ }
+    }
+    const p = this._partner
+    if (p && p.userId === m?.from && p.name) return p.name
+    return m?.from || 'Jemand'
   }
 
   destroy() {
     try { this._unsub?.() } catch {}
+    try { this._chatOff?.() } catch {}
     try { this._dragCleanup?.() } catch {}
     this._launcher?.remove()
     this._overlay?.remove()
@@ -97,6 +181,15 @@ export class MessageLogPanel {
           <button class="mlg-close" type="button" aria-label="Schließen">×</button>
         </header>
         <div class="mlg-list" data-role="list"></div>
+        <div class="mlg-hinweis" data-role="hinweis">Zum Schreiben eine Figur antippen → „Sprechen“.</div>
+        <form class="mlg-compose" data-role="compose" hidden>
+          <div class="mlg-choices" data-role="choices" hidden></div>
+          <div class="mlg-inputrow">
+            <input type="text" data-role="input" autocomplete="off"
+                   placeholder="Nachricht …" maxlength="2000">
+            <button type="submit" title="Senden">➤</button>
+          </div>
+        </form>
       </div>`
     ov.addEventListener('click', e => { if (e.target === ov) this.close() })
     ov.querySelector('.mlg-close').addEventListener('click', () => this.close())
@@ -108,19 +201,149 @@ export class MessageLogPanel {
     this.parent.appendChild(ov)
     this._overlay = ov
     this._listEl = ov.querySelector('[data-role="list"]')
+    this._composeEl = ov.querySelector('[data-role="compose"]')
+    this._inputEl = ov.querySelector('[data-role="input"]')
+    this._choicesEl = ov.querySelector('[data-role="choices"]')
+    this._hinweisEl = ov.querySelector('[data-role="hinweis"]')
+    this._composeEl.addEventListener('submit', (ev) => {
+      ev.preventDefault()
+      const t = this._inputEl.value.trim()
+      if (!t) return
+      this._inputEl.value = ''
+      this._send(t)
+    })
+    // Öffnen heißt: das Neueste sehen wollen. Egal, wo die Liste beim letzten
+    // Schließen stand.
+    this._stickToBottom = true
+    this._listEl.addEventListener('scroll', () => { this._stickToBottom = this._istUnten() },
+                                  { passive: true })
+
+    this._syncCompose()
     this._renderList()
+    this._scrollToBottom()
+    if (this._partner) setTimeout(() => this._inputEl?.focus(), 50)
   }
 
   close() {
     this._open = false
     this._overlay?.remove()
     this._overlay = this._listEl = null
+    this._composeEl = this._inputEl = this._choicesEl = this._hinweisEl = null
+  }
+
+  // ── Gesprächsmodus ───────────────────────────────────────────────────
+  //
+  // Das Verlaufsfenster ist zugleich der Chat. Ohne Gesprächspartner bleibt es
+  // reine Anzeige wie bisher; `talkTo()` schaltet es in einen Privatchat.
+  //
+  // Der Transport ist nutzer-zu-nutzer (`ajna.sendChat`), nicht objektgebunden —
+  // damit trägt dieselbe Bahn später Direktnachrichten und einen Weltchat.
+  // Beim Ansprechen einer FIGUR geht die Nachricht an deren Konto; das Objekt
+  // reist als Kontext mit, sonst wüsste der Agent nicht, welche seiner Figuren
+  // gemeint ist.
+
+  /**
+   * In einen Privatchat wechseln.
+   * @param {{userId: string, name?: string, objectId?: string, serverId?: string}|null} partner
+   *        null beendet das Gespräch und schaltet zurück auf reine Anzeige.
+   * @param {{open?: boolean}} [opts]  Fenster gleich aufmachen (Vorgabe: ja)
+   */
+  talkTo(partner, { open = true } = {}) {
+    this._partner = partner || null
+    this._choices = null
+    // `open: false` für Gespräche, die von selbst anfangen (eine Figur meldet
+    // sich): Fenster nicht aufreißen, der Toast und der Zähler am Auslöser
+    // sagen es schon. Wer „Sprechen" antippt, will es dagegen sofort sehen.
+    if (partner && open) this.open()
+    this._syncCompose()
+    if (partner) {
+      messageLog.push(`— Gespräch mit ${partner.name || 'Unbekannt'} —`, 'dialog')
+      if (open) setTimeout(() => this._inputEl?.focus(), 50)
+    }
+  }
+
+  /** Aktueller Gesprächspartner oder null. */
+  get partner() { return this._partner || null }
+
+  /**
+   * Auswahlantworten anbieten (Parley liefert sie, wenn an einer Stelle nur
+   * feste Eingaben möglich sind). `null` schaltet zurück auf freie Eingabe.
+   * @param {Array<{label:string, send?:string, value?:string}>|null} choices
+   * @param {'choice'|'auto'|'text'} [modus]  ob daneben noch frei getippt werden darf
+   */
+  setChoices(choices, modus = 'choice') {
+    this._choices = Array.isArray(choices) && choices.length ? choices : null
+    // „choice" = nur die Knöpfe, „auto"/„text" = Knöpfe UND Eingabefeld.
+    this._choiceMode = modus === 'choice' ? 'choice' : 'auto'
+    this._syncCompose()
+  }
+
+  _syncCompose() {
+    if (!this._composeEl) return
+    const an = !!this._partner
+    this._composeEl.hidden = !an
+    const kopf = this._overlay?.querySelector('h3')
+    if (kopf) kopf.textContent = an ? (this._partner.name || 'Gespräch') : 'Verlauf'
+
+    // Auswahl statt Freitext: Knöpfe zeigen, Eingabezeile ausblenden.
+    const zeile = this._composeEl.querySelector('.mlg-inputrow')
+    if (this._choices) {
+      this._choicesEl.hidden = false
+      this._choicesEl.textContent = ''
+      for (const c of this._choices) {
+        const b = document.createElement('button')
+        b.type = 'button'
+        b.className = 'mlg-choice'
+        const wert = c.send ?? c.value ?? c.label
+        b.textContent = c.label || wert
+        b.addEventListener('click', () => {
+          this.setChoices(null)
+          // Gesendet wird der MUSTER-Wert, nicht die Beschriftung — sonst
+          // greift die Regel nicht, die den Knopf erzeugt hat.
+          this._send(wert, c.label)
+        })
+        this._choicesEl.appendChild(b)
+      }
+      if (zeile) zeile.hidden = this._choiceMode === 'choice'
+    } else {
+      this._choicesEl.hidden = true
+      this._choicesEl.textContent = ''
+      if (zeile) zeile.hidden = false
+    }
+    if (this._hinweisEl) this._hinweisEl.hidden = an
+    // Knöpfe und Eingabezeile nehmen der Liste Höhe weg — was eben noch unten
+    // stand, wäre sonst wieder aus dem Bild.
+    this._scrollIfSticking()
+  }
+
+  async _send(text, anzeige = null) {
+    const p = this._partner
+    if (!p) return
+    // Wer selbst schreibt, will die eigene Zeile sehen — auch wenn er vorher
+    // hochgescrollt hatte.
+    this._stickToBottom = true
+    messageLog.push(`Du: ${anzeige || text}`, 'dialog')
+    try {
+      const r = await this.ajna?.sendChat?.(p.userId, {
+        text, object: p.objectId || null, serverId: p.serverId || null,
+      })
+      // delivered === 0 heißt: niemand hört zu. Das dem Spieler sagen, sonst
+      // wartet er auf eine Antwort, die nie kommt.
+      if (r && r.delivered === 0) {
+        messageLog.push(`${p.name || 'Er'} antwortet nicht — niemand ist da.`, 'system')
+      }
+    } catch (err) {
+      messageLog.push(`Nachricht nicht zugestellt: ${err?.message || err}`, 'system')
+    }
   }
 
   _setFilter(f, ov) {
     this._filter = f === 'all' ? 'all' : 'player'
     try { localStorage.setItem(FILTER_KEY, this._filter) } catch {}
     ov.querySelectorAll('.mlg-filter button').forEach(b => b.classList.toggle('on', b.dataset.f === this._filter))
+    // Umschalten baut die Liste neu auf — die alte Scrollposition passt danach
+    // zu nichts mehr. Also ans Ende, wie beim Öffnen.
+    this._stickToBottom = true
     this._renderList()
   }
 
@@ -133,16 +356,49 @@ export class MessageLogPanel {
       + `</div>`
   }
 
+  // ── Scrollverhalten ────────────────────────────────────────────────────
+
+  /** Steht die Liste (nahe genug) am unteren Rand? */
+  _istUnten() {
+    const el = this._listEl
+    if (!el) return true
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_TOLERANZ
+  }
+
+  /**
+   * Ans Ende springen und zweimal über requestAnimationFrame nachfassen: Höhe
+   * und Zeilenumbrüche stehen erst nach dem Layout fest, und Auswahlknöpfe
+   * können die Liste unmittelbar danach noch verkürzen. Ein einzelnes Setzen
+   * direkt nach dem Einfügen kommt in dem Fall zu früh.
+   *
+   * Jeder Nachschlag prüft `_stickToBottom` erneut — wischt der Leser genau in
+   * diesen zwei Bildern nach oben, bleibt er oben.
+   */
+  _scrollToBottom() {
+    const ans_ende = () => {
+      if (!this._listEl) return false
+      this._listEl.scrollTop = this._listEl.scrollHeight
+      return true
+    }
+    if (!ans_ende()) return
+    requestAnimationFrame(() => {
+      if (!this._stickToBottom || !ans_ende()) return
+      requestAnimationFrame(() => { if (this._stickToBottom) ans_ende() })
+    })
+  }
+
+  /** Nur nachziehen, wenn der Leser nicht gerade oben etwas nachliest. */
+  _scrollIfSticking() { if (this._stickToBottom) this._scrollToBottom() }
+
   // Text als textContent setzen (kein HTML-Injection über Nachrichteninhalte).
   _appendRow(entry) {
     if (!this._listEl) return
-    const atBottom = this._listEl.scrollHeight - this._listEl.scrollTop - this._listEl.clientHeight < 40
     const tmp = document.createElement('div')
     tmp.innerHTML = this._rowHtml(entry)
     const row = tmp.firstElementChild
     row.querySelector('.mlg-x').textContent = entry.text
     this._listEl.appendChild(row)
-    if (atBottom) this._listEl.scrollTop = this._listEl.scrollHeight
+    this._scrollIfSticking()
   }
 
   _renderList() {
@@ -156,7 +412,7 @@ export class MessageLogPanel {
     // Texte sicher als textContent nachtragen (Reihenfolge = rows).
     const xs = this._listEl.querySelectorAll('.mlg-x')
     rows.forEach((e, i) => { if (xs[i]) xs[i].textContent = e.text })
-    this._listEl.scrollTop = this._listEl.scrollHeight
+    this._scrollIfSticking()
   }
 
   _injectStyles() {
@@ -170,6 +426,26 @@ export class MessageLogPanel {
     /* Höhere Spezifität als die Basisregel — sonst überstimmt display:flex das
        hidden-Attribut und der Zähler bliebe mit veralteter Zahl stehen. */
     .ajna-msglog-launcher .mlg-badge[hidden]{display:none}
+    .ajna-msglog .mlg-compose{border-top:1px solid #2b2b33;padding:8px 10px;
+      display:flex;flex-direction:column;gap:8px;background:rgba(24,24,30,.6)}
+    .ajna-msglog .mlg-compose[hidden]{display:none}
+    .ajna-msglog .mlg-inputrow{display:flex;gap:8px}
+    .ajna-msglog .mlg-inputrow[hidden]{display:none}
+    .ajna-msglog .mlg-inputrow input{flex:1;min-width:0;background:#0f1115;color:#eaeaea;
+      border:1px solid #34343e;border-radius:8px;padding:10px 12px;font:inherit;font-size:15px}
+    .ajna-msglog .mlg-inputrow input:focus{outline:1px solid #2c5d8f;border-color:#2c5d8f}
+    .ajna-msglog .mlg-inputrow button{background:#2c5d8f;color:#fff;border:none;border-radius:8px;
+      padding:0 16px;font-size:16px;cursor:pointer}
+    .ajna-msglog .mlg-inputrow button:active{background:#356da6}
+    .ajna-msglog .mlg-hinweis{padding:8px 12px;border-top:1px solid #2b2b33;
+      background:rgba(24,24,30,.6);color:#8b8b96;font:12px system-ui,sans-serif}
+    .ajna-msglog .mlg-hinweis[hidden]{display:none}
+    .ajna-msglog .mlg-choices{display:flex;flex-wrap:wrap;gap:6px}
+    .ajna-msglog .mlg-choices[hidden]{display:none}
+    .ajna-msglog .mlg-choice{background:rgba(44,93,143,.25);color:#dbe6f2;
+      border:1px solid #3a78b6;border-radius:999px;padding:8px 14px;
+      font:inherit;font-size:14px;cursor:pointer;text-align:left}
+    .ajna-msglog .mlg-choice:active{background:rgba(44,93,143,.5)}
     .ajna-msglog-overlay{position:fixed;inset:0;z-index:6100;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center}
     .ajna-msglog{width:100%;max-width:560px;max-height:min(70vh,560px);display:flex;flex-direction:column;
       background:rgba(18,18,22,.98);color:#eaeaea;border:1px solid #34343e;border-bottom:none;border-radius:14px 14px 0 0;

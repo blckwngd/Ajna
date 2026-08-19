@@ -1,0 +1,181 @@
+{
+  "name": "drache",
+  "extends": "basis",
+  "_note": "Fliegende Wesen (Archetyp dragon). Groß im Auftritt, klein im Alltag — der Witz liegt im Gefälle zwischen beidem.",
+  "input": "auto",
+  "vars": {
+    "art": "Drache",
+    "ehrfurcht": 0
+  },
+  "rules": [
+    {
+      "label": "gruss",
+      "when": [
+        "@gruss *",
+        "* @gruss"
+      ],
+      "then": [
+        "DU WAGST ES, MICH ANZUSPRECHEN. … Entschuldige. Reflex. Hallo.",
+        "Sterblicher! … So begrüßt man das ja. Setz dich ruhig, es dauert.",
+        "Ah, Besuch. Ich hatte seit dem letzten Jahrhundert niemanden mehr zum Reden."
+      ],
+      "set": {
+        "kennt_mich": true
+      },
+      "suggest": "hallo"
+    },
+    {
+      "label": "name",
+      "when": [
+        "* wie heisst du *",
+        "* wer bist du *",
+        "* dein name *"
+      ],
+      "then": [
+        "Ich bin {name}, Schrecken der Lüfte, Herr über … also, über diesen Luftraum hier. Der Rest ist Verhandlungssache.",
+        "{name}. Der Name allein hat schon Dörfer zum Schweigen gebracht. Meistens, weil ihn niemand aussprechen konnte."
+      ],
+      "set": {
+        "ehrfurcht": {
+          "+": 1
+        }
+      },
+      "suggest": "wer bist du"
+    },
+    {
+      "label": "fliegen",
+      "when": [
+        "* kannst du fliegen *",
+        "* flieg *",
+        "* zeig mir wie du fliegst *",
+        "* wie ist es dort oben *"
+      ],
+      "then": [
+        "Natürlich kann ich fliegen. Ich kann es sogar so gut, dass ich Straßen für ein Missverständnis halte.",
+        "Da oben ist es still, kalt und großartig. Drei Dinge, die man am Boden selten zusammen bekommt.",
+        "Ich fliege, wann ich will. Gerade will ich nicht. Das ist ein wichtiger Teil des Könnens."
+      ],
+      "do": [
+        "anim:takeoff"
+      ],
+      "suggest": "kannst du fliegen"
+    },
+    {
+      "label": "feuer",
+      "when": [
+        "* feuer *",
+        "* spuckst du feuer *",
+        "* brennt *",
+        "* mach feuer *"
+      ],
+      "then": [
+        "Feuer? Bei diesem trockenen Gras? Ich bin gefährlich, nicht unverantwortlich.",
+        "Früher, ja. Heute reicht ein bestimmter Blick, und die Leute rennen von selbst.",
+        "Ein bisschen Rauch geht noch. Für alles Weitere bräuchte ich einen Anlauf und ein Alibi."
+      ],
+      "suggest": "spuckst du feuer"
+    },
+    {
+      "label": "schatz",
+      "when": [
+        "* schatz *",
+        "* gold *",
+        "* diamant *",
+        "* hortest du *",
+        "* was bewachst du *"
+      ],
+      "then": [
+        "Ein Hort ist viel Arbeit. Man muss ihn zählen, verteidigen und darauf schlafen. Ich habe stattdessen Hobbys.",
+        "Ich sammle nichts Glänzendes mehr. Nur noch Aussichten. Die kann einem keiner stehlen.",
+        "Falls du etwas Funkelndes findest: behalt es. Ich schlafe deutlich besser ohne."
+      ],
+      "set": {
+        "ehrfurcht": {
+          "+": 1
+        }
+      },
+      "suggest": "hast du einen schatz"
+    },
+    {
+      "label": "kaempfen",
+      "when": [
+        "* kaempfen *",
+        "* toete *",
+        "* ich besiege dich *",
+        "* angst *",
+        "* bist du gefaehrlich *"
+      ],
+      "then": [
+        "Gefährlich? Ich bin eine Naturgewalt. Und du bist ein sehr höflicher kleiner Punkt da unten. Bleiben wir doch dabei.",
+        "Wir könnten kämpfen. Oder wir reden weiter und keiner von uns muss sich anstrengen.",
+        "Ich habe mal gegen einen Ritter gekämpft. Wir haben uns danach über Rüstungsgewicht unterhalten. Netter Kerl."
+      ],
+      "suggest": "bist du gefährlich"
+    },
+    {
+      "label": "alter",
+      "when": [
+        "* wie alt bist du *",
+        "* dein alter *",
+        "* seit wann *"
+      ],
+      "then": [
+        "Alt genug, dass ich Berge kommen sehen habe. Nicht alt genug, um mir Namen zu merken.",
+        "Zähl die Ringe an einem Baum, multipliziere großzügig, und sei dann trotzdem noch unhöflich niedrig."
+      ],
+      "set": {
+        "ehrfurcht": {
+          "+": 1
+        }
+      },
+      "suggest": "wie alt bist du"
+    },
+    {
+      "label": "reiten",
+      "when": [
+        "* darf ich auf dir reiten *",
+        "* nimm mich mit *",
+        "* flieg mit mir *",
+        "* trag mich *"
+      ],
+      "then": [
+        "Auf mir? Reiten? … Ich lasse das jetzt kurz sacken. Nein. Aber ich bin geschmeichelt.",
+        "Ich bin kein Reittier. Ich bin bestenfalls eine sehr große Meinung mit Flügeln."
+      ],
+      "suggest": "darf ich auf dir reiten"
+    },
+    {
+      "_note": "Wer lange genug hoeflich bleibt, bekommt den weichen Kern zu sehen. Bewusst an freundliche Eingaben gebunden statt an \"*\" — sonst wuerde die Regel einmalig irgendeine harmlose Frage schlucken.",
+      "label": "vertrauen",
+      "when": [
+        "* danke *",
+        "* du bist nett *",
+        "* ich mag dich *",
+        "* das war schoen *"
+      ],
+      "if": {
+        "ehrfurcht": {
+          ">=": 3
+        }
+      },
+      "then": [
+        "Weißt du was? Du bist der Erste seit langem, der nicht weggerannt ist. Wenn du mich brauchst — ruf einfach. Ich höre erstaunlich gut."
+      ],
+      "once": true,
+      "suggest": false
+    }
+  ],
+  "fallback": [
+    {
+      "when": [
+        "*"
+      ],
+      "then": [
+        "Ein tiefes Brummen. Das kann Zustimmung sein oder Verdauung.",
+        "Mächtige Wesen müssen nicht auf alles antworten. Sehr praktisch.",
+        "Ich habe zugehört. Ich habe auch nichts verstanden. Beides gleichzeitig, das ist Erfahrung."
+      ],
+      "suggest": false
+    }
+  ]
+}

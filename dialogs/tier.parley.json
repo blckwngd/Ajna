@@ -1,0 +1,178 @@
+{
+  "name": "tier",
+  "_note": [
+    "Tiere (Archetyp animal) erben BEWUSST nicht von 'basis' — ein Reh, das die",
+    "Uhrzeit erklärt, nimmt der Welt mehr, als es ihr gibt. Statt Antworten gibt",
+    "es Beobachtungen: der Spieler liest, was das Tier tut.",
+    "Platzhalter {name} ist der Tiername, {art} die Gattung."
+  ],
+  "input": "auto",
+  "vars": {
+    "art": "Tier",
+    "zutraulich": 0
+  },
+  "lists": {
+    "lieb": [
+      "braves tier",
+      "guter junge",
+      "gutes maedchen",
+      "so lieb",
+      "du bist suess",
+      "du bist schoen",
+      "wie niedlich"
+    ],
+    "futter": [
+      "hier hast du was",
+      "willst du was",
+      "moechtest du futter",
+      "hast du hunger",
+      "ich hab futter",
+      "friss",
+      "hier"
+    ]
+  },
+  "rules": [
+    {
+      "label": "gruss",
+      "when": [
+        "hallo *",
+        "hi *",
+        "hey *",
+        "* @lieb *"
+      ],
+      "then": [
+        "{name} hebt den Kopf und sieht dich an. Länger, als dir lieb ist.",
+        "Ein kurzes Ohrenzucken. Mehr Begrüßung wird das nicht.",
+        "{name} bleibt stehen, wo {name} steht. Immerhin läuft nichts weg."
+      ],
+      "set": {
+        "zutraulich": {
+          "+": 1
+        }
+      },
+      "suggest": "hallo"
+    },
+    {
+      "label": "futter",
+      "when": [
+        "@futter *",
+        "* futter *",
+        "* fressen *"
+      ],
+      "then": [
+        "Das Interesse ist schlagartig da. Die Vorsicht bleibt es aber auch.",
+        "{name} kommt zwei Schritte näher und überlegt es sich dann anders. Fast.",
+        "Erst schnuppern, dann Vertrauen. In dieser Reihenfolge, immer."
+      ],
+      "set": {
+        "zutraulich": {
+          "+": 2
+        }
+      },
+      "do": [
+        "anim:idle"
+      ],
+      "suggest": "hast du hunger"
+    },
+    {
+      "label": "streicheln",
+      "when": [
+        "* streicheln *",
+        "* darf ich dich anfassen *",
+        "* komm her *",
+        "* kraul *"
+      ],
+      "if": {
+        "zutraulich": {
+          ">=": 3
+        }
+      },
+      "then": [
+        "{name} lässt es zu. Kurz. Und tut anschließend so, als wäre nichts gewesen."
+      ],
+      "suggest": "darf ich dich streicheln"
+    },
+    {
+      "label": "streicheln_zu_frueh",
+      "when": [
+        "* streicheln *",
+        "* darf ich dich anfassen *",
+        "* komm her *",
+        "* kraul *"
+      ],
+      "then": [
+        "Ein Schritt zurück. So weit sind wir noch nicht.",
+        "{name} weicht aus — höflich, aber bestimmt."
+      ],
+      "suggest": false
+    },
+    {
+      "label": "lieb",
+      "when": [
+        "@lieb *",
+        "* @lieb"
+      ],
+      "then": [
+        "Der Tonfall kommt an, die Worte nicht. Das reicht völlig.",
+        "{name} blinzelt. Das ist bei Tieren praktisch eine Umarmung."
+      ],
+      "set": {
+        "zutraulich": {
+          "+": 1
+        }
+      },
+      "suggest": false
+    },
+    {
+      "label": "laut",
+      "when": [
+        "* husch *",
+        "* verschwinde *",
+        "* hau ab *",
+        "* buh *",
+        "* weg da *"
+      ],
+      "then": [
+        "Weg. Erstaunlich schnell für so kurze Beine.",
+        "{name} sprintet drei Meter, dreht sich um und beobachtet dich vorwurfsvoll."
+      ],
+      "set": {
+        "zutraulich": {
+          "-": 2
+        }
+      },
+      "do": [
+        "anim:run"
+      ],
+      "suggest": false
+    },
+    {
+      "label": "frage",
+      "when": [
+        "* wer bist du *",
+        "* wie heisst du *",
+        "* was bist du *",
+        "* kannst du sprechen *"
+      ],
+      "then": [
+        "Keine Antwort. Ein {art} bleibt bei seinen Prinzipien.",
+        "{name} kaut weiter. Die Frage war eindeutig nicht wichtig genug."
+      ],
+      "suggest": "wer bist du"
+    }
+  ],
+  "fallback": [
+    {
+      "when": [
+        "*"
+      ],
+      "then": [
+        "{name} hört zu. Vermutlich. Schwer zu sagen.",
+        "Ein Ohr dreht sich in deine Richtung. Der Rest bleibt unbeeindruckt.",
+        "Keine Reaktion. Tiere sind hervorragend darin.",
+        "{name} sieht kurz auf und widmet sich dann wieder dem Boden."
+      ],
+      "suggest": false
+    }
+  ]
+}

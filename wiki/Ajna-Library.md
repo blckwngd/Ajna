@@ -1,12 +1,16 @@
 # Ajna-Library
 
 <!-- nav -->
-[← Inhalt](Home.md#inhalt) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · **Ajna-Library** · [Agent-Library](Agent-Library.md) · [Objektmodell](Objektmodell.md) · [Architektur](Architektur.md)
+[← Inhalt](Home.md#inhalt) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · **Ajna-Library** · [Agent-Library](Agent-Library.md) · [Objektmodell](Objektmodell.md) · [Dialoge](Dialoge.md) · [Architektur](Architektur.md)
 <!-- /nav -->
 
 <!-- seiteninhalt -->
-**Auf dieser Seite:** [Zwei Klassen](#zwei-klassen) · [Einstieg](#einstieg) · [Anmeldung](#anmeldung) · [Lebenszyklus](#lebenszyklus) · [Objekte lesen](#objekte-lesen) · [Objekte schreiben](#objekte-schreiben) · [Echtzeit](#echtzeit) · [Interaktionen](#interaktionen) · [Inventar](#inventar) · [Aufträge](#aufträge) · [Rechte](#rechte) · [Gruppen und Einladungen](#gruppen-und-einladungen) · [Standard-Rechte](#standard-rechte) · [Interessensbereiche](#interessensbereiche) · [Herkunft eines Objekts](#herkunft-eines-objekts) · [Agent-Manifeste](#agent-manifeste) · [Mehrere Server](#mehrere-server) · [Geo-API](#geo-api) · [Eigenen Client bauen](#eigenen-client-bauen) · [Roher Zugriff](#roher-zugriff)
+**Auf dieser Seite:** [Zwei Klassen](#zwei-klassen) · [Einstieg](#einstieg) · [Anmeldung](#anmeldung) · [Lebenszyklus](#lebenszyklus) · [Objekte lesen](#objekte-lesen) · [Objekte schreiben](#objekte-schreiben) · [Echtzeit](#echtzeit) · [Interaktionen](#interaktionen) · [Nachrichten](#nachrichten) · [Dialoge](#dialoge) · [Inventar](#inventar) · [Aufträge](#aufträge) · [Rechte](#rechte) · [Gruppen und Einladungen](#gruppen-und-einladungen) · [Standard-Rechte](#standard-rechte) · [Interessensbereiche](#interessensbereiche) · [Herkunft eines Objekts](#herkunft-eines-objekts) · [Agent-Manifeste](#agent-manifeste) · [Mehrere Server](#mehrere-server) · [Geo-API](#geo-api) · [Eigenen Client bauen](#eigenen-client-bauen) · [Roher Zugriff](#roher-zugriff)
 <!-- /seiteninhalt -->
+
+
+
+
 
 Eine Bibliothek für Auth, Objekte, Echtzeit, Interaktionen, Rechte, Gruppen, Inventar und Aufträge. Sie ist **isomorph**: derselbe Quelltext läuft im Browser (gebündelt) und in Node (Agents, Werkzeuge, Tests).
 
@@ -197,6 +201,66 @@ Objektlose Nachrichten an einen laufenden Agent.
 ```js
 await ajna.sendAgentCommand('world-director', 'spawn', { archetype: 'dragon' })
 ```
+
+---
+
+## Nachrichten
+
+Konto-zu-Konto, ephemer wie `interact` — kein Datenbankschreibvorgang, keine
+Ablage. Wer nicht verbunden ist, bekommt nichts.
+
+| Methode | Beschreibung |
+|---|---|
+| `await sendChat(to, { text, object?, meta?, serverId? })` | → `{ ok, delivered }`; `delivered = 0` heißt: Empfänger nicht verbunden |
+| `await onChat(cb)` | Rückruf `{ from, to, object, text, meta, ts, _origin }`; über alle angemeldeten Server |
+
+`to` ist eine **Konto-ID**, nicht die eines Objekts. Wer eine Figur anspricht,
+schreibt deren Besitzer (`record.owner`) und legt die Figur als `object` bei —
+so weiß der Agent, welche seiner Figuren gemeint war. Für eine Direktnachricht
+bleibt `object` leer.
+
+`from` setzt der Server ein und ist nicht fälschbar. `meta` ist frei; die
+mitgelieferten Dialoge transportieren darin Auswahlantworten
+(`{ choices: [{ label, send }], input }`).
+
+```js
+await ajna.sendChat(figur.owner, { text: 'hallo', object: figur.id })
+
+await ajna.onChat((m) => {
+  console.log(`${m.from} über ${m.object || '—'}: ${m.text}`)
+})
+```
+
+---
+
+## Dialoge
+
+`client/core/Parley.js` bindet die Dialogsprache [Parley](Dialoge.md) an das
+Ajna-Objektmodell an. Die Sprache selbst steht in
+[`/parley/README.md`](../parley/README.md).
+
+| Export | Beschreibung |
+|---|---|
+| `Parley`, `Conversation` | die Klassen des Pakets, unverändert weitergereicht |
+| `createParley(docs, opts?)` | Maschine mit einem Satz Dokumente bauen |
+| `dialogNameFor(record)` | Dialogsatz des Objekts — `state.dialog_set`, sonst nach Archetyp, sonst `basis` |
+| `dialogVarsFor(record)` | Startvariablen: `name`, `art`, `objekt` plus `state.dialog_vars` |
+| `talkSessionId(userId, objectId)` | Sitzungsschlüssel — ein Gespräch je Spieler UND Figur |
+| `objectDialog(record)` | Dialogsatz aus `state.parley`, auf sichere Größen begrenzt |
+| `ARCHETYPE_DIALOG` | Zuordnung Archetyp → Dialogsatz |
+| `STANDARD_DIALOGS` | Namen der mitgelieferten Sätze |
+
+```js
+import { createParley, dialogNameFor, dialogVarsFor, talkSessionId } from './core/Parley.js'
+
+const parley = createParley(meineDokumente)
+const chat = parley.open(dialogNameFor(figur), talkSessionId(meineId, figur.id),
+                         { vars: dialogVarsFor(figur) })
+const antwort = chat.say('hallo')     // { text, choices, input, do, label }
+```
+
+Node-seitig lädt `npcParley()` aus der [Agent-Library](Agent-Library.md) die
+mitgelieferten Sätze von Platte.
 
 ---
 

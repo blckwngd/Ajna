@@ -1,7 +1,7 @@
 # Einen Agent bauen
 
 <!-- nav -->
-[← Inhalt](Home.md#inhalt) · Entwickeln: **Einen Agent bauen** · [Ajna-Library](Ajna-Library.md) · [Agent-Library](Agent-Library.md) · [Objektmodell](Objektmodell.md) · [Architektur](Architektur.md)
+[← Inhalt](Home.md#inhalt) · Entwickeln: **Einen Agent bauen** · [Ajna-Library](Ajna-Library.md) · [Agent-Library](Agent-Library.md) · [Objektmodell](Objektmodell.md) · [Dialoge](Dialoge.md) · [Architektur](Architektur.md)
 <!-- /nav -->
 
 <!-- seiteninhalt -->

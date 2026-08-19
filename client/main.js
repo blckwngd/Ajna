@@ -1146,6 +1146,11 @@ async function init() {
       const go = objectMap.get(record.id)
       if (go) { focusCameraOn(scene, go); _toggleObjectGizmo(go) }
     },
+    // „Sprechen" öffnet den Privatchat im Verlaufsfenster. Das Panel gehört der
+    // Mobile-Shell; dieses Bündel erreicht es über den Haken window.ajnaTalkTo.
+    // Ohne Shell (eigenständige Seite) passiert nichts — die Figur antwortet
+    // trotzdem, das Panel übernimmt das Gespräch dann beim ersten Satz.
+    onTalk: (record) => window.ajnaTalkTo?.(record),
     // Für Aktionen wie „Rufen": exakte Position, die ObjectActions je nach
     // Privatsphäre-Stufe vergröbert oder gar nicht mitschickt.
     getPosition: () => positionSource?.getWorldPosition?.() || null,

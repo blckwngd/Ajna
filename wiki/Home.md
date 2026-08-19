@@ -38,6 +38,7 @@ Es ist kein Spiel mit fester Regelwelt, sondern der Unterbau dafür: Objekte, Re
 | **Mitgeliefert** | Schiffe (AIS), Flugzeuge (ADS-B), WLAN-Netze (WiGLE), Wildtiere (Movebank), Punkte von Interesse (OSM), Smart Home (Home Assistant) und ein World-Director, der Figuren über das Straßennetz laufen lässt. |
 | **Nur dort, wo jemand ist** | Bridges fragen ihre Quelle entlang der Interessensbereiche ab — das schont Kontingente und Privatsphäre zugleich. |
 | **Gemeinsamer Unterbau** | `bootAgent()` erledigt Konfiguration, Einrichtungsassistent, Zertifikate und Anmeldung. Ein neuer Agent beginnt bei der Fachlogik. |
+| **Figuren, die antworten** | Gespräche über [Parley](Dialoge.md) — Dialogsätze in JSON, mit Zustand, Auswahlantworten und Gesten. Kein Sprachmodell, keine laufenden Kosten. |
 
 ### ⚡ Technik
 
@@ -84,6 +85,7 @@ Du willst einen Agent oder einen eigenen Client bauen.
 | **[Ajna-Library](Ajna-Library.md)** | Vollständige API: Auth, Objekte, Echtzeit, Interaktionen, Inventar, Aufträge, Rechte, Gruppen, Mehr-Server, Geo-API, eigener Client |
 | **[Agent-Library](Agent-Library.md)** | `bootAgent`, Umgebungsvariablen, Einrichtungsassistent, Interessensbereiche, Geo-Mathematik, Wegplanung, Landeplätze |
 | **[Objektmodell](Objektmodell.md)** | Felder, `appearance`, `label`, `state`, `state.motion`, Animationen |
+| **[Dialoge](Dialoge.md)** | Gespräche mit Figuren: Parley-Dialogsätze, eigene Sätze schreiben, Anbindung im Agent |
 | **[Architektur](Architektur.md)** | Schichten, Koordinaten, Echtzeit, Rechte, Federation, Kulisse, Verzeichnisse, Tests |
 
 Wer alles der Reihe nach lesen will: jede Seite hat am Fuß einen Vor- und Zurück-Link, der durch die gesamte Dokumentation führt.

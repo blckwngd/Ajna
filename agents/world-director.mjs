@@ -63,6 +63,8 @@ import { stepAlongPath, buildWayGraph, nearestNodeKey, randomReachableTarget, sh
 import { animalNameFor } from '../client/core/animalNames.js'
 
 import { simpleSetup } from './lib/setup-wizard.mjs'
+import { npcParley } from './lib/dialogs.mjs'
+import { dialogNameFor, dialogVarsFor, talkSessionId } from '../client/core/Parley.js'
 
 // Login + geschichtete .env (Env > agents/.env.director > Root-.env) + System-CA.
 // Die WD_*-Konstanten unten lesen process.env erst NACH diesem await — die
@@ -275,9 +277,9 @@ const DESCRIPTION_GEN = {
 // löst die Dialog-Antwort aus (Client zeigt state.dialog).
 const ARCHETYPES = {
   npc:    { count: 2, actions: [{ key: 'talk', label: 'Sprechen' }, { key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: false },
-  enemy:  { count: 1, actions: [{ key: 'attack', label: 'Angreifen' }, { key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: false },
-  animal: { count: 2, actions: [{ key: 'feed', label: 'Füttern' }, { key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: false },
-  dragon: { count: 1, actions: [{ key: 'call', label: 'Rufen' }, { key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: true  },
+  enemy:  { count: 1, actions: [{ key: 'attack', label: 'Angreifen' }, { key: 'talk', label: 'Sprechen' }, { key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: false },
+  animal: { count: 2, actions: [{ key: 'feed', label: 'Füttern' }, { key: 'talk', label: 'Ansprechen' }, { key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: false },
+  dragon: { count: 1, actions: [{ key: 'call', label: 'Rufen' }, { key: 'talk', label: 'Sprechen' }, { key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: true  },
   item:   { count: 2, actions: [],                                         initialAnim: 'idle', flying: false },
   hint:   { count: 1, actions: [{ key: 'examine', label: 'Lesen' }],       initialAnim: 'idle', flying: false },
   // Diamanten: bewusst SELTEN (kleiner count), einsammelbar + stapelbar. Später
@@ -440,7 +442,10 @@ async function ensureAce(objId, interact) {
       })
     }
   } catch (err) {
-    console.warn(`[director] ACE für ${objId} fehlgeschlagen: ${err?.message || err}`)
+    // PocketBase verpackt Feldfehler in response.data — ohne die steht hier nur
+    // "Failed to create record" und man raet, welches Feld gemeint war.
+    const detail = err?.response?.data ? JSON.stringify(err.response.data) : ''
+    console.warn(`[director] ACE für ${objId} fehlgeschlagen: ${err?.message || err}${detail ? ' · ' + detail : ''}`)
   }
 }
 
@@ -744,6 +749,7 @@ async function advanceFor(c) {
     // Angesprochen? Stehenbleiben — der Weg bleibt erhalten und wird danach
     // fortgesetzt (kein Neuplanen, die Figur läuft einfach weiter).
     if (now < (c.attendUntil || 0)) {
+      if (now < (c.gestureUntil || 0)) return   // Geste aus einem Gespraech laeuft
       if (c.anim !== 'idle') { c.anim = 'idle'; await ajna.setAnimation(c.id, 'idle') }
       return
     }
@@ -948,7 +954,7 @@ async function advanceRoamer(c) {
     // Nur Bodenfiguren: ein Flieger würde sonst mitten in der Luft einfrieren
     // (und hat gar keine Idle-Animation).
     if (!c.flying && now < (c.attendUntil || 0)) {
-      if (c.anim !== 'idle') { c.anim = 'idle'; await ajna.setAnimation(c.id, 'idle') }
+      if (now >= (c.gestureUntil || 0) && c.anim !== 'idle') { c.anim = 'idle'; await ajna.setAnimation(c.id, 'idle') }
       c.phaseUntil = c.attendUntil          // danach frisch entscheiden
       return
     }
@@ -1048,6 +1054,10 @@ function attachInteractListener(c) {
 
     // „Rufen": der Spieler hat eine Position mitgeschickt → Anflug starten.
     if (action === 'call' && c.flying) { startSummon(c, evt); return }
+
+    // „Sprechen": der Client hat gerade den Privatchat geoeffnet. Die Figur
+    // ergreift das Wort — sonst saehe der Spieler ein leeres Fenster.
+    if (action === 'talk' && evt?.source) eroeffneGespraech(evt.source, c.id)
 
     c.attendUntil = Date.now() + ATTEND_MS
     console.log(`[director] 👂 "${c.id}" hält inne (${action})`)
@@ -1319,6 +1329,121 @@ ajna.onAgentCommand(WD_SOURCE || 'world-director', (evt) => {
   else console.log(`[director] unbekanntes Kommando "${evt?.command}" — ignoriert`)
 }).then(() => console.log(`[director] hört auf Kommandos (agent:${WD_SOURCE || 'world-director'}) · Cooldown ${CMD_COOLDOWN_MS / 1000} s, max ${CMD_MAX_ON_DEMAND} Objekte auf Zuruf`))
   .catch(err => console.warn(`[director] Kommando-Abo fehlgeschlagen: ${err?.message || err}`))
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Gespräche (Parley)
+// ─────────────────────────────────────────────────────────────────────────
+// Der Client öffnet mit „Sprechen" einen Privatchat mit dem KONTO, dem die
+// Figur gehört — das ist dieser Agent. Welche Figur gemeint war, steht in
+// `object`. Deshalb eine Sitzung je Spieler UND Figur: zwei Spieler reden
+// unabhängig voneinander mit derselben Person, und derselbe Spieler führt mit
+// zwei Figuren zwei getrennte Gespräche.
+//
+// Welcher Dialogsatz greift, entscheidet der Archetyp (npc → mensch, enemy →
+// gestalt, animal → tier, dragon → drache); die Sätze liegen als JSON in
+// /dialogs und erben untereinander. Eine einzelne Figur kann über
+// `state.dialog_set` einen eigenen Satz verlangen.
+//
+// Ephemer wie der Rest des Chats: läuft der Director nicht, antwortet niemand.
+// Es gibt keine Ablage und keinen Nachversand.
+const TALK_ON      = envStr('WD_TALK', 'on').toLowerCase() !== 'off'
+const TALK_IDLE_MS = envNum('WD_TALK_IDLE_S', 900) * 1000   // Gespräch vergessen
+const TALK_MIN_MS  = envNum('WD_TALK_MIN_MS', 400)          // Mindestabstand je Spieler
+const TALK_GESTE_MS = envNum('WD_TALK_GESTURE_S', 4) * 1000 // Dauer einer Geste
+
+const parley = TALK_ON ? npcParley() : null
+const letzterSatz = new Map()   // userId → Zeitstempel der letzten Antwort
+
+const objektVon = (id) => managed.find(o => o.id === id) || null
+const controllerVon = (id) => controllers.find(c => c.id === id) || null
+
+// Eine Eingabe beantworten. `text` kommt vom Spieler; beim Gesprächsbeginn
+// setzt der Director selbst ein „hallo" ein, damit die Figur anfängt.
+async function sprich(userId, obj, text) {
+  const chat = parley.open(dialogNameFor(obj), talkSessionId(userId, obj.id), { vars: dialogVarsFor(obj) })
+  const antwort = chat.say(text)
+  if (!antwort.text) return
+
+  await ajna.sendChat(userId, {
+    text: antwort.text,
+    object: obj.id,
+    // Auswahlantworten reist der Client als Knöpfe an; `input` sagt ihm, ob
+    // daneben noch ein Eingabefeld stehen soll.
+    meta: antwort.choices ? { choices: antwort.choices, input: antwort.input } : null,
+  })
+
+  for (const a of antwort.do) await fuehreAus(a, obj)
+}
+
+// Was eine Dialog-Aktion in Ajna bedeutet, weiß nur der Agent. Bewusst eine
+// kurze Liste: alles, was die Welt verändert, gehört nicht in einen Dialogsatz,
+// den irgendwann jemand anders schreibt.
+async function fuehreAus(aktion, obj) {
+  if (aktion?.action !== 'anim' || !aktion.value) return
+  const c = controllerVon(obj.id)
+  try {
+    await ajna.setAnimation(obj.id, String(aktion.value))
+    if (c) {
+      const jetzt = Date.now()
+      c.anim = String(aktion.value)
+      c.gestureUntil = jetzt + TALK_GESTE_MS
+      c.attendUntil = Math.max(c.attendUntil || 0, jetzt + TALK_GESTE_MS + 1000)
+    }
+  } catch (err) {
+    console.warn(`[director] Geste "${aktion.value}" fehlgeschlagen: ${err?.message || err}`)
+  }
+}
+
+// Vom interact-Listener gerufen: der Spieler hat „Sprechen" gewählt.
+function eroeffneGespraech(userId, objId) {
+  if (!parley) return
+  const obj = objektVon(objId)
+  if (!obj) return
+  sprich(userId, obj, 'hallo')
+    .catch(err => console.warn(`[director] Gesprächsbeginn "${objId}": ${err?.message || err}`))
+}
+
+if (parley) {
+  ajna.onChat(async (msg) => {
+    try {
+      const von = msg?.from
+      const text = String(msg?.text || '').trim()
+      if (!von || !text) return
+
+      // Bremse: eine Antwort je Spieler und TALK_MIN_MS. Reicht gegen
+      // versehentliche Schleifen; gegen gezielten Missbrauch muss der Server
+      // ran (offener Punkt am Chat-Transport).
+      const jetzt = Date.now()
+      if (jetzt - (letzterSatz.get(von) || 0) < TALK_MIN_MS) return
+      letzterSatz.set(von, jetzt)
+
+      const obj = msg.object ? objektVon(msg.object) : null
+      if (!obj) {
+        // Direktnachricht an den Agent ohne Figur — oder eine Figur, die
+        // inzwischen weg ist. Beides ist kein Fehler.
+        await ajna.sendChat(von, { text: 'Hier spricht niemand Bestimmtes. Sprich eine Figur an.', serverId: msg._origin })
+        return
+      }
+
+      const c = controllerVon(obj.id)
+      if (c) c.attendUntil = Math.max(c.attendUntil || 0, jetzt + ATTEND_MS)
+
+      await sprich(von, obj, text)
+    } catch (err) {
+      console.warn(`[director] Chat fehlgeschlagen: ${err?.message || err}`)
+    }
+  }).then(() => console.log(`[director] hört auf Gespräche (${parley.names.length} Dialogsätze: ${parley.names.join(', ')})`))
+    .catch(err => console.warn(`[director] Chat-Abo fehlgeschlagen: ${err?.message || err}`))
+
+  // Alte Gespräche vergessen — sonst wächst die Sitzungstabelle mit jedem
+  // Spieler, der einmal „hallo" gesagt hat.
+  setInterval(() => {
+    const weg = parley.sweep(TALK_IDLE_MS)
+    if (weg) console.log(`[director] ${weg} altes Gespräch(e) vergessen · ${parley.openCount} offen`)
+  }, 60_000)
+} else {
+  console.log('[director] Gespräche aus (WD_TALK=off)')
+}
 
 // ─── Heartbeat hält den Prozess am Leben (+ späterer Online-Status-Anker) ─
 setInterval(() => { publishManifest() }, HEARTBEAT_MS)

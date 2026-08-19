@@ -1291,6 +1291,73 @@ routerAdd("POST", "/api/proximity", (e) => {
 // angemeldete Nutzer kann hier senden. `source` im Broadcast ist die vom Server
 // gesetzte User-ID (nicht faelschbar), damit Agents pro Nutzer drosseln koennen.
 // =====================================================================
+// ---------------------------------------------------------------------
+// POST /api/chat/send — Nachricht an EINEN Empfänger.
+//
+// Bewusst NUTZER-zu-NUTZER statt objektgebunden. Der naheliegende Weg wäre
+// gewesen, Antworten über `interact:<objekt>` zurückzuschicken — aber das
+// verteilt an ALLE Abonnenten dieses Objekts, und derselbe Transport soll
+// später Direktnachrichten zwischen Spielern und einen Weltchat tragen. Beides
+// hätte sich an einer Objekt-ID nicht festmachen lassen.
+//
+// `object` ist optionaler Kontext: Spricht ein Spieler eine Figur an, geht die
+// Nachricht an deren KONTO (`objects.owner`) — der Agent erfährt über `object`,
+// welche seiner Figuren gemeint war. Für eine Direktnachricht bleibt das Feld leer.
+//
+// Ephemer wie `interact`: kein Datenbankschreibvorgang. Wer offline ist, bekommt
+// nichts — für Gespräche vor Ort richtig, für Direktnachrichten später zu wenig.
+// Dann kommt eine Ablage dazu, ohne dass sich der Client-Aufruf ändert.
+//
+// OFFEN und bewusst nicht jetzt gelöst: Missbrauchsschutz (jeder Angemeldete
+// darf jedem schreiben) und die Frage, ob Umstehende mithören können sollen.
+// ---------------------------------------------------------------------
+routerAdd("POST", "/api/chat/send", (e) => {
+  try {
+    const info = e.requestInfo()
+    const user = info.auth
+    if (!user) return e.json(401, { error: "auth required" })
+
+    const body = info.body || {}
+    const to = body.to
+    if (!to || typeof to !== "string") {
+      return e.json(400, { error: "field 'to' (user id) is required" })
+    }
+    const text = body.text
+    if (typeof text !== "string" || !text.trim()) {
+      return e.json(400, { error: "field 'text' (string) is required" })
+    }
+    if (text.length > 2000) {
+      return e.json(400, { error: "text too long (max 2000)" })
+    }
+
+    const topic = "chat:" + to
+    const message = new SubscriptionMessage({
+      name: topic,
+      data: JSON.stringify({
+        from: user.id,               // serverseitig — nicht fälschbar
+        to: to,
+        object: typeof body.object === "string" ? body.object : null,
+        text: text,
+        meta: body.meta || null,     // z. B. Auswahlantworten
+        ts: new Date().toISOString()
+      })
+    })
+
+    let delivered = 0
+    const clients = $app.subscriptionsBroker().clients()
+    for (const id in clients) {
+      const c = clients[id]
+      if (c.hasSubscription(topic)) { c.send(message); delivered++ }
+    }
+    // delivered === 0 heisst: Empfänger gerade nicht verbunden.
+    return e.json(200, { ok: true, delivered: delivered })
+  } catch (err) {
+    console.log("[chat.send] error: " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "internal error" })
+  }
+})
+
+
 routerAdd("POST", "/api/agents/{source}/command", (e) => {
   try {
     const info = e.requestInfo()

@@ -531,6 +531,59 @@ export class AjnaClient {
     })
   }
 
+  // ===================================================================
+  //  Chat — Nachrichten an EINEN Empfänger
+  // ===================================================================
+
+  /**
+   * Nachricht an ein Konto schicken.
+   *
+   * Nutzer-zu-Nutzer, nicht objektgebunden: Dieselbe Bahn trägt Gespräche mit
+   * Figuren, Direktnachrichten und später einen Weltchat. `object` ist reiner
+   * Kontext — spricht ein Spieler eine Figur an, geht die Nachricht an deren
+   * KONTO (`objects.owner`), und der Agent erfährt darin, welche seiner Figuren
+   * gemeint war.
+   *
+   * Ephemer: kein Datenbankschreibvorgang, wer offline ist bekommt nichts.
+   *
+   * @param {string} to      Konto-ID des Empfängers (roh oder composite)
+   * @param {{text: string, object?: string, meta?: any}} msg
+   * @returns {Promise<{ok:boolean, delivered:number}>} delivered=0 → niemand verbunden
+   */
+  async sendChat(to, { text, object = null, meta = null } = {}) {
+    return this.pb.send('/api/chat/send', {
+      method: 'POST',
+      body: {
+        to: this._toRaw(to),
+        text,
+        object: object ? this._toRaw(object) : null,
+        meta,
+      },
+    })
+  }
+
+  /**
+   * Eingehende Nachrichten an das eigene Konto abonnieren.
+   *
+   * @param {(msg: {from:string, to:string, object:string|null, text:string, meta:any, ts:string}) => void} callback
+   * @returns {Promise<() => void>} unsubscribe
+   */
+  async onChat(callback) {
+    const me = this.currentUserRaw()
+    if (!me) throw new Error('onChat: not logged in')
+    const topic = `chat:${me.id}`
+    return this.pb.realtime.subscribe(topic, (evt) => {
+      try {
+        const d = typeof evt === 'string' ? JSON.parse(evt) : evt
+        // Objekt-Kontext in composite Form, damit Aufrufer ihn direkt
+        // gegen getObjectById() halten können.
+        callback({ ...d, object: d.object ? `${this.id}:${d.object}` : null, _origin: this.id })
+      } catch (err) {
+        console.warn('[chat] Ereignis nicht lesbar:', err?.message || err)
+      }
+    })
+  }
+
   /**
    * Für Agents: eigene Kommandos abonnieren.
    * @param {(evt: {command:string, payload:any, source:string, ts:string}) => void} callback

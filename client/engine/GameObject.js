@@ -58,6 +58,12 @@ const ANIM_ALIASES = {
   // Abheben: der wyvern hat „metarig|take off"; Modelle ohne eigenen Takeoff-Clip
   // (z. B. Dragon.glb) fallen sauber auf ihre Flap-/Flug-Animation zurück.
   takeoff: ["take off", "takeoff", "take_off", "launch", "flapflight", "flap", "fly", "flight"],
+  // Gesten aus Dialogen (Parley). Letzter Eintrag ist immer "idle": Modelle
+  // ohne passenden Clip sollen ruhig stehen bleiben statt irgendeine Animation
+  // zu erwischen (der Fallback auf groups[0] greift sonst).
+  wave:  ["wave", "waving", "greet", "salute", "yes", "idle"],
+  dance: ["dance", "dancing", "idle"],
+  jump:  ["jump", "hop", "idle"],
 }
 
 // Typen, die als „Figur" einen Blob-Schatten bekommen (Objekte mit 3D-Modell

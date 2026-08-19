@@ -1,7 +1,7 @@
 # Objektmodell
 
 <!-- nav -->
-[← Inhalt](Home.md#inhalt) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · [Ajna-Library](Ajna-Library.md) · [Agent-Library](Agent-Library.md) · **Objektmodell** · [Architektur](Architektur.md)
+[← Inhalt](Home.md#inhalt) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · [Ajna-Library](Ajna-Library.md) · [Agent-Library](Agent-Library.md) · **Objektmodell** · [Dialoge](Dialoge.md) · [Architektur](Architektur.md)
 <!-- /nav -->
 
 <!-- seiteninhalt -->
@@ -230,5 +230,5 @@ await ajna.setAnimation(drache.id, 'idle')
 <!-- navfuss -->
 ---
 
-← [Agent-Library](Agent-Library.md) · [Inhalt](Home.md#inhalt) · [Architektur](Architektur.md) →
+← [Agent-Library](Agent-Library.md) · [Inhalt](Home.md#inhalt) · [Dialoge](Dialoge.md) →
 <!-- /navfuss -->

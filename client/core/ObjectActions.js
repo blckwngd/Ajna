@@ -38,16 +38,20 @@ const ACTION_LABELS = {
 // entscheidet allein die Privatsphäre-Stufe (privacy.positionFor) — hier steht
 // nur, WELCHE Aktionen sie brauchen.
 const POSITION_ACTIONS = new Set(['call', 'rufen'])
+// Aktionen, die ein Gespräch öffnen statt ein Ereignis zu senden.
+const TALK_ACTIONS = new Set(['talk', 'sprechen'])
 const labelFor = (a) => a?.label || ACTION_LABELS[String(a?.key || '').toLowerCase()] || a?.key || '?'
 
 export class ObjectActions {
-  constructor({ ajna, editorUI, contextMenu, permissionDialog, onInteract, onInteractError, getPosition, onGizmo }) {
+  constructor({ ajna, editorUI, contextMenu, permissionDialog, onInteract, onInteractError, getPosition, onGizmo, onTalk }) {
     this.ajna = ajna
     this.editorUI = editorUI
     this.contextMenu = contextMenu
     this.permissionDialog = permissionDialog
     // „Verschieben/Drehen": heftet das Editor-Gizmo an das Objekt (AR-View).
     this.onGizmo = onGizmo || null
+    // „Sprechen“ öffnet ein Gespräch statt ein Interaktions-Ereignis zu senden.
+    this.onTalk = onTalk || null
     // EXAKTE Position des Spielers (bleibt auf dem Gerät). Nur Aktionen aus
     // POSITION_ACTIONS bekommen daraus überhaupt etwas mit — und auch dann nur
     // so genau, wie die Stufe für DIESEN Server es erlaubt.
@@ -189,6 +193,20 @@ export class ObjectActions {
   // ephemeres Event über den PocketBase-Subscriptions-Broker an alle
   // interessierten Clients (inkl. dem zugewiesenen Agent) verteilt.
   async _triggerAction(record, actionKey) {
+    // „Sprechen“ ist kein Interaktions-Ereignis, sondern der Einstieg in ein
+    // Gespräch: Das Chatfenster wechselt in den Privatchat mit dem Konto, dem
+    // die Figur gehört. Erst die dort getippten Nachrichten gehen über den
+    // Chat-Transport an deren Agent.
+    if (TALK_ACTIONS.has(String(actionKey).toLowerCase())) {
+      this.onTalk?.(record)
+      // Zusätzlich als Interaktion melden: Die Figur soll merken, dass jemand
+      // vor ihr steht — sie hält an und ergreift das Wort. Ohne das säße der
+      // Spieler vor einem leeren Chatfenster und müsste raten, wer anfängt.
+      // Fehler bleiben still: nicht jede ansprechbare Figur hat einen Agent.
+      this.ajna.interact(record.id, actionKey)
+        .catch(err => console.debug('[talk] interact:', err?.message || err))
+      return
+    }
     try {
       // Positions-Aktionen („Rufen"): Payload streng nach Stufe. Bei „Verborgen"
       // gibt es keine Koordinaten — dann die Aktion gar nicht erst senden, sonst

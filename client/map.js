@@ -784,6 +784,11 @@ async function init() {
     editorUI,
     contextMenu,
     permissionDialog,
+    // „Sprechen" öffnet den Privatchat im Verlaufsfenster. Das Panel gehört der
+    // Mobile-Shell; dieses Bündel erreicht es über den Haken window.ajnaTalkTo.
+    // Ohne Shell (eigenständige Seite) passiert nichts — die Figur antwortet
+    // trotzdem, das Panel übernimmt das Gespräch dann beim ersten Satz.
+    onTalk: (record) => window.ajnaTalkTo?.(record),
     // Für Aktionen wie „Rufen": exakte Position, die ObjectActions je nach
     // Privatsphäre-Stufe vergröbert oder gar nicht mitschickt.
     getPosition: () => _hub?.positionSource?.getWorldPosition?.() || window.ajnaGeo?.position || null,

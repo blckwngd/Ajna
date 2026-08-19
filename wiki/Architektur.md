@@ -1,7 +1,7 @@
 # Architektur
 
 <!-- nav -->
-[← Inhalt](Home.md#inhalt) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · [Ajna-Library](Ajna-Library.md) · [Agent-Library](Agent-Library.md) · [Objektmodell](Objektmodell.md) · **Architektur**
+[← Inhalt](Home.md#inhalt) · Entwickeln: [Einen Agent bauen](Einen-Agent-bauen.md) · [Ajna-Library](Ajna-Library.md) · [Agent-Library](Agent-Library.md) · [Objektmodell](Objektmodell.md) · [Dialoge](Dialoge.md) · **Architektur**
 <!-- /nav -->
 
 <!-- seiteninhalt -->
@@ -158,5 +158,5 @@ npm run test:unit     # nur Rechnung, kein Server nötig
 <!-- navfuss -->
 ---
 
-← [Objektmodell](Objektmodell.md) · [Inhalt](Home.md#inhalt)
+← [Dialoge](Dialoge.md) · [Inhalt](Home.md#inhalt)
 <!-- /navfuss -->

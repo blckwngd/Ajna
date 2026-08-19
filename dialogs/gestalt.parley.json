@@ -1,0 +1,115 @@
+{
+  "name": "gestalt",
+  "extends": "basis",
+  "_note": "Zwielichtige Gestalten (Archetyp enemy). Grimmig im Ton, harmlos im Ergebnis — sie wollen vor allem in Ruhe gelassen werden und reden dann doch zu viel.",
+  "input": "auto",
+
+  "vars": {
+    "art": "Gestalt",
+    "genervt": 0
+  },
+
+  "rules": [
+    {
+      "_note": "Steht ganz oben: nach genug Nachfragen taut die Gestalt auf. Einmal.",
+      "label": "aufgetaut",
+      "when": ["*"],
+      "if": { "genervt": { ">=": 4 } },
+      "then": ["Also schön. Ich bin nicht wirklich gefährlich. Ich habe nur dieses Gesicht und keine bessere Idee. Sag es keinem."],
+      "once": true,
+      "set": { "genervt": 0 },
+      "suggest": false
+    },
+    {
+      "label": "gruss",
+      "when": ["@gruss *", "* @gruss"],
+      "then": [
+        "Hm.",
+        "Was.",
+        "Du redest mit mir. Mutig.",
+        "Ich grüße nicht. Aus Prinzip. Guten Tag."
+      ],
+      "set": { "genervt": { "+": 1 }, "kennt_mich": true },
+      "suggest": "hallo"
+    },
+    {
+      "label": "name",
+      "when": ["* wie heisst du *", "* wer bist du *", "* dein name *"],
+      "then": [
+        "{name}. Und jetzt vergiss den Namen wieder.",
+        "Man nennt mich {name}. Man nennt mich auch selten.",
+        "{name}. Klingt bedrohlich, oder? Hat lange gedauert."
+      ],
+      "set": { "genervt": { "+": 1 } },
+      "suggest": "wer bist du"
+    },
+    {
+      "label": "gefaehrlich",
+      "when": ["* bist du gefaehrlich *", "* tust du mir was *", "* willst du kaempfen *", "* greifst du mich an *"],
+      "then": [
+        "Sehr. Furchtbar. Zittere ruhig ein bisschen, das motiviert mich.",
+        "Ich überlege es mir noch. Meistens überlege ich bis Feierabend.",
+        "Kämpfen? Bei dem Wetter? Sei vernünftig."
+      ],
+      "set": { "genervt": { "+": 1 } },
+      "suggest": "bist du gefährlich"
+    },
+    {
+      "label": "was_machst_du",
+      "when": ["* was machst du *", "* was tust du *", "* was willst du *"],
+      "then": [
+        "Patrouillieren. Frag nicht wofür, ich hab den Auftrag nie gelesen.",
+        "Herumlungern. Das ist wie Warten, nur mit schlechterer Haltung.",
+        "Ich bewache. Was, weiß ich nicht. Es ist noch nichts weggekommen, also klappt es."
+      ],
+      "set": { "genervt": { "+": 1 } },
+      "suggest": "was machst du hier"
+    },
+    {
+      "label": "verschwinde",
+      "when": ["* verschwinde *", "* geh weg *", "* lass mich in ruhe *", "* hau ab *"],
+      "then": [
+        "Ich stand zuerst hier.",
+        "Gern. Gleich. Nach der Runde.",
+        "Weißt du, wie viele mir das heute gesagt haben? Zwei. Und beide waren du."
+      ],
+      "suggest": false
+    },
+    {
+      "label": "freundlich",
+      "when": ["@nett *", "* @nett", "* danke *"],
+      "then": [
+        "… hör auf damit.",
+        "Das macht meine ganze Fassade kaputt.",
+        "Nett. Ich bin nicht nett. Merk dir das. Bitte."
+      ],
+      "set": { "genervt": { "-": 2 } },
+      "suggest": false
+    },
+    {
+      "label": "chef",
+      "when": ["* wer schickt dich *", "* fuer wen arbeitest du *", "* dein chef *", "* dein auftrag *"],
+      "then": [
+        "Es gibt keinen Chef. Es gibt nur den Weg und mich. Und den Weg mag ich lieber.",
+        "Auftrag ist ein großes Wort. Sagen wir: Gewohnheit."
+      ],
+      "set": { "genervt": { "+": 1 } },
+      "suggest": "für wen arbeitest du"
+    }
+  ],
+
+  "fallback": [
+    {
+      "when": ["*"],
+      "then": [
+        "Hm.",
+        "Kann sein.",
+        "Sagt wer?",
+        "Ich hab dich gehört. Ich reagiere nur nicht.",
+        "Interessant. Nein, doch nicht."
+      ],
+      "set": { "genervt": { "+": 1 } },
+      "suggest": false
+    }
+  ]
+}

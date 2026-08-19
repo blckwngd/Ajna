@@ -17,4 +17,5 @@
 - [Ajna-Library](Ajna-Library.md)
 - [Agent-Library](Agent-Library.md)
 - [Objektmodell](Objektmodell.md)
+- [Dialoge](Dialoge.md)
 - [Architektur](Architektur.md)

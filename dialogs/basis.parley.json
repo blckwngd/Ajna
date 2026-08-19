@@ -1,0 +1,597 @@
+{
+  "name": "basis",
+  "_note": [
+    "Grundfundus für alles, was reden kann. Kein Charakter greift direkt darauf zu —",
+    "die Figuren-Dialogsätze erben ihn über \"extends\": \"basis\" und überschreiben,",
+    "was sie eigener sagen wollen. Regeln werden in Reihenfolge geprüft: was hier",
+    "unten steht, greift nur, wenn nichts weiter oben gepasst hat.",
+    "",
+    "Sitzungsvariablen, die der Aufrufer setzt: name (die Figur), art (Gattung).",
+    "Alles andere entsteht im Gespräch."
+  ],
+  "input": "auto",
+  "vars": {
+    "name": "Jemand",
+    "art": "Gestalt",
+    "kennt_mich": false,
+    "laune": 0
+  },
+  "lists": {
+    "_note": "Eingaben laufen vorher durch die Normalisierung: Umlaute werden umschrieben (ä→ae), Satzzeichen fallen weg. Deshalb hier 'gruess dich' und nicht 'grüß dich!'.",
+    "gruss": [
+      "hallo",
+      "hallo du",
+      "hi",
+      "hey",
+      "moin",
+      "moin moin",
+      "servus",
+      "gruess dich",
+      "gruezi",
+      "guten tag",
+      "guten morgen",
+      "guten abend",
+      "tach",
+      "salut",
+      "hallo zusammen"
+    ],
+    "tschuess": [
+      "tschuess",
+      "ciao",
+      "bye",
+      "auf wiedersehen",
+      "wiedersehen",
+      "bis dann",
+      "bis bald",
+      "bis spaeter",
+      "man sieht sich",
+      "mach s gut",
+      "gute nacht",
+      "ade"
+    ],
+    "danke": [
+      "danke",
+      "danke schoen",
+      "dankeschoen",
+      "vielen dank",
+      "besten dank",
+      "merci",
+      "tausend dank"
+    ],
+    "ja": [
+      "ja",
+      "jep",
+      "jo",
+      "klar",
+      "na klar",
+      "sicher",
+      "genau",
+      "stimmt",
+      "auf jeden fall",
+      "logisch"
+    ],
+    "nein": [
+      "nein",
+      "nee",
+      "noe",
+      "niemals",
+      "auf keinen fall",
+      "eher nicht",
+      "lieber nicht"
+    ],
+    "grob": [
+      "idiot",
+      "vollidiot",
+      "dummkopf",
+      "blödmann",
+      "bloedmann",
+      "du bist bloed",
+      "du bist doof",
+      "du nervst",
+      "halt die klappe",
+      "halts maul",
+      "langweiler",
+      "spinner"
+    ],
+    "nett": [
+      "du bist nett",
+      "du bist toll",
+      "du bist super",
+      "du bist lieb",
+      "ich mag dich",
+      "du gefaellst mir",
+      "du bist sympathisch"
+    ],
+    "wiebitte": [
+      "was",
+      "wie bitte",
+      "haeh",
+      "hae",
+      "wie",
+      "nochmal",
+      "was hast du gesagt",
+      "kannst du das wiederholen"
+    ]
+  },
+  "rules": [
+    {
+      "_note": "Erstkontakt. Danach greift 'gruss_wieder' — dieselbe Eingabe, andere Antwort.",
+      "label": "gruss",
+      "when": [
+        "@gruss *",
+        "* @gruss"
+      ],
+      "if": {
+        "kennt_mich": false
+      },
+      "then": [
+        "Oh, hallo! Ich bin {name}. Und du bist … auch hier. Gut.",
+        "Hallo! {name}, angenehm. Du siehst aus, als hättest du Fragen.",
+        "Tag auch. {name} mein Name. Ich stand hier ohnehin nur herum."
+      ],
+      "set": {
+        "kennt_mich": true
+      },
+      "suggest": "hallo"
+    },
+    {
+      "label": "gruss_wieder",
+      "when": [
+        "@gruss *",
+        "* @gruss"
+      ],
+      "if": {
+        "kennt_mich": true
+      },
+      "then": [
+        "Wir haben uns doch eben schon begrüßt. Aber gern nochmal: hallo.",
+        "Hallo, zum Zweiten. Ich sammle das jetzt.",
+        "Du grüßt gründlich. Das gefällt mir."
+      ],
+      "suggest": false
+    },
+    {
+      "label": "wiegehts",
+      "when": [
+        "* wie geht es dir *",
+        "* wie geht s dir *",
+        "* wie geht s *",
+        "* wie gehts *",
+        "* alles klar *",
+        "* alles gut *",
+        "* wie laeuft s *"
+      ],
+      "then": [
+        "Bestens. Ich stehe hier, es regnet nicht, niemand will etwas von mir. Fast niemand.",
+        "Kann nicht klagen. Ich hab es versucht, es hört nur keiner zu.",
+        "Gut. Ich hab heute schon dreimal denselben Weg genommen, das beruhigt ungemein."
+      ],
+      "suggest": "wie geht es dir"
+    },
+    {
+      "label": "name",
+      "when": [
+        "* wie heisst du *",
+        "* wer bist du *",
+        "* dein name *",
+        "* wie ist dein name *",
+        "* wie heissen sie *"
+      ],
+      "then": [
+        "{name}. Steht auf keinem Schild, aber es stimmt.",
+        "Ich bin {name}. Den Nachnamen hab ich irgendwo liegen lassen.",
+        "{name}. Und bevor du fragst: nein, ich weiß auch nicht, wer sich das ausgedacht hat."
+      ],
+      "suggest": "wer bist du"
+    },
+    {
+      "_note": "Steht VOR spieler_name: sonst wuerde \"ich bin muede\" als Vorstellung durchgehen.",
+      "label": "stimmung",
+      "when": [
+        "ich bin (muede|kaputt|fertig|erschoepft|traurig|allein|einsam|krank|nervoes) *",
+        "* mir geht es (schlecht|mies|nicht gut) *"
+      ],
+      "then": [
+        "Dann setz dich kurz. Ich halt so lange die Stellung — kann ich gut.",
+        "Das kenn ich. Hilft nur weitergehen. Oder stehenbleiben. Eins von beidem.",
+        "Ach. Komm, sieh nach oben, da fliegt manchmal was Großes vorbei. Hilft erstaunlich oft."
+      ],
+      "suggest": false
+    },
+    {
+      "_note": "Direkt im Anschluss an die Namensfrage nimmt die Figur an, dass eine Vorstellung folgt.",
+      "label": "spieler_name",
+      "when": [
+        "ich heisse *",
+        "mein name ist *",
+        "man nennt mich *",
+        "nenn mich *",
+        "ich bin ?"
+      ],
+      "then": [
+        "Freut mich, {1}. Den merk ich mir. Wahrscheinlich.",
+        "{1}. Klingt nach jemandem, der weiß, wo es langgeht.",
+        "Sehr erfreut, {1}. Ich sag es niemandem weiter — ich rede ja kaum mit jemandem."
+      ],
+      "set": {
+        "spieler": "{1}"
+      },
+      "suggest": false
+    },
+    {
+      "label": "spieler_name_zurueck",
+      "when": [
+        "* wie heisse ich *",
+        "* weisst du wie ich heisse *",
+        "* meinen namen *"
+      ],
+      "if": [
+        {
+          "spieler": {
+            "set": true
+          }
+        }
+      ],
+      "then": [
+        "Du bist {spieler}. Siehst du, ich passe auf."
+      ],
+      "suggest": false
+    },
+    {
+      "label": "was_machst_du",
+      "when": [
+        "* was machst du *",
+        "* was tust du *",
+        "* was machst n du *",
+        "* bist du beschaeftigt *"
+      ],
+      "then": [
+        "Ich gehe. Dann bleibe ich stehen. Dann gehe ich wieder. Ein volles Programm.",
+        "Ich warte. Worauf, hab ich vergessen — aber ich bin sehr konsequent dabei.",
+        "Beruflich? Dastehen. Ich bin darin ziemlich weit oben."
+      ],
+      "suggest": "was machst du hier"
+    },
+    {
+      "label": "was_kannst_du",
+      "when": [
+        "* was kannst du *",
+        "* hilfe *",
+        "* hilf mir *",
+        "* worueber kannst du reden *",
+        "* was kann ich dich fragen *"
+      ],
+      "then": [
+        "Reden. Ein bisschen. Frag mich nach mir, nach der Gegend, nach dem Wetter — oder sag mir, wie du heißt.",
+        "Viel kann ich nicht. Zuhören, antworten, gelegentlich winken. Frag ruhig nach der Gegend."
+      ],
+      "suggest": "was kannst du"
+    },
+    {
+      "label": "wo",
+      "when": [
+        "* wo bin ich *",
+        "* wo sind wir *",
+        "* was ist das hier fuer ein ort *",
+        "* wie heisst dieser ort *"
+      ],
+      "then": [
+        "Genau da, wo du stehst. Ich weiß, das hilft nicht. Mir hilft es auch nicht.",
+        "Hier. Sehr präzise Auskunft, ich weiß. Die Karte kann das besser als ich.",
+        "Irgendwo zwischen dort hinten und da vorn. Sehr schöne Gegend, wenn man Nebel mag."
+      ],
+      "suggest": "wo sind wir hier"
+    },
+    {
+      "label": "weg",
+      "when": [
+        "* wo geht es nach *",
+        "* wie komme ich nach *",
+        "* kennst du den weg *",
+        "* wo ist der weg *"
+      ],
+      "then": [
+        "Immer geradeaus, bis es nicht mehr geradeaus geht. Dann fragst du wieder jemanden.",
+        "Wenn ich das wüsste, stünde ich nicht seit Stunden hier.",
+        "Da lang. Oder da. Ich zeige beim Reden gern in verschiedene Richtungen, das wirkt kompetent."
+      ],
+      "do": [
+        "anim:wave"
+      ],
+      "suggest": false
+    },
+    {
+      "label": "wetter",
+      "when": [
+        "* wetter *",
+        "* regnet *",
+        "* sonne *",
+        "* schoen heute *"
+      ],
+      "then": [
+        {
+          "text": "Herrlich. Genau die Sorte Himmel, unter der man nichts erledigt bekommt.",
+          "weight": 2
+        },
+        {
+          "text": "Es war schon schlimmer. Nicht viel, aber es war.",
+          "weight": 1
+        },
+        {
+          "text": "Gutes Wetter. Ich merke mir das für den Winter.",
+          "weight": 2
+        }
+      ],
+      "suggest": "wie ist das wetter"
+    },
+    {
+      "label": "zeit",
+      "when": [
+        "* wie spaet *",
+        "* wie viel uhr *",
+        "* wieviel uhr *",
+        "* welcher tag *"
+      ],
+      "then": [
+        "Spät genug für eine Pause, früh genug für eine zweite.",
+        "Keine Ahnung. Ich richte mich nach dem Licht, und das lügt.",
+        "Uhrzeit ist etwas für Leute mit Terminen. Ich habe Wege."
+      ],
+      "suggest": false
+    },
+    {
+      "label": "danke",
+      "when": [
+        "@danke *",
+        "* @danke"
+      ],
+      "then": [
+        "Gern. War ja keine Mühe — ich stand ohnehin hier.",
+        "Nichts zu danken. Sag es trotzdem gern nochmal.",
+        "Bitte. Höflichkeit ist selten geworden, das merk ich mir positiv."
+      ],
+      "set": {
+        "laune": {
+          "+": 1
+        }
+      },
+      "suggest": false
+    },
+    {
+      "label": "sorry",
+      "when": [
+        "* entschuldigung *",
+        "* entschuldige *",
+        "* sorry *",
+        "* tut mir leid *"
+      ],
+      "then": [
+        "Schon vergessen. Ich vergesse ohnehin viel.",
+        "Kein Problem. Ich bin schwer zu beleidigen und leicht zu versöhnen."
+      ],
+      "set": {
+        "laune": {
+          "+": 1
+        }
+      },
+      "suggest": false
+    },
+    {
+      "label": "nett",
+      "when": [
+        "@nett *",
+        "* @nett"
+      ],
+      "then": [
+        "Das sagst du bestimmt zu allen, die hier herumstehen. Trotzdem: danke.",
+        "Oh. Damit hab ich jetzt nicht gerechnet. Der Tag ist gerettet.",
+        "Sehr freundlich. Ich revanchiere mich, sobald mir etwas Nettes einfällt."
+      ],
+      "set": {
+        "laune": {
+          "+": 2
+        }
+      },
+      "suggest": false
+    },
+    {
+      "_note": "Steht VOR grob: die allgemeine Regel wuerde sonst immer zuerst greifen.",
+      "label": "grob_genug",
+      "when": [
+        "@grob *",
+        "* @grob"
+      ],
+      "if": {
+        "laune": {
+          "<": -2
+        }
+      },
+      "then": [
+        "Weißt du was? Ich hab hier den ganzen Tag Zeit und du offenbar auch. Reden wir über etwas Netteres."
+      ],
+      "suggest": false
+    },
+    {
+      "label": "grob",
+      "when": [
+        "@grob *",
+        "* @grob",
+        "* du bist (bloed|doof|dumm|nervig) *"
+      ],
+      "then": [
+        "Autsch. Aber gut — ich kann ja auch nicht viel mehr als hier stehen.",
+        "Das saß. Ich schreib es mir auf und ärgere mich später darüber.",
+        "Ich bin für Kritik offen. Für die hier ein bisschen weniger, aber trotzdem."
+      ],
+      "set": {
+        "laune": {
+          "-": 1
+        }
+      },
+      "suggest": false
+    },
+    {
+      "label": "liebe",
+      "when": [
+        "* ich liebe dich *",
+        "* heirate mich *",
+        "* willst du mit mir *"
+      ],
+      "then": [
+        "Das ging schnell. Ich kenne nicht mal deinen Nachnamen.",
+        "Charmant. Aber ich bin vergeben — an diesen Weg hier, wir sehen uns täglich.",
+        "Ich fühle mich geschmeichelt und leicht überfordert. Beides gleichzeitig."
+      ],
+      "suggest": false
+    },
+    {
+      "label": "witz",
+      "when": [
+        "* kennst du einen witz *",
+        "* mach einen witz *",
+        "* witz *"
+      ],
+      "then": [
+        "Zwei Wanderer treffen sich. Sagt der eine: schöne Aussicht. Sagt der andere: ich seh nichts, ich bin ein NPC.",
+        "Warum bleibt ein Wächter nie stehen? Er tut es doch. Ständig. Das ist der Witz.",
+        "Ich hätte einen über Drachen, aber der ist zu lang und fliegt weg."
+      ],
+      "suggest": "erzähl einen witz"
+    },
+    {
+      "label": "lachen",
+      "when": [
+        "haha *",
+        "hehe *",
+        "lol *",
+        "* sehr witzig *",
+        "* lustig *"
+      ],
+      "then": [
+        "Siehst du. Ich kann das.",
+        "Ich merk mir, dass der funktioniert hat.",
+        "Danke, danke. Ich bin die ganze Woche hier. Und nächste auch."
+      ],
+      "set": {
+        "laune": {
+          "+": 1
+        }
+      },
+      "suggest": false
+    },
+    {
+      "label": "winken",
+      "when": [
+        "* wink *",
+        "* winke *",
+        "* gruess mal *"
+      ],
+      "then": [
+        "Schon dabei.",
+        "Wenn es hilft: hallo!"
+      ],
+      "do": [
+        "anim:wave"
+      ],
+      "suggest": "wink mal"
+    },
+    {
+      "label": "tanzen",
+      "when": [
+        "* tanz *",
+        "* tanze *"
+      ],
+      "then": [
+        "Nur ganz kurz. Und niemand redet danach darüber.",
+        "Ich warne dich, ich hab das nie gelernt."
+      ],
+      "do": [
+        "anim:dance"
+      ],
+      "suggest": false
+    },
+    {
+      "label": "ja",
+      "when": [
+        "@ja",
+        "@ja @ja"
+      ],
+      "then": [
+        "Sehr entschlossen.",
+        "Gut. Ich mag klare Antworten.",
+        "Dachte ich mir."
+      ],
+      "suggest": false
+    },
+    {
+      "label": "nein",
+      "when": [
+        "@nein",
+        "@nein @nein"
+      ],
+      "then": [
+        "Auch eine Haltung.",
+        "Schade. Aber respektabel.",
+        "Verstehe. Ich frage nicht nochmal. Vielleicht doch."
+      ],
+      "suggest": false
+    },
+    {
+      "label": "wiebitte",
+      "when": [
+        "@wiebitte",
+        "@wiebitte *"
+      ],
+      "then": [
+        "Ich sagte: nichts Wichtiges. Aber ich sagte es mit Überzeugung.",
+        "Nochmal von vorn? Ich weiß selbst nicht mehr genau."
+      ],
+      "suggest": false
+    },
+    {
+      "label": "tschuess",
+      "when": [
+        "@tschuess *",
+        "* @tschuess"
+      ],
+      "then": [
+        "Mach es gut. Und pass auf, wo du hintrittst.",
+        "Bis dann. Ich bin dann mal hier. Wie immer.",
+        "Tschüss! Falls du zurückkommst — ich bin nicht weit."
+      ],
+      "do": [
+        "anim:wave"
+      ],
+      "set": {
+        "topic": ""
+      },
+      "suggest": "tschüss"
+    }
+  ],
+  "fallback": [
+    {
+      "_note": "Ein einzelnes Wort, das keine Regel kannte.",
+      "when": [
+        "?"
+      ],
+      "then": [
+        "„{1}“. Da musst du mir mehr geben.",
+        "Ein Wort. Sehr sparsam. Ich mag das eigentlich."
+      ],
+      "suggest": false
+    },
+    {
+      "when": [
+        "*"
+      ],
+      "then": [
+        "{swap:1}? Wenn du das sagst.",
+        "Hm. Darüber hab ich noch nie nachgedacht, und ich hatte viel Zeit.",
+        "Das übersteigt mich. Frag mich lieber nach dem Wetter, da bin ich gut.",
+        "Ich nicke jetzt einfach mal wissend.",
+        "Interessant. Und beunruhigend. Vor allem interessant."
+      ],
+      "suggest": false
+    }
+  ]
+}

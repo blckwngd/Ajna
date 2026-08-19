@@ -82,7 +82,11 @@ export class MobileShell {
     this._renderSettings()
     // Chat-/Verlaufsfenster: schwebender Auslöser (💬) in jeder View. Der Verlauf
     // selbst ist persistent (MessageLog); hier nur die Ansicht.
-    this._logPanel = new MessageLogPanel()
+    this._logPanel = new MessageLogPanel({ ajna: this.ajna, toast: this._toast })
+    // AR- und Kartenansicht laufen als eigene Bündel und haben keinen Zugriff
+    // auf dieses Panel. Sie rufen „Sprechen" über diesen Haken hier — dasselbe
+    // Muster wie window.ajnaLog / window.ajnaCameraView.
+    window.ajnaTalkTo = (rec) => this._talkTo(rec)
     // Debug-Protokoll in den Einstellungen live aus dem geteilten Store speisen
     // (so tauchen auch UWB-/Auto-Reconnect-Schritte dort auf).
     this._unsubs.push(
@@ -113,6 +117,8 @@ export class MobileShell {
     this._nearbyActions = new ObjectActions({
       ajna: this.ajna,
       getPosition: _nbPos,
+      // „Sprechen“ öffnet den Privatchat mit dem Konto, dem die Figur gehört.
+      onTalk: (rec) => this._talkTo(rec),
       onInteract: (rec, key) => {
         const name = rec?.name || rec?.id || 'Objekt'
         this._toast.show(interactionReply(rec, key, name), { title: name })
@@ -303,6 +309,7 @@ export class MobileShell {
     this._selPopup?.remove(); this._selPopup = null
     this._logPanel?.destroy(); this._logPanel = null
     this._nearby?.destroy(); this._nearby = null
+    if (window.ajnaTalkTo) delete window.ajnaTalkTo
   }
 
   // ───────────────────────────────────────────────────────────────────
@@ -469,6 +476,26 @@ export class MobileShell {
   }
 
   // ───────────────────────────────────────────────────────────────────
+
+  /**
+   * Gespräch mit einer Figur beginnen. Adressat ist das KONTO des Objekts —
+   * dort hängt der Agent, der antwortet. Ohne Eigentümer geht das nicht: dann
+   * gibt es niemanden, an den die Nachricht gehen könnte.
+   */
+  _talkTo(rec) {
+    if (!rec) return
+    if (!rec.owner) {
+      this._toast?.show('Diese Figur hat kein Konto — niemand kann antworten.',
+        { title: rec.name || 'Objekt' })
+      return
+    }
+    this._logPanel?.talkTo({
+      userId: rec.owner,
+      name: rec.name || 'Unbekannt',
+      objectId: rec.id,
+      serverId: rec._origin || null,
+    })
+  }
 
   _renderSettings() {
     const root = document.getElementById('mobileSettings')

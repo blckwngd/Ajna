@@ -497,6 +497,40 @@ export class AjnaManager {
     return c.sendAgentCommand(source, command, payload)
   }
 
+  // ===================================================================
+  //  Chat
+  // ===================================================================
+
+  /**
+   * Nachricht an ein Konto schicken. Der Server ergibt sich aus dem
+   * Objekt-Kontext, sonst aus `serverId`, sonst der Standard-Server —
+   * Konto-IDs sind je Server verschieden und nur dort gültig.
+   *
+   * @param {string} to  Konto-ID (roh; bei Objekt-Kontext dessen `owner`)
+   * @param {{text:string, object?:string, meta?:any, serverId?:string}} msg
+   */
+  async sendChat(to, { text, object = null, meta = null, serverId = null } = {}) {
+    const client = object ? this._clientFor(object)
+      : (serverId ? this.clients.get(serverId) : this.defaultClient)
+    if (!client) throw new Error('sendChat: unknown server')
+    return client.sendChat(to, { text, object, meta })
+  }
+
+  /**
+   * Eingehende Nachrichten abonnieren — über ALLE Server, bei denen der
+   * Spieler angemeldet ist. Jede Nachricht trägt `_origin`.
+   * @returns {Promise<() => void>} gemeinsames unsubscribe
+   */
+  async onChat(callback) {
+    const offs = []
+    for (const c of this.clients.values()) {
+      if (!c.isLoggedIn()) continue
+      try { offs.push(await c.onChat(callback)) }
+      catch (err) { console.warn(`[AjnaManager] onChat "${c.label}":`, err?.message || err) }
+    }
+    return () => { for (const off of offs) { try { off() } catch {} } }
+  }
+
   /** Für Agents: eigene Kommandos abonnieren (Default-Server). */
   async onAgentCommand(source, callback, serverId = null) {
     const c = serverId ? this.clients.get(serverId) : this.defaultClient

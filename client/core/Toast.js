@@ -64,10 +64,17 @@ export class Toast {
     document.head.appendChild(style)
   }
 
-  show(text, { title, timeout = DEFAULT_TIMEOUT } = {}) {
+  /**
+   * @param {string} text
+   * @param {{title?: string, timeout?: number, log?: boolean}} [opts]
+   *   `log: false`, wenn der Aufrufer den Verlaufs-Eintrag selbst schreibt —
+   *   sonst stünde dieselbe Zeile zweimal im Fenster (einmal als Gespräch,
+   *   einmal als System-Hinweis).
+   */
+  show(text, { title, timeout = DEFAULT_TIMEOUT, log = true } = {}) {
     // Kurzlebige Toasts zusätzlich in den persistenten Verlauf (Chat-/Debug-
     // Fenster), damit Hinweise/Fehler später nachvollziehbar bleiben.
-    try { window.ajnaLog?.push(title ? `${title}: ${text}` : text, 'system') } catch {}
+    if (log) { try { window.ajnaLog?.push(title ? `${title}: ${text}` : text, 'system') } catch {} }
     const el = document.createElement('div')
     el.className = 'ajna-toast'
     if (title) {
