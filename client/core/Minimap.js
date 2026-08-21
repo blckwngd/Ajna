@@ -678,7 +678,7 @@ export class Minimap {
        liegen ausserhalb des Kreises und sind sonst ungenutzt — genau dort
        sitzen die Bedienknöpfe, sie kosten also keine Kartenfläche. */
     .ajna-mm-panel{position:fixed;right:16px;bottom:calc(${bottom} + 60px);z-index:5400;
-      width:var(--mm-size);height:var(--mm-size);--mm-size:clamp(168px,44vw,248px);
+      width:var(--mm-size);height:var(--mm-size);--mm-size:clamp(124px,30vw,236px);
       background:transparent;cursor:move;touch-action:none}
     .ajna-mm-panel[hidden]{display:none}
 
@@ -698,22 +698,29 @@ export class Minimap {
     .ajna-mm-canvas .leaflet-control-attribution a{color:#9dc4ee}
 
     /* Eckknöpfe */
-    .ajna-mm-chip{position:absolute;width:26px;height:26px;border-radius:50%;cursor:pointer;
+    .ajna-mm-chip{position:absolute;width:var(--mm-chip);height:var(--mm-chip);
+      --mm-chip:clamp(22px,calc(var(--mm-size) * .15),28px);border-radius:50%;cursor:pointer;
       border:1px solid #3a3a44;background:rgba(24,24,30,.94);color:#d6d9e0;
-      font:14px/1 system-ui,sans-serif;display:flex;align-items:center;justify-content:center;
+      font:calc(var(--mm-chip) * .54)/1 system-ui,sans-serif;
+      display:flex;align-items:center;justify-content:center;
       padding:0;box-shadow:0 3px 10px rgba(0,0,0,.5);z-index:10}
     .ajna-mm-chip:hover{color:#fff;background:rgba(44,93,143,.95);border-color:#3a78b6}
     .ajna-mm-chip:active{transform:scale(.92)}
     .ajna-mm-chip.mm-tl{left:-4px;top:-4px}
     .ajna-mm-chip.mm-tr{right:-4px;top:-4px}
-    .ajna-mm-chip.mm-bl{left:-4px;bottom:-4px;font-size:18px}
-    .ajna-mm-chip.mm-br{right:-4px;bottom:-4px;font-size:17px}
+    /* − und + brauchen mehr Punktgröße als die Symbole, um gleich groß zu wirken. */
+    .ajna-mm-chip.mm-bl{left:-4px;bottom:-4px;font-size:calc(var(--mm-chip) * .70)}
+    .ajna-mm-chip.mm-br{right:-4px;bottom:-4px;font-size:calc(var(--mm-chip) * .66)}
 
     /* Kamera-Marke: sitzt fest in der Mitte, nur die Rotation ändert sich.
        Keine CSS-Transition — die Nachführung läuft im Bildtakt, eine
        Überblendung würde der Kamera nur hinterherhinken. */
-    .ajna-mm-self{position:absolute;left:50%;top:50%;width:68px;height:68px;
+    .ajna-mm-self{position:absolute;left:50%;top:50%;
+      width:calc(var(--mm-size) * .4);height:calc(var(--mm-size) * .4);
       transform:translate(-50%,-50%);transform-origin:50% 50%;pointer-events:none;z-index:500}
+    /* Das SVG trägt feste Maße im Markup — hier auf die Containergröße ziehen,
+       sonst schrumpft nur der Rahmen und der Blickkegel bliebe groß. */
+    .ajna-mm-self svg{width:100%;height:100%;display:block}
     .ajna-mm-cone{fill:rgba(80,160,255,.30);stroke:rgba(120,190,255,.65);stroke-width:1}
     .ajna-mm-dot{fill:#4da3ff;stroke:#fff;stroke-width:1.5}
 
@@ -732,8 +739,9 @@ export class Minimap {
        darunter, damit ein dunkles Emoji auf der Satellitenkachel nicht
        verschwindet. */
     .ajna-mm-marker{background:none;border:none}
-    .ajna-mm-glyph{display:block;width:20px;height:20px;line-height:20px;text-align:center;
-      font-size:15px;filter:drop-shadow(0 0 2px rgba(0,0,0,.85)) drop-shadow(0 0 1px rgba(0,0,0,.9));
+    .ajna-mm-glyph{display:block;width:var(--mm-ico);height:var(--mm-ico);line-height:var(--mm-ico);
+      --mm-ico:clamp(15px,calc(var(--mm-size) * .115),22px);text-align:center;
+      font-size:calc(var(--mm-ico) * .78);filter:drop-shadow(0 0 2px rgba(0,0,0,.85)) drop-shadow(0 0 1px rgba(0,0,0,.9));
       cursor:default;user-select:none}
     /* Name erst beim Überfahren (am Telefon: beim Antippen). */
     .ajna-mm-canvas .leaflet-tooltip.ajna-mm-tip{background:rgba(18,18,22,.94);color:#eaeaea;

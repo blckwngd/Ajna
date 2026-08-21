@@ -26,6 +26,9 @@ import { privacy } from './PrivacyPolicy.js'
 import { messageLog, CATS } from './MessageLog.js'
 import { MessageLogPanel } from './MessageLogPanel.js'
 import { Minimap } from './Minimap.js'
+import { QuestPanel } from './QuestPanel.js'
+import { QuestEditor } from './QuestEditor.js'
+import { QuestService } from './QuestService.js'
 import { isMultiServer, serverLabelFor } from './ServerBadge.js'
 import { RANGE_DEFS, RANGE_EVENT, readRange, writeRange, valueFromSlider, sliderFromValue, formatRange }
   from './renderRange.js'
@@ -84,6 +87,32 @@ export class MobileShell {
     // Chat-/Verlaufsfenster: schwebender Auslöser (💬) in jeder View. Der Verlauf
     // selbst ist persistent (MessageLog); hier nur die Ansicht.
     this._logPanel = new MessageLogPanel({ ajna: this.ajna, toast: this._toast })
+    // Aufträge: eigener Bereich mit drei Reitern (verfügbar / aktiv / prüfen).
+    // Bewusst in JEDER Ansicht erreichbar — anders als die Minimap, die über
+    // der großen Karte sinnlos wäre. Ein Auftrag interessiert unabhängig davon,
+    // wo man gerade hinschaut.
+    this._quests = new QuestService({
+      ajna: this.ajna,
+      getPosition: () => this.positionSource?.getWorldPosition?.() || window.ajnaGeo?.position || null,
+    })
+    this._questEditor = new QuestEditor({
+      parent: document.body,
+      onSave: (f) => this._questSpeichern(f, false),
+      onPublish: (f) => this._questSpeichern(f, true),
+      onWithdraw: (f) => this._quests.zurueckziehen(f).then(() => this._questsLaden()),
+    })
+    this._questPanel = new QuestPanel({
+      parent: document.body,
+      onShowOnMap: (q) => {
+        this._toast?.show(q.ort || 'Ort unbekannt', { title: q.titel || 'Auftrag' })
+      },
+      onEdit: (q) => this._questBearbeiten(q),
+      onReload: () => this._questsLaden(),
+      onAction: (q, aktion, extra) => this._questAktion(q, aktion, extra),
+    })
+    // Der normale Bearbeiten-Dialog (AR- und Karten-Bündel) erreicht den
+    // Auftrags-Editor über diesen Haken — dasselbe Muster wie ajnaTalkTo.
+    window.ajnaQuestEditor = (rec) => this._questBearbeiten(this._questAus(rec))
     // AR- und Kartenansicht laufen als eigene Bündel und haben keinen Zugriff
     // auf dieses Panel. Sie rufen „Sprechen" über diesen Haken hier — dasselbe
     // Muster wie window.ajnaLog / window.ajnaCameraView.
@@ -317,6 +346,10 @@ export class MobileShell {
     this._debugTimer = null
     this._selPopup?.remove(); this._selPopup = null
     this._logPanel?.destroy(); this._logPanel = null
+    this._questPanel?.destroy(); this._questPanel = null
+    this._questEditor?.destroy(); this._questEditor = null
+    this._quests = null
+    if (window.ajnaQuestEditor) delete window.ajnaQuestEditor
     this._nearby?.destroy(); this._nearby = null
     if (window.ajnaTalkTo) delete window.ajnaTalkTo
   }
@@ -352,7 +385,6 @@ export class MobileShell {
     }
 
     this._minimap?.setVisible(MINIMAP_TABS.has(tabId))
-
     // AR-View: nur wenn immersives WebXR hier unterstützt wird (Headset/Quest-
     // Browser/Android XR), die Babylon-Szene direkt im Tab laden. Sonst Hinweis
     // „in Chrome öffnen". Render-Loop nur aktiv, solange der AR-Tab offen ist.
@@ -504,6 +536,91 @@ export class MobileShell {
       objectId: rec.id,
       serverId: rec._origin || null,
     })
+  }
+
+  // ── Aufträge ───────────────────────────────────────────────────────────
+
+  /** Liste holen und in den Panel geben. Fehler stehen dort, nicht in der Konsole. */
+  async _questsLaden() {
+    if (!this._questPanel) return
+    try {
+      const { quests, fehler } = await this._quests.laden()
+      this._questPanel.setQuests(quests)
+      // Ein Server, der nicht antwortet, darf die anderen nicht mitnehmen —
+      // aber verschweigen lässt sich sein Ausfall auch nicht: seine Aufträge
+      // fehlen dann in der Liste.
+      if (fehler.length) {
+        this._questPanel.setFehler(
+          fehler.map(f => `${f.server}: ${f.error}`).join(' · '))
+      }
+    } catch (err) {
+      this._questPanel.setFehler(err?.message || String(err))
+    }
+  }
+
+  /** Knopf aus der Detailansicht. Wirft weiter — der Panel zeigt die Ablehnung. */
+  async _questAktion(q, aktion, extra) {
+    const proof = aktion === 'submit'
+      ? this._quests.nachweisBauen({ note: extra?.note || '' })
+      : null
+    const res = await this._quests.aktion(q, aktion, { ...(extra || {}), proof })
+    // Der Server antwortet bei fehlendem Nachweis mit einer Liste der Lücken —
+    // die gehört in die Meldung, nicht nur der nackte Fehlertext.
+    await this._questsLaden()
+    const karma = Number(res?.karma)
+    if (Number.isFinite(karma) && karma > 0) {
+      this._toast?.show(`+${karma} Karma`, { title: q.titel || 'Auftrag' })
+    }
+    return res
+  }
+
+  /** Editor öffnen — mit echtem Inventar, eigenen Gruppen und Sichtbarkeit. */
+  async _questBearbeiten(q) {
+    if (!this._questEditor) return
+    this._questEditor.inventar = this._quests.inventar(q?.id || null)
+    this._questEditor.gruppen = await this._quests.gruppen()
+    const formular = q ? await this._quests.formularFuer(q) : null
+    this._questEditor.open(formular)
+  }
+
+  async _questSpeichern(formular, veroeffentlichen) {
+    await this._quests.speichern(formular, { publish: veroeffentlichen })
+    await this._questsLaden()
+  }
+
+  /**
+   * PocketBase-Objekt in die Form bringen, die der Auftrags-Editor erwartet.
+   * Bewusst hier und nicht im Editor: der kennt Ajna-Datensätze nicht.
+   *
+   * Der Weg über den Bearbeiten-Dialog kennt nur den Datensatz, nicht die
+   * Regionsliste — deshalb wird hier ein Anzeige-Auftrag nachgebaut, den
+   * `formularFuer()` danach genauso behandelt wie einen aus der Liste.
+   *
+   * @param {object|null} rec
+   */
+  _questAus(rec) {
+    if (!rec) return null
+    const c = rec.state?.call || {}
+    const frist = c.deadline ? Date.parse(c.deadline) : NaN
+    return {
+      id: rec.id,
+      meine: true,
+      status: c.publishedAt ? (c.status === 'open' ? 'offen' : 'angenommen') : 'entwurf',
+      titel: rec.name || '',
+      kurz: c.kurz || '',
+      text: c.task || rec.description || '',
+      ort: c.ort || '',
+      frist: Number.isFinite(frist) ? frist : null,
+      belohnung: { anzahl: (c.rewardItems || []).length, was: '', steigt: Number(c.steigt) || 0 },
+      karma: Number(c.karma) || 0,
+      roh: {
+        verify: c.verify || 'items',
+        pruefgruppe: c.pruefgruppe || '',
+        votesNeeded: Number(c.schwarmZahl) || 3,
+        nachweis: Array.isArray(c.nachweis) ? c.nachweis : [],
+        anbietenNachH: Number(c.anbietenNachH) || 0,
+      },
+    }
   }
 
   _renderSettings() {

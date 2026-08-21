@@ -101,6 +101,18 @@ export function createContext(prefix) {
     /** Rohe Record-Änderung — simuliert „Speichern" aus dem Editor. */
     patch: (token, id, body) => req(`/api/collections/objects/records/${id}`, { method: 'PATCH', token, body }),
     /**
+     * Änderung am EIGENEN Nutzerdatensatz. Gebraucht für Felder, die der Server
+     * schützt (agent_seal, karma_points): Der Test muss den Versuch machen
+     * dürfen, um zu sehen, dass er folgenlos bleibt.
+     */
+    patchUser: (token, id, body) =>
+      req(`/api/collections/users/records/${id}`, { method: 'PATCH', token, body }),
+    /** Beliebiger API-Aufruf — für Collections ohne eigenen Helfer (z. B. groups). */
+    raw: (path, opts = {}) => req(path, opts),
+    /** Eigenen Nutzerdatensatz lesen. */
+    readUser: async (token, id) =>
+      (await req(`/api/collections/users/records/${id}`, { token })).data,
+    /**
      * Objekt löschen (für Tests, die das Verwaisen der Treuhand provozieren).
      * Nimmt es aus der Aufräum-Liste — sonst meldete cleanup() es später als
      * „nicht entfernbar" (404), obwohl der Test es absichtlich beseitigt hat.
@@ -117,10 +129,17 @@ export function createContext(prefix) {
     quest: {
       publish:  (token, id, body) => req(`/api/objects/${id}/quest/publish`,  { method: 'POST', token, body }),
       accept:   (token, id) => req(`/api/objects/${id}/quest/accept`,   { method: 'POST', token, body: {} }),
-      complete: (token, id) => req(`/api/objects/${id}/quest/complete`, { method: 'POST', token, body: {} }),
+      complete: (token, id, body = {}) => req(`/api/objects/${id}/quest/complete`, { method: 'POST', token, body }),
       cancel:   (token, id) => req(`/api/objects/${id}/quest/cancel`,   { method: 'POST', token, body: {} }),
       approve:  (token, id, body = {}) => req(`/api/objects/${id}/quest/approve`, { method: 'POST', token, body }),
       reject:   (token, id, body = {}) => req(`/api/objects/${id}/quest/reject`,  { method: 'POST', token, body }),
+      confirm:  (token, id, body = { verdict: 'ok' }) =>
+        req(`/api/objects/${id}/quest/confirm`, { method: 'POST', token, body }),
+      /** Regionsliste — was sehe ICH hier an Aufträgen? */
+      near: (token, params = {}) => {
+        const q = new URLSearchParams(params).toString()
+        return req(`/api/quests/near${q ? '?' + q : ''}`, { token })
+      },
     },
 
     /** Objekte zuerst, dann Nutzer. Besitz kann gewechselt haben → alle Tokens durchprobieren. */

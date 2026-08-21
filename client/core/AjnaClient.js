@@ -399,10 +399,63 @@ export class AjnaClient {
   /**
    * Auftrag abschließen: geforderte Items gehen an den Aussteller, die
    * hinterlegte Belohnung an dich — atomar und serverseitig geprüft.
+   *
+   * Bei Aufträgen in der echten Welt gibt es nichts abzugeben; dort verlangt
+   * der Auftrag einen NACHWEIS (`state.call.nachweis`). `proof` trägt ihn bei:
+   * `{note, photos[], at:{lat,lon}}`. Fehlt etwas, antwortet der Server mit 400
+   * und einer Liste der Lücken statt mit einem stillen Fehlschlag.
+   *
+   * @param {string} callId
+   * @param {{note?: string, photos?: string[], at?: {lat:number, lon:number}}} [proof]
    */
-  async completeQuest(callId) {
+  async completeQuest(callId, proof = null) {
     const raw = this._toRaw(callId)
-    return this.pb.send(`/api/objects/${raw}/quest/complete`, { method: 'POST', body: {} })
+    const body = proof ? { proof } : {}
+    return this.pb.send(`/api/objects/${raw}/quest/complete`, { method: 'POST', body })
+  }
+
+  /**
+   * Regionsliste der Aufträge. Der Server entscheidet, was ich sehen und
+   * annehmen darf — der Client baut diese Regeln nicht nach.
+   *
+   * @param {{lat?: number, lon?: number, radius?: number, mine?: boolean}} [opts]
+   */
+  async questsNear({ lat, lon, radius = 2000, mine = false } = {}) {
+    const p = new URLSearchParams()
+    if (Number.isFinite(lat) && Number.isFinite(lon)) { p.set('lat', String(lat)); p.set('lon', String(lon)) }
+    if (radius) p.set('radius', String(radius))
+    if (mine) p.set('mine', '1')
+    const res = await this.pb.send(`/api/quests/near?${p.toString()}`, { method: 'GET' })
+    const liste = Array.isArray(res?.quests) ? res.quests : []
+    // Dieselben zusammengesetzten IDs wie bei Objekten — ein Auftrag IST ein
+    // Objekt, und jede Aktion darauf muss wieder beim richtigen Server landen.
+    for (const q of liste) this._rewriteRecord(q)
+    return { quests: liste, karma: Number(res?.karma) || 0 }
+  }
+
+  /**
+   * Schwarm-Abnahme: eine Einreichung bestätigen oder zurückweisen.
+   * Eine Stimme je Person und Einreichungs-Durchgang.
+   *
+   * @param {string} callId
+   * @param {'ok'|'nein'} verdict
+   * @param {string} [note] Begründung — bei Ablehnung sinnvoll.
+   */
+  async confirmQuest(callId, verdict, note = '') {
+    const raw = this._toRaw(callId)
+    const body = { verdict }
+    if (note) body.note = note
+    return this.pb.send(`/api/objects/${raw}/quest/confirm`, { method: 'POST', body })
+  }
+
+  /**
+   * Angenommenen Auftrag zurückgeben (nur der Bearbeiter). Der Auftrag bleibt
+   * ausgeschrieben und ist sofort wieder zu haben — anders als cancelQuest(),
+   * das die AUSSCHREIBUNG des Ausstellers beendet.
+   */
+  async abandonQuest(callId) {
+    const raw = this._toRaw(callId)
+    return this.pb.send(`/api/objects/${raw}/quest/abandon`, { method: 'POST', body: {} })
   }
 
   /** Auftrag abbrechen (nur Aussteller) — gibt die Treuhand wieder frei. */

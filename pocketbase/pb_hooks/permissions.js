@@ -37,12 +37,24 @@ function transitiveGroupsOf(userId) {
   const queue  = []
 
   // Direkte Memberships
+  //
+  // FILTER-FALLE: `members ?= {:uid}` sieht richtig aus (»mindestens einer
+  // von«), findet in dieser PocketBase-Fassung aber NICHTS — gemessen, sowohl
+  // über die API als auch hier. Die Folge war still und schwerwiegend: Diese
+  // Funktion gab IMMER [] zurück, damit gewährte keine Gruppen-ACE je ein
+  // Recht und keine Untergruppe wurde aufgelöst. Aufgefallen ist es erst, als
+  // eine Prüfgruppe einen Auftrag abnehmen sollte.
+  //
+  // `~` (enthält) trifft, weil die IDs serialisiert durchsucht werden. Da alle
+  // PocketBase-IDs exakt 15 Zeichen haben, kann eine vollständige ID nicht
+  // Teilstring einer anderen sein — die Zusatzprüfung unten ist trotzdem drin,
+  // damit die Richtigkeit nicht an dieser Eigenschaft hängt.
   const direct = $app.findRecordsByFilter(
     "groups",
-    "members ?= {:uid}",
+    "members ~ {:uid}",
     "", 500, 0,
     { uid: userId }
-  )
+  ).filter(g => (g.get("members") || []).some(m => String(m) === String(userId)))
   for (const g of direct) {
     result.add(g.id)
     queue.push(g.id)
@@ -51,12 +63,13 @@ function transitiveGroupsOf(userId) {
   // Aufwärts in der subgroup-Hierarchie
   while (queue.length > 0) {
     const current = queue.shift()
+    // Gleiche Falle wie oben bei `members`.
     const parents = $app.findRecordsByFilter(
       "groups",
-      "subgroups ?= {:gid}",
+      "subgroups ~ {:gid}",
       "", 500, 0,
       { gid: current }
-    )
+    ).filter(g => (g.get("subgroups") || []).some(x => String(x) === String(current)))
     for (const p of parents) {
       if (!result.has(p.id)) {
         result.add(p.id)
@@ -110,8 +123,9 @@ function coerceStringArray(value) {
   if (!Array.isArray(value) || value.length === 0) return Array.isArray(value) ? value : []
   const first = value[0]
   if (typeof first === "number") {
-    try { const p = JSON.parse(String.fromCharCode.apply(null, value)); return Array.isArray(p) ? p : [] }
-    catch { return [] }
+    // Bytes sind UTF-8, nicht Latin-1 — siehe utf8.js. Gruppennamen und
+    // Rechte-Listen dürfen Umlaute enthalten.
+    return require(`${__hooks}/utf8.js`).jsonArray(value)
   }
   if (typeof first === "string" && value.every(c => typeof c === "string" && c.length === 1) && value.join("").charAt(0) === "[") {
     try { const p = JSON.parse(value.join("")); return Array.isArray(p) ? p : [] } catch { return [] }
@@ -320,12 +334,13 @@ function recomputeForGroup(groupId) {
   const queue     = [groupId]
   while (queue.length > 0) {
     const current = queue.shift()
+    // Gleiche Filter-Falle wie in transitiveGroupsOf — siehe dort.
     const parents = $app.findRecordsByFilter(
       "groups",
-      "subgroups ?= {:gid}",
+      "subgroups ~ {:gid}",
       "", 500, 0,
       { gid: current }
-    )
+    ).filter(g => (g.get("subgroups") || []).some(x => String(x) === String(current)))
     for (const p of parents) {
       if (!ancestors.has(p.id)) {
         ancestors.add(p.id)
@@ -380,8 +395,9 @@ function applyOwnerDefaults(ownerId, objectId) {
   if (Array.isArray(defaults) && defaults.length > 0 && typeof defaults[0] !== "object") {
     let raw
     try {
+      // Byte-Fassung ist UTF-8 (siehe utf8.js) — nicht Zeichen für Zeichen lesen.
       raw = typeof defaults[0] === "number"
-        ? String.fromCharCode.apply(null, defaults)
+        ? require(`${__hooks}/utf8.js`).utf8ToString(defaults)
         : defaults.join("")
       defaults = JSON.parse(raw)
       console.log(`[applyOwnerDefaults] re-parsed JSON-field from byte-array (${raw.length} chars)`)

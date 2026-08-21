@@ -5,6 +5,7 @@ import { ContextMenu } from "./core/ContextMenu.js"
 import { PermissionDialog } from "./core/PermissionDialog.js"
 import { GroupDialog } from "./core/GroupDialog.js"
 import { ServerDialog } from "./core/ServerDialog.js"
+import { ServerProfile } from './core/ServerProfile.js'
 import { ProfileDialog } from "./core/ProfileDialog.js"
 import { FilterDialog } from "./core/FilterDialog.js"
 import { AgentFilters } from "./core/AgentFilters.js"
@@ -48,7 +49,11 @@ const interactSubs = new Map()
 const contextMenu = new ContextMenu()
 const permissionDialog = new PermissionDialog({ ajna })
 const groupDialog = new GroupDialog({ ajna })
-const serverDialog = new ServerDialog({ ajna })
+// Server-Profil: Karma, Standort-Freigabe und Verwaltung eines Servers.
+const serverProfile = new ServerProfile({
+  ajna: ajna,
+})
+const serverDialog = new ServerDialog({ ajna , onDetails: (id) => serverProfile.open(id) })
 const profileDialog = new ProfileDialog({ ajna })
 const agentFilters = new AgentFilters(ajna)
 const filterDialog = new FilterDialog({ ajna, filters: agentFilters })
@@ -763,6 +768,9 @@ async function init() {
 
   const editorSection = document.getElementById('editorSection')
   editorUI = new EditorUI({
+    // Auftrags-Editor gehört der Mobile-Shell (sie hält das Quest-Panel). Ohne
+    // Shell bleibt der Knopf im Editor verborgen.
+    onQuestEditor: (rec) => window.ajnaQuestEditor?.(rec),
     ajna,
     container: editorSection,
     mode: 'map',

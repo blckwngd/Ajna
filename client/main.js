@@ -32,6 +32,7 @@ import { ContextMenu } from "./core/ContextMenu.js"
 import { PermissionDialog } from "./core/PermissionDialog.js"
 import { GroupDialog } from "./core/GroupDialog.js"
 import { ServerDialog } from "./core/ServerDialog.js"
+import { ServerProfile } from './core/ServerProfile.js'
 import { ProfileDialog } from "./core/ProfileDialog.js"
 import { FilterDialog } from "./core/FilterDialog.js"
 import { AgentFilters } from "./core/AgentFilters.js"
@@ -907,7 +908,11 @@ async function init() {
   // entsteht.
   const uiContainer = document.getElementById('ui')
   const groupDialog = new GroupDialog({ ajna: ajnaManager })
-  const serverDialog = new ServerDialog({ ajna: ajnaManager })
+  // Server-Profil: Karma, Standort-Freigabe und Verwaltung eines Servers.
+    const serverProfile = new ServerProfile({
+    ajna: ajnaManager,
+  })
+  const serverDialog = new ServerDialog({ ajna: ajnaManager , onDetails: (id) => serverProfile.open(id) })
   const profileDialog = new ProfileDialog({ ajna: ajnaManager })
   // Reuse the shell's shared AgentFilters when embedded (consistent layer
   // selection across map + AR); create one only when standalone.
@@ -957,6 +962,9 @@ async function init() {
   let _openArEditor = () => {}
 
   editorUI = new EditorUI({
+    // Auftrags-Editor gehört der Mobile-Shell (sie hält das Quest-Panel). Ohne
+    // Shell bleibt der Knopf im Editor verborgen.
+    onQuestEditor: (rec) => window.ajnaQuestEditor?.(rec),
     ajna: ajnaManager,
     container: uiContainer,
     mode: 'ar',
@@ -1009,10 +1017,17 @@ async function init() {
     const w = geo.toWorld(p.x, 0, p.z)
     const gc = go.getComponent?.(GeospatialComponent)
     const ref = gc?.altitudeRef || 'ground'
-    // ground: altitude = Höhe über der Bodenebene (= p.y). msl: + Bodenhöhe (AMSL).
+    // Umkehrung von GeoTransformer.toLocalRef — beide Richtungen müssen exakt
+    // zueinander passen, sonst wandert das Objekt bei jedem Speichern:
+    //   ground: y = Geländehöhe(lat,lon) + altitude   → altitude = y − Geländehöhe
+    //   msl:    y = altitude − Bodenhöhe              → altitude = y + Bodenhöhe
+    // Die Geländehöhe wird am ZIEL geholt, nicht am Ausgangspunkt: wer ein
+    // Objekt einen Hang hinauf schiebt, ändert damit auch den Boden darunter.
+    // Ohne diesen Abzug wurde die Geländehöhe bei jedem Speichern erneut
+    // aufaddiert — im Tal sank das Objekt unter den Boden, am Hang stieg es auf.
     const alt = ref === 'msl'
       ? (Number.isFinite(geo.groundAltitude) ? geo.groundAltitude : (geo.origin?.altitude || 0)) + p.y
-      : p.y
+      : p.y - geo.terrainHeightAt(w.lat, w.lon)
     const rq = go.root.rotationQuaternion
     const e = rq ? rq.toEulerAngles() : go.root.rotation
     const rot = { x: e.x, y: e.y, z: e.z }

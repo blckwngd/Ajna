@@ -568,8 +568,45 @@ export class AjnaManager {
   }
 
   /** Auftrag abschließen: atomarer Tausch geforderte Items ↔ Belohnung. */
-  async completeQuest(compositeId) {
-    return this._clientFor(compositeId).completeQuest(compositeId)
+  async completeQuest(compositeId, proof = null) {
+    return this._clientFor(compositeId).completeQuest(compositeId, proof)
+  }
+
+  /** Schwarm-Abnahme: eine Einreichung bestätigen oder zurückweisen. */
+  async confirmQuest(compositeId, verdict, note = '') {
+    return this._clientFor(compositeId).confirmQuest(compositeId, verdict, note)
+  }
+
+  /**
+   * Aufträge der Gegend — über ALLE verbundenen Server.
+   *
+   * Jeder Server führt seine eigenen Aufträge und sein eigenes Karma; die
+   * Liste wird zusammengelegt, die IDs bleiben zusammengesetzt („server:id"),
+   * damit jede Aktion wieder beim richtigen Server landet. Ein Server, der
+   * nicht antwortet, lässt die übrigen stehen — sonst nähme ein einzelner
+   * Ausfall die ganze Liste mit.
+   *
+   * @returns {Promise<{quests: object[], karma: Object<string, number>, fehler: object[]}>}
+   */
+  async questsNear(opts = {}) {
+    const karma = {}
+    const fehler = []
+    const teile = await Promise.all([...this.clients.values()].map(async (client) => {
+      try {
+        const res = await client.questsNear(opts)
+        karma[client.id] = res.karma
+        return res.quests
+      } catch (err) {
+        fehler.push({ server: client.id, error: err?.message || String(err) })
+        return []
+      }
+    }))
+    return { quests: teile.flat(), karma, fehler }
+  }
+
+  /** Angenommenen Auftrag zurückgeben (nur Bearbeiter) — bleibt ausgeschrieben. */
+  async abandonQuest(compositeId) {
+    return this._clientFor(compositeId).abandonQuest(compositeId)
   }
 
   /** Auftrag abbrechen (nur Aussteller) — Treuhand wird frei. */

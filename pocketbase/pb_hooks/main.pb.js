@@ -144,6 +144,36 @@ onRecordUpdateRequest((e) => {
   e.next()
 }, "users")
 
+// ---------------------------------------------------------------------
+// users.karma_points — dieselbe Falle wie agent_seal, dieselbe Antwort.
+//
+// Karma ist eine Aussage des SERVERS über ein Konto: Punkte entstehen
+// ausschließlich beim Auszahlen eines Auftrags (pb_hooks/karma.js). Weil die
+// users-Regel jedem erlaubt, seinen eigenen Datensatz zu ändern, und
+// PocketBase keine Schreibrechte je Feld kennt, könnte sich sonst jedes Konto
+// per updateCurrentUser({karma_points: 999}) auf Stufe 5 setzen.
+//
+// Neue Konten starten bei 0; bei Änderungen wird der gespeicherte Wert
+// zurückgeschrieben. Kein Fehler, sondern stilles Ignorieren — der Client
+// schickt das Feld ohnehin nur versehentlich mit.
+// ---------------------------------------------------------------------
+onRecordCreateRequest((e) => {
+  if (!e.hasSuperuserAuth()) e.record.set("karma_points", 0)
+  e.next()
+}, "users")
+
+onRecordUpdateRequest((e) => {
+  if (!e.hasSuperuserAuth()) {
+    let alt = 0
+    try {
+      const p = Number($app.findRecordById("users", e.record.id).get("karma_points"))
+      alt = isFinite(p) && p > 0 ? p : 0
+    } catch (err) {}
+    e.record.set("karma_points", alt)
+  }
+  e.next()
+}, "users")
+
 
 onRecordCreateRequest(stampeManifestIdentitaet, "agent_manifests")
 onRecordUpdateRequest(stampeManifestIdentitaet, "agent_manifests")
@@ -378,18 +408,9 @@ routerAdd("POST", "/api/objects/{id}/pickup", (e) => {
       // PB-JSVM liefert JSON-Felder je nach Version als String ODER als
       // Byte-/Zeichen-Array (JsonRaw) — beides robust nach Objekt parsen, sonst
       // ist state.portable undefined und Loot wird fälschlich abgelehnt.
-      let state = obj.get("state")
-      if (typeof state === "string") {
-        try { state = JSON.parse(state) } catch (_) { state = {} }
-      } else if (Array.isArray(state)) {
-        try {
-          const s = (state.length && typeof state[0] === "number")
-            ? String.fromCharCode.apply(null, state)
-            : state.join("")
-          state = JSON.parse(s)
-        } catch (_) { state = {} }
-      }
-      const portable = state && typeof state === "object" && !Array.isArray(state) && state.portable === true
+      // Die Byte-Fassung ist UTF-8; siehe utf8.js, warum das wichtig ist.
+      const state = require(`${__hooks}/utf8.js`).jsonObject(obj.get("state"), {})
+      const portable = !Array.isArray(state) && state.portable === true
       const eff = resolveEffective(user, obj)
       const canSee = (eff.rights || []).indexOf("view") !== -1
       if (!portable || !canSee) {
@@ -475,11 +496,12 @@ routerAdd("POST", "/api/objects/{id}/place", (e) => {
 // Body: { rewardItems: [objectId, …],
 //         requiresItems?: [objectId, …],                     // konkrete Instanzen
 //         requires?: [{ match: {type?,name?,tag?}, count? }], // Gattung + Anzahl
-//         verify?: "items" | "agent",
+//         verify?: "items" | "agent" | "crowd",
 //         repeatable?: bool, rewardPerRun?: number }          // mehrfach spielbar
 // Bindet die Belohnung treuhänderisch. Nur der Aussteller (owner).
 //
 // verify: "items" (Default) — Server entscheidet deterministisch.
+// verify: "crowd"           — andere Spieler nehmen ab (quest/confirm).
 // verify: "agent"           — der Aussteller-Agent entscheidet mit eigener
 //                             Logik (siehe quest/approve).
 routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
@@ -557,13 +579,28 @@ routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
         c.requires = norm
       } else delete c.requires
       // Wer entscheidet über den Abschluss? Nur "agent" weicht vom Default ab.
-      c.verify = (String(body.verify || "") === "agent") ? "agent" : "items"
+      // Zulässige Abnahmewege — siehe „Wer nimmt ab?" in quests.js.
+      // Alles Unbekannte fällt auf "items" zurück: ein Auftrag mit
+      // unverstandenem Verfahren wäre sonst nie abschließbar.
+      const v = String(body.verify || "")
+      c.verify = (v === "agent" || v === "issuer" || v === "crowd" || v === "group") ? v : "items"
+      // Prüfgruppe nur bei verify:"group" — sonst stünde eine Gruppe im
+      // Datensatz, die niemand auswertet.
+      if (c.verify === "group" && body.pruefgruppe) c.pruefgruppe = String(body.pruefgruppe)
+      else if (c.verify !== "group") delete c.pruefgruppe
       if (repeatable) { c.repeatable = true; c.rewardPerRun = perRun }
       else { delete c.repeatable; delete c.rewardPerRun }
       // Veröffentlichen heißt: der Aussteller bietet den Auftrag (neu) an →
       // Lebenszyklus zurücksetzen. Sonst bliebe ein bereits erledigter Auftrag
       // für immer "done" und ließe sich mit frischer Belohnung nicht wiederbeleben.
       c.status = "open"
+      // Zeitpunkt der Ausschreibung. Daran hängt die Wartezeit, nach der ein
+      // zunächst nur bei der Figur angebotener Auftrag zusätzlich gelistet wird
+      // (siehe GET /api/quests/near). Ohne eigenen Stempel zählte das
+      // Anlegedatum des Objekts — bei einem wiederbelebten Auftrag also ein
+      // Datum von vor Wochen.
+      c.publishedAt = new Date().toISOString()
+      delete c.angeboten
       delete c.claimedBy
       delete c.completedBy
       delete c.pendingBy
@@ -587,7 +624,8 @@ routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
 routerAdd("POST", "/api/objects/{id}/quest/accept", (e) => {
   try {
     const { resolveEffective } = require(`${__hooks}/permissions.js`)
-    const { parseState, callDataOf } = require(`${__hooks}/quests.js`)
+    const { parseState, callDataOf, istAbgelaufen, markiereAbgelaufen } = require(`${__hooks}/quests.js`)
+    const { karmaReicht } = require(`${__hooks}/karma.js`)
     const callId = e.request.pathValue("id")
     const info = e.requestInfo()
     const user = info.auth
@@ -606,8 +644,35 @@ routerAdd("POST", "/api/objects/{id}/quest/accept", (e) => {
     const st = parseState(call)
     const c = callDataOf(st)
     if (c.status === "done") return e.json(409, { error: "call already completed" })
+    if (c.status === "cancelled") return e.json(409, { error: "call was cancelled" })
+
+    // Frist zuerst: ein abgelaufener Auftrag lässt sich nicht mehr annehmen,
+    // und der Stand wird gleich mitgeschrieben (lazy expiry).
+    if (istAbgelaufen(c)) {
+      if (markiereAbgelaufen(c)) {
+        st.call = c
+        call.set("state", st)
+        try { $app.save(call) } catch (err) {}
+      }
+      return e.json(409, { error: "call expired", status: "expired", deadline: c.deadline })
+    }
+
     if (c.claimedBy && c.claimedBy !== user.id) {
       return e.json(409, { error: "call already claimed by someone else" })
+    }
+
+    // Karma-Bedingung: `state.call.karma` ist die geforderte STUFE (0–5).
+    // Geprüft wird gegen den serverseitig geführten Punktestand — der Client
+    // kann ihn nicht setzen (siehe Hook „karma_points" oben).
+    const noetig = Number(c.karma) || 0
+    if (noetig > 0) {
+      const k = karmaReicht($app, user.id, noetig)
+      if (!k.ok) {
+        return e.json(403, {
+          error: "karma level " + k.noetig + " required, you have " + k.stufe,
+          karma: k.stufe, karmaRequired: k.noetig
+        })
+      }
     }
 
     c.status = "claimed"
@@ -634,7 +699,11 @@ routerAdd("POST", "/api/objects/{id}/quest/accept", (e) => {
 routerAdd("POST", "/api/objects/{id}/quest/complete", (e) => {
   try {
     const { resolveEffective, recomputeForObject } = require(`${__hooks}/permissions.js`)
-    const { parseState, callDataOf, resolveSwap, executeSwap } = require(`${__hooks}/quests.js`)
+    const { parseState, callDataOf, resolveSwap, executeSwap,
+            istAbgelaufen, markiereAbgelaufen,
+            noetigeStimmen, neueEinreichung, pruefeNachweis,
+            brauchtAbnahme } = require(`${__hooks}/quests.js`)
+    const { karmaFuerAbschluss } = require(`${__hooks}/karma.js`)
     const callId = e.request.pathValue("id")
     const info = e.requestInfo()
     const user = info.auth
@@ -654,8 +723,28 @@ routerAdd("POST", "/api/objects/{id}/quest/complete", (e) => {
     const c = callDataOf(st)
     if (c.status === "done") return e.json(409, { error: "call already completed" })
     if (c.status === "cancelled") return e.json(409, { error: "call was cancelled" })
+
+    // Frist gilt auch beim Abschluss: Wer die Zeit überzieht, bekommt nicht
+    // ausgezahlt. Sonst wäre die Frist eine Bitte, keine Bedingung.
+    if (istAbgelaufen(c)) {
+      if (markiereAbgelaufen(c)) {
+        st.call = c
+        call.set("state", st)
+        try { $app.save(call) } catch (err) {}
+      }
+      return e.json(409, { error: "call expired", status: "expired", deadline: c.deadline })
+    }
+
     if (c.claimedBy && c.claimedBy !== user.id) {
       return e.json(403, { error: "call is claimed by someone else" })
+    }
+
+    // Nachweis zuerst: Fehlt er, ist der Auftrag nicht gemeldet, sondern
+    // unvollständig. Das soll der Bearbeiter erfahren, bevor irgendetwas
+    // anderes passiert — und der Prüfer soll ihn später vorliegen haben.
+    const nw = pruefeNachweis(call, c, (info.body || {}).proof)
+    if (!nw.ok) {
+      return e.json(400, { error: "proof incomplete", missing: nw.fehlend })
     }
 
     // Harte Voraussetzungen gelten in BEIDEN Modi — ein Agent soll nicht über
@@ -663,25 +752,42 @@ routerAdd("POST", "/api/objects/{id}/quest/complete", (e) => {
     const swap = resolveSwap($app, call, c, user.id)
     if (!swap.ok) return e.json(swap.code, { error: swap.error })
 
-    if (c.verify === "agent") {
+    if (brauchtAbnahme(c.verify)) {
       c.status = "pending"
       c.pendingBy = user.id
+      // Jede Einreichung bekommt eine eigene Kennung. Beim zweiten Anlauf
+      // zählen die Stimmen des ersten damit NICHT mehr mit.
+      c.submission = neueEinreichung()
+      if (c.verify === "crowd") c.votesNeeded = noetigeStimmen(c)
+      // Der Nachweis wandert mit in den Datensatz — ohne ihn säße der Prüfer
+      // vor einer Behauptung ohne Anhaltspunkt.
+      c.submissionProof = nw.gespeichert
+      c.submittedAt = new Date().toISOString()
       st.call = c
       call.set("state", st)
-      $app.save(call)   // Realtime-Update → der Aussteller-Agent sieht "pending"
-      return e.json(202, { ok: true, id: callId, status: "pending", message: "awaiting issuer verification" })
+      $app.save(call)   // Realtime-Update → Aussteller-Agent bzw. Schwarm sehen "pending"
+      return e.json(202, {
+        ok: true, id: callId, status: "pending", submission: c.submission,
+        votesNeeded: c.verify === "crowd" ? c.votesNeeded : undefined,
+        message: c.verify === "crowd" ? "awaiting crowd confirmation"
+          : (c.verify === "group" ? "awaiting review group" : "awaiting issuer verification")
+      })
     }
 
     const moved = executeSwap($app, call, st, c, swap, user.id)
     for (let i = 0; i < moved.length; i++) {
       try { recomputeForObject(moved[i]) } catch (_) {}   // Eigentum gewechselt
     }
+    // Karma NACH dem Tausch: Es ist die Nebenwirkung eines tatsächlich
+    // ausgezahlten Auftrags, nicht einer erfolgreichen Prüfung.
+    const karmaNeu = karmaFuerAbschluss($app, user.id, callId)
     // Status NICHT hart "done": ein wiederholbarer Auftrag steht danach wieder
     // auf "open", solange der Vorrat reicht — executeSwap hat c.status gesetzt.
     return e.json(200, {
       ok: true, id: callId, status: c.status,
       rewardsLeft: (c.rewardItems || []).length, completions: c.completions || 1,
-      repeatable: c.repeatable === true
+      repeatable: c.repeatable === true,
+      karma: karmaNeu
     })
   } catch (err) {
     console.log("[quest.complete] error: " + (err && err.message ? err.message : err))
@@ -714,12 +820,15 @@ routerAdd("POST", "/api/objects/{id}/quest/approve", (e) => {
     try { call = $app.findRecordById("objects", callId) }
     catch (err) { return e.json(404, { error: "call not found" }) }
     if (call.get("type") !== "call") return e.json(400, { error: "object is not a call" })
-    if (call.get("owner") !== user.id) {
-      return e.json(403, { error: "only the issuer may approve this call" })
-    }
 
     const st = parseState(call)
     const c = callDataOf(st)
+    // Wer entscheiden darf, hängt am Abnahmeweg: der Aussteller immer, bei
+    // verify:"group" zusätzlich die benannte Prüfgruppe (transitiv, wie überall).
+    const { darfAbnehmen } = require(`${__hooks}/quests.js`)
+    const { transitiveGroupsOf } = require(`${__hooks}/permissions.js`)
+    const erlaubt = darfAbnehmen($app, call, c, user.id, transitiveGroupsOf)
+    if (!erlaubt.ok) return e.json(403, { error: erlaubt.grund })
     if (c.status === "done") return e.json(409, { error: "call already completed" })
     if (c.status === "cancelled") return e.json(409, { error: "call was cancelled" })
 
@@ -737,10 +846,14 @@ routerAdd("POST", "/api/objects/{id}/quest/approve", (e) => {
     for (let i = 0; i < moved.length; i++) {
       try { recomputeForObject(moved[i]) } catch (_) {}
     }
+    // Gleiche Gutschrift wie im Server-geprüften Pfad: Karma hängt am
+    // AUSGEZAHLTEN Auftrag, nicht daran, wer geprüft hat.
+    const { karmaFuerAbschluss } = require(`${__hooks}/karma.js`)
+    const karmaNeu = karmaFuerAbschluss($app, completerId, callId)
     return e.json(200, {
       ok: true, id: callId, status: c.status, completedBy: completerId,
       collected: swap.required.length, rewardsLeft: (c.rewardItems || []).length,
-      repeatable: c.repeatable === true
+      repeatable: c.repeatable === true, karma: karmaNeu
     })
   } catch (err) {
     console.log("[quest.approve] error: " + (err && err.message ? err.message : err))
@@ -763,12 +876,15 @@ routerAdd("POST", "/api/objects/{id}/quest/reject", (e) => {
     try { call = $app.findRecordById("objects", callId) }
     catch (err) { return e.json(404, { error: "call not found" }) }
     if (call.get("type") !== "call") return e.json(400, { error: "object is not a call" })
-    if (call.get("owner") !== user.id) {
-      return e.json(403, { error: "only the issuer may reject this call" })
-    }
 
     const st = parseState(call)
     const c = callDataOf(st)
+    // Wer entscheiden darf, hängt am Abnahmeweg: der Aussteller immer, bei
+    // verify:"group" zusätzlich die benannte Prüfgruppe (transitiv, wie überall).
+    const { darfAbnehmen } = require(`${__hooks}/quests.js`)
+    const { transitiveGroupsOf } = require(`${__hooks}/permissions.js`)
+    const erlaubt = darfAbnehmen($app, call, c, user.id, transitiveGroupsOf)
+    if (!erlaubt.ok) return e.json(403, { error: erlaubt.grund })
     if (c.status === "done") return e.json(409, { error: "call already completed" })
 
     const body = info.body || {}
@@ -788,7 +904,444 @@ routerAdd("POST", "/api/objects/{id}/quest/reject", (e) => {
 })
 
 
+// ---------------------------------------------------------------------
+// GET /api/quests/near?lat=&lon=&radius=&mine=1 — Aufträge einer Gegend.
+//
+// Warum eine eigene Route und nicht ein Filter auf `objects`: Drei Dinge lassen
+// sich nicht als Filterausdruck schreiben.
+//
+//   1. „Angeboten" ist eine ZEITFRAGE. Ein Auftrag, den eine Figur vergibt, ist
+//      zunächst nur im Gespräch mit ihr zu haben (`listed: false`). Nimmt ihn
+//      dort niemand an, gehört er nach `anbietenNachH` Stunden zusätzlich in
+//      die Liste. Das wird hier LAZY ausgewertet und zurückgeschrieben — aus
+//      demselben Grund wie bei der Frist: Was nur tickt, solange ein Agent
+//      läuft, ist keine Regel.
+//   2. „Kann ich das annehmen?" hängt am Karma des Fragenden.
+//   3. Abgelaufenes soll gar nicht erst als verfügbar erscheinen.
+//
+// Der Client bekommt damit genau die Liste, die er anzeigen kann — statt selbst
+// Regeln nachzubauen, die serverseitig ohnehin noch einmal geprüft werden.
+// ---------------------------------------------------------------------
+routerAdd("GET", "/api/quests/near", (e) => {
+  try {
+    const { resolveEffective, transitiveGroupsOf } = require(`${__hooks}/permissions.js`)
+    const { parseState, callDataOf, istAbgelaufen, markiereAbgelaufen,
+            abstandM, noetigeStimmen, zaehleStimmen, darfAbnehmen,
+            brauchtAbnahme } = require(`${__hooks}/quests.js`)
+    const { karmaStufe, karmaPunkte } = require(`${__hooks}/karma.js`)
+    const info = e.requestInfo()
+    const user = info.auth
+    if (!user) return e.json(401, { error: "authentication required" })
+
+    const q = info.query || {}
+    const lat = Number(q.lat), lon = Number(q.lon)
+    const radius = Math.min(50000, Math.max(50, Number(q.radius) || 2000))
+    const nurMeine = String(q.mine || "") === "1"
+    const hatOrt = isFinite(lat) && isFinite(lon)
+
+    let alle = []
+    try {
+      alle = $app.findRecordsByFilter("objects", 'type = "call"', "-updated", 500, 0) || []
+    } catch (err) { alle = [] }
+
+    const meineStufe = karmaStufe(karmaPunkte($app, user.id))
+    const jetzt = Date.now()
+    const raus = []
+
+    // Gruppen EINMAL auflösen, nicht je Auftrag: die Auflösung läuft transitiv
+    // über Untergruppen und ist der teuerste Teil der Rechteprüfung.
+    let meineGruppen = null
+    const gruppenVon = (uid) => {
+      if (String(uid) !== user.id) return transitiveGroupsOf($app, uid) || []
+      if (meineGruppen === null) meineGruppen = transitiveGroupsOf($app, uid) || []
+      return meineGruppen
+    }
+
+    // Namen der Belohnungs-Gegenstände. Ohne sie stünde in der Liste nur
+    // „3× Belohnung". Ein Auftrag zahlt selten mehr als eine Handvoll Dinge und
+    // Aufträge derselben Ausschreibung greifen auf dieselben Gattungen zurück —
+    // deshalb ein Cache und eine Obergrenze, statt die Liste zu einer
+    // unbegrenzten Zahl von Einzelabfragen ausarten zu lassen.
+    const namenCache = {}
+    let lookups = 0
+
+    // Anzeigename des Ausstellers. In der Liste steht „von …" — eine Konto-ID
+    // wäre dort so unbrauchbar wie im Gespräch. Bevorzugt der selbstgewählte
+    // `username`; ein Konto ohne beides bleibt namenlos statt als ID zu enden.
+    const nameCache = {}
+    const kontoName = (uid) => {
+      const id = String(uid || "")
+      if (!id) return ""
+      if (!(id in nameCache)) {
+        try {
+          const u = $app.findRecordById("users", id)
+          nameCache[id] = String(u.get("username") || u.get("name") || "")
+        } catch (err) { nameCache[id] = "" }
+      }
+      return nameCache[id]
+    }
+    const belohnungText = (ids) => {
+      const zaehler = {}
+      for (let i = 0; i < ids.length; i++) {
+        const id = String(ids[i])
+        if (!(id in namenCache)) {
+          if (lookups >= 200) { namenCache[id] = "" }
+          else {
+            lookups++
+            try { namenCache[id] = String($app.findRecordById("objects", id).get("name") || "") }
+            catch (err) { namenCache[id] = "" }
+          }
+        }
+        const n = namenCache[id] || "Belohnung"
+        zaehler[n] = (zaehler[n] || 0) + 1
+      }
+      const teile = []
+      for (const n in zaehler) teile.push({ was: n, anzahl: zaehler[n] })
+      return teile
+    }
+
+    for (let i = 0; i < alle.length; i++) {
+      const call = alle[i]
+      const meins = String(call.get("owner") || "") === user.id
+      if (nurMeine && !meins) continue
+
+      // Sichtbarkeit wie überall über die Rechte — kein Sonderweg.
+      if (!meins) {
+        const eff = resolveEffective(user, call)
+        if ((eff.rights || []).indexOf("view") === -1) continue
+      }
+
+      const cLat = Number(call.get("lat")), cLon = Number(call.get("lon"))
+      let entfernung = null
+      if (hatOrt) {
+        if (!isFinite(cLat) || !isFinite(cLon)) continue
+        entfernung = abstandM(lat, lon, cLat, cLon)
+        if (entfernung > radius) continue
+      }
+
+      const st = parseState(call)
+      const c = callDataOf(st)
+      let geaendert = false
+
+      // Abgelaufenes stilllegen, sobald es jemand sieht.
+      if (istAbgelaufen(c) && markiereAbgelaufen(c)) geaendert = true
+
+      // Wartezeit vorbei → zusätzlich listen, Zustand „angeboten".
+      const wartetStd = Number(c.anbietenNachH) || 0
+      let angeboten = false
+      if (c.listed === false && wartetStd > 0 && c.status === "open") {
+        const seit = Date.parse(c.publishedAt || call.get("created"))
+        if (isFinite(seit) && (jetzt - seit) >= wartetStd * 3600000) {
+          c.listed = true
+          c.angeboten = true
+          geaendert = true
+        }
+      }
+      angeboten = c.angeboten === true
+
+      if (geaendert) {
+        st.call = c
+        call.set("state", st)
+        try { $app.save(call) } catch (err) {}
+      }
+
+      // Nicht gelistete Aufträge gehören nicht in die Regionsliste — beim
+      // eigenen Bestand („Meine") schon, sonst sähe man seine eigenen
+      // Entwürfe nicht.
+      if (!meins && c.listed === false) continue
+
+      const noetigesKarma = Number(c.karma) || 0
+      const frei = c.status === "open" || (!c.claimedBy && c.status !== "done" && c.status !== "cancelled" && c.status !== "expired")
+      const verify = c.verify || "items"
+      const bearbeiter = c.claimedBy || null
+      const wartet = c.status === "pending"
+
+      // Darf ich über DIESE Einreichung entscheiden?
+      //
+      // Der Bearbeiter nie — sonst nähme er sich selbst ab. Beim Schwarm
+      // entscheidet nicht der Aussteller (er hat approve/reject), sondern jeder
+      // andere, der noch nicht gestimmt hat; bei Aussteller- und Gruppenabnahme
+      // dieselbe Prüfung wie in quest/approve, damit die Liste nicht mehr
+      // anbietet, als die Route hergibt.
+      let darfPruefen = false
+      let stimmen = null
+      if (wartet && bearbeiter !== user.id) {
+        if (verify === "crowd") {
+          const s = zaehleStimmen($app, call.id, c.submission || "")
+          const schonGestimmt = (s.waehler || []).indexOf(user.id) !== -1
+          stimmen = { ja: s.ja, nein: s.nein, noetig: noetigeStimmen(c), meine: schonGestimmt }
+          darfPruefen = !meins && !schonGestimmt
+        } else if (brauchtAbnahme(verify)) {
+          darfPruefen = darfAbnehmen($app, call, c, user.id, gruppenVon).ok
+        }
+      }
+
+      // Der Nachweis ist für die Abnahme da — und für den, der ihn eingereicht
+      // hat. Sonst hätte jeder Vorbeikommende Fotos und Notizen fremder Leute.
+      const darfNachweisSehen = darfPruefen || meins || bearbeiter === user.id
+
+      raus.push({
+        id: call.id,
+        name: call.get("name"),
+        kurz: c.kurz || "",
+        task: c.task || "",
+        ort: c.ort || "",
+        lat: cLat, lon: cLon,
+        distanceM: entfernung === null ? null : Math.round(entfernung),
+        owner: call.get("owner"),
+        ownerName: kontoName(call.get("owner")),
+        mine: meins,
+        status: c.status || "open",
+        // Ein Auftrag, der nie veröffentlicht wurde, ist ein Entwurf. Ohne
+        // diesen Stempel sähe er wie ein offener Auftrag aus, für den nur
+        // niemand die Treuhand gebunden hat.
+        published: !!c.publishedAt,
+        angeboten: angeboten,
+        listed: c.listed !== false,
+        anbietenNachH: Number(c.anbietenNachH) || 0,
+        deadline: c.deadline || null,
+        karmaRequired: noetigesKarma,
+        karmaOk: meineStufe >= noetigesKarma,
+        verify: verify,
+        pruefgruppe: c.pruefgruppe || null,
+        votesNeeded: verify === "crowd" ? noetigeStimmen(c) : null,
+        votes: stimmen,
+        nachweis: Array.isArray(c.nachweis) ? c.nachweis : [],
+        rewards: (c.rewardItems || []).length,
+        rewardParts: belohnungText(c.rewardItems || []),
+        rewardPerRun: Number(c.rewardPerRun) || 0,
+        steigt: Number(c.steigt) || 0,
+        requires: Array.isArray(c.requires) ? c.requires.length : 0,
+        claimedBy: bearbeiter,
+        pendingBy: c.pendingBy || null,
+        pendingByName: c.pendingBy ? kontoName(c.pendingBy) : null,
+        submittedAt: c.submittedAt || null,
+        submissionProof: darfNachweisSehen ? (c.submissionProof || null) : null,
+        canAccept: !meins && frei && meineStufe >= noetigesKarma && !istAbgelaufen(c),
+        canVerify: darfPruefen,
+      })
+    }
+
+    if (hatOrt) raus.sort(function (a, b) { return (a.distanceM || 0) - (b.distanceM || 0) })
+    return e.json(200, { quests: raus, karma: meineStufe })
+  } catch (err) {
+    console.log("[quests.near] error: " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err) })
+  }
+})
+
+
+// ---------------------------------------------------------------------
+// POST /api/objects/{id}/quest/confirm — Schwarm-Abnahme.
+// Body: { verdict: "ok" | "nein", note?: "…" }
+//
+// Für Aufträge mit verify:"crowd". Andere Spieler bestätigen (oder widersprechen)
+// einer Einreichung; ab `votesNeeded` Ja-Stimmen zahlt der SERVER aus — nicht
+// der Schwarm. Der Schwarm entscheidet nur, ob die Bedingung erfüllt ist; ob die
+// Belohnung gedeckt ist, prüft weiterhin resolveSwap.
+//
+// Bewusste Einschränkungen:
+//   • Der Einreicher stimmt nicht über sich selbst ab.
+//   • Der Aussteller auch nicht — er hat eigene Wege (approve/reject) und wäre
+//     als Partei zugleich Schiedsrichter.
+//   • Eine Stimme je Person und Einreichungs-Durchgang (Unique-Index).
+//   • Genug Nein-Stimmen schicken die Einreichung zurück in „claimed": der
+//     Bearbeiter behält den Auftrag und kann nachbessern. Ihn zu verlieren,
+//     weil drei Leute den falschen Ort angeschaut haben, wäre unverhältnismäßig.
+// ---------------------------------------------------------------------
+routerAdd("POST", "/api/objects/{id}/quest/confirm", (e) => {
+  try {
+    const { resolveEffective, recomputeForObject } = require(`${__hooks}/permissions.js`)
+    const { parseState, callDataOf, resolveSwap, executeSwap,
+            istAbgelaufen, markiereAbgelaufen,
+            noetigeStimmen, zaehleStimmen } = require(`${__hooks}/quests.js`)
+    const { karmaFuerAbschluss, karmaAendern } = require(`${__hooks}/karma.js`)
+    const callId = e.request.pathValue("id")
+    const info = e.requestInfo()
+    const user = info.auth
+    if (!user) return e.json(401, { error: "authentication required" })
+
+    const body = info.body || {}
+    const verdict = String(body.verdict || "").toLowerCase() === "nein" ? "nein" : "ok"
+    const note = body.note ? String(body.note).slice(0, 500) : ""
+
+    let call
+    try { call = $app.findRecordById("objects", callId) }
+    catch (err) { return e.json(404, { error: "call not found" }) }
+    if (call.get("type") !== "call") return e.json(400, { error: "object is not a call" })
+
+    const eff = resolveEffective(user, call)
+    if ((eff.rights || []).indexOf("view") === -1) {
+      return e.json(403, { error: "not allowed to see this call" })
+    }
+
+    const st = parseState(call)
+    const c = callDataOf(st)
+    if (c.verify !== "crowd") return e.json(400, { error: "call is not verified by the crowd" })
+    if (c.status !== "pending") return e.json(409, { error: "no submission awaiting confirmation" })
+    if (!c.submission) return e.json(409, { error: "submission has no id — resubmit required" })
+
+    if (istAbgelaufen(c)) {
+      if (markiereAbgelaufen(c)) {
+        st.call = c
+        call.set("state", st)
+        try { $app.save(call) } catch (err) {}
+      }
+      return e.json(409, { error: "call expired", status: "expired" })
+    }
+
+    const einreicher = String(c.pendingBy || c.claimedBy || "")
+    if (user.id === einreicher) return e.json(403, { error: "you cannot confirm your own submission" })
+    if (user.id === String(call.get("owner") || "")) {
+      return e.json(403, { error: "the issuer decides via approve/reject, not as part of the crowd" })
+    }
+
+    // Stimme ablegen. Der Unique-Index (call, submission, voter) ist die harte
+    // Grenze; der Vorab-Blick liefert nur die verständlichere Meldung.
+    const vorher = zaehleStimmen($app, callId, c.submission)
+    if (vorher.waehler.indexOf(user.id) !== -1) {
+      return e.json(409, { error: "you already voted on this submission" })
+    }
+    try {
+      const coll = $app.findCollectionByNameOrId("quest_confirmations")
+      const stimme = new Record(coll)
+      stimme.set("call", callId)
+      stimme.set("submission", c.submission)
+      stimme.set("voter", user.id)
+      stimme.set("verdict", verdict)
+      if (note) stimme.set("note", note)
+      $app.save(stimme)
+    } catch (err) {
+      return e.json(409, { error: "vote not recorded: " + (err && err.message ? err.message : err) })
+    }
+
+    const stimmen = zaehleStimmen($app, callId, c.submission)
+    const noetig = Number(c.votesNeeded) || noetigeStimmen(c)
+
+    // Noch nicht entschieden — Zwischenstand melden.
+    if (stimmen.ja < noetig && stimmen.nein < noetig) {
+      return e.json(200, {
+        ok: true, id: callId, status: c.status, decided: false,
+        yes: stimmen.ja, no: stimmen.nein, votesNeeded: noetig
+      })
+    }
+
+    // Abgelehnt: zurück zum Bearbeiter, er darf nachbessern.
+    if (stimmen.nein >= noetig) {
+      c.status = c.claimedBy ? "claimed" : "open"
+      delete c.pendingBy
+      delete c.submission
+      c.rejectReason = "vom Schwarm abgelehnt (" + stimmen.nein + " von " + noetig + ")"
+      st.call = c
+      call.set("state", st)
+      $app.save(call)
+      return e.json(200, {
+        ok: true, id: callId, status: c.status, decided: true, approved: false,
+        yes: stimmen.ja, no: stimmen.nein, votesNeeded: noetig
+      })
+    }
+
+    // Angenommen: der Server zahlt aus — mit derselben Deckungsprüfung wie
+    // überall. Reicht die Treuhand nicht, bleibt der Auftrag „pending"; die
+    // Stimmen bleiben gültig, der Aussteller kann nachlegen.
+    const swap = resolveSwap($app, call, c, einreicher)
+    if (!swap.ok) {
+      return e.json(swap.code, {
+        error: swap.error, decided: true, approved: true, payout: false,
+        yes: stimmen.ja, no: stimmen.nein
+      })
+    }
+    delete c.submission
+    const moved = executeSwap($app, call, st, c, swap, einreicher)
+    for (let i = 0; i < moved.length; i++) {
+      try { recomputeForObject(moved[i]) } catch (_) {}
+    }
+    const karmaNeu = karmaFuerAbschluss($app, einreicher, callId)
+    // Wer abgenommen hat, bekommt ebenfalls etwas gutgeschrieben — sonst
+    // erledigt die undankbare Arbeit niemand. Bewusst klein.
+    for (let i = 0; i < stimmen.waehler.length; i++) {
+      karmaAendern($app, stimmen.waehler[i], 1, "Abnahme für Auftrag " + callId)
+    }
+    return e.json(200, {
+      ok: true, id: callId, status: c.status, decided: true, approved: true, payout: true,
+      yes: stimmen.ja, no: stimmen.nein, votesNeeded: noetig,
+      completedBy: einreicher, karma: karmaNeu,
+      rewardsLeft: (c.rewardItems || []).length
+    })
+  } catch (err) {
+    console.log("[quest.confirm] error: " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err) })
+  }
+})
+
+
 // POST /api/objects/{id}/quest/cancel — Aussteller bricht ab, Treuhand wird frei.
+// POST /api/objects/{id}/quest/abandon — Bearbeiter gibt den Auftrag zurück.
+//
+// Nicht dasselbe wie `cancel`: Dort zieht der AUSSTELLER die Ausschreibung
+// zurück und bekommt seine Treuhand frei. Hier legt der BEARBEITER nur seinen
+// Anspruch nieder — der Auftrag bleibt ausgeschrieben und ist sofort wieder zu
+// haben. Ohne diesen Weg bliebe ein angenommener Auftrag für immer belegt,
+// sobald jemand es sich anders überlegt; die Frist griffe erst Tage später,
+// und ein Auftrag ohne Frist gar nicht.
+//
+// Eine eingereichte Arbeit lässt sich nicht zurückziehen: Über eine laufende
+// Abnahme entscheidet der Prüfer, nicht der Eingereichte. Wer nachbessern will,
+// wartet die Ablehnung ab — die schickt den Auftrag ohnehin zurück auf
+// "claimed".
+//
+// Karma bleibt unberührt. Einen Auftrag zurückzugeben ist keine Verfehlung,
+// sondern besser als ihn liegen zu lassen — Abzug gibt es nur für nachgewiesene
+// Verstösse.
+routerAdd("POST", "/api/objects/{id}/quest/abandon", (e) => {
+  try {
+    const { parseState, callDataOf, istAbgelaufen, markiereAbgelaufen } = require(`${__hooks}/quests.js`)
+    const callId = e.request.pathValue("id")
+    const info = e.requestInfo()
+    const user = info.auth
+    if (!user) return e.json(401, { error: "authentication required" })
+
+    let call
+    try { call = $app.findRecordById("objects", callId) }
+    catch (err) { return e.json(404, { error: "call not found" }) }
+    if (call.get("type") !== "call") return e.json(400, { error: "object is not a call" })
+
+    const st = parseState(call)
+    const c = callDataOf(st)
+
+    if (String(c.claimedBy || "") !== user.id) {
+      return e.json(403, { error: "only the player who claimed this call may abandon it" })
+    }
+    if (c.status === "pending") {
+      return e.json(409, { error: "submission is under review — wait for the verdict" })
+    }
+    if (c.status === "done") return e.json(409, { error: "call already completed" })
+
+    // Abgelaufenes wird nicht wieder freigegeben, sondern stillgelegt — sonst
+    // stünde ein Auftrag nach dem Zurückgeben wieder als annehmbar in der
+    // Liste, obwohl seine Frist längst um ist.
+    if (istAbgelaufen(c)) {
+      markiereAbgelaufen(c)
+      st.call = c
+      call.set("state", st)
+      try { $app.save(call) } catch (err) {}
+      return e.json(409, { error: "call expired", status: "expired" })
+    }
+
+    delete c.claimedBy
+    delete c.pendingBy
+    c.status = "open"
+    st.call = c
+    call.set("state", st)
+    $app.save(call)
+    return e.json(200, { ok: true, id: callId, status: "open" })
+  } catch (err) {
+    console.log("[quest.abandon] error: " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err) })
+  }
+})
+
+
 routerAdd("POST", "/api/objects/{id}/quest/cancel", (e) => {
   try {
     const { parseState, escrowCallOf, callDataOf, idList } = require(`${__hooks}/quests.js`)

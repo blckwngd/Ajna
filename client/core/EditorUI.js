@@ -29,7 +29,7 @@ const EDITOR_TYPES = [
 ]
 
 export class EditorUI {
-  constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null, onManageGroups = null, onManageServers = null, onManageProfile = null, onManageFilters = null, onEditorActivate = null, objectFilter = null, onToggleArMode = null, getArMode = null, onSaved = null }) {
+  constructor({ ajna, container, mode = 'map', onObjectSelected = null, onObjectsUpdated = null, onFocusPlayer = null, onObjectHover = null, onManageGroups = null, onManageServers = null, onManageProfile = null, onManageFilters = null, onEditorActivate = null, objectFilter = null, onToggleArMode = null, getArMode = null, onSaved = null, onQuestEditor = null }) {
     this.ajna = ajna
     this.container = container
     this.mode = mode
@@ -55,6 +55,9 @@ export class EditorUI {
     // Optional: onSaved(obj|null, err?) — Host zeigt eine kurze Bestätigung
     // (Toast) nach dem Speichern.
     this.onSaved = onSaved
+    // Optional: onQuestEditor(record|null) — öffnet den Auftrags-Editor. Ohne
+    // Verdrahtung bleibt der Knopf im Auftrags-Abschnitt verborgen.
+    this.onQuestEditor = onQuestEditor
     // Optional: Hover-Callback (record, hovering: boolean) — wird vom AR-
     // Client zum Hervorheben im 3D-Raum, vom Map-Client zum Markieren
     // auf der Karte genutzt.
@@ -204,6 +207,11 @@ export class EditorUI {
             </div>
             <div id="callFields" class="ed-anchor" hidden>
               <div class="ed-full-label">Auftrag (Call)</div>
+              <button type="button" class="ed-btn" data-action="quest-editor"
+                      style="justify-self:start;margin-bottom:8px">Auftrag bearbeiten …</button>
+              <div class="ed-full-label" style="opacity:.7;font-weight:normal;margin-top:-4px">
+                Text für die Liste, Frist, Abnahme und Sichtbarkeit. Belohnung und
+                Forderungen bleiben unten.</div>
               <div class="ed-grid">
                 <label for="callTask">Aufgabe</label>
                 <textarea id="callTask" name="callTask" rows="2" placeholder="Was ist zu tun?" style="grid-column:2;resize:vertical"></textarea>
@@ -544,6 +552,13 @@ export class EditorUI {
       ?.addEventListener('click', () => this._publishCall(false))
     this.editorOverlay?.querySelector('[data-action="call-cancel"]')
       ?.addEventListener('click', () => this._publishCall(true))
+    // Auftrags-Editor: eigener Vorgang, eigenes Fenster. Der Aufrufer verdrahtet
+    // ihn über onQuestEditor — ohne Verdrahtung bleibt der Knopf verborgen.
+    this.editorOverlay?.querySelector('[data-action="quest-editor"]')
+      ?.addEventListener('click', () => {
+        const id = this.editorForm?.objectId?.value
+        this.onQuestEditor?.(id ? this.ajna.getObjectById?.(id) : null)
+      })
     this.editorOverlay?.querySelector('[data-action="call-req-add"]')
       ?.addEventListener('click', () => this._addRequireRow())
 
@@ -797,6 +812,8 @@ export class EditorUI {
   _updateCallSectionVisible() {
     const isCall = (this.typeSelect?.value || '').toLowerCase() === 'call'
     if (this.callFields) this.callFields.hidden = !isCall
+    const knopf = this.editorOverlay?.querySelector('[data-action="quest-editor"]')
+    if (knopf) knopf.hidden = !this.onQuestEditor
   }
   _fillCallFields(obj) {
     const c = obj?.state?.call || {}, f = this.editorForm

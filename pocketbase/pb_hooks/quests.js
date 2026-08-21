@@ -19,19 +19,12 @@
 // Zeichen-Array (JsonRaw) — beides robust nach Objekt parsen (dieselbe
 // Defensive wie in der pickup-Route).
 function parseState(rec) {
-  let state = rec.get("state")
-  if (typeof state === "string") {
-    try { state = JSON.parse(state) } catch (_) { state = {} }
-  } else if (Array.isArray(state)) {
-    try {
-      const s = (state.length && typeof state[0] === "number")
-        ? String.fromCharCode.apply(null, state)
-        : state.join("")
-      state = JSON.parse(s)
-    } catch (_) { state = {} }
-  }
-  if (!state || typeof state !== "object" || Array.isArray(state)) state = {}
-  return state
+  // UTF-8-Dekodierung liegt in utf8.js. Sie hier von Hand zu machen war lange
+  // falsch: Bytes wurden als Latin-1 gelesen, „Bäume" wurde zu „BÃ¤ume" — und
+  // weil Hooks den Stand zurückschreiben, wurde das gespeichert.
+  const { jsonObject } = require(`${__hooks}/utf8.js`)
+  const state = jsonObject(rec.get("state"), {})
+  return Array.isArray(state) ? {} : state
 }
 
 /** Call-ID aus der Markierung am Item — sagt NICHTS über deren Gültigkeit. */
@@ -295,8 +288,232 @@ function executeSwap(app, call, callState, callData, swap, completerId) {
   return moved
 }
 
+// =====================================================================
+//  Frist
+// =====================================================================
+// `state.call.deadline` ist ein ISO-Zeitpunkt. Geprüft wird LAZY — beim
+// Annehmen und beim Abschließen —, nicht von einem Zeitgeber.
+//
+// Warum nicht per Timer oder Agent: Eine Frist, die nur tickt, solange ein
+// Prozess läuft, ist keine Frist. Läge die Auswertung beim Quest-Agent, blieben
+// bei dessen Ausfall Belohnungen unbegrenzt in der Treuhand gebunden — echter
+// Besitz, den niemand mehr freigeben kann. Die lazy Prüfung braucht niemanden,
+// der läuft: Wer den Auftrag anfasst, stellt fest, dass er abgelaufen ist.
+
+/**
+ * Ist der Auftrag über seine Frist hinaus?
+ * @param {object} call  callData (state.call)
+ * @param {number} [jetzt]  ms
+ * @returns {boolean}  ohne Frist immer false
+ */
+function istAbgelaufen(call, jetzt) {
+  const d = call && call.deadline
+  if (!d) return false
+  const t = Date.parse(d)
+  if (!isFinite(t)) return false
+  return t <= (jetzt || Date.now())
+}
+
+/**
+ * Abgelaufenen Auftrag stilllegen: Anspruch lösen, Status setzen.
+ *
+ * Die TREUHAND wird hier bewusst NICHT aufgelöst — gebundene Gegenstände
+ * gehören weiterhin dem Aussteller und werden über quest/cancel freigegeben.
+ * Ein automatisches Zurückbuchen wäre ein Besitzwechsel ohne Auftrag.
+ *
+ * @returns {boolean} true, wenn etwas geändert wurde
+ */
+function markiereAbgelaufen(call) {
+  if (!call || call.status === "expired" || call.status === "done" || call.status === "cancelled") {
+    return false
+  }
+  call.status = "expired"
+  delete call.claimedBy
+  delete call.pendingBy
+  return true
+}
+
+// =====================================================================
+//  Wer nimmt ab?
+// =====================================================================
+// `state.call.verify` sagt, WER über einen gemeldeten Abschluss entscheidet:
+//
+//   "items"           der Server, deterministisch (gelieferte Gegenstände)
+//   "issuer"/"agent"  der AUSSTELLER des Auftrags — Mensch oder Agent
+//   "group"           eine benannte Prüfgruppe (state.call.pruefgruppe)
+//   "crowd"           andere Spieler, x von y (quest/confirm)
+//
+// ZUM NAMEN "agent": historisch. Als es die Aufträge zuerst gab, stellte sie
+// immer ein Agent aus, und die Route heißt bis heute quest/approve mit der
+// Prüfung `call.owner === user.id`. Gemeint war nie „ein Bot entscheidet",
+// sondern „der Aussteller entscheidet" — bei einer Stichprobe durch einen
+// Verein ist das ein Mensch. `"issuer"` ist der ehrliche Name; `"agent"` bleibt
+// gültig, damit bestehende Aufträge und Agents weiterlaufen.
+
+/** Entscheidet der Aussteller selbst? */
+function istAusstellerAbnahme(verify) {
+  return verify === "issuer" || verify === "agent"
+}
+
+/** Braucht dieser Weg eine menschliche Entscheidung (also erst „pending")? */
+function brauchtAbnahme(verify) {
+  return istAusstellerAbnahme(verify) || verify === "group" || verify === "crowd"
+}
+
+/**
+ * Darf dieses Konto über den Abschluss entscheiden?
+ *
+ * Der Aussteller darf immer — er trägt die Belohnung. Bei `verify: "group"`
+ * zusätzlich jedes Mitglied der benannten Gruppe, aufgelöst über dieselbe
+ * transitive Mitgliedschaft wie die Rechte (Untergruppen zählen mit).
+ *
+ * @returns {{ok: boolean, grund: string}}
+ */
+function darfAbnehmen(app, callRec, c, userId, gruppenVon) {
+  if (String(callRec.get("owner") || "") === userId) return { ok: true, grund: "issuer" }
+  if (c.verify !== "group") return { ok: false, grund: "only the issuer may approve this call" }
+  const gruppe = String(c.pruefgruppe || "")
+  if (!gruppe) return { ok: false, grund: "call names no review group" }
+  // Die Auflösung kommt VON AUSSEN. Sie hier per require() nachzuladen ging
+  // schief und der Fehler verschwand in einem catch — die Abnahme scheiterte
+  // dann mit „nicht in der Prüfgruppe", obwohl die Mitgliedschaft bestand.
+  if (typeof gruppenVon !== "function") {
+    return { ok: false, grund: "review group cannot be resolved" }
+  }
+  const meine = gruppenVon(userId) || []
+  for (let i = 0; i < meine.length; i++) {
+    if (String(meine[i]) === gruppe) return { ok: true, grund: "review group" }
+  }
+  return { ok: false, grund: "you are not in the review group for this call" }
+}
+
+// =====================================================================
+//  Schwarm-Abnahme
+// =====================================================================
+
+/** Wie viele Ja-Stimmen dieser Auftrag braucht (Vorgabe 3, sinnvoll 1–9). */
+function noetigeStimmen(call) {
+  const n = Number(call && call.schwarmZahl)
+  if (!isFinite(n)) return 3
+  return Math.max(1, Math.min(9, Math.round(n)))
+}
+
+/**
+ * Kennung eines Einreichungs-Durchgangs. Ohne sie zählten beim zweiten
+ * Einreichen die Stimmen des ersten mit.
+ */
+function neueEinreichung() {
+  return "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+}
+
+/**
+ * Stimmen eines Durchgangs zählen.
+ * @returns {{ja: number, nein: number, waehler: string[]}}
+ */
+function zaehleStimmen(app, callId, submission) {
+  const ergebnis = { ja: 0, nein: 0, waehler: [] }
+  let zeilen = []
+  try {
+    zeilen = app.findRecordsByFilter(
+      "quest_confirmations",
+      "call = {:call} && submission = {:sub}",
+      "-created", 200, 0,
+      { call: callId, sub: submission }
+    )
+  } catch (err) { return ergebnis }
+  for (let i = 0; i < zeilen.length; i++) {
+    const v = zeilen[i].get("verdict")
+    if (v === "ok") ergebnis.ja++
+    else if (v === "nein") ergebnis.nein++
+    ergebnis.waehler.push(String(zeilen[i].get("voter")))
+  }
+  return ergebnis
+}
+
+// =====================================================================
+//  Nachweis
+// =====================================================================
+// Für Echtwelt-Aufgaben („Müll gesammelt") gibt es nichts abzugeben. Der
+// Abschluss hängt dann nicht an Ware, sondern an einem Nachweis:
+//
+//   foto        mindestens ein Bildverweis
+//   vorOrt      eine gemeldete Position nahe am Einsatzort
+//   gegenstand  läuft weiter über requires/requiresItems (resolveSwap)
+//
+// WAS DAS IST UND WAS NICHT: Keiner dieser Nachweise ist ein Beweis. Die
+// Position meldet das Gerät des Bearbeiters selbst und kann gefälscht werden;
+// ein Bild kann alt oder von woanders sein. Die Prüfung erhöht den AUFWAND und
+// gibt dem Prüfer etwas in die Hand — mehr behauptet sie nicht. Belastbar wird
+// Anwesenheit erst mit einem zweiten Faktor am Ort (NFC/Beacon), siehe die
+// Planung zur Regel-Engine.
+//
+// Deshalb prüft der Server nur, was er prüfen KANN: dass eine Angabe gemacht
+// wurde und dass sie plausibel ist (Entfernung zum Auftrag).
+
+const VOR_ORT_RADIUS_M = 150
+
+/** Grobe Meter-Distanz zwischen zwei WGS84-Punkten. */
+function abstandM(aLat, aLon, bLat, bLon) {
+  const dLat = (bLat - aLat) * 111320
+  const dLon = (bLon - aLon) * 111320 * Math.cos(aLat * Math.PI / 180)
+  return Math.sqrt(dLat * dLat + dLon * dLon)
+}
+
+/**
+ * Nachweis gegen die Forderungen des Auftrags prüfen.
+ *
+ * @param {object} callRec   Auftrags-Record (für lat/lon)
+ * @param {object} c         callData
+ * @param {object} proof     { note?, photos?, at? }
+ * @returns {{ok: boolean, fehlend: string[], gespeichert: object}}
+ */
+function pruefeNachweis(callRec, c, proof) {
+  const noetig = Array.isArray(c.nachweis) ? c.nachweis : []
+  const p = (proof && typeof proof === "object") ? proof : {}
+  const fehlend = []
+
+  const bilder = Array.isArray(p.photos)
+    ? p.photos.map(function (x) { return String(x || "").slice(0, 300) }).filter(Boolean)
+    : []
+  if (noetig.indexOf("foto") !== -1 && bilder.length === 0) {
+    fehlend.push("foto: mindestens ein Bildverweis")
+  }
+
+  let ort = null
+  if (noetig.indexOf("vorOrt") !== -1) {
+    const lat = Number(p.at && p.at.lat), lon = Number(p.at && p.at.lon)
+    if (!isFinite(lat) || !isFinite(lon)) {
+      fehlend.push("vorOrt: keine Position gemeldet")
+    } else {
+      const grenze = Number(c.vorOrtRadiusM) > 0 ? Number(c.vorOrtRadiusM) : VOR_ORT_RADIUS_M
+      const d = abstandM(Number(callRec.get("lat")), Number(callRec.get("lon")), lat, lon)
+      if (!isFinite(d) || d > grenze) {
+        fehlend.push("vorOrt: " + Math.round(d) + " m entfernt, erlaubt sind " + grenze + " m")
+      } else {
+        // `precise` sagt, ob die Stufe „Genau" galt — eine vergröberte Angabe
+        // ist schwächer und soll dem Prüfer nicht als exakt verkauft werden.
+        ort = { lat: lat, lon: lon, precise: p.at.precise === true, distanceM: Math.round(d) }
+      }
+    }
+  }
+
+  return {
+    ok: fehlend.length === 0,
+    fehlend: fehlend,
+    gespeichert: {
+      note: p.note ? String(p.note).slice(0, 1000) : "",
+      photos: bilder.slice(0, 8),
+      at: ort,
+    },
+  }
+}
+
 module.exports = {
+  VOR_ORT_RADIUS_M, abstandM, pruefeNachweis,
+  istAusstellerAbnahme, brauchtAbnahme, darfAbnehmen,
   parseState, escrowCallOf, activeEscrowOf, callDataOf, idList,
   specMatches, describeSpec, validateSpecs,
-  resolveSwap, executeSwap
+  resolveSwap, executeSwap,
+  istAbgelaufen, markiereAbgelaufen,
+  noetigeStimmen, neueEinreichung, zaehleStimmen
 }

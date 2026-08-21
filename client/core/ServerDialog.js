@@ -23,8 +23,11 @@ export class ServerDialog {
   /**
    * @param {{ajna: import('./AjnaManager.js').AjnaManager}} opts
    */
-  constructor({ ajna } = {}) {
+  constructor({ ajna, onDetails = null } = {}) {
     this.ajna = ajna
+    // „Details …" öffnet das Server-Profil (ServerProfile.js). Ohne
+    // Verdrahtung bleibt der Knopf wirkungslos — die Liste funktioniert weiter.
+    this.onDetails = onDetails
     this._backdrop = null
     this._status = ''
     this._statusKind = ''
@@ -206,13 +209,6 @@ export class ServerDialog {
         </div>
         <div class="sd-server-url"></div>
         <div class="sd-server-meta"></div>
-        <div class="sd-privacy-row">
-          <label>Standort:</label>
-          <select class="sd-privacy">
-            ${privacy.LEVELS.map(l => `<option value="${l}">${privacy.label(l)}</option>`).join('')}
-          </select>
-          <button class="sd-privacy-reset" title="Wieder dem Standard folgen">↺</button>
-        </div>
       </div>
       <div class="sd-server-actions">
         <div class="sd-login-row" style="display:none">
@@ -224,9 +220,7 @@ export class ServerDialog {
         <div class="sd-action-row">
           <button class="sd-login-toggle">${s.isLoggedIn ? 'Logout' : 'Login'}</button>
           <button class="sd-connect-toggle" ${s.isLoggedIn ? '' : 'disabled'}>${s.isConnected ? 'Trennen' : 'Verbinden'}</button>
-          <button class="sd-set-default" ${s.isDefault ? 'disabled' : ''}>Als Standard</button>
-          <button class="sd-rename">Umbenennen</button>
-          <button class="sd-remove danger" ${s.isDefault ? 'disabled' : ''}>Entfernen</button>
+          <button class="sd-details">Details …</button>
         </div>
       </div>
     `
@@ -237,31 +231,12 @@ export class ServerDialog {
     row.dataset.serverId = s.id
     this._fillBadges(row.querySelector('.sd-badges'), s)
 
-    // Standort-Freigabe pro Server: man vertraut nicht jedem Server gleich viel.
-    // Ohne eigene Wahl folgt die Zeile dem Profil-Standard; das ↺ nimmt eine
-    // Übersteuerung wieder zurück.
-    const privSelect = row.querySelector('.sd-privacy')
-    const privReset = row.querySelector('.sd-privacy-reset')
-    // Erklärung hinter dem ℹ️ statt als Dauertext: die Stufen brauchen ehrliche,
-    // also lange Sätze — eingeblendet erschlagen sie die Server-Zeile.
-    // Funktion statt fertigem Text: sie wird bei jedem Öffnen neu ausgewertet
-    // und zeigt damit immer die GERADE gewählte Stufe.
-    row.querySelector('.sd-privacy-row').appendChild(infoHint(() => {
-      const lvl = privacy.levelFor(s.id)
-      const prefix = privacy.hasOverride(s.id)
-        ? `Eigene Einstellung für diesen Server.\n\n`
-        : `Folgt dem Standard aus den Einstellungen (↺ ist nur bei einer eigenen Einstellung sichtbar).\n\n`
-      return prefix + (privacy.LEVEL_INFO[lvl]?.hint || '')
-    }, { title: () => `Standort-Freigabe: ${privacy.label(privacy.levelFor(s.id))}` }))
-    const renderPriv = () => {
-      const lvl = privacy.levelFor(s.id)
-      privSelect.value = lvl
-      privReset.style.visibility = privacy.hasOverride(s.id) ? 'visible' : 'hidden'
-    }
-    privSelect.addEventListener('change', () => { privacy.setLevel(s.id, privSelect.value); renderPriv() })
-    privReset.addEventListener('click', () => { privacy.clearLevel(s.id); renderPriv() })
+    // Standort-Freigabe, Umbenennen, Standard und Entfernen stehen im
+    // Server-Profil (ServerProfile.js). Hier bleibt, was man häufig tut —
+    // sonst trug jede Zeile fünf Knöpfe und ein Formular.
+    row.querySelector('.sd-details').addEventListener('click', () => this.onDetails?.(s.id))
+    // Eine Stufenänderung im Profil betrifft die Abzeichen hier.
     this._privacyUnsub ||= privacy.onChange(() => { if (this._backdrop) this._render() })
-    renderPriv()
 
     const loginRow = row.querySelector('.sd-login-row')
     const actionRow = row.querySelector('.sd-action-row')
@@ -311,33 +286,6 @@ export class ServerDialog {
         }
       } catch (err) {
         this._setStatus(`Fehler: ${err?.message || err}`, 'error')
-      }
-    })
-
-    row.querySelector('.sd-set-default').addEventListener('click', () => {
-      try {
-        this.ajna.setDefaultServer(s.id)
-        this._setStatus(`Standard: ${s.label}`)
-      } catch (err) {
-        this._setStatus(err?.message || String(err), 'error')
-      }
-    })
-
-    row.querySelector('.sd-rename').addEventListener('click', () => {
-      const next = prompt('Neuer Server-Label:', s.label)
-      if (next && next.trim()) {
-        this.ajna.renameServer(s.id, next.trim())
-        this._setStatus(`Umbenannt: ${next.trim()}`)
-      }
-    })
-
-    row.querySelector('.sd-remove').addEventListener('click', async () => {
-      if (!confirm(`Server "${s.label}" wirklich entfernen? Login-Token wird gelöscht.`)) return
-      try {
-        await this.ajna.removeServer(s.id)
-        this._setStatus(`Entfernt: ${s.label}`)
-      } catch (err) {
-        this._setStatus(err?.message || String(err), 'error')
       }
     })
 
@@ -441,19 +389,6 @@ export class ServerDialog {
         margin-bottom: 2px;
       }
       .ajna-sd-dialog .sd-server-meta { font-size: 11px; color: #888; }
-      .ajna-sd-dialog .sd-privacy-row {
-        display: flex; align-items: center; gap: 6px; margin-top: 6px;
-      }
-      .ajna-sd-dialog .sd-privacy-row label { font-size: 11px; color: #888; }
-      .ajna-sd-dialog .sd-privacy {
-        background: #1a1a1a; color: #ddd; border: 1px solid #444;
-        border-radius: 4px; padding: 2px 4px; font-size: 11px;
-      }
-      .ajna-sd-dialog .sd-privacy-reset {
-        background: none; border: none; color: #888; cursor: pointer;
-        font-size: 12px; padding: 0 4px;
-      }
-      .ajna-sd-dialog .sd-privacy-reset:hover { color: #ddd; }
 
       .ajna-sd-dialog .sd-badge {
         display: inline-block;

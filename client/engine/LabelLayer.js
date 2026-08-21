@@ -30,9 +30,21 @@ import * as GUI from 'babylonjs-gui'
 import { resolveLabel, labelScaleForDistance } from '../core/Appearance.js'
 
 const UPDATE_MS = 250          // schwerer Durchlauf: 4×/s reicht fürs Auge
-const MAX_VISIBLE = 25         // mehr Tafeln liest ohnehin niemand
 const MAX_DISTANCE_M = 1500    // darüber: ausblenden
-const BASE_FONT_PX = 18        // × Entfernungsfaktor 0.7…1.4 ⇒ 13…25 px
+
+// Schriftgröße und Tafelzahl hängen an der BREITE DER GUI-TEXTUR, nicht an
+// festen Pixeln. Grund: Babylon rechnet Schriftgrößen in Textur-Pixeln, und die
+// Textur ist so breit wie der Renderpuffer. Auf einem Telefon sind das gut 390
+// Pixel (bei aktiver Render-Skalierung noch weniger), am Schreibtisch 1440 —
+// dieselben 18 px füllten am Telefon also den vierfachen Bildschirmanteil.
+// Genau das machte die Tafeln am Handy erschlagend groß.
+const REF_BREITE_PX = 1280     // Bezugsbreite, auf die sich BASE_FONT_PX bezieht
+const BASE_FONT_PX = 18        // × Entfernungsfaktor 0.7…1.4
+const FONT_MIN_PX = 9          // darunter unlesbar
+const FONT_MAX_PX = 20         // darüber erschlagend
+const SCHMAL_PX = 700          // ab hier gilt die Anzeige als „Telefon"
+const MAX_VISIBLE_BREIT = 25   // mehr Tafeln liest ohnehin niemand
+const MAX_VISIBLE_SCHMAL = 10  // auf einem Telefon ist der Platz früher voll
 const FOCUS_ANGLE_DEG = 12     // Sichtkegel, in dem eine Tafel „angeschaut" ist
 const FOCUS_SCALE = 1.3
 const EASE = 0.18              // Annäherung pro Frame an die Zielgröße
@@ -110,6 +122,28 @@ class LabelLayer {
     t.linkOffsetY = -14
 
     this.entries.set(gameObject, { text: t, record, pole, scale: 1, target: 1, dist: Infinity })
+  }
+
+  /** Breite der GUI-Textur in Pixeln (= Renderpuffer-Breite). */
+  _texturBreite() {
+    const b = this.scene?.getEngine?.()?.getRenderWidth?.()
+    return Number.isFinite(b) && b > 0 ? b : REF_BREITE_PX
+  }
+
+  /**
+   * Grundschriftgröße für diese Anzeige. Skaliert mit der Texturbreite, damit
+   * eine Tafel überall ungefähr denselben BILDSCHIRMANTEIL einnimmt, nach unten
+   * wie nach oben begrenzt.
+   * @returns {number} Pixel
+   */
+  _basisFontPx() {
+    const roh = BASE_FONT_PX * this._texturBreite() / REF_BREITE_PX
+    return Math.max(FONT_MIN_PX, Math.min(FONT_MAX_PX, Math.round(roh)))
+  }
+
+  /** Wie viele Tafeln gleichzeitig? Auf schmalen Anzeigen weniger. */
+  _maxTafeln() {
+    return this._texturBreite() < SCHMAL_PX ? MAX_VISIBLE_SCHMAL : MAX_VISIBLE_BREIT
   }
 
   /**
@@ -221,10 +255,14 @@ class LabelLayer {
       candidates.push({ go, e, dist, dot })
     }
 
-    // Deckel: die nächsten MAX_VISIBLE gewinnen.
+    // Deckel: die nächstgelegenen gewinnen (auf schmalen Anzeigen weniger).
     candidates.sort((a, b) => a.dist - b.dist)
-    const shown = candidates.slice(0, MAX_VISIBLE)
-    for (const c of candidates.slice(MAX_VISIBLE)) this._show(c.e, false)
+    const grenze = this._maxTafeln()
+    const shown = candidates.slice(0, grenze)
+    for (const c of candidates.slice(grenze)) this._show(c.e, false)
+    // Einmal je Durchlauf bestimmen statt je Tafel — die Texturbreite ändert
+    // sich nur bei Größenwechsel oder Render-Skalierung.
+    const basisPx = this._basisFontPx()
 
     // Angeschaut = kleinster Winkel im Sichtkegel; bei Gleichstand die nähere.
     const cosLimit = Math.cos(FOCUS_ANGLE_DEG * Math.PI / 180)
@@ -245,7 +283,7 @@ class LabelLayer {
       // Schriftgröße auf GANZE Pixel: sie neu zu setzen rastert den Text neu,
       // das soll nur passieren, wenn sich wirklich etwas ändert. Der weiche
       // Fokus läuft darüber als Transform (scaleX/Y) — billig und flüssig.
-      const px = Math.round(BASE_FONT_PX * labelScaleForDistance(dist))
+      const px = Math.round(basisPx * labelScaleForDistance(dist))
       if (px !== e.text.fontSize) e.text.fontSize = px
 
       const focused = go === this._focus

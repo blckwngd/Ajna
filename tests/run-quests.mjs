@@ -21,5 +21,12 @@ import * as self from './quests/self.mjs'
 import * as orphan from './quests/orphan.mjs'
 import * as save from './quests/save.mjs'
 import * as revive from './quests/revive.mjs'
+import * as fristKarma from './quests/frist-karma.mjs'
+import * as schwarm from './quests/schwarm.mjs'
+import * as nachweisListe from './quests/nachweis-liste.mjs'
+import * as pruefgruppe from './quests/pruefgruppe.mjs'
+import * as gruppenrechte from './quests/gruppenrechte.mjs'
+import * as aufgebenListe from './quests/aufgeben-liste.mjs'
+import * as umlaute from './quests/umlaute.mjs'
 
-await runSuites('Quests', 'qtest', [basic, requires, repeat, self, orphan, save, revive])
+await runSuites('Quests', 'qtest', [basic, requires, repeat, self, orphan, save, revive, fristKarma, schwarm, nachweisListe, pruefgruppe, gruppenrechte, aufgebenListe, umlaute])
