@@ -228,7 +228,31 @@ export function zuFormular(v, { jetzt = Date.now(), sichtbarkeit = 'region', sic
     sichtbarkeit,
     sichtbarGruppe,
     anbietenNachH: Number(roh.anbietenNachH) || 0,
+    wiederholbar: roh.repeatable === true || Number(roh.rewardPerRun) > 0,
+    proDurchlauf: Number(roh.rewardPerRun) || 1,
+    forderungen: forderungenAus(roh.requiresSpecs),
   }
+}
+
+/**
+ * Server-Forderungen („3× Wolfsfell") in Formularzeilen.
+ * Der Server beschreibt eine GATTUNG (`match`), keine konkreten Stücke — beim
+ * Ausschreiben weiss niemand, welches Fell der Bearbeiter später trägt.
+ */
+export function forderungenAus(specs) {
+  return (Array.isArray(specs) ? specs : [])
+    .map(s => ({
+      name: String(s?.match?.name || s?.match?.type || s?.match?.tag || ''),
+      anzahl: Math.max(1, Number(s?.count) || 1),
+    }))
+    .filter(f => f.name)
+}
+
+/** Formularzeilen zurück in Server-Forderungen. */
+export function forderungenZu(zeilen) {
+  return (Array.isArray(zeilen) ? zeilen : [])
+    .map(f => ({ match: { name: String(f?.name || '').trim() }, count: Math.max(1, Number(f?.anzahl) || 1) }))
+    .filter(f => f.match.name)
 }
 
 /**
@@ -254,6 +278,16 @@ export function callZustandAus(formular, { jetzt = Date.now(), vorher = null } =
   if (f.abnahme === 'schwarm') c.schwarmZahl = Math.max(1, Math.min(9, Number(f.schwarmZahl) || 3))
   else delete c.schwarmZahl
 
+  // Forderungen und Wiederholbarkeit setzt beim Ausschreiben der Server (er
+  // prüft sie dort). Ein ENTWURF geht da nie durch — ohne diese Zeilen wäre
+  // beides zwischen „Speichern" und „Veröffentlichen" wieder weg.
+  const forderungen = forderungenZu(f.forderungen)
+  if (forderungen.length) c.requires = forderungen; else delete c.requires
+  if (f.wiederholbar) {
+    c.repeatable = true
+    c.rewardPerRun = Math.max(1, Number(f.proDurchlauf) || 1)
+  } else { delete c.repeatable; delete c.rewardPerRun }
+
   // Nur bei der Figur anbieten: erst nach der Wartezeit zusätzlich listen.
   const wartet = Number(f.anbietenNachH) || 0
   if (wartet > 0) { c.anbietenNachH = wartet; c.listed = false; delete c.angeboten }
@@ -262,12 +296,25 @@ export function callZustandAus(formular, { jetzt = Date.now(), vorher = null } =
   return c
 }
 
-/** Formular → Rumpf für POST quest/publish. */
+/**
+ * Formular → Rumpf für POST quest/publish.
+ *
+ * Wiederholbarkeit und Forderungen gehören hierhin und nicht in den Zustand:
+ * Der Server prüft beim Ausschreiben, dass der Vorrat für die Durchläufe reicht
+ * und dass jede Forderung eine Gattung nennt. Beides schriebe ein Client sonst
+ * an der Prüfung vorbei.
+ */
 export function publishPayloadAus(formular, rewardItems) {
   const f = formular || {}
   const verify = ABNAHME_ZU_VERIFY[f.abnahme] || 'items'
   const body = { rewardItems: [...(rewardItems || [])], verify }
   if (verify === 'group' && f.pruefgruppe) body.pruefgruppe = String(f.pruefgruppe)
+  const forderungen = forderungenZu(f.forderungen)
+  if (forderungen.length) body.requires = forderungen
+  if (f.wiederholbar) {
+    body.repeatable = true
+    body.rewardPerRun = Math.max(1, Number(f.proDurchlauf) || 1)
+  }
   return body
 }
 

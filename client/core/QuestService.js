@@ -24,6 +24,16 @@ import {
 /** Wie weit die Regionsliste reicht (Meter). */
 export const RADIUS_M = 3000
 
+/**
+ * Aussehen eines neu angelegten Auftrags.
+ *
+ * Der Auftrags-Editor fragt bewusst nicht danach: Wer eine Aufgabe
+ * ausschreibt, denkt an die Aufgabe. Ohne Vorgabe stünde der Auftrag als
+ * namenlose Kiste in der Welt — mit dieser hier ist er als Aushang erkennbar,
+ * und wer die Extrameile gehen will, ändert ihn im Objekt-Editor.
+ */
+export const AUFTRAG_AUSSEHEN = { emoji: '📣', color: '#c58b2b', scale: 1 }
+
 export class QuestService {
   /**
    * @param {{
@@ -193,7 +203,9 @@ export class QuestService {
    */
   async speichern(formular, { publish = false } = {}) {
     const f = formular || {}
-    const pos = this._position()
+    // Die im Kontextmenü angeklickte Stelle geht vor: Sie ist eine Aussage
+    // („dort soll der Auftrag hin"), die eigene Position nur ein Rückfall.
+    const pos = (f.position && Number.isFinite(f.position.lat)) ? f.position : this._position()
     const vorhanden = f.id ? this._objekt(f.id) : null
     const vorher = vorhanden?.state?.call || null
 
@@ -208,6 +220,11 @@ export class QuestService {
       daten.lat = pos.lat
       daten.lon = pos.lon
       daten.altitude = 0
+      // Aussehen wird hier NICHT gefragt. Wer einen Auftrag ausschreibt, hat
+      // einen Text im Kopf, keine Meinung zu glTF-Dateien — also eine
+      // brauchbare Vorgabe setzen und im Objekt-Editor änderbar lassen.
+      daten.appearance = { ...AUFTRAG_AUSSEHEN }
+      daten.description = String(f.kurz || '').trim()
       const rec = await this.ajna.createObject(daten)
       id = rec?.id
       if (!id) throw new Error('Der Auftrag wurde nicht angelegt.')

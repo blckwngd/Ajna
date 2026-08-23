@@ -1,12 +1,15 @@
 // QuestEditor — Auftrag schreiben und ändern.
 //
-// ABGRENZUNG zum Auftrags-Abschnitt im normalen Editor (EditorUI, `#callFields`):
-// Dort steht die MECHANIK — geforderte Gegenstände, Belohnung aus dem Inventar,
-// Treuhand binden, wiederholbar. Das ist an die Server-Routen angeschlossen und
-// bleibt vorerst dort.
-// Hier steht der VORGANG: Text für die Liste, Frist, Abnahmeverfahren,
-// Nachweis, Karma-Bedingung, Sichtbarkeit. Also alles, was entscheidet, WER den
-// Auftrag sieht, WANN er verfällt und WORAN man erkennt, dass er erledigt ist.
+// HIER STEHT DER GANZE AUFTRAG. Text für die Liste, Frist, Belohnung,
+// Wiederholbarkeit, geforderte Gegenstände, Abnahmeverfahren, Nachweis,
+// Karma-Bedingung, Sichtbarkeit.
+//
+// Das war einmal geteilt: Der Objekt-Editor führte „Aufgabe", „Prüfung",
+// „Wiederholbar", Forderungen und Belohnung ein zweites Mal. Zwei Formulare für
+// eine Sache sind nicht nur überladen — das dortige Speichern baute `state.call`
+// aus seinen Feldern NEU AUF und warf dabei alles weg, was es nicht kannte
+// (Kurztext, Ort, Frist, Nachweis, Karma, Prüfgruppe). Jetzt gibt es dort nur
+// noch den Knopf hierher.
 //
 // VOKABULAR (vorher uneinheitlich benutzt):
 //   Bearbeiter — wer den Auftrag übernimmt und ausführt
@@ -116,8 +119,9 @@ export const LEER_AUFTRAG = () => ({
   fristMs: 0, frist: null,
   belohnung: { anzahl: 1, was: 'Diamant', steigt: 0 },
   abnahme: 'stichprobe', schwarmZahl: 3, pruefgruppe: '',
-  nachweis: ['foto'], karma: 0, sichtbarkeit: 'region', sichtbarGruppe: '',
+  nachweis: [], karma: 0, sichtbarkeit: 'region', sichtbarGruppe: '',
   anbietenNachH: 0,
+  wiederholbar: false, proDurchlauf: 1, forderungen: [],
 })
 
 // Demo-Inventar für die Belohnungsauswahl. Ersetzt später der echte Bestand.
@@ -158,6 +162,18 @@ export function pruefeAuftrag(q) {
   if (q?.sichtbarkeit === 'region' && !String(q?.kurz || '').trim()) {
     fehler.push('Für die Regionsliste braucht es eine Kurzbeschreibung.')
   }
+  // Eine Forderung ohne Gattung träfe JEDEN Gegenstand — der Server lehnt sie
+  // beim Veröffentlichen ab, und das ist der unangenehmere Zeitpunkt.
+  if ((q?.forderungen || []).some(f => !String(f?.name || '').trim())) {
+    fehler.push('Jede Forderung braucht eine Gattung — sonst zählt jeder beliebige Gegenstand.')
+  }
+  if (q?.wiederholbar) {
+    const p = Number(q?.proDurchlauf)
+    if (!Number.isFinite(p) || p < 1) fehler.push('Belohnung je Durchlauf muss mindestens 1 sein.')
+    else if (p > n) {
+      fehler.push('Je Durchlauf kann nicht mehr ausgezahlt werden, als insgesamt hinterlegt ist.')
+    }
+  }
   return fehler
 }
 
@@ -187,11 +203,18 @@ export class QuestEditor {
    * Fenster öffnen.
    * @param {object|null} quest  null = neuer Entwurf
    */
-  open(quest = null) {
+  open(quest = null, { veroeffentlichen = true, position = null } = {}) {
     this.close()
     this._q = { ...LEER_AUFTRAG(), ...(quest || {}) }
     this._q.belohnung = { ...LEER_AUFTRAG().belohnung, ...(quest?.belohnung || {}) }
     this._q.nachweis = Array.isArray(this._q.nachweis) ? [...this._q.nachweis] : []
+    this._q.forderungen = Array.isArray(this._q.forderungen) ? [...this._q.forderungen] : []
+    // Stelle, an der der Auftrag entstehen soll (Kontextmenü). Nur für neue
+    // Aufträge — ein bestehender liegt schon irgendwo.
+    if (position && !this._q.id) this._q.position = position
+    // Aus dem Objekt-Editor heraus wird nur bearbeitet. Ausschreiben bindet die
+    // Treuhand und gehört an die Stelle, an der man den Auftrag auch anlegt.
+    this._veroeffentlichen = veroeffentlichen !== false
     const ov = document.createElement('div')
     ov.className = 'ajna-qe-overlay'
     ov.innerHTML = `<div class="ajna-qe" role="dialog" aria-modal="true" aria-label="Auftrag bearbeiten">
@@ -275,6 +298,15 @@ export class QuestEditor {
       </div>
       <div class="qe-fussnote">Die Belohnung wird beim Veröffentlichen aus deinem Inventar
         treuhänderisch gebunden. Bindung und Auszahlung macht der Server.</div>
+      <label class="qe-haken-zeile">
+        <input type="checkbox" data-f="wiederholbar"${q.wiederholbar ? ' checked' : ''}${aus('belohnung')}>
+        <span><span class="qe-haken-titel">Wiederholbar</span>
+        <span class="qe-haken-hinweis">Mehrere Spieler können den Auftrag nacheinander erledigen.
+        Der hinterlegte Vorrat begrenzt, wie oft.</span></span>
+      </label>
+      ${q.wiederholbar ? `<label>Belohnung je Durchlauf
+        <input type="number" data-f="proDurchlauf" min="1" max="99" value="${esc(q.proDurchlauf || 1)}"${aus('belohnung')}>
+      </label>` : ''}
 
       <div class="qe-abschnitt">Abnahme</div>
       <label>Verfahren
@@ -301,16 +333,27 @@ export class QuestEditor {
           </span></label>`
         }).join('')}
       </div>
+      ${q.nachweis.includes('gegenstand') || q.abnahme === 'uebergabe' ? `
+      <div class="qe-feldname">Geforderte Gegenstände</div>
+      <div class="qe-fussnote">Gattung und Anzahl — der Server sucht sie beim Abschluss im
+        Inventar des Bearbeiters. Leer heisst: nichts abgeben.</div>
+      <div class="qe-forderungen">
+        ${(q.forderungen || []).map((f, i) => `<span class="qe-forderung">
+          <input type="number" data-forderung="${i}" data-teil="anzahl" min="1" max="99" value="${esc(f.anzahl)}"${aus('abnahme')}>
+          <input type="text" data-forderung="${i}" data-teil="name" value="${esc(f.name)}"
+                 placeholder="Wolfsfell" maxlength="60"${aus('abnahme')}>
+          <button type="button" class="qe-weg" data-forderung-weg="${i}" aria-label="Entfernen"${aus('abnahme')}>×</button>
+        </span>`).join('')}
+      </div>
+      <button type="button" class="qe-btn qe-klein" data-a="forderung-neu"${aus('abnahme')}>+ Forderung</button>
+      ` : ''}
       <label>Nötiges Karma des Bearbeiters
         <select data-f="karma"${aus('karma')}>
           ${KARMA_WAHL.map(v => `<option value="${v.stufe}"${v.stufe === Number(q.karma || 0) ? ' selected' : ''}>${esc(v.label)}</option>`).join('')}
         </select>
       </label>
-      <div class="qe-fussnote">Karma zeigt, wie verlässlich sich jemand bei Aufträgen gezeigt hat:
-        ${KARMA_PRO_STUFE} Punkte je Stufe, Stufe 1 bis 5. Gutgeschrieben wird für bestätigte
-        Abschlüsse (${esc(KARMA_GUTSCHRIFT[0].punkte)} Punkte), abgezogen nur bei nachgewiesenen
-        Verstößen oder wiederholten begründeten Beschwerden. Wer neu ist, hat Karma 0 —
-        das ist kein Makel, sondern ein noch leeres Konto.</div>
+      <div class="qe-fussnote">${KARMA_PRO_STUFE} Punkte je Stufe, Stufe 0 bis 5.
+        ${KARMA_GUTSCHRIFT.map(g => `${esc(g.grund)}: +${g.punkte}`).join('. ')}.</div>
 
       <div class="qe-abschnitt">Sichtbarkeit</div>
       <label>Wer sieht den Auftrag
@@ -339,9 +382,24 @@ export class QuestEditor {
       el.addEventListener('change', () => { this._lese(); this._render() })
     })
     // Neu zeichnen, nicht nur lesen: an einem Haken hängt ein Hinweis, der
-    // erscheinen und verschwinden muss (siehe OHNE_FUNKTION).
+    // erscheinen und verschwinden muss (siehe OHNE_FUNKTION), und an
+    // „Gegenstand dabeihaben" die Forderungsliste.
     this._body.querySelectorAll('[data-n]').forEach(el =>
       el.addEventListener('change', () => { this._lese(); this._render() }))
+
+    this._body.querySelectorAll('[data-forderung]').forEach(el =>
+      el.addEventListener('input', () => this._lese()))
+    this._body.querySelectorAll('[data-forderung-weg]').forEach(el =>
+      el.addEventListener('click', () => {
+        this._lese()
+        this._q.forderungen.splice(Number(el.dataset.forderungWeg), 1)
+        this._render()
+      }))
+    this._body.querySelector('[data-a="forderung-neu"]')?.addEventListener('click', () => {
+      this._lese()
+      this._q.forderungen = [...(this._q.forderungen || []), { name: '', anzahl: 1 }]
+      this._render()
+    })
 
     this._renderAktionen(sp)
   }
@@ -364,7 +422,9 @@ export class QuestEditor {
     const q = this._q
     const knoepfe = []
     if (sp.schreibbar) knoepfe.push({ k: 'save', l: 'Speichern' })
-    if (q.status === 'entwurf') knoepfe.push({ k: 'publish', l: 'Veröffentlichen', p: true })
+    if (q.status === 'entwurf' && this._veroeffentlichen !== false) {
+      knoepfe.push({ k: 'publish', l: 'Veröffentlichen', p: true })
+    }
     if (q.status === 'offen' || q.status === 'angeboten') knoepfe.push({ k: 'withdraw', l: 'Zurückziehen' })
     knoepfe.push({ k: 'cancel', l: 'Schließen' })
     this._aktionenEl.innerHTML = knoepfe
@@ -383,7 +443,8 @@ export class QuestEditor {
     for (const el of this._body.querySelectorAll('[data-f]')) {
       const pfad = el.dataset.f
       let wert = el.value
-      if (el.type === 'number' || pfad === 'fristMs' || pfad === 'anbietenNachH') wert = Number(wert) || 0
+      if (el.type === 'checkbox') wert = el.checked
+      else if (el.type === 'number' || pfad === 'fristMs' || pfad === 'anbietenNachH') wert = Number(wert) || 0
       if (pfad.includes('.')) {
         const [a, b] = pfad.split('.')
         q[a] = { ...(q[a] || {}) }
@@ -394,6 +455,18 @@ export class QuestEditor {
     }
     q.nachweis = [...this._body.querySelectorAll('[data-n]')]
       .filter(el => el.checked).map(el => el.dataset.n)
+
+    // Forderungen liegen als Liste vor, nicht als einzelne Felder — deshalb
+    // getrennt eingesammelt. Leere Zeilen bleiben erhalten, solange das Fenster
+    // offen ist; wegzuwerfen was jemand gerade tippt, wäre unhöflich.
+    const forderungen = []
+    for (const el of this._body.querySelectorAll('[data-forderung]')) {
+      const i = Number(el.dataset.forderung)
+      forderungen[i] = forderungen[i] || { name: '', anzahl: 1 }
+      if (el.dataset.teil === 'anzahl') forderungen[i].anzahl = Math.max(1, Number(el.value) || 1)
+      else forderungen[i].name = el.value
+    }
+    if (forderungen.length) q.forderungen = forderungen.filter(Boolean)
     // Frist als Zeitstempel mitführen — die Liste zeigt Restzeit, nicht Dauer.
     q.frist = q.fristMs ? Date.now() + Number(q.fristMs) : null
     return q
@@ -506,6 +579,14 @@ export class QuestEditor {
     .ajna-qe .qe-haken-hinweis{display:block;margin-top:2px;font:11px/1.45 system-ui,sans-serif;color:#7f8796}
     .ajna-qe .qe-haken-offen{display:block;margin-top:3px;font:11px/1.45 system-ui,sans-serif;
       color:#c9a227}
+    .ajna-qe .qe-forderungen{display:flex;flex-direction:column;gap:5px;margin-bottom:6px}
+    .ajna-qe .qe-forderung{display:flex;gap:6px;align-items:center}
+    .ajna-qe .qe-forderung input[type=number]{width:64px;flex:0 0 auto}
+    .ajna-qe .qe-forderung input[type=text]{flex:1 1 auto}
+    .ajna-qe .qe-weg{flex:0 0 auto;width:26px;height:26px;padding:0;border-radius:6px;
+      background:#2a2a32;border:1px solid #3a3a44;color:#b8b8c0;cursor:pointer;font-size:15px;line-height:1}
+    .ajna-qe .qe-weg:hover{background:#3a2a2a;color:#e08a6b}
+    .ajna-qe .qe-btn.qe-klein{padding:3px 10px;font-size:12px;margin-bottom:12px}
 
     .ajna-qe .qe-fuss{border-top:1px solid #2b2b33;padding:10px 12px;background:rgba(24,24,30,.6)}
     .ajna-qe .qe-fehler{margin-bottom:8px;padding:8px 10px;border-radius:8px;

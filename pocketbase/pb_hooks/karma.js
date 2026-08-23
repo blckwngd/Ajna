@@ -20,10 +20,27 @@
 const KARMA_PRO_STUFE = 20
 const KARMA_MAX_STUFE = 5
 
-// Was ein bestätigter Abschluss einbringt. Eine Stufe kostet damit rund vier
-// Aufträge — genug, dass Stufe 3 etwas heißt, wenig genug, dass niemand
-// hundert Aufträge braucht, um überhaupt sichtbar zu werden.
-const PUNKTE_ABSCHLUSS = 5
+// Was ein Abschluss einbringt — in zwei Teilen.
+//
+// WARUM GETEILT: Prüft nur der Server (Übergabe von Gegenständen), ist der
+// Abschluss eine Rechenoperation. Sieht ein MENSCH nach — Stichprobe,
+// Prüfgruppe, Schwarm — steckt Arbeit darin, und zwar auf beiden Seiten: Der
+// Bearbeiter macht seine Erledigung überprüfbar, jemand anders schaut sie an.
+//
+// Der eigentliche Grund ist aber ein anderer: Eine Prüfung, die nur wehtun
+// kann, wird gemieden — und was gemieden wird, wird auch nicht ehrlich
+// gemeldet. Mit einem Bonus lohnt es sich, die Abnahme zu suchen statt ihr
+// auszuweichen. Deshalb gibt es für eine ABGELEHNTE Abnahme auch keinen Abzug:
+// Eine Ablehnung ist noch kein Verstoß, und eine Prüfgruppe soll kein
+// Druckmittel in der Hand halten. Punkte kostet nur, was nachgewiesen ist —
+// und das entscheidet die Administration, nicht diese Datei.
+//
+// In Summe bleibt der geprüfte Weg bei 5 Punkten, also beim bisherigen Wert.
+// Niemand steht schlechter da als vorher; nur der automatische Weg wiegt
+// weniger.
+const PUNKTE_ABSCHLUSS = 2          // jeder erledigte Auftrag
+const PUNKTE_ABNAHME_BONUS = 3      // zusätzlich, wenn ein Mensch abgenommen hat
+const PUNKTE_PRUEFER = 1            // fürs Abnehmen für andere
 
 /**
  * Stufe zu einem Punktestand.
@@ -82,8 +99,24 @@ function karmaAendern(app, userId, delta, grund) {
 }
 
 /** Gutschrift für einen ausgezahlten Auftrag. */
-function karmaFuerAbschluss(app, userId, callId) {
-  return karmaAendern(app, userId, PUNKTE_ABSCHLUSS, "Auftrag " + callId + " abgeschlossen")
+function karmaFuerAbschluss(app, userId, callId, verify) {
+  // `verify` sagt, WER entschieden hat. Fehlt die Angabe, gilt der sparsame
+  // Fall — ein Aufrufer, der den Weg nicht kennt, soll keinen Bonus auslösen.
+  const geprueft = menschlicheAbnahme(verify)
+  const punkte = PUNKTE_ABSCHLUSS + (geprueft ? PUNKTE_ABNAHME_BONUS : 0)
+  return karmaAendern(app, userId, punkte,
+    "Auftrag " + callId + (geprueft ? " abgeschlossen und abgenommen" : " abgeschlossen"))
+}
+
+/** Hat ein Mensch über den Abschluss entschieden? */
+function menschlicheAbnahme(verify) {
+  const v = String(verify || "")
+  return v === "issuer" || v === "agent" || v === "group" || v === "crowd"
+}
+
+/** Gutschrift fürs Abnehmen für andere. */
+function karmaFuerPruefer(app, userId, callId) {
+  return karmaAendern(app, userId, PUNKTE_PRUEFER, "Abnahme für Auftrag " + callId)
 }
 
 /**
@@ -97,6 +130,8 @@ function karmaReicht(app, userId, noetigeStufe) {
 }
 
 module.exports = {
-  KARMA_PRO_STUFE, KARMA_MAX_STUFE, PUNKTE_ABSCHLUSS,
-  karmaStufe, karmaPunkte, karmaAendern, karmaFuerAbschluss, karmaReicht,
+  KARMA_PRO_STUFE, KARMA_MAX_STUFE,
+  PUNKTE_ABSCHLUSS, PUNKTE_ABNAHME_BONUS, PUNKTE_PRUEFER,
+  karmaStufe, karmaPunkte, karmaAendern, karmaReicht,
+  karmaFuerAbschluss, karmaFuerPruefer, menschlicheAbnahme,
 }

@@ -182,6 +182,35 @@ export function directorSpawnItems({ ajna, position, enabled = true, notify, sou
       disabled: !enabled,
       onClick: () => send(s.archetype, s.label)
     })),
-    { label: 'Zufällig hier erzeugen', disabled: !enabled, onClick: () => send('random', 'Zufälliges Objekt') }
+    { label: 'Zufällig hier erzeugen', disabled: !enabled, onClick: () => send('random', 'Zufälliges Objekt') },
+    questSpawnItem({ position, enabled, notify })
   ]
+}
+
+/**
+ * „Auftrag hier erzeugen" — führt DIREKT ins Auftrags-Fenster, nicht in den
+ * Objekt-Editor.
+ *
+ * Warum anders als die übrigen Einträge: Ein Auftrag ist ein Vorgang, kein
+ * Modell. Wer einen ausschreiben will, hat einen Text im Kopf und eine
+ * Belohnung — keine Meinung zu Skalierung, Rotation und glTF-Datei. Ihn erst
+ * durch ein Objektformular zu schicken, stellt die falsche Frage zuerst.
+ * Das Objekt entsteht trotzdem, nur eben nebenbei beim Speichern.
+ *
+ * Auch nicht über den World-Director: Der Auftrag gehört dem Spieler, nicht dem
+ * Agent — sonst könnte der Aussteller ihn weder ändern noch abnehmen.
+ */
+export function questSpawnItem({ position, enabled = true, notify }) {
+  return {
+    label: 'Auftrag hier erzeugen',
+    disabled: !enabled,
+    onClick: () => {
+      const oeffnen = window.ajnaQuestEditor
+      if (typeof oeffnen !== 'function') {
+        notify?.('Das Auftrags-Fenster ist in dieser Ansicht nicht verfügbar.')
+        return
+      }
+      oeffnen(null, { lat: position.lat, lon: position.lon })
+    }
+  }
 }

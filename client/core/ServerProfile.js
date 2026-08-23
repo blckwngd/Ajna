@@ -20,7 +20,7 @@
 
 import { privacy } from './PrivacyPolicy.js'
 import { infoHint } from './InfoHint.js'
-import { renderKarma, KARMA_PRO_STUFE, KARMA_GUTSCHRIFT, KARMA_ABZUG } from './karma.js'
+import { renderKarma } from './karma.js'
 
 const STYLE_ID = 'ajna-sp-style'
 
@@ -120,10 +120,6 @@ export class ServerProfile {
       <div class="sp-abschnitt">Karma auf diesem Server</div>
       ${s.isLoggedIn ? '<div data-role="karma"></div>'
         : '<div class="sp-fussnote">Erst nach Anmeldung — Karma hängt am Konto.</div>'}
-      <div class="sp-fussnote">${KARMA_PRO_STUFE} Punkte je Stufe.
-        Gutschrift für ${esc(KARMA_GUTSCHRIFT[0].grund.toLowerCase())} (+${KARMA_GUTSCHRIFT[0].punkte}),
-        Abzug nur bei ${esc(KARMA_ABZUG[0].grund)}.
-        Jede Instanz führt ihr eigenes Karma — es wandert nicht mit.</div>
 
       <div class="sp-abschnitt">Standort-Freigabe <span data-role="priv-info"></span></div>
       <div class="sp-priv-zeile">

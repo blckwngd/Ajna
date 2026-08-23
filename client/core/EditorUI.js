@@ -205,40 +205,17 @@ export class EditorUI {
                 <input id="uwbNetwork" name="uwbNetwork" type="text" placeholder="z. B. 0x89AB" style="justify-self:start">
               </div>
             </div>
+            <!-- Der Auftrag selbst wird nicht hier bearbeitet, sondern im
+                 Auftrags-Fenster: Aufgabe, Abnahme, Nachweis, Frist, Belohnung,
+                 Wiederholbarkeit und Sichtbarkeit hängen aneinander und am
+                 Lebenslauf des Vorgangs. Hier standen sie ein zweites Mal — mit
+                 der unangenehmen Nebenwirkung, dass Speichern im Objekt-Editor
+                 alles überschrieb, was das Auftrags-Fenster gesetzt hatte. -->
             <div id="callFields" class="ed-anchor" hidden>
-              <div class="ed-full-label">Auftrag (Call)</div>
+              <div class="ed-full-label">Auftrag</div>
               <button type="button" class="ed-btn" data-action="quest-editor"
-                      style="justify-self:start;margin-bottom:8px">Auftrag bearbeiten …</button>
-              <div class="ed-full-label" style="opacity:.7;font-weight:normal;margin-top:-4px">
-                Text für die Liste, Frist, Abnahme und Sichtbarkeit. Belohnung und
-                Forderungen bleiben unten.</div>
-              <div class="ed-grid">
-                <label for="callTask">Aufgabe</label>
-                <textarea id="callTask" name="callTask" rows="2" placeholder="Was ist zu tun?" style="grid-column:2;resize:vertical"></textarea>
-                <label for="callVerify">Prüfung</label>
-                <select id="callVerify" name="callVerify" style="justify-self:start">
-                  <option value="items">Server prüft (geforderte Items)</option>
-                  <option value="agent">Agent entscheidet (eigene Logik)</option>
-                </select>
-                <label for="callRepeatable">Wiederholbar</label>
-                <span class="ed-rot-cell" style="align-items:center">
-                  <input id="callRepeatable" name="callRepeatable" type="checkbox" style="width:auto;justify-self:start">
-                  <input id="callRewardPerRun" name="callRewardPerRun" type="text" inputmode="numeric" value="1"
-                         title="Belohnungen pro Durchlauf" style="width:52px">
-                  <span class="meta" style="opacity:.7;font-size:11px">pro Durchlauf</span>
-                </span>
-              </div>
-              <div class="ed-full-label" style="font-weight:normal">Geforderte Gegenstände — Gattung + Anzahl (leer = nichts abgeben)</div>
-              <div data-role="call-requires" class="ed-json" style="max-height:120px;overflow:auto;padding:6px"></div>
-              <button type="button" class="ed-btn" data-action="call-req-add" style="margin-top:4px;justify-self:start;padding:2px 10px">+ Forderung</button>
-              <div class="ed-full-label" style="font-weight:normal">Belohnung aus deinem Inventar (wird treuhänderisch gebunden)</div>
-              <div data-role="call-reward-picker" class="ed-json" style="max-height:132px;overflow:auto;padding:6px"></div>
+                      style="justify-self:start">Auftrag bearbeiten …</button>
               <div class="ed-full-label" data-role="call-reward-info" style="opacity:.75;font-weight:normal"></div>
-              <div class="ed-buttons">
-                <button type="button" class="ed-btn" data-action="call-publish">Veröffentlichen (Treuhand binden)</button>
-                <button type="button" class="ed-btn" data-action="call-cancel">Auftrag abbrechen</button>
-              </div>
-              <div class="ed-full-label" data-role="call-status" style="opacity:.8;font-weight:normal"></div>
             </div>
             <label for="stateJson" class="ed-full-label">State (JSON)</label>
             <textarea id="stateJson" name="stateJson" rows="4" class="ed-json" spellcheck="false"></textarea>
@@ -546,12 +523,6 @@ export class EditorUI {
       this.onSaved?.(obj)   // Host zeigt eine kurze Bestätigung (Toast)
     })
 
-    // Auftrag veröffentlichen/abbrechen — läuft über die Server-Routen, weil
-    // daran die Treuhand hängt (Belohnungen sind gedeckte Items, keine Zahl).
-    this.editorOverlay?.querySelector('[data-action="call-publish"]')
-      ?.addEventListener('click', () => this._publishCall(false))
-    this.editorOverlay?.querySelector('[data-action="call-cancel"]')
-      ?.addEventListener('click', () => this._publishCall(true))
     // Auftrags-Editor: eigener Vorgang, eigenes Fenster. Der Aufrufer verdrahtet
     // ihn über onQuestEditor — ohne Verdrahtung bleibt der Knopf verborgen.
     this.editorOverlay?.querySelector('[data-action="quest-editor"]')
@@ -559,8 +530,6 @@ export class EditorUI {
         const id = this.editorForm?.objectId?.value
         this.onQuestEditor?.(id ? this.ajna.getObjectById?.(id) : null)
       })
-    this.editorOverlay?.querySelector('[data-action="call-req-add"]')
-      ?.addEventListener('click', () => this._addRequireRow())
 
     this.editorDeleteBtn.addEventListener('click', async () => {
       const id = this.editorForm.objectId.value
@@ -815,254 +784,34 @@ export class EditorUI {
     const knopf = this.editorOverlay?.querySelector('[data-action="quest-editor"]')
     if (knopf) knopf.hidden = !this.onQuestEditor
   }
+  // Der Auftrags-Abschnitt zeigt nur noch, WORAN man ist — bearbeitet wird im
+  // Auftrags-Fenster. Belohnungen sind keine Zahl, sondern treuhänderisch
+  // gebundene Gegenstände; gesetzt werden sie ausschliesslich vom Server.
   _fillCallFields(obj) {
-    const c = obj?.state?.call || {}, f = this.editorForm
-    if (f.callTask) f.callTask.value = c.task ?? ''
-    if (f.callVerify) f.callVerify.value = c.verify === 'agent' ? 'agent' : 'items'
-    if (f.callRepeatable) f.callRepeatable.checked = c.repeatable === true
-    if (f.callRewardPerRun) f.callRewardPerRun.value = c.rewardPerRun ?? 1
-    this._renderRequires(obj)
-    this._renderRewardPicker(obj)
-
-    // Belohnungen sind KEINE Zahl, sondern treuhänderisch gebundene Items aus
-    // dem Inventar des Ausstellers. Gesetzt werden sie ausschließlich vom Server
-    // (quest/publish) — hier nur Auswahl + Ist-Zustand.
+    const c = obj?.state?.call || {}
     const info = this.editorOverlay?.querySelector('[data-role="call-reward-info"]')
-    if (info) {
-      const n = Array.isArray(c.rewardItems) ? c.rewardItems.length : 0
-      const req = Array.isArray(c.requiresItems) ? c.requiresItems.length : 0
-      info.textContent = n
-        ? `Hinterlegt: ${n} Item(s)${req ? `, gefordert: ${req}` : ''} · Status: ${c.status || 'open'}`
-        : 'Noch nichts hinterlegt — ohne gebundene Belohnung ist der Auftrag nicht abschließbar.'
-    }
-    const st = this.editorOverlay?.querySelector('[data-role="call-status"]')
-    if (st) st.textContent = ''
+    if (!info) return
+    const n = Array.isArray(c.rewardItems) ? c.rewardItems.length : 0
+    const req = Array.isArray(c.requiresItems) ? c.requiresItems.length : 0
+    info.textContent = n
+      ? `Hinterlegt: ${n} Gegenstand/Gegenstände${req ? `, gefordert: ${req}` : ''} · Status: ${c.status || 'open'}`
+      : 'Noch nicht ausgeschrieben.'
   }
 
-  // Forderungs-Builder: „bring mir 3× Wolfsfell". Bewusst GATTUNG statt Instanz —
-  // beim Posten weiß man nicht, welches konkrete Fell der Spieler später trägt.
-  // Der Server löst die Gattung beim Abschluss im Inventar des Spielers auf.
-  _renderRequires(obj) {
-    const host = this.editorOverlay?.querySelector('[data-role="call-requires"]')
-    if (!host) return
-    host.innerHTML = ''
-    const specs = Array.isArray(obj?.state?.call?.requires) ? obj.state.call.requires : []
-    for (const s of specs) host.appendChild(this._requireRow(s))
-    if (!specs.length) this._setRequiresHint(host)
-  }
-
-  _setRequiresHint(host) {
-    const d = document.createElement('div')
-    d.dataset.role = 'req-hint'
-    d.style.cssText = 'opacity:.6;font-size:12px'
-    d.textContent = 'Keine Forderung — der Auftrag ist eine reine Belohnung (wer ihn abschließt, bekommt sie).'
-    host.appendChild(d)
-  }
-
-  _requireRow(spec) {
-    const m = (spec && spec.match) || {}
-    const row = document.createElement('div')
-    row.className = 'req-row'
-    row.style.cssText = 'display:flex;gap:4px;align-items:center;margin-bottom:4px'
-
-    const type = document.createElement('select')
-    type.dataset.role = 'req-type'
-    type.style.cssText = 'width:96px'
-    type.appendChild(new Option('Typ egal', ''))
-    for (const t of EDITOR_TYPES) {
-      if (t.key === 'default' || t.key === 'call') continue
-      type.appendChild(new Option(t.label, t.key))
-    }
-    if (m.type && ![...type.options].some(o => o.value === m.type)) type.appendChild(new Option(m.type, m.type))
-    type.value = m.type || ''
-
-    const mk = (role, ph, w, val) => {
-      const i = document.createElement('input')
-      i.type = 'text'; i.dataset.role = role; i.placeholder = ph
-      i.style.cssText = `width:${w}`; i.value = val || ''
-      return i
-    }
-    const name = mk('req-name', 'Name', '1px;flex:1;min-width:64px', m.name)
-    const tag = mk('req-tag', 'Tag', '68px', m.tag)
-    const count = mk('req-count', 'n', '40px', String(spec?.count ?? 1))
-    count.inputMode = 'numeric'
-    count.title = 'Anzahl'
-
-    const del = document.createElement('button')
-    del.type = 'button'; del.textContent = '×'; del.title = 'Forderung entfernen'
-    del.style.cssText = 'padding:0 7px;cursor:pointer'
-    del.addEventListener('click', () => {
-      const host = row.parentElement
-      row.remove()
-      if (host && !host.querySelector('.req-row')) this._setRequiresHint(host)
-    })
-
-    row.append(type, name, tag, count, del)
-    return row
-  }
-
-  _addRequireRow() {
-    const host = this.editorOverlay?.querySelector('[data-role="call-requires"]')
-    if (!host) return
-    host.querySelector('[data-role="req-hint"]')?.remove()
-    host.appendChild(this._requireRow(null))
-  }
-
-  // Zeilen → requires-Array. Leere Zeilen (nichts ausgefüllt) fallen raus: eine
-  // Forderung ohne Merkmal würde ALLES treffen — das lehnt der Server auch ab.
-  _collectRequires() {
-    const rows = [...(this.editorOverlay?.querySelectorAll('[data-role="call-requires"] .req-row') || [])]
-    const out = []
-    for (const r of rows) {
-      const match = {}
-      const type = r.querySelector('[data-role="req-type"]')?.value?.trim()
-      const name = r.querySelector('[data-role="req-name"]')?.value?.trim()
-      const tag = r.querySelector('[data-role="req-tag"]')?.value?.trim()
-      if (type) match.type = type
-      if (name) match.name = name
-      if (tag) match.tag = tag
-      if (!Object.keys(match).length) continue
-      const n = parseInt(r.querySelector('[data-role="req-count"]')?.value, 10)
-      out.push({ match, count: Number.isFinite(n) && n > 0 ? n : 1 })
-    }
-    return out
-  }
-
-  /**
-   * Ist das Item WIRKLICH noch an einen anderen Auftrag gebunden? Die Markierung
-   * am Item allein genügt nicht — sie verwaist, wenn der Auftrag gelöscht bzw.
-   * erledigt/abgebrochen wurde oder das Item nicht mehr als Belohnung führt.
-   * Spiegelt activeEscrowOf aus den Server-Hooks; ohne das zeigte der Picker
-   * längst freie Items dauerhaft als „an anderen Auftrag gebunden".
-   */
-  _boundToOtherCall(rec, callId) {
-    const boundTo = rec?.state?.escrow?.call || null
-    if (!boundTo || boundTo === callId) return false
-    const other = this.ajna?.getObjectById?.(boundTo)
-    if (!other || (other.type || '').toLowerCase() !== 'call') return false   // Auftrag weg → frei
-    const c = other.state?.call || {}
-    if (c.status === 'done' || c.status === 'cancelled') return false          // beendet → frei
-    const listed = Array.isArray(c.rewardItems) && c.rewardItems.indexOf(rec.id) !== -1
-    return listed                                                             // nicht gelistet → frei
-  }
-
-  // Belohnungs-Picker: die eigenen getragenen Items (carried_by = ich) zum
-  // Ankreuzen. Bereits für DIESEN Auftrag gebundene Items sind vorausgewählt;
-  // an einen ANDEREN Auftrag gebundene sind gesperrt (der Server würde sie
-  // ohnehin ablehnen — das hier ist nur die ehrliche Vorschau).
-  _renderRewardPicker(obj) {
-    const host = this.editorOverlay?.querySelector('[data-role="call-reward-picker"]')
-    if (!host) return
-    host.innerHTML = ''
-    const callId = obj?.id || null
-    const chosen = new Set(Array.isArray(obj?.state?.call?.rewardItems) ? obj.state.call.rewardItems : [])
-    const items = this.ajna?.inventoryItems?.() || []
-
-    if (!items.length) {
-      const d = document.createElement('div')
-      d.style.cssText = 'opacity:.6;font-size:12px'
-      d.textContent = 'Dein Inventar ist leer — sammle erst Objekte ein, die du als Belohnung hinterlegen kannst.'
-      host.appendChild(d)
-      return
-    }
-    for (const rec of items) {
-      const lockedElsewhere = this._boundToOtherCall(rec, callId)
-      const row = document.createElement('label')
-      row.style.cssText = 'display:flex;align-items:center;gap:7px;padding:2px 0;font-size:12px'
-        + (lockedElsewhere ? ';opacity:.45' : '')
-      const cb = document.createElement('input')
-      cb.type = 'checkbox'
-      cb.value = rec.id
-      cb.dataset.role = 'reward-item'
-      cb.checked = chosen.has(rec.id)
-      cb.disabled = !!lockedElsewhere
-      cb.style.width = 'auto'
-      const txt = document.createElement('span')
-      let emoji = ''
-      try { emoji = emojiOf(rec) || '' } catch {}
-      txt.textContent = `${emoji ? emoji + ' ' : ''}${rec.name || rec.id}`
-        + (lockedElsewhere ? '  (an anderen Auftrag gebunden)' : '')
-      row.append(cb, txt)
-      host.appendChild(row)
-    }
-  }
-
-  // „Veröffentlichen" / „Abbrechen" — beides server-autoritativ (Treuhand).
-  async _publishCall(cancel = false) {
-    const status = this.editorOverlay?.querySelector('[data-role="call-status"]')
-    const say = t => { if (status) status.textContent = t }
-    const id = this.editorForm?.objectId?.value
-    if (!id) { say('Auftrag zuerst speichern — die Treuhand hängt am gespeicherten Objekt.'); return }
-    let resCall = null
-    try {
-      if (cancel) {
-        const res = await this.ajna.cancelQuest(id)
-        resCall = res?.call || null
-        say(`Abgebrochen — ${res?.released ?? 0} Item(s) wieder frei.`)
-      } else {
-        const rewardItems = [...(this.editorOverlay?.querySelectorAll('[data-role="reward-item"]') || [])]
-          .filter(cb => cb.checked).map(cb => cb.value)
-        if (!rewardItems.length) { say('Mindestens ein Item als Belohnung wählen — Belohnungen werden nicht erzeugt.'); return }
-        const verify = this.editorForm?.callVerify?.value === 'agent' ? 'agent' : 'items'
-        const requires = this._collectRequires()
-        const repeatable = !!this.editorForm?.callRepeatable?.checked
-        const perRun = parseInt(this.editorForm?.callRewardPerRun?.value, 10)
-        const rewardPerRun = Number.isFinite(perRun) && perRun > 0 ? perRun : 1
-        const res = await this.ajna.publishQuest(id, { rewardItems, requires, verify, repeatable, rewardPerRun })
-        resCall = res?.call || null
-        const reqTxt = requires.length ? ` · ${requires.reduce((n, r) => n + (r.count || 1), 0)} gefordert` : ''
-        const repTxt = repeatable
-          ? ` · wiederholbar: ${Math.floor(rewardItems.length / rewardPerRun)}× (${rewardPerRun} pro Durchlauf)`
-          : ''
-        say(`Veröffentlicht: ${res?.rewardItems?.length ?? rewardItems.length} Item(s) gebunden${reqTxt}${repTxt}`
-          + (verify === 'agent' ? ' · Abschluss entscheidet der Agent.' : ' · Server prüft den Abschluss.'))
-      }
-      // Ansicht aus der SERVER-ANTWORT auffrischen, nicht aus dem Cache: der
-      // hinkt per Realtime kurz nach, und ein Neubefüllen daraus setzte die
-      // gerade getätigte Eingabe wieder zurück (z. B. den „Wiederholbar"-Haken).
-      const fresh = this.ajna.getObjectById?.(id)
-      const merged = { ...(fresh || { id }), state: { ...(fresh?.state || {}), call: resCall || {} } }
-      this._fillCallFields(merged)
-      if (this.editorForm?.stateJson) {
-        this.editorForm.stateJson.value = JSON.stringify(merged.state, null, 2)
-      }
-    } catch (err) {
-      say(err?.response?.error || err?.message || 'Aktion fehlgeschlagen')
-    }
-  }
-  // Call-Felder in state.call übernehmen (nur Typ call).
+  // `state.call` gehört dem Auftrags-Fenster und dem Server.
   //
-  // Zwei Sorten Felder, sauber getrennt:
-  //   • TREUHAND/LEBENSZYKLUS (rewardItems, requiresItems, status, claimedBy …)
-  //     gehören dem SERVER — daran hängt die Deckung. Die ziehen wir aus dem
-  //     gecachten Record nach, damit ein „Speichern" mit veraltetem State-JSON
-  //     sie nicht überschreibt (sonst verwaist die Treuhand).
-  //   • KONFIGURATION (task, verify, repeatable, rewardPerRun, requires) kommt
-  //     aus dem FORMULAR. Vorher zog dieser Merge alles aus dem Record — damit
-  //     verwarf „Speichern" stillschweigend die Eingaben, und „Wiederholbar"
-  //     wirkte nur über „Veröffentlichen".
+  // Hier stand einmal ein Merge, der `state.call` aus den Editor-Feldern NEU
+  // AUFBAUTE und dabei alles verwarf, was nicht im Formular stand — Kurztext,
+  // Ort, Frist, Nachweis, Karma, Prüfgruppe, Sichtbarkeits-Wartezeit. Ein
+  // beiläufiges „Speichern" im Objekt-Editor löschte damit die halbe
+  // Ausschreibung. Seit die Felder nur noch im Auftrags-Fenster stehen, ist die
+  // richtige Antwort: nichts anfassen.
   _mergeCallFields(state) {
     if ((this.typeSelect?.value || '').toLowerCase() !== 'call') return
-    const f = this.editorForm
-    const id = f.objectId?.value
-    const owned = (id && this.ajna?.getObjectById?.(id)?.state?.call) || state.call || {}
-
-    const call = {}
-    for (const k of ['rewardItems', 'requiresItems', 'status', 'claimedBy', 'completedBy', 'pendingBy', 'completions']) {
-      if (owned[k] !== undefined) call[k] = owned[k]
-    }
-
-    call.task = String(f.callTask?.value ?? '').trim()
-    call.verify = f.callVerify?.value === 'agent' ? 'agent' : 'items'
-    if (f.callRepeatable?.checked) {
-      const n = parseInt(f.callRewardPerRun?.value, 10)
-      call.repeatable = true
-      call.rewardPerRun = Number.isFinite(n) && n > 0 ? n : 1
-    }
-    const requires = this._collectRequires()
-    if (requires.length) call.requires = requires
-    if (!call.status) call.status = 'open'
-    state.call = call
+    const id = this.editorForm?.objectId?.value
+    const owned = (id && this.ajna?.getObjectById?.(id)?.state?.call) || state.call
+    if (owned && typeof owned === 'object') state.call = owned
+    else if (!state.call) state.call = { status: 'open' }
   }
 
   // Modell-Feld aus einem gltf-Wert füllen: lokales Modell → Dropdown, sonst

@@ -684,7 +684,8 @@ console.log('\n── Karma-Anzeige')
   check('Ist-Punktestand steht in der Anzeige', txt.includes('>63<'))
   check('Ziel der naechsten Stufe steht daneben', txt.includes('>80<'))
   check('Fortschritt als Balkenbreite', /width:15%/.test(txt))
-  check('Restweg wird benannt', /Noch 17 Punkte/.test(txt))
+  check('Restweg wird benannt', /17 Punkte bis Karma 4/.test(txt))
+  check('und woher Karma kommt', /durch das Erledigen von Aufträgen auf diesem Server/.test(txt))
   const voll = document.createElement('div')
   renderKarma(voll, 200)
   check('auf der Hoechststufe kein Restweg', /Höchste Stufe/.test(voll.innerHTML))
@@ -718,6 +719,27 @@ console.log('\n── Karma-Anzeige')
   check(`hoechste Stufe stimmt ueberein (${KARMA_MAX_STUFE})`, zahl('KARMA_MAX_STUFE') === KARMA_MAX_STUFE)
   check('Server schreibt Karma nur selbst gut',
     /karma_points/.test(readFileSync(new URL('../pocketbase/pb_hooks/main.pb.js', import.meta.url), 'utf8')))
+
+  // Die Client-Tabelle ERKLAERT nur, ausgezahlt wird serverseitig. Eine
+  // Beschriftung, die etwas verspricht, das der Server nicht gutschreibt, ist
+  // schlimmer als gar keine — genau das war beim Stichproben-Bonus der Fall:
+  // „+2" stand in der Tabelle und wurde nie gezahlt.
+  const { KARMA_GUTSCHRIFT, KARMA_ABZUG } = await import('../client/core/karma.js')
+  const g = Object.fromEntries(KARMA_GUTSCHRIFT.map(x => [x.grund, x.punkte]))
+  check(`Abschluss stimmt ueberein (${zahl('PUNKTE_ABSCHLUSS')})`,
+    zahl('PUNKTE_ABSCHLUSS') === g['Auftrag erledigt'])
+  check(`Abnahme-Bonus stimmt ueberein (${zahl('PUNKTE_ABNAHME_BONUS')})`,
+    zahl('PUNKTE_ABNAHME_BONUS') === g['Erledigung von jemandem abgenommen'])
+  check(`Pruefer-Gutschrift stimmt ueberein (${zahl('PUNKTE_PRUEFER')})`,
+    zahl('PUNKTE_PRUEFER') === g['Abnahme für andere übernommen'])
+  check('der geprüfte Weg bleibt bei 5 Punkten',
+    zahl('PUNKTE_ABSCHLUSS') + zahl('PUNKTE_ABNAHME_BONUS') === 5)
+  check('eine abgelehnte Abnahme kostet nichts',
+    !/karmaAendern\([^)]*-\d/.test(serverKarma)
+    && !KARMA_ABZUG.some(a => /abgelehnt|Ablehnung/i.test(a.grund)))
+  check('nur menschliche Abnahmewege bekommen den Bonus',
+    /issuer[\s\S]{0,60}agent[\s\S]{0,60}group[\s\S]{0,60}crowd/.test(
+      serverKarma.slice(serverKarma.indexOf('function menschlicheAbnahme'))))
 }
 
 // ── questMapping: Server-Auftrag ↔ Anzeige ───────────────────────────────
@@ -940,6 +962,138 @@ console.log('\n── Nachweis: fehlende Funktion benannt')
   const panel = readFileSync(new URL('../client/core/QuestPanel.js', import.meta.url), 'utf8')
   check('auch der Bearbeiter erfaehrt es beim Melden',
     /nicht implementiert[\s\S]{0,80}hochladen/i.test(panel))
+}
+
+// ── Auftrag anlegen: ein Fenster statt zwei ──────────────────────────────
+// „Aufgabe", „Prüfung", „Wiederholbar", Forderungen und Belohnung standen im
+// Objekt-Editor UND im Auftrags-Fenster. Zwei Formulare für eine Sache sind
+// nicht nur überladen: Das Speichern im Objekt-Editor baute `state.call` aus
+// SEINEN Feldern neu auf und warf dabei alles weg, was es nicht kannte.
+console.log('\n── Auftrag: nur noch ein Formular')
+{
+  const ed = readFileSync(new URL('../client/core/EditorUI.js', import.meta.url), 'utf8')
+  for (const feld of ['callTask', 'callVerify', 'callRepeatable', 'callRewardPerRun',
+                      'call-requires', 'call-reward-picker', 'call-publish']) {
+    check(`„${feld}" steht nicht mehr im Objekt-Editor`, !ed.includes(feld))
+  }
+  check('der Knopf ins Auftrags-Fenster bleibt', /data-action="quest-editor"/.test(ed))
+  check('Speichern fasst state.call nicht mehr an',
+    /_mergeCallFields\(state\)[\s\S]{0,600}state\.call = owned/.test(ed))
+  check('und baut ihn nicht mehr aus Formularfeldern neu auf',
+    !/call\.task = /.test(ed) && !/call\.verify = /.test(ed))
+}
+
+// ── QuestEditor: Wiederholbarkeit und Forderungen ────────────────────────
+console.log('\n── Auftrags-Editor: Wiederholbarkeit und Forderungen')
+{
+  const { pruefeAuftrag, LEER_AUFTRAG, QuestEditor } =
+    await import('../client/core/QuestEditor.js')
+
+  const gut = () => ({ ...LEER_AUFTRAG(), titel: 'T', text: 'A', kurz: 'K',
+                       belohnung: { anzahl: 3, was: 'Diamant', steigt: 0 } })
+
+  check('ein einfacher Auftrag geht durch', pruefeAuftrag(gut()).length === 0)
+  check('Wiederholbar ohne Vorrat wird beanstandet',
+    pruefeAuftrag({ ...gut(), wiederholbar: true, proDurchlauf: 4 })
+      .some(f => /hinterlegt/.test(f)))
+  check('passt der Vorrat, geht es durch',
+    pruefeAuftrag({ ...gut(), wiederholbar: true, proDurchlauf: 3 }).length === 0)
+  check('Forderung ohne Gattung wird beanstandet',
+    pruefeAuftrag({ ...gut(), forderungen: [{ name: '  ', anzahl: 2 }] })
+      .some(f => /Gattung/.test(f)))
+  check('mit Gattung geht sie durch',
+    pruefeAuftrag({ ...gut(), forderungen: [{ name: 'Wolfsfell', anzahl: 2 }] }).length === 0)
+
+  // Veroeffentlichen bindet die Treuhand — aus dem Objekt-Editor heraus wird
+  // nur bearbeitet.
+  const knoepfe = (opts) => {
+    const e = Object.create(QuestEditor.prototype)
+    e._q = { ...LEER_AUFTRAG(), status: 'entwurf' }
+    e._veroeffentlichen = opts.veroeffentlichen
+    const gesammelt = []
+    e._aktionenEl = {
+      set innerHTML(html) { gesammelt.push(html) },
+      querySelectorAll: () => [],
+    }
+    e._renderAktionen({ schreibbar: true, gesperrt: [] })
+    return gesammelt.join('')
+  }
+  check('beim Anlegen gibt es „Veröffentlichen"',
+    /Veröffentlichen/.test(knoepfe({ veroeffentlichen: true })))
+  check('aus dem Objekt-Editor heraus nicht',
+    !/Veröffentlichen/.test(knoepfe({ veroeffentlichen: false })))
+  check('gespeichert wird in beiden Fällen',
+    /Speichern/.test(knoepfe({ veroeffentlichen: false })))
+}
+
+// ── Kontextmenü: „Auftrag hier erzeugen" ─────────────────────────────────
+// Bewusst NICHT über den World-Director wie Monster und Tier: Der Auftrag
+// gehoert dem Spieler, sonst koennte der Aussteller ihn weder aendern noch
+// abnehmen. Und bewusst direkt ins Auftrags-Fenster statt in den Objekt-Editor.
+console.log('\n── Kontextmenü: Auftrag hier erzeugen')
+{
+  const { directorSpawnItems, questSpawnItem } = await import('../client/core/SpawnHere.js')
+
+  const gesendet = []
+  const eintraege = directorSpawnItems({
+    ajna: { sendAgentCommand: async (...a) => { gesendet.push(a); return { delivered: 1 } } },
+    position: { lat: 50.4, lon: 7.5 }, enabled: true,
+  })
+  const auftrag = eintraege.find(e => /Auftrag/.test(e.label))
+  check('der Eintrag steht im Menü', !!auftrag)
+  check('und heisst wie die anderen', auftrag.label === 'Auftrag hier erzeugen')
+  check('Monster laeuft weiterhin über den Director',
+    eintraege.some(e => e.label === 'Monster hier erzeugen'))
+
+  // Der Auftrag darf NICHT beim Director landen.
+  const vorher = gesendet.length
+  const gerufen = []
+  globalThis.window = globalThis.window || {}
+  window.ajnaQuestEditor = (rec, pos) => gerufen.push({ rec, pos })
+  auftrag.onClick()
+  check('er geht nicht an den World-Director', gesendet.length === vorher)
+  check('sondern öffnet das Auftrags-Fenster', gerufen.length === 1)
+  check('ohne bestehenden Auftrag', gerufen[0].rec === null)
+  check('mit der angeklickten Stelle',
+    gerufen[0].pos.lat === 50.4 && gerufen[0].pos.lon === 7.5)
+
+  // Ohne Fenster (z. B. Ansicht ohne Shell) darf nichts still passieren.
+  delete window.ajnaQuestEditor
+  const meldungen = []
+  questSpawnItem({ position: { lat: 1, lon: 2 }, notify: m => meldungen.push(m) }).onClick()
+  check('fehlt das Fenster, wird das gesagt', meldungen.length === 1)
+
+  for (const datei of ['map.js', 'main.js']) {
+    const q = readFileSync(new URL('../client/' + datei, import.meta.url), 'utf8')
+    check(`${datei} bindet die Menüeinträge gemeinsam ein`, /directorSpawnItems\(/.test(q))
+  }
+}
+
+// ── Forderungen: Hin- und Rückweg ────────────────────────────────────────
+console.log('\n── Forderungen übersetzen')
+{
+  const qm = await import('../client/core/questMapping.js')
+  const zeilen = [{ name: 'Wolfsfell', anzahl: 3 }, { name: '', anzahl: 1 }]
+  const specs = qm.forderungenZu(zeilen)
+  check('leere Zeilen fallen weg', specs.length === 1)
+  check('als Gattung, nicht als Stück', specs[0].match.name === 'Wolfsfell' && specs[0].count === 3)
+  check('und zurück', qm.forderungenAus(specs)[0].anzahl === 3)
+  check('unbekannte Form ergibt nichts', qm.forderungenAus(null).length === 0)
+
+  const body = qm.publishPayloadAus(
+    { abnahme: 'uebergabe', forderungen: zeilen, wiederholbar: true, proDurchlauf: 2 }, ['i1'])
+  check('Forderungen gehen ans Veröffentlichen', body.requires.length === 1)
+  check('Wiederholbarkeit ebenfalls', body.repeatable === true && body.rewardPerRun === 2)
+  check('ohne Wiederholbarkeit steht nichts im Rumpf',
+    qm.publishPayloadAus({ abnahme: 'uebergabe' }, ['i1']).repeatable === undefined)
+
+  // Ein Entwurf geht nie durch quest/publish — ohne diese Felder im Zustand
+  // waere beides zwischen Speichern und Veröffentlichen wieder weg.
+  const c = qm.callZustandAus({ forderungen: zeilen, wiederholbar: true, proDurchlauf: 2 })
+  check('der Entwurf behält seine Forderungen', c.requires.length === 1)
+  check('und seine Wiederholbarkeit', c.repeatable === true && c.rewardPerRun === 2)
+  check('abgewählt verschwindet sie wieder',
+    qm.callZustandAus({ wiederholbar: false }, { vorher: c }).repeatable === undefined)
 }
 
 const failed = results.filter(r => !r.ok)

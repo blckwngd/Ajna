@@ -780,7 +780,8 @@ routerAdd("POST", "/api/objects/{id}/quest/complete", (e) => {
     }
     // Karma NACH dem Tausch: Es ist die Nebenwirkung eines tatsächlich
     // ausgezahlten Auftrags, nicht einer erfolgreichen Prüfung.
-    const karmaNeu = karmaFuerAbschluss($app, user.id, callId)
+    // Hier hat der SERVER entschieden — kein Abnahme-Bonus.
+    const karmaNeu = karmaFuerAbschluss($app, user.id, callId, c.verify)
     // Status NICHT hart "done": ein wiederholbarer Auftrag steht danach wieder
     // auf "open", solange der Vorrat reicht — executeSwap hat c.status gesetzt.
     return e.json(200, {
@@ -846,10 +847,16 @@ routerAdd("POST", "/api/objects/{id}/quest/approve", (e) => {
     for (let i = 0; i < moved.length; i++) {
       try { recomputeForObject(moved[i]) } catch (_) {}
     }
-    // Gleiche Gutschrift wie im Server-geprüften Pfad: Karma hängt am
-    // AUSGEZAHLTEN Auftrag, nicht daran, wer geprüft hat.
-    const { karmaFuerAbschluss } = require(`${__hooks}/karma.js`)
-    const karmaNeu = karmaFuerAbschluss($app, completerId, callId)
+    // Hier hat ein MENSCH abgenommen (Aussteller oder Prüfgruppe) — dafür
+    // gibt es zusätzlich zum Abschluss den Abnahme-Bonus.
+    const { karmaFuerAbschluss, karmaFuerPruefer } = require(`${__hooks}/karma.js`)
+    const karmaNeu = karmaFuerAbschluss($app, completerId, callId, c.verify)
+    // Wer abgenommen hat, bekommt ebenfalls etwas — aber nur, wenn es nicht
+    // der Aussteller selbst war: Der prüft seinen eigenen Auftrag und würde
+    // sich sonst fürs Ausschreiben bezahlen.
+    if (user.id !== completerId && String(call.get("owner") || "") !== user.id) {
+      karmaFuerPruefer($app, user.id, callId)
+    }
     return e.json(200, {
       ok: true, id: callId, status: c.status, completedBy: completerId,
       collected: swap.required.length, rewardsLeft: (c.rewardItems || []).length,
@@ -1112,6 +1119,10 @@ routerAdd("GET", "/api/quests/near", (e) => {
         rewardPerRun: Number(c.rewardPerRun) || 0,
         steigt: Number(c.steigt) || 0,
         requires: Array.isArray(c.requires) ? c.requires.length : 0,
+        // Die Gattungen selbst, damit der Auftrags-Editor sie beim Ändern
+        // wieder anzeigen kann — mit der blossen Anzahl liesse sich ein Auftrag
+        // nur bearbeiten, indem man seine Forderungen neu eintippt.
+        requiresSpecs: Array.isArray(c.requires) ? c.requires : [],
         claimedBy: bearbeiter,
         pendingBy: c.pendingBy || null,
         pendingByName: c.pendingBy ? kontoName(c.pendingBy) : null,
@@ -1155,7 +1166,7 @@ routerAdd("POST", "/api/objects/{id}/quest/confirm", (e) => {
     const { parseState, callDataOf, resolveSwap, executeSwap,
             istAbgelaufen, markiereAbgelaufen,
             noetigeStimmen, zaehleStimmen } = require(`${__hooks}/quests.js`)
-    const { karmaFuerAbschluss, karmaAendern } = require(`${__hooks}/karma.js`)
+    const { karmaFuerAbschluss, karmaFuerPruefer } = require(`${__hooks}/karma.js`)
     const callId = e.request.pathValue("id")
     const info = e.requestInfo()
     const user = info.auth
@@ -1256,11 +1267,12 @@ routerAdd("POST", "/api/objects/{id}/quest/confirm", (e) => {
     for (let i = 0; i < moved.length; i++) {
       try { recomputeForObject(moved[i]) } catch (_) {}
     }
-    const karmaNeu = karmaFuerAbschluss($app, einreicher, callId)
-    // Wer abgenommen hat, bekommt ebenfalls etwas gutgeschrieben — sonst
+    // Der Schwarm ist eine menschliche Abnahme — mit Bonus.
+    const karmaNeu = karmaFuerAbschluss($app, einreicher, callId, c.verify)
+    // Wer abgestimmt hat, bekommt ebenfalls etwas gutgeschrieben — sonst
     // erledigt die undankbare Arbeit niemand. Bewusst klein.
     for (let i = 0; i < stimmen.waehler.length; i++) {
-      karmaAendern($app, stimmen.waehler[i], 1, "Abnahme für Auftrag " + callId)
+      karmaFuerPruefer($app, stimmen.waehler[i], callId)
     }
     return e.json(200, {
       ok: true, id: callId, status: c.status, decided: true, approved: true, payout: true,

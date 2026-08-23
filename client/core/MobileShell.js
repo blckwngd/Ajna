@@ -110,9 +110,17 @@ export class MobileShell {
       onReload: () => this._questsLaden(),
       onAction: (q, aktion, extra) => this._questAktion(q, aktion, extra),
     })
-    // Der normale Bearbeiten-Dialog (AR- und Karten-Bündel) erreicht den
-    // Auftrags-Editor über diesen Haken — dasselbe Muster wie ajnaTalkTo.
-    window.ajnaQuestEditor = (rec) => this._questBearbeiten(this._questAus(rec))
+    // Der Bearbeiten-Dialog und das Kontextmenü (AR- und Karten-Bündel)
+    // erreichen den Auftrags-Editor über diesen Haken — dasselbe Muster wie
+    // ajnaTalkTo. Mit `position` entsteht ein neuer Auftrag an der
+    // angeklickten Stelle; ohne wird ein bestehender bearbeitet.
+    window.ajnaQuestEditor = (rec, position = null) =>
+      this._questBearbeiten(rec ? this._questAus(rec) : null, {
+        position,
+        // Aus dem Objekt-Editor heraus wird nur bearbeitet: Ausschreiben bindet
+        // die Treuhand und gehört dorthin, wo man den Auftrag auch anlegt.
+        veroeffentlichen: !rec,
+      })
     // AR- und Kartenansicht laufen als eigene Bündel und haben keinen Zugriff
     // auf dieses Panel. Sie rufen „Sprechen" über diesen Haken hier — dasselbe
     // Muster wie window.ajnaLog / window.ajnaCameraView.
@@ -575,12 +583,12 @@ export class MobileShell {
   }
 
   /** Editor öffnen — mit echtem Inventar, eigenen Gruppen und Sichtbarkeit. */
-  async _questBearbeiten(q) {
+  async _questBearbeiten(q, opts = {}) {
     if (!this._questEditor) return
     this._questEditor.inventar = this._quests.inventar(q?.id || null)
     this._questEditor.gruppen = await this._quests.gruppen()
     const formular = q ? await this._quests.formularFuer(q) : null
-    this._questEditor.open(formular)
+    this._questEditor.open(formular, opts)
   }
 
   async _questSpeichern(formular, veroeffentlichen) {

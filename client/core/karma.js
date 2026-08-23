@@ -26,12 +26,20 @@ export const KARMA_PRO_STUFE = 20
 export const KARMA_MAX_STUFE = 5
 
 /**
- * Was Punkte einbringt. Die Zahlen sind ein Vorschlag, keine Festlegung — die
- * Größenordnung sagt: Eine Stufe kostet ungefähr vier bestätigte Aufträge.
+ * Was Punkte einbringt.
+ *
+ * Diese Tabelle muss zu `pb_hooks/karma.js` passen — SIE zahlt nicht aus, sie
+ * erklärt nur. Eine Beschriftung, die etwas verspricht, das der Server nicht
+ * gutschreibt, ist schlimmer als gar keine; ein Test vergleicht die Zahlen.
+ *
+ * Der geteilte Abschluss ist Absicht: Prüft nur der Server, ist die Erledigung
+ * eine Rechenoperation. Sieht ein Mensch nach, steckt auf beiden Seiten Arbeit
+ * darin — und vor allem soll sich die Abnahme LOHNEN statt zu drohen. Deshalb
+ * kostet eine abgelehnte Abnahme auch nichts.
  */
 export const KARMA_GUTSCHRIFT = [
-  { grund: 'Abschluss bestätigt', punkte: +5 },
-  { grund: 'Abschluss stichprobenartig geprüft und in Ordnung', punkte: +2 },
+  { grund: 'Auftrag erledigt', punkte: +2 },
+  { grund: 'Erledigung von jemandem abgenommen', punkte: +3 },
   { grund: 'Abnahme für andere übernommen', punkte: +1 },
 ]
 
@@ -146,5 +154,6 @@ export function renderKarma(el, punkte, { satz = true } = {}) {
     <div class="ak-zahlen"><span>${f.punkte}</span><span>${ziel}</span></div>
     ${satz ? `<div class="ak-satz">${f.max
       ? 'Höchste Stufe erreicht.'
-      : `Noch ${f.bisNaechste} Punkte bis ${karmaLabel(f.stufe + 1)}.`}</div>` : ''}`
+      : `${f.bisNaechste} Punkte bis ${karmaLabel(f.stufe + 1)}.`}
+      Karma erhöht sich durch das Erledigen von Aufträgen auf diesem Server.</div>` : ''}`
 }
