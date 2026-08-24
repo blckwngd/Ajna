@@ -17,6 +17,7 @@ import { shapeOf, emojiOf, iconOf, colorOf, radiusOf, glowOf, textureOf } from "
 import { isWikimediaUrl } from "./core/wikiLinks.js"
 import { interactionReply, describeRequires } from "./core/InteractionReply.js"
 import { spawnRandomAndEdit, directorSpawnItems } from "./core/SpawnHere.js"
+import { PRESENCE_TYPE, zeigeAnwesenheit, anwesenheitsText } from "./core/PresenceService.js"
 import { InterestArea } from "./core/InterestArea.js"
 import { ProximityReporter } from "./core/ProximityReporter.js"
 import { InterestAreaDebug } from "./core/InterestAreaDebug.js"
@@ -133,8 +134,13 @@ function mapUpdateMarkers(objects) {
   // Agent-Filter: nur Objekte, die der Spieler sehen will (Default = alle).
   // UWB-Anker (Infrastruktur) nur bei aktivem Debug-Flag zeigen (Einstellungen).
   const showAnchors = (() => { try { return localStorage.getItem('ajna.debug.show_uwb_anchors') === '1' } catch { return false } })()
-  const inWorld = objects.filter(o => !o.carried_by &&
-    ((o.type || '').toLowerCase() !== 'uwb_anchor' || showAnchors))
+  // Anwesenheiten anderer Spieler sind gewöhnliche Objekte; ausgeblendet werden
+  // veraltete (Gespenster geschlossener Apps). Die EIGENE bleibt hier sichtbar —
+  // auf der Karte ist es nützlich zu sehen, wo man selbst gemeldet wird.
+  const _ich = ajna.currentUser()?.id || ''
+  const inWorld = objects.filter(o => !o.carried_by
+    && ((o.type || '').toLowerCase() !== 'uwb_anchor' || showAnchors)
+    && (o.type !== PRESENCE_TYPE || String(o.owner || '') === _ich || zeigeAnwesenheit(o, _ich)))
   const filtered = agentFilters ? inWorld.filter(o => agentFilters.matches(o)) : inWorld
   const bounds = window.map.getBounds().pad(VIEWPORT_PAD)
   const keep = new Set()   // ids, die einen Marker haben SOLLEN
@@ -251,7 +257,8 @@ const MARKER_TYPES = {
   hint:   { cls: 'map-marker-hint' },
   wifi:   { cls: 'map-marker-wifi' },
   uwb_anchor: { cls: 'map-marker-anchor' },
-  call:   { cls: 'map-marker-call' }
+  call:   { cls: 'map-marker-call' },
+  player: { cls: 'map-marker-player' }
 }
 
 function markerIconFor(obj) {
@@ -269,9 +276,13 @@ function markerIconFor(obj) {
     ? `<span style="text-shadow:0 0 5px ${glow},0 0 11px ${glow},0 0 18px ${glow}">${emoji}</span>`
     : emoji
   // UWB-Anker: Node-ID + Höhe statt Name (3D-Höhe auch auf der 2D-Karte sichtbar).
+  // Anwesenheiten tragen den Anzeigenamen im state (vom Server eingestempelt),
+  // nicht im Objektnamen — der heißt bei allen gleich.
   const html = type === 'uwb_anchor'
     ? `⚓ #${obj.state?.uwb?.nodeId ?? '?'} · ${(obj.altitude ?? 0).toFixed(1)}m`
-    : `${glyph} ${obj.name}`
+    : type === PRESENCE_TYPE
+      ? `${glyph} ${anwesenheitsText(obj).name}`
+      : `${glyph} ${obj.name}`
   return window.L.divIcon({
     className: def ? `map-marker ${def.cls}` : 'map-marker',
     iconSize: [28, 28],

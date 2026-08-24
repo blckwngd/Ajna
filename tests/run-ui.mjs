@@ -861,20 +861,31 @@ console.log('\n── questMapping: Zustände und Zuordnung')
     qm.publishPayloadAus({ abnahme: 'schwarm' }, ['i1']).pruefgruppe === undefined)
 
   // ── Inventar und Belohnungswahl ────────────────────────────────────────
+  // WAS ZAEHLT ALS INVENTAR: allein `carried_by`. Hier stand einmal zusaetzlich
+  // `type === 'item'` — und damit fiel fast alles heraus, was man wirklich
+  // traegt: Ein Diamant hat `type: 'diamond'`. Im Editor stand dann eine
+  // einzige Gattung zur Wahl, obwohl das Inventar voll war.
   const objekte = [
-    { id: 'i1', type: 'item', name: 'Diamant', carried_by: ICH, state: {} },
-    { id: 'i2', type: 'item', name: 'Diamant', carried_by: ICH, state: {} },
-    { id: 'i3', type: 'item', name: 'Diamant', carried_by: ICH, state: { escrow: { call: 'c9' } } },
-    { id: 'i4', type: 'item', name: 'Talisman', carried_by: ICH, state: {} },
-    { id: 'i5', type: 'item', name: 'Diamant', carried_by: ANDER, state: {} },
-    { id: 'i6', type: 'npc', name: 'Diamant', carried_by: ICH, state: {} },
+    { id: 'i1', type: 'diamond', name: 'Diamant', carried_by: ICH, _origin: 'heim', state: {} },
+    { id: 'i2', type: 'diamond', name: 'Diamant', carried_by: ICH, _origin: 'heim', state: {} },
+    { id: 'i3', type: 'diamond', name: 'Diamant', carried_by: ICH, _origin: 'heim', state: { escrow: { call: 'c9' } } },
+    { id: 'i4', type: 'item',    name: 'Talisman', carried_by: ICH, _origin: 'heim', state: {} },
+    { id: 'i5', type: 'diamond', name: 'Diamant', carried_by: ANDER, _origin: 'heim', state: {} },
+    { id: 'i6', type: 'item',    name: 'Kompass', carried_by: ICH, _origin: 'verein', state: {} },
   ]
   const inv = qm.inventarAus(objekte, ICH)
   const diamant = inv.find(i => i.was === 'Diamant')
+  check('ein Diamant zaehlt zum Inventar, obwohl sein Typ nicht „item" ist', !!diamant)
   check('gebundene und fremde Stücke zählen nicht mit', diamant.vorrat === 2)
-  check('nur Gegenstände, keine Figuren', inv.length === 2)
+  check('alle getragenen Gattungen stehen zur Wahl', inv.length === 3)
   check('eigene Treuhand darf mitzählen',
     qm.inventarAus(objekte, ICH, { callId: 'c9' }).find(i => i.was === 'Diamant').vorrat === 3)
+
+  // Treuhand und Tausch sind eine Transaktion EINES Servers — Gegenstaende von
+  // anderswo kann er weder sperren noch uebergeben.
+  const nurHeim = qm.inventarAus(objekte, ICH, { serverId: 'heim' })
+  check('auf einen Server eingegrenzt fehlt Fremdes', !nurHeim.some(i => i.was === 'Kompass'))
+  check('und das Eigene bleibt', nurHeim.length === 2)
 
   check('Belohnung wird aus dem Bestand belegt',
     qm.waehleBelohnung(inv, 'Diamant', 2).ids.length === 2)
@@ -993,11 +1004,11 @@ console.log('\n── Auftrags-Editor: Wiederholbarkeit und Forderungen')
                        belohnung: { anzahl: 3, was: 'Diamant', steigt: 0 } })
 
   check('ein einfacher Auftrag geht durch', pruefeAuftrag(gut()).length === 0)
-  check('Wiederholbar ohne Vorrat wird beanstandet',
-    pruefeAuftrag({ ...gut(), wiederholbar: true, proDurchlauf: 4 })
-      .some(f => /hinterlegt/.test(f)))
+  check('Vorrat kleiner als die Belohnung wird beanstandet',
+    pruefeAuftrag({ ...gut(), wiederholbar: true, vorrat: 2 })
+      .some(f => /Vorrat/.test(f)))
   check('passt der Vorrat, geht es durch',
-    pruefeAuftrag({ ...gut(), wiederholbar: true, proDurchlauf: 3 }).length === 0)
+    pruefeAuftrag({ ...gut(), wiederholbar: true, vorrat: 9 }).length === 0)
   check('Forderung ohne Gattung wird beanstandet',
     pruefeAuftrag({ ...gut(), forderungen: [{ name: '  ', anzahl: 2 }] })
       .some(f => /Gattung/.test(f)))
@@ -1081,7 +1092,8 @@ console.log('\n── Forderungen übersetzen')
   check('unbekannte Form ergibt nichts', qm.forderungenAus(null).length === 0)
 
   const body = qm.publishPayloadAus(
-    { abnahme: 'uebergabe', forderungen: zeilen, wiederholbar: true, proDurchlauf: 2 }, ['i1'])
+    { abnahme: 'uebergabe', forderungen: zeilen, wiederholbar: true,
+      belohnung: { anzahl: 2 }, vorrat: 6 }, ['i1'])
   check('Forderungen gehen ans Veröffentlichen', body.requires.length === 1)
   check('Wiederholbarkeit ebenfalls', body.repeatable === true && body.rewardPerRun === 2)
   check('ohne Wiederholbarkeit steht nichts im Rumpf',
@@ -1089,11 +1101,263 @@ console.log('\n── Forderungen übersetzen')
 
   // Ein Entwurf geht nie durch quest/publish — ohne diese Felder im Zustand
   // waere beides zwischen Speichern und Veröffentlichen wieder weg.
-  const c = qm.callZustandAus({ forderungen: zeilen, wiederholbar: true, proDurchlauf: 2 })
+  const c = qm.callZustandAus({ forderungen: zeilen, wiederholbar: true,
+                                belohnung: { anzahl: 2 }, vorrat: 6 })
   check('der Entwurf behält seine Forderungen', c.requires.length === 1)
   check('und seine Wiederholbarkeit', c.repeatable === true && c.rewardPerRun === 2)
   check('abgewählt verschwindet sie wieder',
     qm.callZustandAus({ wiederholbar: false }, { vorher: c }).repeatable === undefined)
+}
+
+// ── Belohnung vs. Vorrat ─────────────────────────────────────────────────
+// Vorher hiess es „Belohnung: 2" und „Belohnung je Durchlauf: 1" — das las
+// sich, als koenne die Quest zweimal abgeschlossen werden, sagte aber
+// woertlich etwas anderes. Jetzt: „Belohnung" ist, was EINER bekommt,
+// „Vorrat" ist, wie viel insgesamt gebunden wird.
+console.log('\n── Belohnung und Vorrat')
+{
+  const { vorratVon, durchlaeufeVon, LEER_AUFTRAG } = await import('../client/core/QuestEditor.js')
+  const qm = await import('../client/core/questMapping.js')
+
+  const einmal = { ...LEER_AUFTRAG(), belohnung: { anzahl: 3, was: 'Diamant', steigt: 0 } }
+  check('einmalig: Vorrat ist die Belohnung', vorratVon(einmal) === 3)
+  check('und reicht für einen Durchlauf', durchlaeufeVon(einmal) === 1)
+
+  const mehrfach = { ...einmal, wiederholbar: true, vorrat: 9 }
+  check('wiederholbar: Vorrat steht für sich', vorratVon(mehrfach) === 9)
+  check('3× Belohnung aus 9 Vorrat = 3 Durchläufe', durchlaeufeVon(mehrfach) === 3)
+  check('ein zu kleiner Vorrat faellt nie unter die Belohnung',
+    vorratVon({ ...einmal, wiederholbar: true, vorrat: 1 }) === 3)
+
+  check('gebunden wird der Vorrat, nicht die Belohnung',
+    qm.benoetigterVorrat(mehrfach) === 9)
+  check('einmalig gebunden wird genau die Belohnung',
+    qm.benoetigterVorrat(einmal) === 3)
+
+  // Die Liste darf nicht den ganzen Vorrat als Belohnung ausweisen — sonst
+  // verspricht sie das Dreifache dessen, was ausgezahlt wird.
+  const v = qm.zuAnsicht({
+    id: 'c1', name: 'T', owner: 'x', status: 'open', published: true,
+    rewardParts: [{ was: 'Diamant', anzahl: 9 }], rewards: 9,
+    repeatable: true, rewardPerRun: 3,
+  }, 'ich')
+  check('die Liste zeigt, was EINER bekommt', v.belohnung.anzahl === 3)
+  check('und kennt den Vorrat daneben', v.belohnung.vorrat === 9)
+  const f = qm.zuFormular(v)
+  check('das Formular trennt beides ebenso',
+    f.belohnung.anzahl === 3 && f.vorrat === 9 && f.wiederholbar === true)
+}
+
+// ── Regionsliste: „nie" ──────────────────────────────────────────────────
+// `listed: false` ohne Wartezeit ist auf dem Server derselbe Zustand wie
+// „noch nicht so weit" — im Formular aber eine ganz andere Aussage.
+console.log('\n── Regionsliste: nie')
+{
+  const { ANBIETEN } = await import('../client/core/QuestEditor.js')
+  const qm = await import('../client/core/questMapping.js')
+
+  check('„nie" steht zur Wahl', ANBIETEN.some(a => a.h === -1 && /nie/i.test(a.label)))
+  check('„sofort" ebenfalls', ANBIETEN.some(a => a.h === 0))
+
+  const nie = qm.callZustandAus({ anbietenNachH: -1 })
+  check('nie: nicht gelistet', nie.listed === false)
+  check('nie: keine Wartezeit, die das aendert', nie.anbietenNachH === undefined)
+
+  const spaeter = qm.callZustandAus({ anbietenNachH: 6 })
+  check('spaeter: nicht gelistet, aber mit Wartezeit',
+    spaeter.listed === false && spaeter.anbietenNachH === 6)
+  check('sofort: gelistet', qm.callZustandAus({ anbietenNachH: 0 }).listed === true)
+
+  // Rueckweg: aus dem Serverzustand muss wieder „nie" werden.
+  const zurueck = (roh) => qm.zuFormular({ roh }).anbietenNachH
+  check('nie kommt als nie zurueck', zurueck({ listed: false }) === -1)
+  check('Wartezeit kommt als Wartezeit zurueck', zurueck({ listed: false, anbietenNachH: 6 }) === 6)
+  check('gelistet kommt als sofort zurueck', zurueck({ listed: true }) === 0)
+}
+
+// ── Server-Wahl beim Anlegen ─────────────────────────────────────────────
+// Ein Auftrag liegt auf genau EINEM Server: dort haengt seine Treuhand, dort
+// wird abgenommen, dort zaehlt das Karma. Wer mehrere verbunden hat, schreibt
+// aber nicht immer auf demselben aus.
+console.log('\n── Server-Wahl im Auftrags-Fenster')
+{
+  const { QuestEditor, LEER_AUFTRAG } = await import('../client/core/QuestEditor.js')
+  const mk = (q, server) => {
+    const e = Object.create(QuestEditor.prototype)
+    e._q = { ...LEER_AUFTRAG(), ...q }
+    e.server = server
+    return e
+  }
+  const server = [
+    { id: 'heim', label: 'Heim', isDefault: true },
+    { id: 'verein', label: 'Verein', isDefault: false },
+  ]
+  check('ohne Wahl gilt der Standardserver',
+    mk({}, server)._aktiverServer().id === 'heim')
+  check('eine Wahl gilt', mk({ server: 'verein' }, server)._aktiverServer().id === 'verein')
+  check('ein unbekannter Server faellt auf den Standard zurueck',
+    mk({ server: 'weg' }, server)._aktiverServer().id === 'heim')
+  check('ohne Server gibt es nichts zu waehlen', mk({}, [])._aktiverServer() === null)
+
+  // Ein einzelner Server blendet das Badge aus — dann gibt es keine Entscheidung.
+  const eins = mk({}, [server[0]])
+  let versteckt = null
+  eins._serverEl = { set hidden(v) { versteckt = v }, get hidden() { return versteckt } }
+  eins._renderServer()
+  check('bei einem Server bleibt das Badge weg', versteckt === true)
+
+  // Ein bestehender Auftrag laesst sich nicht verschieben: das waere kein
+  // Umzug, sondern ein neuer Auftrag mitsamt neuer Treuhand.
+  const fest = mk({ id: 'heim:abc' }, server)
+  let html = ''
+  fest._serverEl = { set hidden(v) {}, get hidden() { return false },
+                     set innerHTML(h) { html = h },
+                     querySelector: () => null, querySelectorAll: () => [] }
+  fest._renderServer()
+  check('ein bestehender Auftrag zeigt seinen Server unveraenderlich', /disabled/.test(html))
+  check('mit Begruendung im Titel', /bleibt auf seinem Server/.test(html))
+
+  const dienst = readFileSync(new URL('../client/core/QuestService.js', import.meta.url), 'utf8')
+  check('angelegt wird auf dem gewaehlten Server',
+    /createObject\(daten, \{ serverId: f\.server/.test(dienst))
+  check('das Inventar ist auf den Server begrenzt',
+    /inventar\(callId = null, serverId = null\)/.test(dienst))
+  // Angemeldet reicht NICHT: Ein Server kann eingeloggt und trotzdem getrennt
+  // sein. Ihn als Ziel anzubieten hiesse, einen Auftrag anzulegen, der beim
+  // ersten Schreibversuch scheitert.
+  check('nur VERBUNDENE Server stehen zur Wahl',
+    /filter\(s => s\.isLoggedIn && s\.isConnected && !s\.isDisconnected\)/.test(dienst))
+  check('und ohne verbundenen Server sagt das Speichern es',
+    /Kein verbundener Server/.test(dienst))
+}
+
+// ── Modelle sitzen auf dem Boden ─────────────────────────────────────────
+// Ein gerufener Drache landete sichtbar UNTER dem Gelaende. Die Position
+// stimmte — der Modell-Ursprung liegt nur nicht an den Fuessen.
+console.log('\n── Modelle aufsetzen')
+{
+  const src = readFileSync(new URL('../client/engine/GameObject.js', import.meta.url), 'utf8')
+  check('es gibt einen Aufsetz-Schritt', /#seatModel\(importRoot\)/.test(src))
+  check('er laeuft NACH der Groessen-Normierung',
+    src.indexOf('#normalizeModelSize(importRoot, url)') < src.indexOf('#seatModel(importRoot)'))
+  check('gemessen wird die ganze Hierarchie, nicht ein Mesh',
+    /#seatModel[\s\S]{0,600}getHierarchyBoundingVectors\(true\)/.test(src))
+  check('winzige Korrekturen bleiben aus',
+    /#seatModel[\s\S]{0,700}Math\.abs\(unten\) < 0\.01/.test(src))
+
+  // Die Modelle selbst: Fuss-Ursprung darf sich nicht veraendern, ein
+  // mittiger Ursprung ist genau der Fall, den der Schritt abfaengt.
+  const { readFileSync: rf, existsSync } = await import('node:fs')
+  const glbY = (datei) => {
+    const p = new URL('../client/models/' + datei, import.meta.url)
+    if (!existsSync(p)) return null
+    const b = rf(p)
+    if (b.readUInt32LE(0) !== 0x46546C67) return null
+    let off = 12, j = null
+    while (off < b.length) {
+      const len = b.readUInt32LE(off), typ = b.readUInt32LE(off + 4)
+      if (typ === 0x4E4F534A) { j = JSON.parse(b.slice(off + 8, off + 8 + len).toString('utf8')); break }
+      off += 8 + len
+    }
+    if (!j) return null
+    let min = Infinity, max = -Infinity
+    for (const m of j.meshes || []) for (const pr of m.primitives || []) {
+      const a = j.accessors[pr.attributes.POSITION]
+      if (a?.min && a?.max) { min = Math.min(min, a.min[1]); max = Math.max(max, a.max[1]) }
+    }
+    return Number.isFinite(min) ? { min, max } : null
+  }
+  const drache = glbY('Dragon.glb')
+  if (drache) {
+    check('Dragon.glb hat seinen Ursprung NICHT an den Fuessen', drache.min < -0.01)
+  } else {
+    check('Dragon.glb lesbar', false, 'Modell fehlt')
+  }
+}
+
+// ── Animations-Distanz ───────────────────────────────────────────────────
+// War fest auf 150 m verdrahtet und nur ueber die Konsole erreichbar. Ein
+// Drache ist auf 300 m noch bildfuellend, ein Fuchs dort ein Punkt.
+console.log('\n── Animations-Distanz')
+{
+  const { RANGE_DEFS, animRadiusFuer } = await import('../client/core/renderRange.js')
+  check('es gibt einen eigenen Regler', !!RANGE_DEFS.anim)
+  check('mit sinnvoller Vorgabe', RANGE_DEFS.anim.def === 150)
+  check('und „unbegrenzt" am Anschlag', RANGE_DEFS.anim.unbegrenzt === true)
+  check('er ist NICHT die Objekt-Sichtweite', RANGE_DEFS.anim.key !== RANGE_DEFS.objects.key)
+
+  check('Menschengroesse bleibt bei der Einstellung', animRadiusFuer(150, 1.8) === 150)
+  check('ein Drache wird weiter animiert', animRadiusFuer(150, 12) > 150 * 5)
+  check('ein Fuchs nicht kleiner als die Einstellung', animRadiusFuer(150, 0.6) === 150)
+  check('die Streckung ist gedeckelt', animRadiusFuer(150, 500) === 150 * 8)
+  check('unbegrenzt bleibt unbegrenzt', animRadiusFuer(Infinity, 12) === Infinity)
+  check('ohne Hoehenangabe die blanke Einstellung', animRadiusFuer(150, NaN) === 150)
+
+  const shell = readFileSync(new URL('../client/core/MobileShell.js', import.meta.url), 'utf8')
+  check('der Regler steht in den Einstellungen', /reichweite\('anim'\)/.test(shell))
+  const main = readFileSync(new URL('../client/main.js', import.meta.url), 'utf8')
+  check('der LOD-Pass nutzt ihn', /animRadiusFuer\(animBasis, figurHoehe\(go\)\)/.test(main))
+  check('und nicht mehr die feste Zahl', !/animRadiusM: 150/.test(main))
+}
+
+// ── Anwesenheit: Privatsphaere zuerst ────────────────────────────────────
+console.log('\n── Anwesenheit anderer Spieler')
+{
+  const ps = await import('../client/core/PresenceService.js')
+  const ICH = 'u_ich', ANDER = 'u_ander'
+  const jetzt = 1_000_000_000
+
+  const rec = (o = {}) => ({
+    id: 'p1', type: 'player', owner: ANDER,
+    state: { presence: true, name: 'Ada', karma: 3, seenAt: new Date(jetzt - 1000).toISOString() },
+    ...o,
+  })
+
+  check('fremde Anwesenheit wird gezeigt', ps.zeigeAnwesenheit(rec(), ICH, jetzt) === true)
+  check('die EIGENE nicht — sie staende im eigenen Kopf',
+    ps.zeigeAnwesenheit(rec({ owner: ICH }), ICH, jetzt) === false)
+  check('ein Gespenst verschwindet',
+    ps.zeigeAnwesenheit(rec({ state: { seenAt: new Date(jetzt - 10 * 60_000).toISOString() } }), ICH, jetzt) === false)
+  check('kurz vor der Grenze noch sichtbar',
+    ps.zeigeAnwesenheit(rec({ state: { seenAt: new Date(jetzt - ps.VERALTET_MS + 5000).toISOString() } }), ICH, jetzt) === true)
+  check('ohne Stempel wird nicht versteckt',
+    ps.zeigeAnwesenheit(rec({ state: {} }), ICH, jetzt) === true)
+  check('andere Objekttypen gehen das nichts an',
+    ps.zeigeAnwesenheit({ type: 'npc', owner: ANDER }, ICH, jetzt) === false)
+
+  const t = ps.anwesenheitsText(rec())
+  check('Name kommt aus dem state, nicht aus dem Objektnamen', t.name === 'Ada')
+  check('Karma als Sterne', t.sterne === '★★★☆☆')
+  check('ohne Namen bleibt es lesbar', ps.anwesenheitsText({ state: {} }).name === 'Unbekannt')
+
+  // Die Stufe „Genau" ist die Bedingung — nicht „irgendeine Freigabe".
+  const src = readFileSync(new URL('../client/core/PresenceService.js', import.meta.url), 'utf8')
+  check('angelegt wird nur bei Stufe „Genau"', /privacy\.allows\(s\.id, 'exact'\)/.test(src))
+  check('sonst wird sie entfernt', /else await this\._entfernen\(s\.id\)/.test(src))
+  check('eine Stufenaenderung wirkt sofort', /privacy\.onChange/.test(src))
+  check('sie wird nicht heimlich sichtbar gemacht', /subject_type: 'authenticated'/.test(src))
+  check('Name und Karma schreibt der Client NICHT',
+    !/state:\s*\{[^}]*name:/.test(src) && !/state:\s*\{[^}]*karma:/.test(src))
+
+  const hooks = readFileSync(new URL('../pocketbase/pb_hooks/main.pb.js', import.meta.url), 'utf8')
+  check('der Server stempelt die Identitaet ein', /stampeAnwesenheit/.test(hooks))
+  check('und ueberschreibt den Besitzer', /istSuper\) e\.record\.set\("owner", uid\)/.test(hooks))
+  check('Karma kommt aus der Server-Rechnung', /st\.karma = karmaStufe\(karmaPunkte/.test(hooks))
+  check('mit Zeitstempel gegen Gespenster', /st\.seenAt = /.test(hooks))
+
+  // Beschriftung: Karma als Sterne, aber kein Schild „0" fuer Neulinge.
+  const { resolveLabel } = await import('../client/core/Appearance.js')
+  const label = (k) => resolveLabel('{state.name} {karma}', { state: { name: 'Ada', karma: k } })
+  check('Karma erscheint als Sterne im Schild', label(3).trim() === 'Ada ★★★☆☆')
+  check('Karma 0 traegt kein Schild', label(0).trim() === 'Ada')
+
+  // In beiden 3D-Wegen ausgeblendet bzw. gezeigt.
+  const main = readFileSync(new URL('../client/main.js', import.meta.url), 'utf8')
+  check('die Freiflug-Ansicht filtert Anwesenheiten', /zeigeAnwesenheit\(o, _ich\)/.test(main))
+  check('und startet den Dienst', /presence\.start\(\)/.test(main))
+  check('beim Verlassen wird aufgeraeumt', /pagehide[\s\S]{0,80}presence\.stop\(\)/.test(main))
+  const map = readFileSync(new URL('../client/map.js', import.meta.url), 'utf8')
+  check('die Karte zeigt sie ebenfalls', /PRESENCE_TYPE/.test(map))
 }
 
 const failed = results.filter(r => !r.ok)

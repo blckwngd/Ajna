@@ -18,7 +18,7 @@
 
 import {
   listeZuAnsicht, zuFormular, callZustandAus, publishPayloadAus,
-  inventarAus, waehleBelohnung,
+  inventarAus, waehleBelohnung, benoetigterVorrat,
 } from './questMapping.js'
 
 /** Wie weit die Regionsliste reicht (Meter). */
@@ -160,11 +160,34 @@ export class QuestService {
 
   /**
    * Getragene Gegenstände als Auswahl für die Belohnung.
-   * @param {string|null} callId Auftrag, dessen eigene Treuhand mitzählen darf
+   *
+   * `serverId` grenzt auf einen Server ein. Das ist keine Bequemlichkeit,
+   * sondern eine Grenze der Sache: Die Treuhand wird in EINER Transaktion des
+   * ausschreibenden Servers gebunden und ausgezahlt. Ein Server kann einen
+   * Gegenstand, der auf einem anderen liegt, weder sperren noch übergeben.
+   *
+   * @param {string|null} callId    Auftrag, dessen eigene Treuhand mitzählen darf
+   * @param {string|null} serverId  Server, auf dem ausgeschrieben wird
    */
-  inventar(callId = null) {
+  inventar(callId = null, serverId = null) {
     const alle = this.ajna.getObjects?.() || []
-    return inventarAus(alle, this.meineId, { callId: this._roh(callId) })
+    return inventarAus(alle, this.meineId, { callId: this._roh(callId), serverId })
+  }
+
+  /**
+   * Server, auf denen sich ausschreiben lässt.
+   *
+   * Angemeldet REICHT NICHT — ein Server kann eingeloggt und trotzdem getrennt
+   * sein (Sitzung im Speicher, Verbindung weg). Ihn dann als Ziel anzubieten
+   * hieße, einen Auftrag anzulegen, der beim ersten Schreibversuch scheitert;
+   * schlimmer noch: das Anlegen könnte durchgehen und die Treuhand nicht.
+   */
+  serverListe() {
+    try {
+      return (this.ajna.getServers?.() || [])
+        .filter(s => s.isLoggedIn && s.isConnected && !s.isDisconnected)
+        .map(s => ({ id: s.id, label: s.label || s.url, isDefault: !!s.isDefault }))
+    } catch { return [] }
   }
 
   /** Anzeige-Auftrag in das Editor-Formular, samt Sichtbarkeit aus den Rechten. */
@@ -217,6 +240,11 @@ export class QuestService {
       await this.ajna.updateObject(id, daten)
     } else {
       if (!pos) throw new Error('Ohne bekannte Position lässt sich kein Auftrag anlegen.')
+      // Ein getrennter Server nimmt nichts entgegen. Das hier zu sagen ist
+      // freundlicher, als den Netzwerkfehler durchzureichen.
+      if (!this.serverListe().length) {
+        throw new Error('Kein verbundener Server — der Auftrag kann nirgends angelegt werden.')
+      }
       daten.lat = pos.lat
       daten.lon = pos.lon
       daten.altitude = 0
@@ -225,7 +253,8 @@ export class QuestService {
       // brauchbare Vorgabe setzen und im Objekt-Editor änderbar lassen.
       daten.appearance = { ...AUFTRAG_AUSSEHEN }
       daten.description = String(f.kurz || '').trim()
-      const rec = await this.ajna.createObject(daten)
+      // Ohne Angabe der Standardserver — die Wahl im Kopf des Fensters geht vor.
+      const rec = await this.ajna.createObject(daten, { serverId: f.server || undefined })
       id = rec?.id
       if (!id) throw new Error('Der Auftrag wurde nicht angelegt.')
     }
@@ -236,10 +265,16 @@ export class QuestService {
     // Belohnung: der Editor wählt eine Gattung und eine Anzahl, der Server will
     // konkrete Stücke. Fehlt etwas, ist das hier zu sagen — nicht erst als
     // Serverfehler mit Datensatz-Kennungen darin.
-    const bestand = this.inventar(id)
-    const { ids, fehlt } = waehleBelohnung(bestand, f.belohnung?.was, f.belohnung?.anzahl)
+    //
+    // Gebunden wird der VORRAT, nicht die Belohnung eines Durchlaufs: Bei einem
+    // wiederholbaren Auftrag müssen alle Stücke von Anfang an hinterlegt sein,
+    // sonst stünde die letzte Erledigung ohne Deckung da.
+    const aufServer = this._serverVon(id)
+    const bestand = this.inventar(id, aufServer)
+    const menge = benoetigterVorrat(f)
+    const { ids, fehlt } = waehleBelohnung(bestand, f.belohnung?.was, menge)
     if (fehlt > 0) {
-      throw new Error(`Es fehlen ${fehlt}× ${f.belohnung?.was || 'Belohnung'} in deinem Inventar.`)
+      throw new Error(`Es fehlen ${fehlt}× ${f.belohnung?.was || 'Belohnung'} in deinem Inventar auf diesem Server.`)
     }
     if (!ids.length) throw new Error('Ohne Belohnung lässt sich kein Auftrag ausschreiben.')
 
@@ -300,5 +335,11 @@ export class QuestService {
     if (!id) return null
     const i = String(id).indexOf(':')
     return i < 0 ? String(id) : String(id).slice(i + 1)
+  }
+
+  /** Server-Kennung aus einer zusammengesetzten Objekt-ID. */
+  _serverVon(id) {
+    const i = String(id || '').indexOf(':')
+    return i < 0 ? null : String(id).slice(0, i)
   }
 }

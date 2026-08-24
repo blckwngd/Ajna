@@ -29,5 +29,6 @@ import * as gruppenrechte from './quests/gruppenrechte.mjs'
 import * as aufgebenListe from './quests/aufgeben-liste.mjs'
 import * as umlaute from './quests/umlaute.mjs'
 import * as karmaBonus from './quests/karma-bonus.mjs'
+import * as anwesenheit from './quests/anwesenheit.mjs'
 
-await runSuites('Quests', 'qtest', [basic, requires, repeat, self, orphan, save, revive, fristKarma, schwarm, nachweisListe, pruefgruppe, gruppenrechte, aufgebenListe, umlaute, karmaBonus])
+await runSuites('Quests', 'qtest', [basic, requires, repeat, self, orphan, save, revive, fristKarma, schwarm, nachweisListe, pruefgruppe, gruppenrechte, aufgebenListe, umlaute, karmaBonus, anwesenheit])

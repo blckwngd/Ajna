@@ -131,14 +131,33 @@ export function istRelevant(rec, meineId) {
   return s === 'open'
 }
 
-/** Belohnungsteile („3× Diamant") in die Form bringen, die das Panel zeigt. */
+/**
+ * Belohnungsteile („3× Diamant") in die Form bringen, die das Panel zeigt.
+ *
+ * BELOHNUNG IST NICHT VORRAT: Bei einem wiederholbaren Auftrag liegen im
+ * Treuhandkonto alle Stücke für alle Durchläufe. Was EIN Bearbeiter bekommt,
+ * ist `rewardPerRun`. Stünde dort der ganze Vorrat, verspräche die Liste das
+ * Sechsfache dessen, was am Ende ausgezahlt wird.
+ */
 function belohnungAus(rec) {
   const teile = Array.isArray(rec?.rewardParts) ? rec.rewardParts.filter(t => t && t.was) : []
+  const gesamt = teile.reduce((n, t) => n + (Number(t.anzahl) || 0), 0) || Number(rec?.rewards) || 0
+  const proLauf = Number(rec?.rewardPerRun) || 0
   const erst = teile[0] || null
+  if (proLauf > 0 && proLauf < gesamt) {
+    return {
+      anzahl: proLauf,
+      was: erst ? erst.was : 'Belohnung',
+      teile: erst ? [{ was: erst.was, anzahl: proLauf }] : [],
+      vorrat: gesamt,
+      steigt: Number(rec?.steigt) || 0,
+    }
+  }
   return {
-    anzahl: erst ? Number(erst.anzahl) || 0 : Number(rec?.rewards) || 0,
+    anzahl: erst ? Number(erst.anzahl) || 0 : gesamt,
     was: erst ? erst.was : 'Belohnung',
     teile,
+    vorrat: gesamt,
     steigt: Number(rec?.steigt) || 0,
   }
 }
@@ -227,10 +246,18 @@ export function zuFormular(v, { jetzt = Date.now(), sichtbarkeit = 'region', sic
     // kommt von aussen, weil dafür die ACEs gelesen werden müssen.
     sichtbarkeit,
     sichtbarGruppe,
-    anbietenNachH: Number(roh.anbietenNachH) || 0,
-    wiederholbar: roh.repeatable === true || Number(roh.rewardPerRun) > 0,
-    proDurchlauf: Number(roh.rewardPerRun) || 1,
+    // „nie" wird als -1 geführt: `listed: false` ohne Wartezeit ist auf dem
+    // Server derselbe Zustand wie „noch nicht so weit", im Formular aber eine
+    // ganz andere Aussage.
+    anbietenNachH: roh.listed === false && !Number(roh.anbietenNachH)
+      ? -1 : (Number(roh.anbietenNachH) || 0),
+    // „Belohnung" ist, was EINER bekommt (rewardPerRun); „Vorrat" ist, wie
+    // viel insgesamt gebunden ist (die Zahl der Treuhand-Gegenstände).
+    wiederholbar: roh.repeatable === true,
+    vorrat: Number(v?.belohnung?.vorrat) || Number(v?.belohnung?.anzahl) || 1,
     forderungen: forderungenAus(roh.requiresSpecs),
+    // Der Auftrag liegt auf dem Server, von dem er kam — verschieben geht nicht.
+    server: roh._origin || null,
   }
 }
 
@@ -246,6 +273,20 @@ export function forderungenAus(specs) {
       anzahl: Math.max(1, Number(s?.count) || 1),
     }))
     .filter(f => f.name)
+}
+
+/**
+ * Wie viele Stücke insgesamt gebunden werden müssen.
+ *
+ * Bei einem wiederholbaren Auftrag ist das der VORRAT für alle Durchläufe, bei
+ * einem einmaligen die Belohnung selbst. Der Server prüft beim Ausschreiben,
+ * dass `rewardPerRun` den Vorrat nicht übersteigt.
+ */
+export function benoetigterVorrat(formular) {
+  const f = formular || {}
+  const pro = Math.max(0, Number(f.belohnung?.anzahl) || 0)
+  if (!f.wiederholbar) return pro
+  return Math.max(pro, Number(f.vorrat) || pro)
 }
 
 /** Formularzeilen zurück in Server-Forderungen. */
@@ -285,12 +326,14 @@ export function callZustandAus(formular, { jetzt = Date.now(), vorher = null } =
   if (forderungen.length) c.requires = forderungen; else delete c.requires
   if (f.wiederholbar) {
     c.repeatable = true
-    c.rewardPerRun = Math.max(1, Number(f.proDurchlauf) || 1)
+    c.rewardPerRun = Math.max(1, Number(f.belohnung?.anzahl) || 1)
   } else { delete c.repeatable; delete c.rewardPerRun }
 
   // Nur bei der Figur anbieten: erst nach der Wartezeit zusätzlich listen.
+  // `-1` heisst „nie" — nicht gelistet und keine Wartezeit, die das ändert.
   const wartet = Number(f.anbietenNachH) || 0
-  if (wartet > 0) { c.anbietenNachH = wartet; c.listed = false; delete c.angeboten }
+  if (wartet < 0) { delete c.anbietenNachH; c.listed = false; delete c.angeboten }
+  else if (wartet > 0) { c.anbietenNachH = wartet; c.listed = false; delete c.angeboten }
   else { delete c.anbietenNachH; c.listed = true }
 
   return c
@@ -313,7 +356,7 @@ export function publishPayloadAus(formular, rewardItems) {
   if (forderungen.length) body.requires = forderungen
   if (f.wiederholbar) {
     body.repeatable = true
-    body.rewardPerRun = Math.max(1, Number(f.proDurchlauf) || 1)
+    body.rewardPerRun = Math.max(1, Number(f.belohnung?.anzahl) || 1)
   }
   return body
 }
@@ -330,13 +373,23 @@ export function publishPayloadAus(formular, rewardItems) {
  * gebunden. Gebündelt wird nach Name, weil das die Gattung ist, die ein Mensch
  * meint; bereits gebundene Stücke zählen nicht mit, sonst verspräche der Editor
  * einen Vorrat, den `quest/publish` zu Recht ablehnt.
+ *
+ * WAS ZÄHLT ALS INVENTAR: allein `carried_by`. Hier stand einmal zusätzlich
+ * `type === 'item'` — und damit fiel fast alles heraus, was man tatsächlich mit
+ * sich trägt: Ein Diamant hat `type: 'diamond'`, nicht `'item'`. Im Editor
+ * stand dann eine einzige Gattung zur Wahl, obwohl das Inventar voll war. Was
+ * jemand trägt, IST sein Inventar — der Typ sagt darüber nichts.
+ *
+ * `serverId` grenzt auf einen Server ein: Treuhand und Tausch sind eine
+ * Transaktion EINES Servers, Gegenstände von anderswo kann er nicht binden.
  */
-export function inventarAus(objekte, meineId, { callId = null } = {}) {
+export function inventarAus(objekte, meineId, { callId = null, serverId = null } = {}) {
   const ich = String(meineId || '')
   const zaehler = new Map()
   for (const o of Array.isArray(objekte) ? objekte : []) {
-    if (!o || o.type !== 'item') continue
+    if (!o) continue
     if (String(o.carried_by || '') !== ich) continue
+    if (serverId && String(o._origin || '') !== String(serverId)) continue
     const gebunden = o.state?.escrow?.call
     if (gebunden && String(gebunden) !== String(callId || '')) continue
     const was = String(o.name || '').trim()

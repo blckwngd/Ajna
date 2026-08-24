@@ -376,6 +376,7 @@ export class GameObject {
       }
       importRoot.parent = parent
       this.#normalizeModelSize(importRoot, url)
+      this.#seatModel(importRoot)
     }
 
     this.meshes = result.meshes
@@ -470,6 +471,40 @@ export class GameObject {
       }
     } catch (err) {
       console.warn(`GameObject ${this.id}: Größen-Normierung fehlgeschlagen`, err?.message || err)
+    }
+  }
+
+  /**
+   * Modell auf seinen Standpunkt setzen.
+   *
+   * ANLASS: Ein gerufener Drache landete sichtbar UNTER dem Gelände. Die
+   * Position stimmte — der Ursprung des Modells liegt nur nicht an den Füßen:
+   * Bei `Dragon.glb` sitzt er auf 38 % der Höhe, beim Wyvern auf 48 %. Genau
+   * dieser Anteil verschwindet im Boden, und je größer die Figur, desto
+   * auffälliger.
+   *
+   * Deshalb wird der Import-Root so verschoben, dass sein TIEFSTER PUNKT auf
+   * der Objektposition liegt. Für Modelle mit Ursprung an den Füßen (Fox,
+   * Soldier …) ist die Verschiebung ~0 — die Messung passiert zur Laufzeit über
+   * die volle Hierarchie, also nach allen Knoten-Transforms und der
+   * Größen-Normierung. Ein Modell, das schon richtig sitzt, bleibt unberührt.
+   *
+   * Für fliegende Figuren heißt das: Die Höhe bezeichnet den Bauch, nicht die
+   * Körpermitte. Das ist die Angabe, die man meint, wenn man „30 m über Grund"
+   * sagt.
+   */
+  #seatModel(importRoot) {
+    try {
+      this.root.computeWorldMatrix(true)
+      importRoot.computeWorldMatrix(true)
+      const { min } = importRoot.getHierarchyBoundingVectors(true)
+      const unten = min.y - this.root.getAbsolutePosition().y
+      // Nur eingreifen, wenn es sich lohnt: Millimeter-Korrekturen an jedem
+      // Modell wären Rauschen, und ein Modell ohne Geometrie liefert Unsinn.
+      if (!Number.isFinite(unten) || Math.abs(unten) < 0.01) return
+      importRoot.position.y -= unten
+    } catch (err) {
+      console.warn(`GameObject ${this.id}: Aufsetzen fehlgeschlagen`, err?.message || err)
     }
   }
 

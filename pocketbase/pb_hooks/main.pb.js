@@ -85,6 +85,66 @@ onRecordUpdateRequest(pruefeQuellenanspruch, "objects")
 
 
 // ---------------------------------------------------------------------
+// Anwesenheits-Objekte (`type: "player"`): Identität EINSTEMPELN (BEFORE).
+//
+// Ein Spieler wird in der Welt durch ein gewöhnliches Objekt vertreten. Das ist
+// Absicht — so läuft er durch dieselben Rechte, dieselbe Realtime-Verteilung
+// und dieselbe Darstellung wie alles andere, ohne einen zweiten Weg neben den
+// Objekten.
+//
+// WAS DER CLIENT NICHT SELBST SCHREIBEN DARF:
+//   • `state.name`  — Anzeigename. Sonst könnte sich jeder als jemand anders
+//     ausgeben; das Schild über dem Kopf wäre wertlos.
+//   • `state.karma` — Karma ist serverseitig geführt (siehe karma.js) und
+//     genau deshalb etwas wert. Ein selbst gesetztes Karma wäre eine Behauptung.
+//   • `owner`       — sonst legte jemand eine Anwesenheit FÜR einen anderen an.
+//
+// Fremde Konten sind nicht lesbar (die users-Regeln geben nur den eigenen
+// Datensatz heraus). Ohne dieses Einstempeln müsste der Betrachter den Namen
+// also entweder erraten oder dem Angezeigten glauben — beides untauglich.
+//
+// `state.seenAt` stempelt der Server ebenfalls: Daran erkennt der Betrachter
+// eine veraltete Anwesenheit („App vor zwei Stunden geschlossen") und blendet
+// sie aus, statt ein Gespenst stehen zu lassen.
+// ---------------------------------------------------------------------
+function stampeAnwesenheit(e) {
+  try {
+    if (e.record.get("type") !== "player") { e.next(); return }
+    const { parseState } = require(`${__hooks}/quests.js`)
+    const { karmaStufe, karmaPunkte } = require(`${__hooks}/karma.js`)
+
+    const uid = e.auth ? e.auth.id : (e.record.get("owner") || "")
+    if (!uid) throw new ForbiddenError("Anwesenheit braucht ein angemeldetes Konto.")
+
+    // Superuser dürfen fremde Anwesenheiten pflegen (Aufräumen, Migration);
+    // ein normales Konto vertritt nur sich selbst.
+    const istSuper = !!(e.auth && e.auth.collection && e.auth.collection().name === "_superusers")
+    if (!istSuper) e.record.set("owner", uid)
+
+    const besitzer = e.record.get("owner") || uid
+    let anzeige = ""
+    try {
+      const u = $app.findRecordById("users", besitzer)
+      anzeige = String(u.get("username") || u.get("name") || "")
+    } catch (err) { anzeige = "" }
+
+    const st = parseState(e.record)
+    st.presence = true
+    st.name = anzeige
+    st.karma = karmaStufe(karmaPunkte($app, besitzer))
+    st.seenAt = new Date().toISOString()
+    e.record.set("state", st)
+  } catch (err) {
+    if (err instanceof ForbiddenError) throw err
+    console.log("[objects.presence] " + (err && err.message ? err.message : err))
+  }
+  e.next()
+}
+onRecordCreateRequest(stampeAnwesenheit, "objects")
+onRecordUpdateRequest(stampeAnwesenheit, "objects")
+
+
+// ---------------------------------------------------------------------
 // agent_manifests: Identität des Eigentümers EINSTEMPELN (BEFORE).
 //
 // `owner_handle` und `owner_sealed` sind abgeleitet — sie kommen aus dem
@@ -1116,6 +1176,7 @@ routerAdd("GET", "/api/quests/near", (e) => {
         nachweis: Array.isArray(c.nachweis) ? c.nachweis : [],
         rewards: (c.rewardItems || []).length,
         rewardParts: belohnungText(c.rewardItems || []),
+        repeatable: c.repeatable === true,
         rewardPerRun: Number(c.rewardPerRun) || 0,
         steigt: Number(c.steigt) || 0,
         requires: Array.isArray(c.requires) ? c.requires.length : 0,

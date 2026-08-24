@@ -585,10 +585,20 @@ export class MobileShell {
   /** Editor öffnen — mit echtem Inventar, eigenen Gruppen und Sichtbarkeit. */
   async _questBearbeiten(q, opts = {}) {
     if (!this._questEditor) return
-    this._questEditor.inventar = this._quests.inventar(q?.id || null)
-    this._questEditor.gruppen = await this._quests.gruppen()
+    const ed = this._questEditor
+    ed.server = this._quests.serverListe()
+    ed.gruppen = await this._quests.gruppen()
     const formular = q ? await this._quests.formularFuer(q) : null
-    this._questEditor.open(formular, opts)
+    // Belohnungen kommen aus dem Inventar AUF DIESEM SERVER — Treuhand und
+    // Tausch sind eine Transaktion eines Servers.
+    const aufServer = formular?.server || ed.server.find(s => s.isDefault)?.id || null
+    ed.inventar = this._quests.inventar(q?.id || null, aufServer)
+    // Wechselt jemand den Server, ist der bisherige Bestand nicht mehr der
+    // richtige — sonst stünde dort eine Gattung zur Wahl, die es dort nicht gibt.
+    ed.onServerChanged = (serverId) => {
+      ed.inventar = this._quests.inventar(null, serverId)
+    }
+    ed.open(formular, opts)
   }
 
   async _questSpeichern(formular, veroeffentlichen) {
@@ -735,6 +745,14 @@ export class MobileShell {
         </label>
         <div class="meta" style="margin-top:6px">
           Höhenrelief ringsum. Mindestens so groß wie die Kulisse.
+        </div>
+        <label class="meta" style="display:flex;align-items:center;gap:10px;margin-top:12px">
+          <span style="white-space:nowrap;min-width:74px">Animation</span>
+          ${reichweite('anim')}
+        </label>
+        <div class="meta" style="margin-top:6px">
+          Ab hier stehen Figuren still. Große Figuren werden entsprechend weiter
+          animiert. Ganz rechts = unbegrenzt.
         </div>
       </section>
 

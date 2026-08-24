@@ -112,24 +112,51 @@ export function sperrenFuer(status) {
   return { gesperrt: [], schreibbar: true, hinweis: null }   // Entwurf
 }
 
+/**
+ * Wann ein zunächst nur bei der Figur angebotener Auftrag zusätzlich in die
+ * Regionsliste wandert. `-1` heißt: gar nicht — er bleibt für immer etwas, das
+ * man nur im Gespräch bekommt.
+ */
+export const ANBIETEN = [
+  { h: 0,  label: 'sofort' },
+  { h: 6,  label: 'erst nach 6 Stunden' },
+  { h: 24, label: 'erst nach 1 Tag' },
+  { h: 72, label: 'erst nach 3 Tagen' },
+  { h: -1, label: 'nie — nur bei der Figur' },
+]
+
 /** Leerer Auftrag. */
 export const LEER_AUFTRAG = () => ({
   id: null, status: 'entwurf', meine: true,
   titel: '', kurz: '', text: '', ort: '',
   fristMs: 0, frist: null,
-  belohnung: { anzahl: 1, was: 'Diamant', steigt: 0 },
+  belohnung: { anzahl: 1, was: '', steigt: 0 },
   abnahme: 'stichprobe', schwarmZahl: 3, pruefgruppe: '',
   nachweis: [], karma: 0, sichtbarkeit: 'region', sichtbarGruppe: '',
   anbietenNachH: 0,
-  wiederholbar: false, proDurchlauf: 1, forderungen: [],
+  wiederholbar: false, vorrat: 1, forderungen: [],
+  server: null,
 })
 
-// Demo-Inventar für die Belohnungsauswahl. Ersetzt später der echte Bestand.
-const DEMO_INVENTAR = [
-  { was: 'Diamant', vorrat: 12 },
-  { was: 'Talisman', vorrat: 3 },
-  { was: 'Kompass', vorrat: 1 },
-]
+/**
+ * Wie viel insgesamt hinterlegt wird.
+ *
+ * VOKABULAR: „Belohnung" ist, was EIN Bearbeiter bekommt. „Vorrat" ist, wie
+ * viel dafür insgesamt gebunden wird. Bei einem einmaligen Auftrag sind das
+ * dieselben Stücke, deshalb steht das Feld nur bei „wiederholbar" — vorher hieß
+ * es „Belohnung: 2 / je Durchlauf: 1", was genau andersherum klang.
+ */
+export function vorratVon(q) {
+  const pro = Math.max(0, Number(q?.belohnung?.anzahl) || 0)
+  if (!q?.wiederholbar) return pro
+  return Math.max(pro, Number(q?.vorrat) || pro)
+}
+
+/** Wie oft der Auftrag mit diesem Vorrat erledigt werden kann. */
+export function durchlaeufeVon(q) {
+  const pro = Math.max(1, Number(q?.belohnung?.anzahl) || 1)
+  return Math.max(1, Math.floor(vorratVon(q) / pro))
+}
 
 const esc = (s) => String(s ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -168,10 +195,10 @@ export function pruefeAuftrag(q) {
     fehler.push('Jede Forderung braucht eine Gattung — sonst zählt jeder beliebige Gegenstand.')
   }
   if (q?.wiederholbar) {
-    const p = Number(q?.proDurchlauf)
-    if (!Number.isFinite(p) || p < 1) fehler.push('Belohnung je Durchlauf muss mindestens 1 sein.')
-    else if (p > n) {
-      fehler.push('Je Durchlauf kann nicht mehr ausgezahlt werden, als insgesamt hinterlegt ist.')
+    const v = Number(q?.vorrat)
+    if (!Number.isFinite(v) || v < 1) fehler.push('Der Vorrat muss mindestens 1 sein.')
+    else if (v < n) {
+      fehler.push('Der Vorrat kann nicht kleiner sein als die Belohnung für einen Durchlauf.')
     }
   }
   return fehler
@@ -187,10 +214,16 @@ export class QuestEditor {
    *   onWithdraw?: (quest: object) => void,
    * }} opts
    */
-  constructor({ parent = document.body, inventar = null, gruppen = null,
-                onSave = null, onPublish = null, onWithdraw = null } = {}) {
+  constructor({ parent = document.body, inventar = null, gruppen = null, server = null,
+                onSave = null, onPublish = null, onWithdraw = null, onServerChanged = null } = {}) {
     this.parent = parent
-    this.inventar = Array.isArray(inventar) ? inventar : DEMO_INVENTAR
+    // Verbundene Server, für die Wahl im Kopf. Ein einzelner Server blendet
+    // das Badge aus — dann gibt es nichts zu entscheiden.
+    this.server = Array.isArray(server) ? server : []
+    this.onServerChanged = onServerChanged
+    // Kein Platzhalter-Bestand: Ein erfundenes Inventar verdeckt genau den
+    // Fall, in dem wirklich nichts da ist.
+    this.inventar = Array.isArray(inventar) ? inventar : []
     this.gruppen = Array.isArray(gruppen) ? gruppen : []
     this.onSave = onSave
     this.onPublish = onPublish
@@ -220,6 +253,7 @@ export class QuestEditor {
     ov.innerHTML = `<div class="ajna-qe" role="dialog" aria-modal="true" aria-label="Auftrag bearbeiten">
       <header>
         <h3>${this._q.id ? 'Auftrag bearbeiten' : 'Neuer Auftrag'}</h3>
+        <span class="qe-serverwahl" data-role="serverwahl"></span>
         <button class="qe-close" type="button" aria-label="Schließen">×</button>
       </header>
       <div class="qe-body" data-role="body"></div>
@@ -235,12 +269,14 @@ export class QuestEditor {
     this._body = ov.querySelector('[data-role="body"]')
     this._fehlerEl = ov.querySelector('[data-role="fehler"]')
     this._aktionenEl = ov.querySelector('[data-role="aktionen"]')
+    this._serverEl = ov.querySelector('[data-role="serverwahl"]')
+    this._renderServer()
     this._render()
   }
 
   close() {
     this._ov?.remove()
-    this._ov = this._body = this._fehlerEl = this._aktionenEl = null
+    this._ov = this._body = this._fehlerEl = this._aktionenEl = this._serverEl = null
     this._q = null
   }
 
@@ -284,11 +320,11 @@ export class QuestEditor {
         </select>
       </label>
       <div class="qe-zeile">
-        <label>Belohnung
+        <label>Belohnung — was der Bearbeiter bekommt
           <span class="qe-paar">
             <input type="number" data-f="belohnung.anzahl" min="0" max="99" value="${esc(q.belohnung.anzahl)}"${aus('belohnung')}>
             <select data-f="belohnung.was"${aus('belohnung')}>
-              ${this.inventar.map(i => `<option value="${esc(i.was)}"${i.was === q.belohnung.was ? ' selected' : ''}>${esc(i.was)} (${i.vorrat} im Inventar)</option>`).join('')}
+              ${this._inventarWahl(q)}
             </select>
           </span>
         </label>
@@ -296,17 +332,17 @@ export class QuestEditor {
           <input type="number" data-f="belohnung.steigt" min="0" max="9" value="${esc(q.belohnung.steigt || 0)}"${aus('belohnung')}>
         </label>
       </div>
-      <div class="qe-fussnote">Die Belohnung wird beim Veröffentlichen aus deinem Inventar
-        treuhänderisch gebunden. Bindung und Auszahlung macht der Server.</div>
+      <div class="qe-fussnote">Wird beim Veröffentlichen aus deinem Inventar treuhänderisch
+        gebunden. Bindung und Auszahlung macht der Server.</div>
       <label class="qe-haken-zeile">
         <input type="checkbox" data-f="wiederholbar"${q.wiederholbar ? ' checked' : ''}${aus('belohnung')}>
         <span><span class="qe-haken-titel">Wiederholbar</span>
-        <span class="qe-haken-hinweis">Mehrere Spieler können den Auftrag nacheinander erledigen.
-        Der hinterlegte Vorrat begrenzt, wie oft.</span></span>
+        <span class="qe-haken-hinweis">Mehrere Spieler können den Auftrag nacheinander erledigen.</span></span>
       </label>
-      ${q.wiederholbar ? `<label>Belohnung je Durchlauf
-        <input type="number" data-f="proDurchlauf" min="1" max="99" value="${esc(q.proDurchlauf || 1)}"${aus('belohnung')}>
-      </label>` : ''}
+      ${q.wiederholbar ? `<label>Vorrat — wie viel insgesamt hinterlegt wird
+        <input type="number" data-f="vorrat" min="1" max="99" value="${esc(vorratVon(q))}"${aus('belohnung')}>
+      </label>
+      <div class="qe-fussnote">${esc(this._vorratSatz(q))}</div>` : ''}
 
       <div class="qe-abschnitt">Abnahme</div>
       <label>Verfahren
@@ -366,16 +402,13 @@ export class QuestEditor {
       </label>` : ''}
       <label>Ab wann steht der Auftrag auch in der Regionsliste
         <select data-f="anbietenNachH"${aus('sichtbarkeit')}>
-          <option value="0"${!Number(q.anbietenNachH) ? ' selected' : ''}>sofort</option>
-          <option value="6"${Number(q.anbietenNachH) === 6 ? ' selected' : ''}>erst nach 6 Stunden</option>
-          <option value="24"${Number(q.anbietenNachH) === 24 ? ' selected' : ''}>erst nach 1 Tag</option>
-          <option value="72"${Number(q.anbietenNachH) === 72 ? ' selected' : ''}>erst nach 3 Tagen</option>
+          ${ANBIETEN.map(a => `<option value="${a.h}"${Number(q.anbietenNachH || 0) === a.h ? ' selected' : ''}>${esc(a.label)}</option>`).join('')}
         </select>
       </label>
       <div class="qe-fussnote">Vergibt eine Figur den Auftrag, ist er zunächst nur im Gespräch
-        mit ihr zu haben — wer nicht mit ihr redet, erfährt nichts davon. Nimmt ihn dort
-        niemand an, erscheint er nach der eingestellten Wartezeit zusätzlich in der Liste
-        für die Region, dort mit dem Zustand „angeboten". „Sofort" heißt: gleich in beiden.</div>`
+        mit ihr zu haben. Nimmt ihn dort niemand an, erscheint er nach der eingestellten
+        Wartezeit zusätzlich in der Regionsliste, dort mit dem Zustand „angeboten".
+        „Sofort" heißt: gleich in beiden. „Nie" heißt: nur im Gespräch, dauerhaft.</div>`
 
     this._body.querySelectorAll('[data-f]').forEach(el => {
       el.addEventListener('input', () => this._lese())
@@ -402,6 +435,89 @@ export class QuestEditor {
     })
 
     this._renderAktionen(sp)
+  }
+
+  /**
+   * Auf welchem Server der Auftrag entsteht.
+   *
+   * WARUM ÜBERHAUPT EINE WAHL: Ein Auftrag liegt auf genau einem Server — dort
+   * hängt seine Treuhand, dort wird abgenommen, dort zählt das Karma. Wer
+   * mehrere Server verbunden hat, schreibt aber nicht immer auf demselben aus:
+   * Der Auftrag fürs Vereinsgelände gehört auf den Vereinsserver, nicht auf den
+   * zuletzt benutzten. Vorgabe ist der Standardserver.
+   *
+   * Ein bestehender Auftrag lässt sich NICHT verschieben: Das wäre kein
+   * Umzug, sondern ein neuer Auftrag anderswo — mitsamt neuer Treuhand.
+   */
+  _renderServer() {
+    if (!this._serverEl) return
+    const mehrere = (this.server || []).length > 1
+    if (!mehrere) { this._serverEl.hidden = true; return }
+    this._serverEl.hidden = false
+
+    const aktiv = this._aktiverServer()
+    const fest = !!this._q.id
+    this._serverEl.innerHTML = `
+      <button type="button" class="qe-badge" data-role="badge"${fest ? ' disabled' : ''}
+              title="${fest ? 'Ein bestehender Auftrag bleibt auf seinem Server.' : 'Server wählen'}">
+        ${esc(aktiv?.label || aktiv?.id || '?')}${fest ? '' : ' ▾'}
+      </button>
+      <div class="qe-serverliste" data-role="liste" hidden>
+        ${this.server.map(sv => `<button type="button" data-sv="${esc(sv.id)}"
+          ${sv.id === aktiv?.id ? 'class="on"' : ''}>${esc(sv.label || sv.id)}${sv.isDefault ? ' · Standard' : ''}</button>`).join('')}
+      </div>`
+    if (fest) return
+
+    const liste = this._serverEl.querySelector('[data-role="liste"]')
+    this._serverEl.querySelector('[data-role="badge"]').addEventListener('click', () => {
+      liste.hidden = !liste.hidden
+    })
+    this._serverEl.querySelectorAll('[data-sv]').forEach(b =>
+      b.addEventListener('click', () => {
+        this._lese()
+        this._q.server = b.dataset.sv
+        // Das Inventar hängt am Server — die bisherige Belohnung gibt es dort
+        // vielleicht gar nicht. Der Aufrufer liefert den neuen Bestand nach.
+        this.onServerChanged?.(b.dataset.sv)
+        liste.hidden = true
+        this._renderServer()
+        this._render()
+      }))
+  }
+
+  _aktiverServer() {
+    const liste = this.server || []
+    return liste.find(s => s.id === this._q?.server)
+      || liste.find(s => s.isDefault)
+      || liste[0]
+      || null
+  }
+
+  /**
+   * Belohnungs-Gattungen aus dem Inventar. Ein leeres Inventar sagt das auch —
+   * eine leere Auswahlliste sieht sonst nach einem Ladefehler aus.
+   */
+  _inventarWahl(q) {
+    if (!this.inventar.length) {
+      return `<option value="">nichts im Inventar auf diesem Server</option>`
+    }
+    return this.inventar
+      .map(i => `<option value="${esc(i.was)}"${i.was === q.belohnung.was ? ' selected' : ''}>`
+        + `${esc(i.was)} (${i.vorrat} im Inventar)</option>`)
+      .join('')
+  }
+
+  /** Was der eingestellte Vorrat bedeutet — in Durchläufen, nicht in Stück. */
+  _vorratSatz(q) {
+    const pro = Math.max(1, Number(q.belohnung.anzahl) || 1)
+    const vorrat = vorratVon(q)
+    const mal = durchlaeufeVon(q)
+    const rest = vorrat - mal * pro
+    const bestand = this.inventar.find(i => i.was === q.belohnung.was)?.vorrat ?? 0
+    const knapp = vorrat > bestand
+      ? ` Im Inventar liegen nur ${bestand}.`
+      : ''
+    return `Reicht für ${mal}× erledigen${rest > 0 ? ` (${rest} bleibt übrig)` : ''}.${knapp}`
   }
 
   /**
@@ -469,6 +585,14 @@ export class QuestEditor {
     if (forderungen.length) q.forderungen = forderungen.filter(Boolean)
     // Frist als Zeitstempel mitführen — die Liste zeigt Restzeit, nicht Dauer.
     q.frist = q.fristMs ? Date.now() + Number(q.fristMs) : null
+
+    // Den ANGEZEIGTEN Server festschreiben. Ist der Standardserver gerade
+    // getrennt, zeigt das Badge einen anderen — ohne diese Zeile ginge der
+    // Auftrag trotzdem an den Standard, also woanders hin als angekündigt.
+    if (!q.id) {
+      const sv = this._aktiverServer()
+      if (sv) q.server = sv.id
+    }
     return q
   }
 
@@ -587,6 +711,20 @@ export class QuestEditor {
       background:#2a2a32;border:1px solid #3a3a44;color:#b8b8c0;cursor:pointer;font-size:15px;line-height:1}
     .ajna-qe .qe-weg:hover{background:#3a2a2a;color:#e08a6b}
     .ajna-qe .qe-btn.qe-klein{padding:3px 10px;font-size:12px;margin-bottom:12px}
+    .ajna-qe .qe-serverwahl{position:relative;flex:0 0 auto}
+    .ajna-qe .qe-serverwahl[hidden]{display:none}
+    .ajna-qe .qe-badge{background:#2a2a32;border:1px solid #3a3a44;border-radius:6px;
+      color:#c8c8d0;font:11px system-ui,sans-serif;padding:3px 8px;cursor:pointer;white-space:nowrap}
+    .ajna-qe .qe-badge:hover:not(:disabled){background:#33343e;color:#fff}
+    .ajna-qe .qe-badge:disabled{cursor:default;opacity:.6}
+    .ajna-qe .qe-serverliste{position:absolute;right:0;top:calc(100% + 4px);z-index:5;
+      min-width:170px;background:#1c1c22;border:1px solid #3a3a44;border-radius:8px;
+      padding:4px;box-shadow:0 8px 24px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:2px}
+    .ajna-qe .qe-serverliste[hidden]{display:none}
+    .ajna-qe .qe-serverliste button{background:none;border:none;text-align:left;color:#c8c8d0;
+      font:12px system-ui,sans-serif;padding:6px 8px;border-radius:5px;cursor:pointer;width:100%}
+    .ajna-qe .qe-serverliste button:hover{background:#2a2a32;color:#fff}
+    .ajna-qe .qe-serverliste button.on{color:#fff;background:#2c5d8f}
 
     .ajna-qe .qe-fuss{border-top:1px solid #2b2b33;padding:10px 12px;background:rgba(24,24,30,.6)}
     .ajna-qe .qe-fehler{margin-bottom:8px;padding:8px 10px;border-radius:8px;

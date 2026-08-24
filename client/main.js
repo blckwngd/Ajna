@@ -46,7 +46,8 @@ import { interactionReply, isCollectAction } from "./core/InteractionReply.js"
 import { InventoryUI, DRAG_MIME } from "./core/InventoryUI.js"
 import { Minimap } from "./core/Minimap.js"
 import { isMultiServer, serverLabelFor } from './core/ServerBadge.js'
-import { readAllRanges, effectiveTerrain, RANGE_EVENT } from "./core/renderRange.js"
+import { readAllRanges, effectiveTerrain, RANGE_EVENT, readRange, animRadiusFuer } from "./core/renderRange.js"
+import { PresenceService, PRESENCE_TYPE, zeigeAnwesenheit } from "./core/PresenceService.js"
 import { inventoryDevices } from "./core/inventoryDevices.js"
 import { spawnRandomAndEdit, directorSpawnItems } from "./core/SpawnHere.js"
 import { CameraComponent } from "./engine/components/CameraComponent.js"
@@ -951,6 +952,22 @@ async function init() {
     getPosition: () => positionSource?.getWorldPosition?.() || null
   })
   proximityReporter.start()
+
+  // Stufe „Genau": eigene Anwesenheit als Objekt in der Welt, damit andere
+  // Spieler einen sehen. Bewusst NUR bei „Genau" — die gröberen Stufen liefern
+  // absichtlich keine Position, die man als Figur zeichnen könnte, ohne genau
+  // das preiszugeben, was sie zurückhalten. Siehe core/PresenceService.js.
+  const presence = new PresenceService({
+    ajna: ajnaManager,
+    getPosition: () => positionSource?.getWorldPosition?.() || null,
+    getHeading: () => (typeof window.ajnaHeadingRad === 'number' ? window.ajnaHeadingRad : null),
+  })
+  presence.start()
+  window.ajnaPresence = presence
+  // Beim Verlassen der Seite aufräumen: Ohne das bliebe die letzte Position
+  // stehen, bis sie veraltet — und das ist genau die Stelle, an der jemand
+  // gesehen wird, der sich längst abgemeldet hat.
+  window.addEventListener('pagehide', () => { try { presence.stop() } catch {} })
   // Manifeste selbst aktuell halten (Erst-Load deckt persistierte Session ab, wo
   // onAuthChanged nicht feuert) und die Area neu publishen, sobald die Quellen
   // geladen/geändert sind — sonst ginge sie ohne Quellen raus (Agents sehen sie nicht).
@@ -1756,9 +1773,27 @@ async function init() {
   // beides sind die teuersten Posten pro Figur (Shadow-Map-Renderpass bzw.
   // Bone-Matrizen pro Frame). Ferne Objekte bleiben sichtbar, werfen aber
   // keinen Schatten und stehen still (fällt jenseits der Radien nicht auf).
-  // Live tunebar: ajnaPerf.shadowRadiusM / ajnaPerf.animRadiusM (0 = aus).
-  const perfCfg = { shadowRadiusM: 40, animRadiusM: 150 }
+  // Live tunebar: ajnaPerf.shadowRadiusM (0 = aus). Die Animations-Distanz
+  // kommt aus den Einstellungen (RANGE_DEFS.anim) und wird zusätzlich mit der
+  // Größe der Figur gestreckt — ein Drache in 200 m ist noch bildfüllend,
+  // ein Fuchs dort ein Punkt.
+  const perfCfg = { shadowRadiusM: 40 }
   window.ajnaPerf = perfCfg
+
+  // Höhe einer Figur, einmal gemessen und am Objekt gemerkt: Die Bounding-Box
+  // je Objekt alle 2 s neu zu berechnen waere teurer als das, was der LOD-Pass
+  // einspart.
+  const figurHoehe = (go) => {
+    if (Number.isFinite(go._hoeheM)) return go._hoeheM
+    try {
+      const { min, max } = go.root.getHierarchyBoundingVectors(true)
+      const h = max.y - min.y
+      if (Number.isFinite(h) && h > 0) { go._hoeheM = h; return h }
+    } catch {}
+    return 1.8
+  }
+  let animBasis = readRange('anim')
+  window.addEventListener(RANGE_EVENT, () => { animBasis = readRange('anim') })
   setInterval(() => {
     const cam = scene.activeCamera
     if (!cam) return
@@ -1778,8 +1813,8 @@ async function init() {
       // Animationen nur nah — NUR die gerade laufenden Groups pausieren und
       // exakt diese später fortsetzen (nicht alle starten: sonst liefen
       // plötzlich mehrere Clips gleichzeitig).
-      if (go.animationGroups?.length && perfCfg.animRadiusM > 0) {
-        const want = d <= perfCfg.animRadiusM
+      if (go.animationGroups?.length && animBasis > 0) {
+        const want = d <= animRadiusFuer(animBasis, figurHoehe(go))
         if (!want && !go._pausedAnims) {
           go._pausedAnims = go.animationGroups.filter(g => g.isPlaying)
           go._pausedAnims.forEach(g => { try { g.pause() } catch {} })
@@ -2413,7 +2448,14 @@ async function syncSceneObjects(scene, world, geo, objects) {
   // User-Setting sichtbar sein soll. Default = alles sichtbar.
   // UWB-Anker sind Infrastruktur — nicht als Spielobjekte rendern (das übernimmt
   // das UwbAnchorOverlay als umschaltbares Debug-Overlay mit 3D-Höhen-Marker).
-  const worldObjects = objects.filter(o => !o.carried_by && (o.type || '').toLowerCase() !== 'uwb_anchor')
+  // Anwesenheiten anderer Spieler laufen als gewöhnliche Objekte durch —
+  // ausgeblendet werden nur die EIGENE (stünde im eigenen Kopf) und veraltete
+  // (Gespenster von geschlossenen Apps). Siehe core/PresenceService.js.
+  const _ich = ajnaManager.currentUser()?.id || ''
+  const worldObjects = objects.filter(o =>
+    !o.carried_by
+    && (o.type || '').toLowerCase() !== 'uwb_anchor'
+    && (o.type !== PRESENCE_TYPE || zeigeAnwesenheit(o, _ich)))
   const filteredObjects = _agentFilters
     ? worldObjects.filter(o => _agentFilters.matches(o))
     : worldObjects

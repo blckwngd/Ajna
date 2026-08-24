@@ -253,6 +253,16 @@ export function resolveLabel(template, record, ctx = {}) {
       case 'distance_m':  return Number.isFinite(d) ? String(Math.round(d)) : ''
       case 'distance_km': return Number.isFinite(d) ? (d / 1000).toFixed(1) : ''
       case 'altitude':    return Number.isFinite(record?.altitude) ? String(Math.round(record.altitude)) : ''
+      // Karma als Sterne. Eigener Platzhalter statt `{state.karma}`, weil eine
+      // nackte Zahl über dem Kopf nichts sagt — die Skala steht nirgends dabei.
+      // Kein Karma ⇒ leer: Wer neu ist, trägt kein Schild „0", das wie ein
+      // Makel aussähe.
+      case 'karma': {
+        const k = Math.round(Number(state.karma))
+        if (!Number.isFinite(k) || k <= 0) return ''
+        const s = Math.max(0, Math.min(5, k))
+        return '★'.repeat(s) + '☆'.repeat(5 - s)
+      }
     }
     if (key.startsWith('state.')) {
       const v = state[key.slice(6)]
