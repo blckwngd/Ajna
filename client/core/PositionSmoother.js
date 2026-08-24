@@ -49,6 +49,24 @@ const MAX_INTERP_MS = 1500
 //   lat0/lon0/alt0  Position ZUR Messung
 const MAX_DR_MS = 150000
 
+// Wie schnell ein Versatz höchstens abgebaut wird (m/s).
+//
+// NICHT über eine feste Zeit: Ein Versatz von vier Metern in 700 ms bedeutet
+// 5,7 m/s zusätzlich — bei einem gehenden Pferd sieht das aus wie ein Ruck.
+// Über eine Höchstgeschwindigkeit bleibt die Korrektur immer langsamer als ein
+// Schritt und fällt damit nie auf; sie dauert dafür bei großem Versatz länger.
+// Genau der Tausch, um den es geht: eine Abweichung, die niemand bemerkt,
+// gegen einen Sprung, den jeder sieht.
+const KORREKTUR_TEMPO = 1.2
+
+// Grenzen der Korrekturdauer (ms) — winzige Versätze sofort, große nicht endlos.
+const KORREKTUR_MIN_MS = 200
+const KORREKTUR_MAX_MS = 3000
+
+// Ab dieser Entfernung ist es kein Versatz mehr, sondern ein Ortswechsel —
+// dann wird gesprungen (Meter).
+const MAX_KORREKTUR_M = 40
+
 export class PositionSmoother {
   constructor() {
     this.prev = null
@@ -65,6 +83,36 @@ export class PositionSmoother {
     if (!record || !Number.isFinite(record.lat) || !Number.isFinite(record.lon)) return false
     const snap = _snapFromRecord(record, now)
     if (this.curr && _sameTarget(this.curr, snap)) return false   // No-op: keine Bewegung
+
+    // WEICHE KORREKTUR statt Sprung.
+    //
+    // Solange ein Objekt vorausgerechnet wird, läuft die Anzeige zwangsläufig
+    // ein Stück von der Wahrheit weg (Rundung, Netzlaufzeit, ein Tick zu spät).
+    // Trifft dann ein neuer Plan ein, sprang die Figur bisher auf die neue
+    // Rechnung — bei 500-ms-Takten unsichtbar, seit die Agents nur noch an
+    // Wegknicken melden aber ein deutliches Zucken.
+    //
+    // Deshalb wird der Versatz im Moment des Eintreffens gemessen und über
+    // KORREKTUR_MS auf null gefahren. Die Figur läuft dabei minimal falsch —
+    // das ist der bewusste Tausch: eine Abweichung, die niemand bemerkt, gegen
+    // einen Sprung, den jeder sieht.
+    if (this.curr?.dr && snap.dr) {
+      const gezeigt = _extrapolate(this.curr, now)
+      const neuStand = _extrapolate(snap, now)
+      const dLat = gezeigt.lat - neuStand.lat
+      const dLon = gezeigt.lon - neuStand.lon
+      const dAlt = gezeigt.altitude - neuStand.altitude
+      // Grosse Sprünge sind KEIN Drift, sondern ein Ortswechsel (Editor,
+      // Neuplanung, Teleport). Die weichzuzeichnen hiesse, die Figur sekundenlang
+      // quer durch die Welt gleiten zu lassen — dort ist Springen richtig.
+      const weitM = Math.hypot(dLat * 111320, dLon * 111320 * Math.cos(gezeigt.lat * Math.PI / 180))
+      if (weitM <= MAX_KORREKTUR_M) {
+        const dauer = Math.min(KORREKTUR_MAX_MS,
+          Math.max(KORREKTUR_MIN_MS, (weitM / KORREKTUR_TEMPO) * 1000))
+        snap.fix = { lat: dLat, lon: dLon, altitude: dAlt, t: now, dauer }
+      }
+    }
+
     this.prev = this.curr
     this.curr = snap
     return true
@@ -167,12 +215,24 @@ function _extrapolate(curr, now) {
   const dNorth = distM * Math.cos(trk)
   const dEast  = distM * Math.sin(trk)
   const cosLat = Math.cos(dr.lat0 * Math.PI / 180) || 1e-6
-  return {
+  const p = {
     lat: dr.lat0 + dNorth / 111320,
     lon: dr.lon0 + dEast / (111320 * cosLat),
     altitude: dr.alt0 + dr.vrate * s,
     rotation: { x: curr.rotation.x, y: curr.rotation.y, z: curr.rotation.z }
   }
+  // Restlichen Versatz auflösen (siehe feed): Anteil läuft von 1 auf 0.
+  const fix = curr.fix
+  if (fix) {
+    const anteil = 1 - Math.min(1, Math.max(0, (now - fix.t) / (fix.dauer || KORREKTUR_MAX_MS)))
+    if (anteil <= 0) { curr.fix = null }
+    else {
+      p.lat += fix.lat * anteil
+      p.lon += fix.lon * anteil
+      p.altitude += fix.altitude * anteil
+    }
+  }
+  return p
 }
 
 function _sameTarget(a, b) {

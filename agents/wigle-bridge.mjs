@@ -47,6 +47,7 @@ import { bboxAroundM, centerOf } from '../client/core/geoMath.js'
 import { watchInterestAreas } from '../client/core/interestAreas.js'
 
 import { simpleSetup } from './lib/setup-wizard.mjs'
+import { Quellcache, istAbgeriegelt } from './lib/quellcache.mjs'
 
 // Login + geschichtete .env (Env > agents/.env.wigle > Root-.env) + System-CA.
 // Erststart ohne Pflichtwerte (oder --setup): Mini-Wizard fragt sie ab. Die
@@ -74,6 +75,22 @@ const MAX_AREAS  = envInt('WIGLE_MAX_AREAS', 8)     // Quota-Schutz
 const POLL_MS      = envNum('WIGLE_POLL_S', 60) * 1000        // Bereichs-Poll (billig, lokal)
 const QUERY_MIN_MS = envNum('WIGLE_QUERY_MIN_S', 300) * 1000  // min. Abstand WiGLE-Abfragen
 
+// Zwischenspeicher + Tagesbudget (agents/lib/quellcache.mjs).
+//
+// WARUM: Nicht der Dauerbetrieb verbrennt das Tageslimit, sondern die
+// Neustarts. Ohne Ablage begann jeder Start bei null und fragte sofort alles
+// erneut ab — bei einem Entwicklungstag mit einem Dutzend Neustarts ist das
+// Kontingent weg, bevor irgendjemand ein WLAN gesehen hat. Der Zähler liegt
+// deshalb ebenfalls auf Platte: Ein Neustart darf ihn nicht zurücksetzen.
+const CACHE_TTL_MS = envNum('WIGLE_CACHE_TTL_S', 12 * 3600) * 1000
+const TAGESBUDGET  = envInt('WIGLE_MAX_QUERIES_DAY', 80)
+const cache = new Quellcache('wigle', {
+  ttlMs: CACHE_TTL_MS,
+  minAbstandMs: QUERY_MIN_MS,
+  proTag: TAGESBUDGET,
+  log: (m) => console.log(`[wigle] ${m}`),
+})
+
 // Ansatz B (optional): empirischer Empfangsradius aus den Einzelsichtungen
 // (network/detail). EINE WiGLE-Abfrage PRO NETZ → hart budgetiert. Aus (Default)
 // bleibt es bei der bandbasierten Schätzung.
@@ -83,6 +100,9 @@ const DETAIL_PCTL  = Math.min(1, Math.max(0, envNum('WIGLE_DETAIL_PCTL', 0.9))) 
 const DETAIL_MIN   = envInt('WIGLE_DETAIL_MIN_SAMPLES', 4)      // darunter nicht vertrauenswürdig
 const DETAIL_CAP_M = envNum('WIGLE_DETAIL_CAP_M', 250)          // Deckel gg. mobile/streuende APs
 const DETAIL_FLOOR_M = 10
+// Detail-Antworten halten deutlich länger als Suchergebnisse: Ein Access Point
+// steht, wo er steht. Vorgabe 30 Tage.
+const DETAIL_TTL_MS = envNum('WIGLE_DETAIL_TTL_S', 30 * 86400) * 1000
 
 // Funk-/Sendemasten aus OpenStreetMap (über unsere Geo-API, Overpass-gecacht).
 // Statisch → seltener Sync als die WLAN-Abfragen.
@@ -194,10 +214,22 @@ const WIGLE_DETAIL_URL = 'https://api.wigle.net/api/v2/network/detail'
 // EINE WiGLE-Abfrage pro Aufruf → nur mit Budget nutzen.
 // Wirft bei 429 (Tageslimit) weiter, damit der Aufrufer das Budget stoppt.
 async function fetchDetailRadius(netid, centerLat, centerLon) {
+  // Der Empfangsradius eines fest installierten APs ändert sich über Wochen
+  // kaum — ihn erneut zu erfragen wäre die teuerste Art, dasselbe zu erfahren.
+  // Deshalb eine lange Haltbarkeit, unabhängig von der der Suchergebnisse.
+  const { daten, herkunft } = await cache.hole(`detail:${netid}`,
+    () => fetchDetailRadiusRoh(netid, centerLat, centerLon),
+    { ttlMs: DETAIL_TTL_MS })
+  // `gekostet` sagt dem Aufrufer, ob das Sync-Budget belastet werden muss —
+  // eine abgelegte Antwort hat die Quelle nicht angefasst.
+  return daten ? { ...daten, gekostet: herkunft === 'frisch' } : null
+}
+
+async function fetchDetailRadiusRoh(netid, centerLat, centerLon) {
   const r = await fetch(`${WIGLE_DETAIL_URL}?${new URLSearchParams({ netid })}`, {
     headers: { Authorization: AUTH, Accept: 'application/json' }
   })
-  if (r.status === 429) throw new Error('429 — WiGLE-Tageslimit')
+  if (r.status === 429) { await cache.sperre(); throw new Error('429 — WiGLE-Tageslimit') }
   if (!r.ok) throw new Error(`WiGLE detail ${r.status}`)
   const data = await r.json()
   if (data && data.success === false) return null
@@ -225,7 +257,27 @@ function describeNet(n) {
   return parts.join(' · ') + ' (Quelle: WiGLE)'
 }
 
-async function fetchNetworks(bbox) {
+/**
+ * Netze einer BoundingBox — über den Zwischenspeicher.
+ *
+ * Der Schlüssel ist die auf fünf Nachkommastellen gerundete Box: Zwei Abfragen
+ * derselben Gegend, die sich um einen Meter unterscheiden, sind dieselbe Frage.
+ * Ohne dieses Runden träfe der Zwischenspeicher praktisch nie, weil die
+ * Interessensbereiche der Spieler ständig leicht wandern.
+ */
+async function fetchNetworks(bbox, { frisch = false } = {}) {
+  const k = (v) => Number(v).toFixed(5)
+  const schluessel = `bbox:${k(bbox.latMin)},${k(bbox.lonMin)},${k(bbox.latMax)},${k(bbox.lonMax)}`
+  const { daten, herkunft, alterMin, grund } = await cache.hole(
+    schluessel, () => fetchNetworksRoh(bbox), { frisch })
+
+  if (herkunft === 'cache') console.log(`[wigle] aus dem Zwischenspeicher (${alterMin} min alt)`)
+  else if (herkunft === 'cache-alt') console.warn(`[wigle] alte Antwort (${alterMin} min) — ${grund}`)
+  else if (herkunft === null) console.warn(`[wigle] keine Abfrage möglich (${grund}) und nichts abgelegt`)
+  return Array.isArray(daten) ? daten : []
+}
+
+async function fetchNetworksRoh(bbox) {
   // Paginiert über WiGLEs `searchAfter`-Token, bis MAX_NETS erreicht ist, keine
   // weitere Seite kommt, oder MAX_PAGES (Quota-Schutz) ausgeschöpft ist. Jede
   // Seite ist EINE WiGLE-Abfrage (zählt aufs Tageslimit).
@@ -242,10 +294,17 @@ async function fetchNetworks(bbox) {
       headers: { Authorization: AUTH, Accept: 'application/json' }
     })
     if (r.status === 401) throw new Error('WiGLE 401 — API-Name/Token prüfen')
-    if (r.status === 429) throw new Error('WiGLE 429 — tägliches Query-Limit erreicht')
+    if (r.status === 429) { await cache.sperre(); throw new Error('WiGLE 429 — tägliches Query-Limit erreicht') }
     if (!r.ok) throw new Error(`WiGLE ${r.status}: ${await r.text().catch(() => '')}`)
     const data = await r.json()
-    if (data && data.success === false) throw new Error(`WiGLE: ${data.message || 'Fehler'}`)
+    // WiGLE meldet das Kontingent NICHT immer als 429, sondern auch als 200 mit
+    // einem Vermerk im Rumpf. Wer nur auf den Statuscode hört, fragt munter
+    // weiter und bekommt nie wieder Daten.
+    if (data && data.success === false) {
+      const m = String(data.message || 'Fehler')
+      if (istAbgeriegelt(m)) await cache.sperre()
+      throw new Error(`WiGLE: ${m}`)
+    }
     const results = Array.isArray(data?.results) ? data.results : []
     out.push(...results)
     searchAfter = data?.searchAfter || data?.search_after || null
@@ -293,13 +352,18 @@ async function queryReconcile(centers, fromAreas) {
   async function coverageFor(n, lat, lon) {
     const netid = String(n.netid)
     if (detailBudget > 0 && !detail429) {
-      detailBudget--; triedDetail.add(netid)
+      triedDetail.add(netid)
       try {
         const d = await fetchDetailRadius(netid, lat, lon)
+        // Nur echte Abfragen zählen. Vorher zog jede abgelegte Antwort das
+        // Sync-Budget mit herunter — nach dem ersten Lauf wären damit alle
+        // Verfeinerungen aufgebraucht gewesen, ohne dass eine Abfrage lief.
+        if (d?.gekostet !== false) detailBudget--
         if (d) { refined++; return { radius: d.radius, basis: 'observations', samples: d.samples } }
         detailInsufficient.add(netid)   // getestet, aber zu wenige Sichtungen → nicht erneut versuchen
       } catch (err) {
-        if (String(err.message).startsWith('429')) { detail429 = true; console.warn('[wigle] detail 429 → Rest dieses Syncs Band-Schätzung') }
+        detailBudget--                    // der Versuch selbst zählt beim Anbieter
+        if (istAbgeriegelt(err)) { detail429 = true; console.warn('[wigle] detail abgeriegelt → Rest dieses Syncs Band-Schätzung') }
         else console.warn(`[wigle] detail ${netid}: ${err.message}`)
       }
     }
@@ -381,9 +445,10 @@ async function queryReconcile(centers, fromAreas) {
       if (net.basis === 'observations' || triedDetail.has(netid) || detailInsufficient.has(netid)) continue
       const la = Number(net.lat), lo = Number(net.lon)
       if (!Number.isFinite(la) || !Number.isFinite(lo)) continue
-      detailBudget--; triedDetail.add(netid)
+      triedDetail.add(netid)
       try {
         const d = await fetchDetailRadius(netid, la, lo)
+        if (d?.gekostet !== false) detailBudget--   // abgelegte Antworten kosten nichts
         if (!d) { net.basis = 'band'; detailInsufficient.add(netid); continue }   // zu wenige Sichtungen → nicht mehr versuchen
         const rec = ajna.getObjectById(net.objectId)
         if (!rec) continue
@@ -393,7 +458,8 @@ async function queryReconcile(centers, fromAreas) {
         net.basis = 'observations'; refined++
         console.log(`[ajna] ~ ${net.name} (${netid}) Radius ${d.radius} m aus ${d.samples} Sichtungen`)
       } catch (err) {
-        if (String(err.message).startsWith('429')) { detail429 = true; console.warn('[wigle] detail 429 (Backfill) → Stop'); break }
+        detailBudget--
+        if (istAbgeriegelt(err)) { detail429 = true; console.warn('[wigle] detail abgeriegelt (Backfill) → Stop'); break }
         console.warn(`[wigle] backfill ${netid}: ${err.message}`)
       }
     }
@@ -423,6 +489,13 @@ const areaWatch = watchInterestAreas(ajna, 'wigle',
     }
   })
 await areaWatch.first
+{
+  const b = await cache.stand()
+  console.log(`[wigle] Zwischenspeicher: ${(CACHE_TTL_MS / 3600000).toFixed(0)} h haltbar · `
+    + `Tagesbudget ${TAGESBUDGET} (${b.benutzt} verbraucht`
+    + `${b.uebrig !== null ? `, ${b.uebrig} übrig` : ''})`
+    + `${b.gesperrt ? ` · GESPERRT bis ${b.gesperrt}` : ''}`)
+}
 console.log(`[wigle] bereit — Bereichs-Poll alle ${(POLL_MS / 1000) | 0} s, WiGLE-Query min. alle ${(QUERY_MIN_MS / 1000) | 0} s, Re-Query alle ${(INTERVAL_MS / 1000) | 0} s. (Strg+C)`)
 
 // ───────────────────────────────────────────────────────────────────────

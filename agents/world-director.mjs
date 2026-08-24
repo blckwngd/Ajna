@@ -63,6 +63,7 @@ import { stepAlongPath, buildWayGraph, nearestNodeKey, randomReachableTarget, sh
 import { animalNameFor } from '../client/core/animalNames.js'
 
 import { simpleSetup } from './lib/setup-wizard.mjs'
+import { Bewegungsplan, bewegungsUpdate } from './lib/bewegung.mjs'
 import { npcParley } from './lib/dialogs.mjs'
 import { dialogNameFor, dialogVarsFor, talkSessionId } from '../client/core/Parley.js'
 
@@ -109,6 +110,50 @@ const STREET_ARCHETYPES = new Set(['npc', 'enemy'])
 // Szene ansehen, die richtige Konvention festlegen, dann vereinheitlichen
 // und in docs/world-objects.md dokumentieren.
 const HEADING_TO_YAW = h => Math.PI - h
+
+// Kompass-Kurs in Grad, wie ihn `state.motion` erwartet. `c.heading` liegt im
+// Bogenmaß vor (bearingRad: 0 = Nord, im Uhrzeigersinn) — dieselbe Konvention,
+// nur andere Einheit.
+const KURS_GRAD = h => ((h * 180 / Math.PI) % 360 + 360) % 360
+
+// Plan je Figur. Statt bei JEDEM Tick eine Position zu schreiben, wird der
+// Bewegungsplan veröffentlicht (`state.motion`) und der Betrachter rechnet
+// frameweise voraus. Geschrieben wird nur noch an Knicken, bei Tempowechsel,
+// beim Anhalten/Losgehen, bei Abweichung und als Lebenszeichen.
+// Siehe agents/lib/bewegung.mjs — dort steht auch, warum der Knick der
+// entscheidende Auslöser ist.
+const planFuer = (c) => {
+  if (c._plan) return c._plan
+  // FLIEGER BEKOMMEN GRÖSSEREN SPIELRAUM. Sie drehen laufend (Randlenkung,
+  // Höhenwelle, Kreisen), und jede dieser Drehungen ist für sich winzig — mit
+  // der Fußgänger-Schwelle schrieben sie fast im Tick-Takt.
+  //
+  // Der Unterschied ist nicht Bequemlichkeit, sondern Sache: Eine Figur auf der
+  // Straße MUSS die Polylinie genau treffen, sonst läuft sie durch ein Haus.
+  // Ein Vogel im freien Luftraum darf eine Kurve etwas abkürzen — dort steht
+  // nichts im Weg, und aus der Entfernung, in der man ihn sieht, ist es
+  // ohnehin nicht zu erkennen.
+  const flieger = !!c.flying
+  c._plan = new Bewegungsplan(flieger
+    ? { kursSchwelleGrad: 18, driftM: 15 }
+    : { kursSchwelleGrad: 8, driftM: 4 })
+  return c._plan
+}
+
+/**
+ * Bewegungs-Update schreiben — oder eben nicht.
+ *
+ * Rotation gehört mit ins Update und nicht separat: Zwischen zwei Knicken
+ * ändert sich der Blickwinkel nicht, und ein eigener Schreibvorgang dafür
+ * würde die Ersparnis gerade wieder auffressen.
+ */
+async function schreibeBewegung(c, { lat, lon, altitude, v, trk, vrate = 0, rotation, state }) {
+  const u = bewegungsUpdate(planFuer(c), { lat, lon, altitude, v, trk, vrate },
+    state || c.baseState || {})
+  if (!u) return false
+  await ajna.updateObject(c.id, { lat: u.lat, lon: u.lon, altitude: u.altitude, rotation, state: u.state })
+  return true
+}
 
 // ── Freiflug (Drachen/Vögel): sanftes Umherfliegen in einem Areal ──────────
 const FLY_AREA_M    = parseFloat(process.env.WD_FLY_AREA_M    || '150')  // Radius Flug-Areal um Spawn (m)
@@ -758,15 +803,23 @@ async function advanceFor(c) {
     const step = stepAlongPath(c.path, c.cursor, c.speed * dt)
     c.lat = step.lat; c.lon = step.lon
     c.cursor = { segIdx: step.segIdx, segT: step.segT }
-    await ajna.updateObject(c.id, {
-      lat: c.lat, lon: c.lon,
-      rotation: { x: 0, y: HEADING_TO_YAW(step.headingRad), z: 0 }
+    // Plan statt Position: geschrieben wird nur an Knicken der Route, bei
+    // Tempowechsel oder als Lebenszeichen. `walk_path` bleibt im state, damit
+    // Betrachter den geplanten Weg weiterhin zeichnen können.
+    await schreibeBewegung(c, {
+      lat: c.lat, lon: c.lon, altitude: c.altBase ?? 0,
+      v: c.speed, trk: KURS_GRAD(step.headingRad),
+      rotation: { x: 0, y: HEADING_TO_YAW(step.headingRad), z: 0 },
+      state: { ...c.baseState, walk_path: c.path },
     })
     if (step.done) {
       const pauseMs = PAUSE_MS + randInt(0, 15) * 1000   // 10–25 s, gestreut (nicht im Gleichschritt)
       c.fsm = 'idle'; c.path = null; c.nextPlanAt = now + pauseMs
       await ajna.setAnimation(c.id, 'idle')
-      await ajna.updateObject(c.id, { state: { ...c.baseState } })   // walk_path entfernen
+      // Stillstand MUSS raus: Ohne diesen Plan liefe die Figur beim Betrachter
+      // endlos geradeaus weiter — die Vorausrechnung kennt kein Ziel.
+      const halt = planFuer(c).haltAn({ lat: c.lat, lon: c.lon, altitude: c.altBase ?? 0, trk: 0 })
+      await ajna.updateObject(c.id, { state: { ...c.baseState, motion: halt } })   // walk_path entfernen
       console.log(`[director] ⏸ ${c.archetype} "${c.id}" angekommen — Pause ${(pauseMs / 1000) | 0} s`)
     }
   } catch (err) {
@@ -888,10 +941,15 @@ async function advanceSummon(c, dt, now) {
         c.lat = s.spot.lat; c.lon = s.spot.lon; c.altBase = s.spot.altitude
         c.heading = bearingRad(s.spot.lat, s.spot.lon, s.lat, s.lon)
         c.anim = 'idle'
+        // Aufsetzen ist ein Zustandswechsel — hier wird bewusst IMMER
+        // geschrieben, und der Plan ausdrücklich auf Stillstand gesetzt.
+        // Sonst flöge der Drache beim Betrachter über den Landeplatz hinaus.
+        const gelandet = planFuer(c).haltAn({ lat: c.lat, lon: c.lon, altitude: c.altBase, trk: KURS_GRAD(c.heading) })
         await ajna.updateObject(c.id, {
           lat: c.lat, lon: c.lon, altitude: c.altBase,
           animation_state: 'idle',
-          rotation: { x: 0, y: wrapPi(Math.PI - c.heading + FLY_YAW_OFFSET), z: 0 }
+          rotation: { x: 0, y: wrapPi(Math.PI - c.heading + FLY_YAW_OFFSET), z: 0 },
+          state: { ...c.baseState, motion: gelandet }
         })
         s.phase = 'landed'
         s.until = now + CALL_STAY_S * 1000
@@ -934,8 +992,9 @@ async function advanceSummon(c, dt, now) {
   }
 
   if (anim !== c.anim) { c.anim = anim; await ajna.setAnimation(c.id, anim) }
-  await ajna.updateObject(c.id, {
+  await schreibeBewegung(c, {
     lat: c.lat, lon: c.lon, altitude: c.altBase,
+    v: c.speed, trk: KURS_GRAD(c.heading),
     rotation: { x: 0, y: wrapPi(Math.PI - c.heading + FLY_YAW_OFFSET), z: clamp(turnRatio, -1, 1) * FLY_BANK_MAX }
   })
 }
@@ -1009,9 +1068,15 @@ async function advanceRoamer(c) {
     }
     if (wantAnim !== c.anim) { c.anim = wantAnim; await ajna.setAnimation(c.id, wantAnim) }
 
-    await ajna.updateObject(c.id, {
+    // Flieger drehen laufend — der Knick-Auslöser greift hier also öfter als
+    // bei einer Figur auf der Straße. Das ist richtig so: Eine kreisende Möwe
+    // ändert ihren Kurs wirklich ständig, und wer das verschweigt, lässt sie
+    // beim Betrachter geradeaus davonfliegen.
+    await schreibeBewegung(c, {
       lat: c.lat, lon: c.lon, altitude,
-      rotation: { x: 0, y: yaw, z: roll }
+      v: c.speed, trk: KURS_GRAD(c.heading),
+      vrate: Number.isFinite(c._vrate) ? c._vrate : 0,
+      rotation: { x: 0, y: yaw, z: roll },
     })
   } catch (err) {
     console.warn(`[director] Roam "${c.id}" fehlgeschlagen: ${err?.message || err}`)

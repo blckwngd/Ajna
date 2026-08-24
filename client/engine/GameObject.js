@@ -6,6 +6,7 @@ import { LabelComponent } from "./components/LabelComponent.js"
 import { tagMeshOwner } from "./meshOwner.js"
 import { ENC_STYLE, encCategory } from "../core/wifiStyle.js"
 import { appearanceOf, arViewOf, gltfUrlOf } from "../core/Appearance.js"
+import { gangartFuer, tempoAusSpruengen } from "../core/gangart.js"
 
 // Ziel-Welthöhe (Meter) pro Modell-Datei. Manche GLBs (three.js-Tiere, der
 // Khronos-Fox) sind in Eigen-Einheiten riesig → ohne Normierung füllen sie die
@@ -70,6 +71,15 @@ const ANIM_ALIASES = {
 // Typen, die als „Figur" einen Blob-Schatten bekommen (Objekte mit 3D-Modell
 // ebenfalls, siehe loadFromData).
 const FIGURE_TYPES = new Set(["npc", "enemy", "animal", "dragon"])
+
+// Zustände, in denen die Gangart (core/gangart.js) das Sagen hat: Fortbewegung
+// AUF DEM BODEN. Alles andere — fliegen, gleiten, abheben, Gesten — gehört dem
+// Agent bzw. der Interaktion; dort wäre eine tempoabhängige Gehanimation falsch.
+const BODEN_ANIM = new Set(["idle", "walk", "run"])
+
+// Ab dieser Höhe über Grund gilt eine Figur als fliegend (Meter). Bewusst über
+// Kopfhöhe: Ein Objekt auf einer Treppe oder einem Dach geht weiterhin.
+const FLIEGT_AB_M = 3
 
 export class GameObject {
 
@@ -190,6 +200,7 @@ export class GameObject {
     // mitbringt — wird im #loadModel-Callback gestartet. applyData(...)
     // wechselt sie später live.
     this._initialAnimationState = data.animation_state || null
+    this._agentAnim = data.animation_state || null
 
     // Object-Type bestimmt die Platzhalter-Optik (siehe #createPlaceholder).
     // Wird vom Agent über das `type`-Feld gesetzt — z. B. "poi" oder "ship".
@@ -391,6 +402,7 @@ export class GameObject {
     this.animationGroups = result.animationGroups || []
     this.skeletons = result.skeletons || []
     this._activeAnim = null
+    this.#pruefeGangart()
 
     this.#applyModelColor()     // untexturierte Materialien mit appearance.color einfärben
     this.#applyModelOpacity()   // appearance.opacity → Material-Transparenz (alle Materialien)
@@ -497,7 +509,12 @@ export class GameObject {
     try {
       this.root.computeWorldMatrix(true)
       importRoot.computeWorldMatrix(true)
-      const { min } = importRoot.getHierarchyBoundingVectors(true)
+      const { min, max } = importRoot.getHierarchyBoundingVectors(true)
+      // Höhe gleich mitnehmen: Die Gangart skaliert damit die Schrittlänge
+      // (ein Fuchs rennt, wo ein Pferd geht), und der Perf-Pass in main.js
+      // streckt daran die Animations-Distanz. Zweimal messen wäre Verschwendung.
+      const hoehe = max.y - min.y
+      if (Number.isFinite(hoehe) && hoehe > 0) this._hoeheM = hoehe
       const unten = min.y - this.root.getAbsolutePosition().y
       // Nur eingreifen, wenn es sich lohnt: Millimeter-Korrekturen an jedem
       // Modell wären Rauschen, und ein Modell ohne Geometrie liefert Unsinn.
@@ -878,6 +895,10 @@ export class GameObject {
     // Load-Abschluss in #loadModel.
     if (data.animation_state !== undefined) {
       this._initialAnimationState = data.animation_state
+      // Was der AGENT will — getrennt festhalten. Die Gangart darf nur
+      // Bodenzustände verfeinern; sagt der Agent „fliegen", hat sie sich
+      // herauszuhalten (siehe #pflegeGangart).
+      this._agentAnim = data.animation_state
       if (this.animationGroups && this.animationGroups.length > 0) {
         this._applyAnimationState(data.animation_state)
       }
@@ -976,9 +997,94 @@ export class GameObject {
       geoComp.altitude = snap.altitude
     }
     // Rotation direkt — kein Component übernimmt das pro Frame.
-    this.root.rotation.x = snap.rotation.x
-    this.root.rotation.y = snap.rotation.y
-    this.root.rotation.z = snap.rotation.z
+    //
+    // WEICH DREHEN statt springen: Bei vorausgerechneten Objekten liefert der
+    // Smoother die Rotation der letzten Meldung unverändert. Seit die Agents
+    // ihren Plan statt jeder Position schicken, kommen Meldungen nur noch an
+    // Wegknicken — die Figur würde dort ruckartig herumschnappen. Auf der
+    // Stelle drehen ist außerdem genau das, was eine Figur lebendig macht.
+    this.#dreheZu(snap.rotation)
+    this.#pflegeGangart(snap)
+  }
+
+  /**
+   * Bringt dieses Modell überhaupt Gehen mit?
+   *
+   * Nur dann lohnt die Gangart-Pflege. Ein Diamant, eine Bildtafel oder ein
+   * Flugzeug haben keinen Gehzyklus — dort würde die Rechnung eine Animation
+   * verstellen, die etwas ganz anderes zeigt.
+   */
+  #pruefeGangart() {
+    const namen = (this.animationGroups || []).map(g => (g.name || '').toLowerCase())
+    const hat = (teile) => namen.some(n => teile.some(x => n.includes(x)))
+    this._gangartAn = hat(['walk', 'move', 'trot']) && FIGURE_TYPES.has(this._objectType)
+    this._laufAnim = hat(['run', 'gallop', 'sprint'])
+    this._gangLetzte = null
+    this._gangV = 0
+    this._gangT = 0
+  }
+
+  /** Auf dem kürzesten Winkelweg zur Zielrotation nachziehen. */
+  #dreheZu(ziel) {
+    const r = this.root.rotation
+    const kurz = (von, nach) => {
+      let d = (nach - von) % (Math.PI * 2)
+      if (d > Math.PI) d -= Math.PI * 2
+      if (d < -Math.PI) d += Math.PI * 2
+      return d
+    }
+    // Fester Anteil je Frame: bildratenunabhängig genug für diesen Zweck und
+    // ohne Zustand. Ein volles Umdrehen dauert damit rund eine halbe Sekunde.
+    const k = 0.18
+    r.x += kurz(r.x, ziel.x) * k
+    r.y += kurz(r.y, ziel.y) * k
+    r.z += kurz(r.z, ziel.z) * k
+  }
+
+  /**
+   * Gangart nach TATSÄCHLICHEM Tempo: Zyklus wählen, mischen, Abspieltempo an
+   * die Schrittlänge koppeln. Siehe core/gangart.js — dort steht, warum das
+   * Gleiten der stärkste Tot-Effekt ist.
+   */
+  #pflegeGangart(snap) {
+    if (!this._gangartAn || !this.animationGroups?.length) return
+
+    // NUR BODENFORTBEWEGUNG. Ein Drache und der Wyvern bringen einen
+    // Gehzyklus mit — den gibt es für den Fall, dass sie gelandet sind.
+    // Solange der Agent „fliegen" oder „gleiten" meldet, ist jede Gangart-
+    // Rechnung falsch: Die Figur zuckte dann im Gehtakt durch die Luft,
+    // statt zu fliegen. Fluglage bestimmt der Agent, nicht das Tempo.
+    if (this._agentAnim && !BODEN_ANIM.has(String(this._agentAnim).toLowerCase())) return
+
+    // Zweite Sicherung über die HÖHE: Zwischen dem Laden und der ersten
+    // Meldung des Agents steht in `_agentAnim` noch der Anlege-Zustand
+    // („idle"). Ein Drache, der beim Erscheinen 40 m hoch kreist, bekäme in
+    // diesem Fenster kurz einen Gehzyklus verpasst. Wer in der Luft ist, geht
+    // nicht — unabhängig davon, was gerade gemeldet wurde.
+    if ((snap.altitude ?? 0) > FLIEGT_AB_M) return
+
+    // Tempo bevorzugt aus dem Plan des Agents. Der Rückfall aus zwei Positionen
+    // zappelt und hinkt hinterher — er ist für Objekte da, deren Quelle noch
+    // keinen Plan schickt.
+    let v = this._smoother.curr?.dr?.v
+    if (!Number.isFinite(v)) {
+      const jetzt = performance.now()
+      if (this._gangLetzte) {
+        this._gangV = tempoAusSpruengen(this._gangLetzte, snap, jetzt - this._gangT, this._gangV || 0)
+      }
+      this._gangLetzte = { lat: snap.lat, lon: snap.lon }
+      this._gangT = jetzt
+      v = this._gangV || 0
+    }
+
+    const g = gangartFuer(v, { groesse: this._hoeheM || undefined, hatLauf: !!this._laufAnim })
+    const fuehrend = g.misch.anteil > 0.5 ? g.misch.nach : g.misch.von
+    if (fuehrend !== this._lastAnimState) this._applyAnimationState(fuehrend)
+    // Abspieltempo — die eigentliche Rechnung gegen das Gleiten.
+    const tempo = g.tempo * (this._animSpeed || 1)
+    if (this._activeAnim && Math.abs((this._activeAnim.speedRatio ?? 1) - tempo) > 0.02) {
+      try { this._activeAnim.speedRatio = tempo } catch {}
+    }
   }
 
   dispose() {

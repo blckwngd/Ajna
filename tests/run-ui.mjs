@@ -1243,7 +1243,11 @@ console.log('\n── Modelle aufsetzen')
   check('gemessen wird die ganze Hierarchie, nicht ein Mesh',
     /#seatModel[\s\S]{0,600}getHierarchyBoundingVectors\(true\)/.test(src))
   check('winzige Korrekturen bleiben aus',
-    /#seatModel[\s\S]{0,700}Math\.abs\(unten\) < 0\.01/.test(src))
+    /#seatModel[\s\S]{0,1200}Math\.abs\(unten\) < 0\.01/.test(src))
+  // Die Höhe wird beim Aufsetzen gleich mitgemessen — die Gangart skaliert
+  // damit die Schrittlänge, der Perf-Pass die Animations-Distanz.
+  check('und die Figurenhöhe fällt dabei ab',
+    /#seatModel[\s\S]{0,600}this\._hoeheM = hoehe/.test(src))
 
   // Die Modelle selbst: Fuss-Ursprung darf sich nicht veraendern, ein
   // mittiger Ursprung ist genau der Fall, den der Schritt abfaengt.
@@ -1358,6 +1362,107 @@ console.log('\n── Anwesenheit anderer Spieler')
   check('beim Verlassen wird aufgeraeumt', /pagehide[\s\S]{0,80}presence\.stop\(\)/.test(main))
   const map = readFileSync(new URL('../client/map.js', import.meta.url), 'utf8')
   check('die Karte zeigt sie ebenfalls', /PRESENCE_TYPE/.test(map))
+}
+
+// ── Weiche Korrektur statt Sprung ────────────────────────────────────────
+// Solange ein Objekt vorausgerechnet wird, laeuft die Anzeige von der Wahrheit
+// weg. Trifft ein neuer Plan ein, sprang die Figur bisher auf die neue Rechnung
+// — bei 500-ms-Takten unsichtbar, seit die Agents nur noch an Wegknicken
+// melden aber ein deutliches Zucken.
+console.log('\n── PositionSmoother: weiche Korrektur')
+{
+  const { PositionSmoother } = await import('../client/core/PositionSmoother.js')
+
+  const mitPlan = (lat, lon, v, trk, t) => ({
+    lat, lon, altitude: 0, rotation: { x: 0, y: 0, z: 0 },
+    state: { motion: { v, trk, lat0: lat, lon0: lon, alt0: 0, vrate: 0, t: Date.now() } },
+  })
+  const distM = (a, b) => Math.hypot(
+    (a.lat - b.lat) * 111320,
+    (a.lon - b.lon) * 111320 * Math.cos(a.lat * Math.PI / 180))
+
+  {
+    const sm = new PositionSmoother()
+    sm.feed(mitPlan(50, 7, 5, 90), 0)
+    const vorher = sm.sample(2000)          // 2 s vorausgerechnet
+
+    // Ein neuer Plan, der die Figur 3 m weiter hinten sieht — genau der Fall,
+    // der bisher zuckte.
+    const versetzt = mitPlan(50, 7 + (10 - 3) / (111320 * Math.cos(50 * Math.PI / 180)), 5, 90)
+    sm.feed(versetzt, 2000)
+
+    const sofort = sm.sample(2000)
+    check('im Moment des Eintreffens springt nichts',
+      distM(vorher, sofort) < 0.2, distM(vorher, sofort).toFixed(2) + ' m')
+
+    const mitten = sm.sample(2350)
+    check('der Versatz wird abgebaut, nicht gehalten',
+      distM(mitten, sm.sample(2350)) < 0.01)
+
+    // Die Korrektur laeuft nie schneller als ein Schritt — sonst waere sie
+    // selbst der Ruck, den sie verhindern soll.
+    let maxTempo = 0
+    let vor = sm.sample(2000)
+    for (let t = 2050; t <= 5000; t += 50) {
+      const jetzt = sm.sample(t)
+      const gefahren = distM(vor, jetzt) / 0.05
+      // 5 m/s Grundtempo des Plans plus Korrektur — die Korrektur allein
+      // darf 1,2 m/s nicht überschreiten.
+      if (gefahren - 5 > maxTempo) maxTempo = gefahren - 5
+      vor = jetzt
+    }
+    check('die Korrektur bleibt langsamer als ein Schritt', maxTempo <= 1.4,
+      maxTempo.toFixed(2) + ' m/s obendrauf')
+
+    // Nach der Korrekturzeit steht die Figur wieder exakt auf dem Plan.
+    const spaet = sm.sample(6000)
+    const rein = { lat: versetzt.state.motion.lat0, lon: versetzt.state.motion.lon0 }
+    const gerechnet = {
+      lat: rein.lat,
+      lon: rein.lon + (5 * 4.0) / (111320 * Math.cos(50 * Math.PI / 180)),
+    }
+    check('danach folgt sie wieder genau dem Plan',
+      distM(spaet, gerechnet) < 0.6, distM(spaet, gerechnet).toFixed(2) + ' m')
+  }
+
+  // Grosse Spruenge sind KEIN Drift, sondern ein Ortswechsel (Editor,
+  // Neuplanung). Die weichzuzeichnen hiesse, die Figur sekundenlang quer durch
+  // die Welt gleiten zu lassen.
+  {
+    const sm = new PositionSmoother()
+    sm.feed(mitPlan(50, 7, 5, 90), 0)
+    const vorher = sm.sample(1000)
+    sm.feed(mitPlan(50.01, 7, 5, 90), 1000)      // ~1,1 km weiter
+    const nachher = sm.sample(1000)
+    check('ein Ortswechsel wird gesprungen, nicht geglättet',
+      distM(vorher, nachher) > 500, Math.round(distM(vorher, nachher)) + ' m')
+  }
+
+  // Ohne Plan (reine Interpolation) darf sich nichts ändern.
+  {
+    const sm = new PositionSmoother()
+    sm.feed({ lat: 50, lon: 7, altitude: 0, rotation: { x: 0, y: 0, z: 0 } }, 0)
+    sm.feed({ lat: 50.0001, lon: 7, altitude: 0, rotation: { x: 0, y: 0, z: 0 } }, 500)
+    const p = sm.sample(700)
+    check('Objekte ohne Plan bleiben unberührt', p && Number.isFinite(p.lat))
+  }
+}
+
+// ── Gangart nur am Boden ─────────────────────────────────────────────────
+// Drache und Wyvern bringen einen Gehzyklus mit — fuer den Fall, dass sie
+// gelandet sind. Solange der Agent „fliegen" meldet, zuckten sie im Gehtakt
+// durch die Luft.
+console.log('\n── Gangart: nur am Boden')
+{
+  const src = readFileSync(new URL('../client/engine/GameObject.js', import.meta.url), 'utf8')
+  check('es gibt eine Liste der Bodenzustände', /const BODEN_ANIM = new Set\(\["idle", "walk", "run"\]\)/.test(src))
+  check('fliegen gehört NICHT dazu', !/BODEN_ANIM = new Set\(\[[^\]]*"fly"/.test(src))
+  check('der Wunsch des Agents wird getrennt gemerkt', /this\._agentAnim = data\.animation_state/.test(src))
+  check('und die Gangart hält sich bei Flug heraus',
+    /#pflegeGangart[\s\S]{0,900}!BODEN_ANIM\.has\(String\(this\._agentAnim\)[\s\S]{0,40}\) return/.test(src))
+  check('zusätzlich über die Höhe abgesichert',
+    /#pflegeGangart[\s\S]{0,1600}snap\.altitude \?\? 0\) > FLIEGT_AB_M\) return/.test(src))
+  check('die Höhengrenze liegt über Kopfhöhe', /const FLIEGT_AB_M = 3/.test(src))
 }
 
 const failed = results.filter(r => !r.ok)
