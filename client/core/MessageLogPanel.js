@@ -83,7 +83,9 @@ export class MessageLogPanel {
 
     messageLog.push(`${name}: ${m.text}`, 'dialog')
     // `log: false` — die Zeile steht schon als Gespräch im Verlauf.
-    try { this._toast?.show(m.text, { title: name, log: false }) } catch {}
+    // Antippen öffnet das Gespräch — der Toast ist der Weg hinein, nicht nur
+    // eine Meldung. Das Fenster drängt sich dafür nicht mehr selbst auf.
+    try { this._toast?.show(m.text, { title: name, log: false, onClick: () => this.open() }) } catch {}
 
     // Auswahlantworten nur übernehmen, wenn sie vom aktuellen Partner kommen —
     // sonst überschriebe eine fremde Nachricht die Knöpfe des Gesprächs.

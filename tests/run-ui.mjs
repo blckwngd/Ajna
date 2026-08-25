@@ -1465,6 +1465,282 @@ console.log('\n── Gangart: nur am Boden')
   check('die Höhengrenze liegt über Kopfhöhe', /const FLIEGT_AB_M = 3/.test(src))
 }
 
+// ── Interaktions-Protokoll: Zeile und geteilter Verlauf ──────────────────
+// Untersucht man ein Objekt, soll das Ergebnis MIT Objekt-ID im Verlauf
+// stehen — bei gleichnamigen Figuren („Papagei", „Soldat") ist ohne Kennung
+// nicht feststellbar, welche gemeint war.
+console.log('\n── Interaktions-Protokoll')
+{
+  const { interaktionsZeile, protokolliereInteraktion } =
+    await import('../client/core/InteractionReply.js')
+
+  const rec = { id: 'default:abc123', name: 'Papagei Julie', type: 'animal' }
+  const zeile = interaktionsZeile(rec, 'examine', 'Ein Papagei.')
+  check('der Name steht drin', /Papagei Julie/.test(zeile))
+  check('die VOLLE Objekt-ID steht drin', zeile.includes('default:abc123'), zeile)
+  check('die Aktion steht drin', /examine/.test(zeile))
+  check('und die Antwort', /Ein Papagei\./.test(zeile))
+  check('ohne ID bleibt es lesbar',
+    !/\[\]/.test(interaktionsZeile({ name: 'X' }, 'examine', 'y')))
+  check('ohne Namen ebenso', /Objekt/.test(interaktionsZeile({ id: 'i1' }, 'examine', 'y')))
+
+  // DIE FALLE: Der Client besteht aus vier Webpack-Bündeln, jedes mit einer
+  // EIGENEN Modulinstanz des Verlaufs. Wer den importierten `messageLog`
+  // benutzt, schreibt in den Verlauf SEINES Bündels — das Fenster gehört der
+  // Shell und liest ihren eigenen. Die Zeilen landen nirgends sichtbar, ohne
+  // dass etwas fehlschlägt. Geteilt wird über `window.ajnaLog`.
+  const gesammelt = []
+  globalThis.window = globalThis.window || {}
+  const vorher = window.ajnaLog
+  window.ajnaLog = { push: (text, cat) => gesammelt.push({ text, cat }) }
+  protokolliereInteraktion(rec, 'talk', 'Hallo!')
+  check('geschrieben wird in den GETEILTEN Verlauf', gesammelt.length === 1)
+  check('mit Objekt-ID', gesammelt[0]?.text.includes('default:abc123'))
+  check('als Aktion einsortiert', gesammelt[0]?.cat === 'interact')
+
+  // Fehlt der Verlauf (eigenständige Seite ohne Shell), darf nichts brechen.
+  window.ajnaLog = undefined
+  let geworfen = false
+  try { protokolliereInteraktion(rec, 'examine', 'x') } catch { geworfen = true }
+  check('ohne Verlauf passiert einfach nichts', !geworfen)
+  window.ajnaLog = vorher
+
+  // „interact" muss im Standard-Filter des Fensters sichtbar sein — sonst
+  // stünde die Zeile zwar im Verlauf, aber niemand sähe sie.
+  const { CATS } = await import('../client/core/MessageLog.js')
+  check('Aktionen sind im Verlauf sichtbar', CATS.interact?.player === true)
+
+  // Kein Aufrufer darf am geteilten Verlauf vorbeischreiben.
+  for (const datei of ['../client/map.js', '../client/main.js', '../client/core/MobileShell.js']) {
+    const q = readFileSync(new URL(datei, import.meta.url), 'utf8')
+    const name = datei.split('/').pop()
+    check(`${name} nutzt den gemeinsamen Weg`, /protokolliereInteraktion\(/.test(q))
+    check(`${name} schreibt nicht am Bündel vorbei`,
+      !/messageLog\.push\(interaktionsZeile/.test(q))
+  }
+}
+
+// ── Toast: anklickbar, laenger, kein aufdraengendes Fenster ─────────────
+console.log('\n── Toast als Weg ins Gespräch')
+{
+  const t = readFileSync(new URL('../client/core/Toast.js', import.meta.url), 'utf8')
+  check('Anzeigedauer auf 8 Sekunden', /DEFAULT_TIMEOUT = 8000/.test(t))
+  check('der Toast ist anklickbar', /el\.classList\.add\('klickbar'\)/.test(t))
+  check('und per Tastatur bedienbar', /Enter' \|\| e\.key === ' '/.test(t))
+  check('er oeffnet den Verlauf', /window\.ajnaLogPanel\?\.open\(\)/.test(t))
+  check('ein eigener Klick-Haken geht vor', /onClick \? onClick\(\)/.test(t))
+  check('als klickbar erkennbar', /klickbar \{ cursor: pointer/.test(t))
+
+  const shell = readFileSync(new URL('../client/core/MobileShell.js', import.meta.url), 'utf8')
+  // „Sprechen" legte den Verlauf sofort ueber die Szene — genau dann, wenn man
+  // die Figur ansieht. Jetzt kommt nur der Toast.
+  check('„Sprechen" reisst das Fenster nicht mehr auf', /talkTo\(\{[\s\S]{0,220}\}, \{ open: false \}\)/.test(shell))
+  check('stattdessen ein Hinweis zum Antippen', /Antippen zum Antworten/.test(shell))
+  check('das Panel ist buendeluebergreifend erreichbar', /window\.ajnaLogPanel = this\._logPanel/.test(shell))
+  check('und wird beim Abraeumen entfernt', /delete window\.ajnaLogPanel/.test(shell))
+
+  const panel = readFileSync(new URL('../client/core/MessageLogPanel.js', import.meta.url), 'utf8')
+  check('Antworten der Figur fuehren ebenfalls ins Gespraech',
+    /onClick: \(\) => this\.open\(\)/.test(panel))
+}
+
+// ── Aktions-Reichweite (max_distance) und Privatsphaere ──────────────────
+// Eine Aktion kann `max_distance` tragen. Naehe laesst sich aber nur pruefen,
+// wenn der Standort ueberhaupt freigegeben ist — daraus folgt die noetige
+// Stufe, aus der Sache heraus statt willkuerlich.
+console.log('\n── Aktions-Reichweite')
+{
+  const r = await import('../client/core/aktionsReichweite.js')
+
+  const ohne = { key: 'examine', label: 'Untersuchen' }
+  const nah = { key: 'attack', label: 'Angreifen', max_distance: 30 }
+  const weit = { key: 'lesen', label: 'Lesen', max_distance: 800 }
+
+  check('ohne max_distance keine Anforderung', r.noetigeStufe(ohne) === 'off')
+  check('0 zaehlt wie ohne', r.noetigeStufe({ max_distance: 0 }) === 'off')
+  check('Unsinn zaehlt wie ohne', r.noetigeStufe({ max_distance: 'viel' }) === 'off')
+  // Eine auf 100 m gerundete Position kann eine 30-m-Frage nicht beantworten.
+  check('kurze Reichweite verlangt „Nähe"', r.noetigeStufe(nah) === 'proximity')
+  check('grosse Reichweite genuegt „Gegend"', r.noetigeStufe(weit) === 'area')
+
+  check('bei „Verborgen" gesperrt', !r.aktionErlaubt(nah, 'off').ok)
+  check('bei „Gegend" fuer 30 m noch gesperrt', !r.aktionErlaubt(nah, 'area').ok)
+  check('bei „Nähe" frei', r.aktionErlaubt(nah, 'proximity').ok)
+  check('bei „Genau" ebenfalls', r.aktionErlaubt(nah, 'exact').ok)
+  check('eine Aktion ohne Reichweite ist immer frei', r.aktionErlaubt(ohne, 'off').ok)
+
+  // Ein ausgegrauter Knopf ohne Erklaerung ist eine Sackgasse.
+  const abgelehnt = r.aktionErlaubt(nah, 'area')
+  check('die Ablehnung sagt, was zu tun ist', /Standort-Freigabe/.test(abgelehnt.text))
+  check('und nennt die noetige Stufe', abgelehnt.noetig === 'proximity')
+
+  // Entfernung, wenn bekannt.
+  check('zu weit wird abgelehnt', !r.aktionErlaubt(nah, 'exact', 200).ok)
+  check('mit Zahlen in der Begruendung', /200 m/.test(r.aktionErlaubt(nah, 'exact', 200).text))
+  check('in Reichweite geht es', r.aktionErlaubt(nah, 'exact', 12).ok)
+  // Bei „Naehe" gibt es GAR KEINE Koordinaten — fehlende Entfernung darf
+  // deshalb nicht als Ablehnung gelten.
+  check('ohne gemessene Entfernung wird nicht abgelehnt',
+    r.aktionErlaubt(nah, 'proximity', null).ok)
+
+  // ── Agent-Seite ────────────────────────────────────────────────────────
+  const ziel = { lat: 50.4466, lon: 7.5971 }
+  const noerdlich = (m) => ({ lat: ziel.lat + m / 111320, lon: ziel.lon })
+
+  check('Naehe-Meldung genuegt und braucht keine Koordinate',
+    r.naheGenug({ aktion: nah, ziel, absender: null, istNah: true }).ok)
+  check('ohne alles wird abgelehnt',
+    r.naheGenug({ aktion: nah, ziel, absender: null }).grund === 'keine-position')
+  check('nahe Position geht durch',
+    r.naheGenug({ aktion: nah, ziel, absender: noerdlich(10) }).ok)
+  check('ferne Position nicht',
+    !r.naheGenug({ aktion: nah, ziel, absender: noerdlich(5000) }).ok)
+  check('ohne Reichweite ist alles erlaubt',
+    r.naheGenug({ aktion: ohne, ziel, absender: noerdlich(9000) }).ok)
+  // Wer auf 100 m gerundet meldet, laege sonst systematisch daneben.
+  check('bei grosser Reichweite gibt es Kulanz fuer die Rundung',
+    r.naheGenug({ aktion: weit, ziel, absender: noerdlich(880) }).ok)
+  check('unbegrenzt ist sie aber nicht',
+    !r.naheGenug({ aktion: weit, ziel, absender: noerdlich(1500) }).ok)
+
+  check('Abstand wird gemessen',
+    Math.abs(r.abstandM(50.4466, 7.5971, 50.4475, 7.5971) - 100) < 3,
+    r.abstandM(50.4466, 7.5971, 50.4475, 7.5971).toFixed(0) + ' m')
+
+  // Der Client muss abbrechen, statt eine Aktion ins Leere zu senden.
+  const oa = readFileSync(new URL('../client/core/ObjectActions.js', import.meta.url), 'utf8')
+  check('der Client prueft die Reichweite vorher', /aktionErlaubt\(aktion, stufe, d\)/.test(oa))
+  check('und schickt die Position mit, damit der Agent pruefen kann',
+    /privacy\.positionFor\(record\?\._origin/.test(oa))
+}
+
+// ── Trefferpunkte-Balken in der Beschriftung ─────────────────────────────
+{
+  const { resolveLabel } = await import('../client/core/Appearance.js')
+  const bar = (ist, max) => resolveLabel('{hp}', { state: { hp: { ist, max } } })
+  check('unverletzt steht nichts da', bar(30, 30) === '')
+  check('verletzt kommt die Zahl', bar(15, 30) === '15/30', bar(15, 30))
+  check('ohne Angabe steht nichts da', resolveLabel('{hp}', { state: {} }) === '')
+
+  // Der ÜBLICHE Weg ist der farbige Balken — er braucht keine Beschriftung und
+  // erscheint nur bei Verletzung. Sonst haetten alle Gegner dauerhaft ihren
+  // Namen im Bild, weil eine Tafel noetig waere.
+  const ll = readFileSync(new URL('../client/engine/LabelLayer.js', import.meta.url), 'utf8')
+  check('der Balken ist ein eigenes Element', /GUI\.Rectangle\(`hpbg_/.test(ll))
+  check('gruen, gelb, rot', /#4caf50[\s\S]{0,160}#e0b020[\s\S]{0,160}#d84a3a/.test(ll))
+  check('nur bei Verletzung sichtbar', /ist < max && dist <= HP_SICHT_M/.test(ll))
+  check('und nur in der Naehe', /HP_SICHT_M = \d+/.test(ll))
+  check('schmal', Number((ll.match(/HP_HOEHE_PX = (\d+)/) || [])[1]) <= 8)
+
+  const lc = readFileSync(new URL('../client/engine/components/LabelComponent.js', import.meta.url), 'utf8')
+  check('Trefferpunkte allein genuegen zum Anmelden', /labelOf\(this\.record\) \|\| hatHp/.test(lc))
+
+  const prof = readFileSync(new URL('../agents/world-director.profiles.mjs', import.meta.url), 'utf8')
+  check('Gegner tragen KEINE Dauer-Beschriftung', !/out\.label = '\{name\} \{hp\}'/.test(prof))
+}
+
+
+// ── Kampf: Route abbrechen, Beute wirklich ablegen ───────────────────────
+// Drei Fehler derselben Familie: Der Director hielt die Figur nur INTERN an,
+// legte die Beute an der zuletzt GESCHRIEBENEN Position ab und ordnete sie
+// keiner Manifest-Schicht zu — sichtbar wurde davon nichts.
+console.log('\n── Kampf: Halt, Beute, Sichtbarkeit')
+{
+  const wd = readFileSync(new URL('../agents/world-director.mjs', import.meta.url), 'utf8')
+
+  check('ein Treffer bricht die Route ab', /r\.tot[\s\S]{0,400}halteAn\(c, \{ bis: Date\.now\(\) \+ KAMPF_HALT_MS/.test(wd))
+  check('und dauert laenger als ein Gespraech',
+    /WD_KAMPF_HALT_S \|\| '(\d+)'/.test(wd) &&
+    Number(wd.match(/WD_KAMPF_HALT_S \|\| '(\d+)'/)[1]) > Number(wd.match(/WD_ATTEND_S \|\| '(\d+)'/)[1]))
+  // Ohne Halt-Plan laeuft die Figur beim Betrachter weiter — die
+  // Vorausrechnung kennt nur Kurs und Tempo, kein Ziel.
+  check('der Stillstand wird auch geschrieben', /motion: planFuer\(c\)\.haltAn\(/.test(wd))
+  check('der Gefallene plant nichts mehr', /c\.gefallen = true/.test(wd) && /c\.tot \|\| c\.gefallen\) continue/.test(wd))
+  check('er sieht seinen Angreifer an', /blickAuf: at/.test(wd))
+  // hp landen im baseState, sonst wirft der naechste Bewegungs-Schreibvorgang
+  // sie weg und der Gegner steht wieder bei voller Gesundheit da.
+  check('Trefferpunkte ueberleben den naechsten Schreibvorgang',
+    wd.includes('if (zusatz) c.baseState = { ...c.baseState, ...zusatz }') &&
+    wd.includes('zusatz: { hp: r.hp }'))
+  check('Beute faellt an die LIVE-Position', /destPoint\(c\.lat \?\? obj\.lat, c\.lon \?\? obj\.lon/.test(wd))
+  check('und die Reichweite wird auch dagegen geprueft', /lat: c\.lat \?\? obj\.lat, lon: c\.lon \?\? obj\.lon/.test(wd))
+  // addPermission scheiterte still: Der afterCreate-Hook hat die ACE schon.
+  check('die Rechte werden gesetzt, nicht doppelt angelegt', /ensureAce\(rec\.id, \['collect', 'examine'\]\)/.test(wd))
+  check('auch ein Gespraech haelt sichtbar an', /wegBehalten: true/.test(wd))
+  check('dabei bleibt der Weg erhalten', /if \(wegBehalten && c\.path\) patch\.state\.walk_path = c\.path/.test(wd))
+  // Zwei gleichzeitige Schreibvorgaenge auf denselben Datensatz brechen
+  // einander ab — ausgerechnet der Halt darf nicht der verlorene sein.
+  check('Halt und Bewegungs-Tick schreiben nicht gleichzeitig', /for \(let i = 0; c\.busy && i < 30/.test(wd))
+
+  // „hit" ist eine Geste, kein Zustand: Der Client kehrt danach nicht von
+  // selbst zu „steht" zurueck — der Getroffene liefe sonst auf der Stelle.
+  check('nach dem Zucken steht er', wd.includes("setzeAnim(c, 'idle')\n      schreibeAnimFalls(c)"))
+  check('walk_path faellt beim Abbrechen weg', wd.includes('else delete patch.state.walk_path'))
+  check('Weg und Bewegung gehoeren nicht zur Identitaet der Figur',
+    wd.includes('const { walk_path, motion, ...rest } = state || {}'))
+
+  check('Fundstuecke sind aufnehmbar', /TRAGBAR = new Set\(\['item', 'diamond'\]\)/.test(wd))
+  check('auch die schon liegenden', /if \(tragbar\) next\.portable = true/.test(wd))
+  check('und untersuchbar', /item:   \{ count: 2, actions: \[\{ key: 'examine'/.test(wd))
+
+  const { beuteObjekt } = await import('../agents/lib/kampf.mjs')
+  const b = beuteObjekt('Knochensplitter', { lat: 50.4, lon: 7.5 })
+  check('Beute ist tragbar', b.state.portable === true)
+  check('Beute traegt ihren Namen im Bild', b.appearance.label === 'Knochensplitter')
+  // Ein Agent-Objekt ohne passende Schicht blendet der Inhaltsfilter aus,
+  // sobald der Spieler dort einmal etwas ausgewaehlt hat.
+  check('Beute ist einer Schicht zugeordnet', b.state.archetype === 'item')
+
+  const af = readFileSync(new URL('../client/core/AgentFilters.js', import.meta.url), 'utf8')
+  check('was zu keiner Schicht passt, verschwindet nicht still',
+    /return !manifest\.layers\.some\(l => l\.predicate && matchesPredicate\(record, l\.predicate\)\)/.test(af))
+}
+
+
+// ── Gallertwesen, Einmal-Animationen, Spawn-Rückmeldung ─────────────────
+console.log('\n── Gallert, Tod, Spawn-Hinweis')
+{
+  const prof = await import('../agents/world-director.profiles.mjs')
+  const a = prof.profileAppearance('MawGooey.glb', 'abc-123')
+  const b = prof.profileAppearance('MawGooey.glb', 'abc-123')
+  const c = prof.profileAppearance('MawGooey.glb', 'xyz-999')
+  check('Gallertwesen bekommen eine Farbe', /^#[0-9a-f]{6}$/i.test(a.color || ''), a.color)
+  check('und sind durchscheinend', a.opacity > 0 && a.opacity < 1, String(a.opacity))
+  // Zufall waere hier falsch: Die Profil-Heilung rechnet dieselbe appearance
+  // bei jedem Boot neu aus — die Figur bekaeme jedes Mal eine andere Farbe.
+  check('dieselbe Saat ergibt dieselbe Farbe', a.color === b.color)
+  check('verschiedene Figuren sehen verschieden aus',
+    ['abc-123', 'xyz-999', 'q-1', 'q-2', 'q-3', 'q-4'].map(s => prof.profileAppearance('Slime.glb', s).color)
+      .filter((v, i, arr) => arr.indexOf(v) === i).length > 1)
+  check('Pferde bleiben unbehelligt', !prof.profileAppearance('Horse.glb', 'x').color)
+  check('auch verschiedene Saaten fuer dasselbe Modell', c.opacity === a.opacity)
+
+  const go = readFileSync(new URL('../client/engine/GameObject.js', import.meta.url), 'utf8')
+  // In der Schleife faellt MawGooey immer wieder in sich zusammen.
+  check('Treffer und Tod laufen EINMAL', go.includes('next.start(!einmalig, this._animSpeed)'))
+  check('und die Entfernungs-Pause nimmt sie nicht in die Schleife',
+    readFileSync(new URL('../client/main.js', import.meta.url), 'utf8').includes('g.play(!go._animEinmalig)'))
+  // Ein durchsichtiges Auge in einem durchsichtigen Koerper ist kein Auge mehr.
+  check('Augen bleiben deckend', /AUGEN_MATERIAL = \/\(eye\|auge\|pupil\|iris\)\/i/.test(go))
+  check('und ungefaerbt', (go.match(/AUGEN_MATERIAL\.test/g) || []).length === 2)
+
+  const mj = readFileSync(new URL('../client/main.js', import.meta.url), 'utf8')
+  // Die zwischengespeicherte Auswahl kannte ein neues Objekt nicht — es
+  // erschien erst, wenn der Spieler 15 m gelaufen war.
+  check('ein neues Objekt loest die Auswahl neu aus', mj.includes('const neuDabei = !bekannt || list.some(o => !bekannt.has(o.id))'))
+  check('der Platzhalter erscheint beim Anfordern', mj.includes('angefordert: stelle => _spawnFunken?.zeige(stelle)'))
+  check('und verschwindet, wenn das Objekt da ist', mj.includes("if (action === 'create') _spawnFunken?.quittiere(rec.lat, rec.lon)"))
+
+  const sh = readFileSync(new URL('../client/core/SpawnHere.js', import.meta.url), 'utf8')
+  // Ohne laufenden Director entstuende sonst eine Wolke an einer Stelle, an
+  // der nie etwas erscheint.
+  const zeilen = sh.split('\n')
+  const iNein = zeilen.findIndex(z => z.includes('der World-Director läuft nicht'))
+  const iWolke = zeilen.findIndex(z => z.includes('angefordert?.('))
+  check('keine Wolke ohne Empfaenger',
+    iNein >= 0 && iWolke > iNein && zeilen.slice(iNein, iWolke).some(z => z.trim() === 'else {'))
+}
+
 const failed = results.filter(r => !r.ok)
 console.log(`\n${'═'.repeat(60)}`)
 console.log(`UI: ${results.length - failed.length} bestanden, ${failed.length} fehlgeschlagen`)

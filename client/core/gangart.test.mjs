@@ -9,7 +9,7 @@
 
 import {
   gangartFuer, tempoAusSpruengen,
-  STEHT_UNTER, GEH_TEMPO, LAUF_TEMPO, TEMPO_MIN, TEMPO_MAX, BEZUGS_GROESSE,
+  STEHT_UNTER, GEH_TEMPO, LAUF_TEMPO, TEMPO_MIN, TEMPO_MAX,
 } from './gangart.js'
 
 let failures = 0
@@ -80,20 +80,51 @@ check('negatives Tempo auch nicht', gangartFuer(-5).zustand === 'idle')
     gangartFuer(LAUF_TEMPO, { hatLauf: false }).zustand === 'walk')
 }
 
-// ── Größe: ein Fuchs rennt, wo ein Pferd geht ────────────────────────────
+// ── Das Zyklus-Tempo kommt aus dem Modell-Profil ─────────────────────────
+// Es aus der FIGURENGRÖSSE abzuleiten war falsch: Ein Zyklus wird nicht
+// langsamer, weil man das Modell kleiner skaliert. Beim Fuchs kam so 0,47 m/s
+// heraus statt 0,92 — das Abspieltempo lief in den Anschlag, und er lief auf
+// der Stelle.
 {
-  const fuchs = gangartFuer(1.4, { groesse: 0.4 })
-  const mensch = gangartFuer(1.4, { groesse: BEZUGS_GROESSE })
-  const pferd = gangartFuer(1.4, { groesse: 2.6 })
+  // Werte aus agents/world-director.profiles.mjs (speed / animSpeed).
+  const FUCHS = 0.92, PFERD = 1.6, SOLDAT = 1.5, ROBOTER = 1.09
 
-  check('derselbe Wert ist für den Fuchs schneller',
-    fuchs.zustand === 'run' && mensch.zustand === 'walk',
-    `Fuchs=${fuchs.zustand}, Mensch=${mensch.zustand}`)
-  check('und für das Pferd gemächlicher', pferd.tempo < mensch.tempo,
-    `Pferd=${pferd.tempo.toFixed(2)}, Mensch=${mensch.tempo.toFixed(2)}`)
-  check('unsinnige Größen werden geklemmt, nicht geglaubt',
-    Number.isFinite(gangartFuer(1.4, { groesse: 0 }).tempo)
-    && Number.isFinite(gangartFuer(1.4, { groesse: 1e6 }).tempo))
+  // Läuft eine Figur mit IHREM Normaltempo, muss der Zyklus normal laufen.
+  // Bemerkenswert: Diese Werte treffen genau den handjustierten `animSpeed`
+  // aus dem Modell-Profil (Fuchs 1,3 · Pferd 1,5 · Soldat 1,0 · Roboter 1,1).
+  // Das ist kein Zufall, sondern die Probe aufs Exempel — die Zahl wurde aus
+  // eben diesem Faktor abgeleitet.
+  const gehTempoVon = (ref, v) => gangartFuer(v, { gehTempo: ref }).tempoFuer.walk
+  check('Fuchs bei 1,2 m/s → 1,3-facher Zyklus', nah(gehTempoVon(FUCHS, 1.2), 1.3, 0.02))
+  check('Soldat bei 1,5 m/s → normal', nah(gehTempoVon(SOLDAT, 1.5), 1.0))
+  check('Roboter bei 1,2 m/s → 1,1-fach', nah(gehTempoVon(ROBOTER, 1.2), 1.1, 0.02))
+  check('Pferd bei 2,4 m/s → 1,5-fach', nah(gehTempoVon(PFERD, 2.4), 1.5, 0.02))
+
+  // Der Denkfehler, der das verdeckte: Gegen ein INTERPOLIERTES Bezugstempo
+  // gerechnet kommt im Misch-Bereich zwangsläufig 1,0 heraus — dort fand also
+  // gar keine Anpassung statt, und dort leben die meisten Figuren.
+  check('im Misch-Bereich wird trotzdem angepasst',
+    gangartFuer(1.2, { gehTempo: FUCHS }).tempoFuer.walk !== 1.0)
+
+  // Und keiner läuft in den Anschlag — das war das eigentliche Symptom.
+  for (const [name, ref, v] of [['Fuchs', FUCHS, 1.2], ['Pferd', PFERD, 2.4],
+                                ['Soldat', SOLDAT, 1.5], ['Roboter', ROBOTER, 1.2]]) {
+    const g = gangartFuer(v, { gehTempo: ref })
+    check(`${name} läuft nicht in den Anschlag`,
+      g.tempoFuer.walk < TEMPO_MAX && g.tempoFuer.walk > TEMPO_MIN,
+      `walk=${g.tempoFuer.walk.toFixed(2)}`)
+  }
+
+  check('ohne Angabe gilt die Menschen-Vorgabe',
+    nah(gangartFuer(GEH_TEMPO).tempo, 1.0))
+  check('unsinnige Angaben werden abgefangen',
+    Number.isFinite(gangartFuer(1.4, { gehTempo: 0 }).tempo)
+    && Number.isFinite(gangartFuer(1.4, { gehTempo: NaN }).tempo))
+
+  // Der Laufzyklus leitet sich aus dem Verhältnis ab — sonst liefe ein Pferd
+  // bei 2 m/s schon im „Sprint".
+  check('das Pferd rennt bei seinem Normaltempo nicht',
+    gangartFuer(2.4, { gehTempo: PFERD }).zustand === 'walk')
 }
 
 // ── Rückfall ohne Bewegungsplan ──────────────────────────────────────────

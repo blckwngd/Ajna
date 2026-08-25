@@ -42,7 +42,7 @@ import { AjnaGeo } from "./core/AjnaGeo.js"
 import { ObjectActions } from "./core/ObjectActions.js"
 import { InWorldActionMenu } from "./core/InWorldActionMenu.js"
 import { Toast } from "./core/Toast.js"
-import { interactionReply, isCollectAction } from "./core/InteractionReply.js"
+import { interactionReply, isCollectAction, protokolliereInteraktion } from "./core/InteractionReply.js"
 import { InventoryUI, DRAG_MIME } from "./core/InventoryUI.js"
 import { Minimap } from "./core/Minimap.js"
 import { isMultiServer, serverLabelFor } from './core/ServerBadge.js'
@@ -50,6 +50,7 @@ import { readAllRanges, effectiveTerrain, RANGE_EVENT, readRange, animRadiusFuer
 import { PresenceService, PRESENCE_TYPE, zeigeAnwesenheit } from "./core/PresenceService.js"
 import { inventoryDevices } from "./core/inventoryDevices.js"
 import { spawnRandomAndEdit, directorSpawnItems } from "./core/SpawnHere.js"
+import { SpawnFunken } from "./engine/SpawnFunken.js"
 import { CameraComponent } from "./engine/components/CameraComponent.js"
 import { DebugCameraComponent } from "./engine/components/DebugCameraComponent.js"
 import { PlayerGPSComponent } from "./engine/components/PlayerGPSComponent.js"
@@ -1342,7 +1343,9 @@ async function init() {
     container: document.querySelector('.shell-view[data-view="ar"]') || document.body,
     onExamine: (rec) => {
       if (!_toast) _toast = new Toast()
-      _toast.show(interactionReply(rec, 'examine', rec.name), { title: rec.name || 'Objekt' })
+      const antwort = interactionReply(rec, 'examine', rec.name)
+      _toast.show(antwort, { title: rec.name || 'Objekt', log: false })
+      protokolliereInteraktion(rec, 'examine', antwort)
       _announcer?.interaction(rec, 'examine')
     },
     onPlace: (rec) => {
@@ -1570,7 +1573,8 @@ async function init() {
         ...directorSpawnItems({
           ajna: ajnaManager, position: { lat: geoPos.lat, lon: geoPos.lon },
           enabled: ajnaManager.isLoggedIn(),
-          notify: msg => { if (!_toast) _toast = new Toast(); _toast.show(msg, { title: 'Spawn' }) }
+          notify: msg => { if (!_toast) _toast = new Toast(); _toast.show(msg, { title: 'Spawn' }) },
+          angefordert: stelle => _spawnFunken?.zeige(stelle)
         })
       ]
     })
@@ -1706,6 +1710,8 @@ async function init() {
   // pro Figur ein Update; ungethrottlet liefe pro Tick ein Schwung voller
   // Reconciles → periodisches Ruckeln. Max ~4×/s, immer mit der zuletzt
   // gelieferten Objekt-Liste. PositionSmoother hält die Bewegung flüssig.
+  _spawnFunken = new SpawnFunken(scene, geo)
+
   ajnaManager.onObjectsChanged(throttleLatest(objects => {
     syncSceneObjects(scene, world, geo, objects)
   }, 1000))
@@ -1718,6 +1724,8 @@ async function init() {
   // 1147ms). Strukturelle Änderungen (neu/gelöscht/Appearance/getragen) übernimmt
   // der gedrosselte Reconcile oben (jetzt 1s statt 250ms, da Transforms hier laufen).
   ajnaManager.onObjectEvent((rec, action) => {
+    // Das erwartete Objekt ist da → Platzhalter-Wolke ausklingen lassen.
+    if (action === 'create') _spawnFunken?.quittiere(rec.lat, rec.lon)
     if (action !== 'update' || rec.carried_by) return
     const go = objectMap.get(rec.id)
     if (go && go._appearanceSig === JSON.stringify(rec.appearance ?? null)) {
@@ -1819,7 +1827,9 @@ async function init() {
           go._pausedAnims = go.animationGroups.filter(g => g.isPlaying)
           go._pausedAnims.forEach(g => { try { g.pause() } catch {} })
         } else if (want && go._pausedAnims) {
-          go._pausedAnims.forEach(g => { try { g.play(true) } catch {} })
+          // NICHT blind in die Schleife: Ein Gefallener, der aus dem Radius
+          // und wieder hinein kommt, fiele sonst endlos neu zusammen.
+          go._pausedAnims.forEach(g => { try { g.play(!go._animEinmalig) } catch {} })
           go._pausedAnims = null
         }
       }
@@ -2310,6 +2320,9 @@ const _creating = new Set()
 // der Composite-ID. Map hält die Unsubscribe-Functions.
 const interactSubs = new Map()
 let _toast = null
+// Platzhalter-Wolken für angeforderte Objekte. Modulweit wie _toast, weil
+// Kontextmenü und Realtime-Handler dieselbe Instanz brauchen.
+let _spawnFunken = null
 
 function subscribeInteract(manager, objectId, onEvent) {
   if (interactSubs.has(objectId)) return
@@ -2357,6 +2370,11 @@ function throttleLatest(fn, ms) {
 // Auswahl bleibt zwischen Kamerabewegungen stabil → keine dispose/create-Welle).
 let _capCamPos = null
 const _capKeep = new Map()                          // source → Set<id>
+// Welche IDs bei der letzten Auswahl ÜBERHAUPT zur Wahl standen. Kommt eine
+// dazu, muss neu gewählt werden — auch wenn die Kamera steht. Ohne das
+// erschien ein gerade erzeugtes Objekt erst, wenn der Spieler 15 m gelaufen
+// war: die zwischengespeicherte Auswahl kannte es schlicht nicht.
+const _capAlle = new Map()                          // source → Set<id>
 const CAP_RECOMPUTE_DIST2 = 15 * 15                 // 15 m (quadriert)
 
 // Objekt-Sichtweite in Metern (Einstellungen → „Sichtweite"). Infinity = aus.
@@ -2412,9 +2430,15 @@ function _capByAgentBudget(objects, geo, camera, filters) {
       keep.push(...list)                            // unbegrenzt oder unter Budget → alle
       continue
     }
+    // Neuzugang bei dieser Quelle? Dann muss die Auswahl neu berechnet werden,
+    // egal ob die Kamera steht.
+    const bekannt = _capAlle.get(src)
+    const neuDabei = !bekannt || list.some(o => !bekannt.has(o.id))
+    _capAlle.set(src, new Set(list.map(o => o.id)))
+
     // Steht die Kamera + haben wir eine gültige Auswahl: wiederverwenden
     // (nur noch existierende Objekte) → keine Distanzrechnung, kein Churn.
-    if (!recompute && _capKeep.has(src)) {
+    if (!recompute && !neuDabei && _capKeep.has(src)) {
       const cached = _capKeep.get(src)
       const kept = list.filter(o => cached.has(o.id))
       if (kept.length) { keep.push(...kept); continue }

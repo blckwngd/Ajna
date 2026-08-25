@@ -263,7 +263,12 @@ export class AgentFilters {
       if (!layer.predicate) return true     // null-predicate-Layer → "all"-artig
       if (matchesPredicate(record, layer.predicate)) return true
     }
-    return false
+
+    // Passt das Objekt zu KEINER Schicht des Manifests, konnte der Spieler es
+    // nie abwählen — dann ist Ausblenden kein Filtern, sondern stilles
+    // Verschwinden. Solche Nachzügler zeigen wir. (Wer wirklich nichts von
+    // dieser Quelle sehen will, wählt alles ab: das greift weiter oben.)
+    return !manifest.layers.some(l => l.predicate && matchesPredicate(record, l.predicate))
   }
 
   /**

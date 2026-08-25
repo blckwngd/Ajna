@@ -3,7 +3,10 @@
 // nach oben); jeder verschwindet nach `timeout` ms automatisch.
 
 const MAX_VISIBLE = 4        // mehr würde den Bildschirm zulaufen lassen
-const DEFAULT_TIMEOUT = 5000
+// Anzeigedauer. Länger als üblich, weil der Toast jetzt ANKLICKBAR ist: Er
+// zeigt nicht nur an, er ist auch der Weg ins Gespräch. Fünf Sekunden reichten
+// zum Lesen, aber nicht zum Entscheiden und Treffen.
+const DEFAULT_TIMEOUT = 8000
 
 export class Toast {
   constructor() {
@@ -53,6 +56,9 @@ export class Toast {
         transition: opacity 180ms ease-out, transform 180ms ease-out;
       }
       .ajna-toast.show { opacity: 1; transform: translateY(0); }
+      .ajna-toast.klickbar { cursor: pointer; }
+      .ajna-toast.klickbar:hover { filter: brightness(1.18); }
+      .ajna-toast.klickbar:focus-visible { outline: 2px solid #4a9d5f; outline-offset: 2px; }
       .ajna-toast .toast-title {
         color: #f1c40f;
         text-transform: uppercase;
@@ -71,7 +77,7 @@ export class Toast {
    *   sonst stünde dieselbe Zeile zweimal im Fenster (einmal als Gespräch,
    *   einmal als System-Hinweis).
    */
-  show(text, { title, timeout = DEFAULT_TIMEOUT, log = true } = {}) {
+  show(text, { title, timeout = DEFAULT_TIMEOUT, log = true, onClick = null } = {}) {
     // Kurzlebige Toasts zusätzlich in den persistenten Verlauf (Chat-/Debug-
     // Fenster), damit Hinweise/Fehler später nachvollziehbar bleiben.
     if (log) { try { window.ajnaLog?.push(title ? `${title}: ${text}` : text, 'system') } catch {} }
@@ -84,6 +90,27 @@ export class Toast {
       el.appendChild(t)
     }
     el.appendChild(document.createTextNode(text))
+
+    // ANKLICKBAR: Der Toast führt in den Verlauf. Damit kann eine Figur etwas
+    // sagen, OHNE dass sich sofort ein Fenster über die Szene legt — wer
+    // antworten will, tippt auf die Meldung. Das Fenster aufzudrängen hat die
+    // Sicht in genau dem Moment blockiert, in dem man die Figur ansieht.
+    el.classList.add('klickbar')
+    el.setAttribute('role', 'button')
+    el.setAttribute('tabindex', '0')
+    el.title = 'Öffnet den Verlauf'
+    const oeffnen = () => {
+      el.classList.remove('show')
+      setTimeout(() => el.remove(), 200)
+      try { onClick ? onClick() : window.ajnaLogPanel?.open() } catch (err) {
+        console.warn('[toast] Öffnen:', err?.message || err)
+      }
+    }
+    el.addEventListener('click', oeffnen)
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); oeffnen() }
+    })
+
     this.container.appendChild(el)
 
     // Bei einem Schwall (z. B. Auftrags-Abschluss) die ältesten wegnehmen,

@@ -63,6 +63,13 @@ const ANIM_ALIASES = {
   // Gesten aus Dialogen (Parley). Letzter Eintrag ist immer "idle": Modelle
   // ohne passenden Clip sollen ruhig stehen bleiben statt irgendeine Animation
   // zu erwischen (der Fallback auf groups[0] greift sonst).
+  // Kampf. Dragon.glb bringt „Hit" mit, MawGooey und RobotExpressive „Death";
+  // Soldier und Slime haben nichts dergleichen. Für die steht der nachgebaute
+  // Ersatz bereit (siehe #kampfGeste) — deshalb dürfen diese beiden Zustände
+  // NICHT auf groups[0] zurückfallen: Ein zufälliger Clip als „Tod" sähe aus
+  // wie ein Fehler, und der Ersatz käme nie zum Zug.
+  hit:   ["hit", "damage", "hurt", "flinch", "recoil", "impact"],
+  death: ["death", "die", "dead", "defeat"],
   wave:  ["wave", "waving", "greet", "salute", "yes", "idle"],
   dance: ["dance", "dancing", "idle"],
   jump:  ["jump", "hop", "idle"],
@@ -71,6 +78,15 @@ const ANIM_ALIASES = {
 // Typen, die als „Figur" einen Blob-Schatten bekommen (Objekte mit 3D-Modell
 // ebenfalls, siehe loadFromData).
 const FIGURE_TYPES = new Set(["npc", "enemy", "animal", "dragon"])
+
+// Zustände, für die KEIN beliebiger Clip herhalten darf (siehe _resolveAnimGroup).
+const OHNE_RUECKFALL = new Set(["hit", "death"])
+
+// Augen bleiben deckend und ungefärbt. Ein durchsichtiges Auge in einem
+// durchsichtigen Körper ist kein Auge mehr — und gerade bei Gallertwesen ist
+// der Blick das Einzige, was die Figur lesbar macht. Slime führt sie als
+// eigenes Material, Modelle mit nur einem Material trifft die Regel nicht.
+const AUGEN_MATERIAL = /(eye|auge|pupil|iris)/i
 
 // Zustände, in denen die Gangart (core/gangart.js) das Sagen hat: Fortbewegung
 // AUF DEM BODEN. Alles andere — fliegen, gleiten, abheben, Gesten — gehört dem
@@ -229,6 +245,11 @@ export class GameObject {
     this._modelYaw = Number.isFinite(apYaw) ? apYaw : null
     const apSpeed = Number(this._appearance?.animSpeed)
     this._animSpeed = Number.isFinite(apSpeed) ? Math.min(4, Math.max(0.1, apSpeed)) : 1
+    // Für welches Tempo der Gehzyklus dieses Modells gezeichnet ist (m/s).
+    // Kommt aus dem Modell-Profil des Agents (appearance.gehTempo) — raten
+    // lässt es sich nicht, siehe core/gangart.js.
+    const apGeh = Number(this._appearance?.gehTempo)
+    this._gehTempo = Number.isFinite(apGeh) && apGeh > 0 ? apGeh : undefined
     const aliases = this._appearance?.anim
     this._animAliases = (aliases && typeof aliases === 'object' && !Array.isArray(aliases)) ? aliases : null
 
@@ -431,6 +452,7 @@ export class GameObject {
     for (const mesh of this.meshes || []) {
       const mat = mesh.material
       if (!mat) continue
+      if (AUGEN_MATERIAL.test(mat.name || "")) continue     // Augen behalten ihre Farbe
       const textures = mat.getActiveTextures ? mat.getActiveTextures() : []
       if (textures.length > 0) continue                     // texturiert → Look behalten
       if ("albedoColor" in mat) mat.albedoColor = c         // PBRMaterial (GLB-Standard)
@@ -446,8 +468,9 @@ export class GameObject {
     for (const mesh of this.meshes || []) {
       const mat = mesh.material
       if (!mat) continue
+      if (AUGEN_MATERIAL.test(mat.name || "")) continue          // Augen bleiben deckend
       mat.alpha = op
-      if ("transparencyMode" in mat) mat.transparencyMode = 2   // MATERIAL_ALPHABLEND
+      if ("transparencyMode" in mat) mat.transparencyMode = 2    // MATERIAL_ALPHABLEND
     }
   }
 
@@ -547,6 +570,9 @@ export class GameObject {
       const g = groups.find(x => (x.name || "").toLowerCase().includes(needle))
       if (g) return g
     }
+    // Für Kampf-Zustände lieber GAR NICHTS als irgendetwas: Der Aufrufer baut
+    // die Geste dann selbst nach.
+    if (OHNE_RUECKFALL.has(lower)) return null
     return groups[0]
   }
 
@@ -567,6 +593,15 @@ export class GameObject {
     this._lastAnimState = state
 
     const next = this._resolveAnimGroup(state)
+
+    // Kein passender Clip für Treffer/Tod → Geste nachbauen. Ein Modell ohne
+    // eigene Kampf-Animation soll trotzdem reagieren; sonst „stirbt" der
+    // Soldat, indem er weiter herumsteht.
+    if (!next && OHNE_RUECKFALL.has(String(state).toLowerCase())) {
+      this.#kampfGeste(String(state).toLowerCase())
+      return
+    }
+    if (!next) return
     if (this._activeAnim === next) return
 
     // Distanz-LOD-Pause (main.js ajnaPerf) verwerfen: Der Zustandswechsel macht
@@ -583,8 +618,13 @@ export class GameObject {
     // Group — der gelandete Drache bliebe mit den aus GlideFlight/FlapFlight
     // gespreizten Flügeln stehen, während nur Rumpf/Schwanz idle-atmen.
     this.skeletons?.forEach(sk => { try { sk.returnToRest() } catch {} })
-    next.start(true, this._animSpeed)   // Playback-Faktor aus appearance.animSpeed
+    // Treffer und Tod sind EINMALIGE Vorgänge. In der Schleife fällt MawGooey
+    // immer wieder in sich zusammen, statt liegen zu bleiben — Babylon hält die
+    // letzte Pose, wenn die Group ohne loop endet.
+    const einmalig = OHNE_RUECKFALL.has(String(state).toLowerCase())
+    next.start(!einmalig, this._animSpeed)   // Playback-Faktor aus appearance.animSpeed
     this._activeAnim = next
+    this._animEinmalig = einmalig
   }
 
   // Spielt EINMAL eine zur Aktion passende Reaktions-Animation (z. B. "wave" auf
@@ -1024,6 +1064,74 @@ export class GameObject {
     this._gangT = 0
   }
 
+  /**
+   * Treffer und Tod nachbauen, wenn das Modell keine Clips dafür hat.
+   *
+   * Gearbeitet wird auf einem EIGENEN Knoten zwischen Objekt und Modell — die
+   * geo-Rotation am `root` gehört dem Agent, und ein umgefallener Gegner darf
+   * seine Ausrichtung nicht verlieren.
+   *
+   *   hit   kurzes Zurückzucken samt Stauchen, danach zurück (~260 ms)
+   *   death auf die Seite kippen und ein Stück einsinken, und so bleiben
+   *
+   * Umfallen ist die verständlichste Todes-Geste, die ohne Skelett-Animation
+   * auskommt: Sie liest sich aus jedem Blickwinkel und braucht keine Knochen.
+   */
+  #kampfGeste(art) {
+    const knoten = this.#gestenKnoten()
+    if (!knoten) return
+    const start = performance.now()
+
+    if (art === 'death') {
+      this._gesteTot = true
+      const dauer = 650
+      const lauf = () => {
+        if (!this.root || this.root.isDisposed?.()) return
+        const t = Math.min(1, (performance.now() - start) / dauer)
+        // Weich auslaufen — ein linearer Sturz wirkt wie ein Umschalten.
+        const e = 1 - Math.pow(1 - t, 3)
+        knoten.rotation.z = e * (Math.PI / 2)
+        knoten.position.y = -e * 0.25
+        if (t < 1) requestAnimationFrame(lauf)
+      }
+      requestAnimationFrame(lauf)
+      return
+    }
+
+    // Treffer: nicht doppelt starten, sonst zappelt die Figur bei schnellen
+    // Schlägen unkontrolliert.
+    if (this._gesteTot || this._gesteLaeuft) return
+    this._gesteLaeuft = true
+    const dauer = 260
+    const lauf = () => {
+      if (!this.root || this.root.isDisposed?.()) { this._gesteLaeuft = false; return }
+      const t = Math.min(1, (performance.now() - start) / dauer)
+      const puls = Math.sin(t * Math.PI)          // 0 → 1 → 0
+      knoten.position.z = -puls * 0.22            // zurückzucken
+      knoten.scaling.y = 1 - puls * 0.12          // und kurz stauchen
+      if (t < 1) requestAnimationFrame(lauf)
+      else {
+        knoten.position.z = 0
+        knoten.scaling.y = 1
+        this._gesteLaeuft = false
+      }
+    }
+    requestAnimationFrame(lauf)
+  }
+
+  /** Knoten für nachgebaute Gesten — einmal angelegt, zwischen root und Modell. */
+  #gestenKnoten() {
+    if (this._gestenNode) return this._gestenNode
+    const kinder = this.root?.getChildTransformNodes?.(true) || []
+    const modell = kinder[0]
+    if (!modell) return null
+    const n = new BABYLON.TransformNode(`geste_${this.id}`, this.scene)
+    n.parent = this.root
+    modell.parent = n
+    this._gestenNode = n
+    return n
+  }
+
   /** Auf dem kürzesten Winkelweg zur Zielrotation nachziehen. */
   #dreheZu(ziel) {
     const r = this.root.rotation
@@ -1077,11 +1185,29 @@ export class GameObject {
       v = this._gangV || 0
     }
 
-    const g = gangartFuer(v, { groesse: this._hoeheM || undefined, hatLauf: !!this._laufAnim })
-    const fuehrend = g.misch.anteil > 0.5 ? g.misch.nach : g.misch.von
+    const g = gangartFuer(v, { gehTempo: this._gehTempo, hatLauf: !!this._laufAnim })
+
+    // HYSTERESE beim Umschalten. Genau an der Grenze zwischen Gehen und Laufen
+    // kippte der führende Zyklus hin und her, und jeder Wechsel STOPPT und
+    // STARTET die Animation — sichtbar als kurzes Zucken nach jedem Durchlauf.
+    // Erst ab deutlichem Abstand zur Mitte wird gewechselt.
+    const schwelle = this._gangZustand === g.misch.nach ? 0.35 : 0.65
+    const fuehrend = g.misch.von === g.misch.nach
+      ? g.misch.von
+      : (g.misch.anteil > schwelle ? g.misch.nach : g.misch.von)
+    this._gangZustand = fuehrend
     if (fuehrend !== this._lastAnimState) this._applyAnimationState(fuehrend)
+
     // Abspieltempo — die eigentliche Rechnung gegen das Gleiten.
-    const tempo = g.tempo * (this._animSpeed || 1)
+    //
+    // `_animSpeed` wird hier NICHT mehr aufmultipliziert: Es steckt bereits im
+    // Zyklus-Tempo (`gehTempo = speed / animSpeed`, siehe
+    // world-director.profiles.mjs). Es zweimal anzuwenden trieb den Fuchs auf
+    // das Zweieinhalbfache — er lief auf der Stelle.
+    // Das Tempo muss zu dem Zyklus passen, der TATSÄCHLICH läuft — nicht zum
+    // rechnerischen Mittel. Gegen ein interpoliertes Bezugstempo gerechnet kam
+    // im ganzen Misch-Bereich immer 1,0 heraus, also gar keine Anpassung.
+    const tempo = g.tempoFuer?.[fuehrend] ?? g.tempo
     if (this._activeAnim && Math.abs((this._activeAnim.speedRatio ?? 1) - tempo) > 0.02) {
       try { this._activeAnim.speedRatio = tempo } catch {}
     }

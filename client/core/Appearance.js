@@ -257,6 +257,17 @@ export function resolveLabel(template, record, ctx = {}) {
       // nackte Zahl über dem Kopf nichts sagt — die Skala steht nirgends dabei.
       // Kein Karma ⇒ leer: Wer neu ist, trägt kein Schild „0", das wie ein
       // Makel aussähe.
+      // Trefferpunkte als ZAHL — für Vorlagen, die es ausdrücklich wollen.
+      // Der übliche Weg ist der farbige Balken in engine/LabelLayer.js; er
+      // braucht keine Beschriftung und blendet sich selbst ein, sobald eine
+      // Figur verletzt ist. Ein Balken aus Blockzeichen sah nach Notlösung aus.
+      case 'hp': {
+        const hp = state.hp
+        const ist = Number(hp?.ist), max = Number(hp?.max)
+        if (!Number.isFinite(ist) || !Number.isFinite(max) || max <= 0) return ''
+        if (ist >= max) return ''
+        return `${Math.round(ist)}/${Math.round(max)}`
+      }
       case 'karma': {
         const k = Math.round(Number(state.karma))
         if (!Number.isFinite(k) || k <= 0) return ''

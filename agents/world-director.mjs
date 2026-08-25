@@ -64,6 +64,8 @@ import { animalNameFor } from '../client/core/animalNames.js'
 
 import { simpleSetup } from './lib/setup-wizard.mjs'
 import { Bewegungsplan, bewegungsUpdate } from './lib/bewegung.mjs'
+import { yawFuerKurs } from '../client/core/yaw.js'
+import { Kampf, hpVon, beuteObjekt } from './lib/kampf.mjs'
 import { npcParley } from './lib/dialogs.mjs'
 import { dialogNameFor, dialogVarsFor, talkSessionId } from '../client/core/Parley.js'
 
@@ -109,7 +111,11 @@ const STREET_ARCHETYPES = new Set(['npc', 'enemy'])
 // das ist NICHT geprüft. Auflösen heißt: beide Fälle nebeneinander in der
 // Szene ansehen, die richtige Konvention festlegen, dann vereinheitlichen
 // und in docs/world-objects.md dokumentieren.
-const HEADING_TO_YAW = h => Math.PI - h
+// Kompasskurs → Babylon-Yaw. Die Umrechnung liegt in client/core/yaw.js, weil
+// sie eine RENDER-Konvention ist: Der Client legt fest, wie er zeichnet. Hier
+// stand sie früher zweimal (Boden und Flug) und in den Fahrzeug-Brücken ein
+// drittes Mal — 90 Grad daneben. Siehe dort für die Herleitung.
+const HEADING_TO_YAW = h => yawFuerKurs(h)
 
 // Kompass-Kurs in Grad, wie ihn `state.motion` erwartet. `c.heading` liegt im
 // Bogenmaß vor (bearingRad: 0 = Nord, im Uhrzeigersinn) — dieselbe Konvention,
@@ -122,6 +128,36 @@ const KURS_GRAD = h => ((h * 180 / Math.PI) % 360 + 360) % 360
 // beim Anhalten/Losgehen, bei Abweichung und als Lebenszeichen.
 // Siehe agents/lib/bewegung.mjs — dort steht auch, warum der Knick der
 // entscheidende Auslöser ist.
+/**
+ * Animationswechsel melden, OHNE auf die Antwort zu warten.
+ *
+ * `await ajna.setAnimation(...)` steckte mitten in der Bewegungsschleife. Ein
+ * Netzaufruf pro Zustandswechsel, und solange er lief, stand der Tick DIESER
+ * Figur still (`busy`). Beim Ruf an einen Wyvern fallen mehrere Wechsel kurz
+ * hintereinander an — sichtbar als sekundenlang eingefrorene Figur.
+ *
+ * Ein verlorener Animationswechsel ist verschmerzbar: Der nächste Wechsel holt
+ * ihn ein. Eine stehende Figur ist es nicht.
+ */
+function setzeAnim(c, wert) {
+  if (c.anim === wert) return
+  c.anim = wert
+  c.animOffen = true      // wird mit dem nächsten Schreibvorgang mitgeschickt
+}
+
+/**
+ * Offenen Animationswechsel schreiben, wenn sonst nichts zu schreiben war.
+ *
+ * Für Figuren, die gerade stehen (Pause, Gespräch): Dort blockiert das Warten
+ * niemanden, weil sie sich ohnehin nicht bewegen.
+ */
+async function schreibeAnimFalls(c) {
+  if (!c.animOffen) return
+  c.animOffen = false
+  try { await ajna.setAnimation(c.id, c.anim) }
+  catch (err) { console.warn(`[director] Animation "${c.id}": ${err?.message || err}`) }
+}
+
 const planFuer = (c) => {
   if (c._plan) return c._plan
   // FLIEGER BEKOMMEN GRÖSSEREN SPIELRAUM. Sie drehen laufend (Randlenkung,
@@ -148,10 +184,29 @@ const planFuer = (c) => {
  * würde die Ersparnis gerade wieder auffressen.
  */
 async function schreibeBewegung(c, { lat, lon, altitude, v, trk, vrate = 0, rotation, state }) {
-  const u = bewegungsUpdate(planFuer(c), { lat, lon, altitude, v, trk, vrate },
-    state || c.baseState || {})
-  if (!u) return false
-  await ajna.updateObject(c.id, { lat: u.lat, lon: u.lon, altitude: u.altitude, rotation, state: u.state })
+  // `state` NUR mitschreiben, wenn eine Grundlage da ist. Ein leeres Objekt
+  // als Rückfall ersetzt den kompletten Zustand des Objekts — genau so gingen
+  // die Aktionen der Drachen verloren. Ohne Grundlage lieber nur die Position
+  // schreiben und den Plan diesmal auslassen; der nächste Durchgang mit
+  // Grundlage holt ihn nach.
+  const grund = state || c.baseState || null
+  const u = bewegungsUpdate(planFuer(c), { lat, lon, altitude, v, trk, vrate }, grund || {})
+  // Ein Animationswechsel muss RAUS, auch wenn der Bewegungsplan schweigt.
+  if (!u && !c.animOffen) return false
+
+  const patch = u
+    ? { lat: u.lat, lon: u.lon, altitude: u.altitude, rotation }
+    : { lat, lon, altitude, rotation }
+  if (u && grund) patch.state = u.state
+
+  // ANIMATION IN DENSELBEN SCHREIBVORGANG. Sie als eigene Anfrage zu schicken
+  // war ein Fehler mit Folgen: Beides geht auf denselben Datensatz, und das
+  // PocketBase-SDK bricht bei zwei gleichzeitigen Anfragen an dieselbe Adresse
+  // eine davon ab („autocancelled"). Getroffen hat es oft die POSITION — die
+  // Figuren blieben stehen. Ein Request trägt ohnehin beides.
+  if (c.animOffen) { patch.animation_state = c.anim; c.animOffen = false }
+
+  await ajna.updateObject(c.id, patch)
   return true
 }
 
@@ -172,6 +227,14 @@ const ROAM_AREA_M   = parseFloat(process.env.WD_ROAM_AREA_M   || '80')   // Radi
 // die exakte Position bleibt on-device). Also kein „dreht sich zum Spieler",
 // sondern Stehenbleiben + idle für ein paar Sekunden.
 const ATTEND_MS = parseFloat(process.env.WD_ATTEND_S || '6') * 1000
+// Wer angegriffen wird, laeuft nicht weiter seine Runde. Deutlich laenger als
+// ATTEND_MS: Ein Kampf ist kein kurzes Innehalten, und eine Figur, die dem
+// Angreifer nach zwei Sekunden davonspaziert, wirkt kaputt.
+const KAMPF_HALT_MS = parseFloat(process.env.WD_KAMPF_HALT_S || '30') * 1000
+// „Getroffen" ist eine GESTE, kein Zustand. Bliebe sie stehen, liefe der
+// Getroffene beim Betrachter seine Geh-Animation auf der Stelle weiter — der
+// Client kehrt nach der Geste nicht von selbst zu „steht" zurück.
+const ZUCK_MS = 1200
 
 // ─── „Rufen" (Drache kommt zum Spieler) ──────────────────────────────────
 // Ablauf: anfliegen → tief kreisen → landen → warten → abheben → Routine.
@@ -184,6 +247,11 @@ const CALL_CIRCLE_S     = parseFloat(process.env.WD_CALL_CIRCLE_S   || '12')   /
 const CALL_STAY_S       = parseFloat(process.env.WD_CALL_STAY_S     || '120')  // s am Boden bleiben (2 min)
 const CALL_LAND_MIN_M   = parseFloat(process.env.WD_CALL_LAND_MIN_M || '8')    // nicht näher an den Spieler
 const CALL_LAND_MAX_M   = parseFloat(process.env.WD_CALL_LAND_MAX_M || '20')
+// Radius der Gebäude-Abfrage für die Landung. Deutlich größer als der
+// Landeplatz-Ring — er ist so gewählt, dass er den Schlüssel mit der
+// Kulissen-Abfrage teilt und damit deren Zwischenspeicher mitbenutzt.
+const CALL_BUILDING_CACHE_R = parseFloat(process.env.WD_CALL_BUILDING_CACHE_R || '200')
+const CALL_SPOT_TIMEOUT_MS = parseFloat(process.env.WD_CALL_SPOT_TIMEOUT_S || '6') * 1000
 const CALL_APPROACH_SPEED = parseFloat(process.env.WD_CALL_SPEED    || '14')   // m/s Anflug (zügiger als Streifen)
 const CALL_DESCENT_SPEED  = parseFloat(process.env.WD_CALL_DESCENT  || '4')    // m/s Sinken/Steigen
 const CALL_MAX_RANGE_M  = parseFloat(process.env.WD_CALL_RANGE_M    || '1500') // weiter weg → Ruf ignorieren
@@ -193,11 +261,16 @@ const ROAM_MOVE_MIN = parseFloat(process.env.WD_ROAM_MOVE_MIN || '8')
 const ROAM_MOVE_MAX = parseFloat(process.env.WD_ROAM_MOVE_MAX || '22')
 const ROAM_REST_MIN = parseFloat(process.env.WD_ROAM_REST_MIN || '4')
 const ROAM_REST_MAX = parseFloat(process.env.WD_ROAM_REST_MAX || '14')
-// Flieger-Ausrichtung: Wegen invertNorthSouth (Nord=-Z) zeigt der Körper mit der
-// bisherigen Yaw-Formel bei Kurven falsch herum (rückwärts). Flieger nutzen daher
-// die gespiegelte Yaw (π/2 − heading). WD_FLY_YAW_OFFSET = π addieren, falls ein
-// Modell dann rückwärts zeigt. WD_FLY_BANK_MAX = Roll-Amplitude in Kurven (rad;
-// Vorzeichen umkehren, falls es in die falsche Richtung kippt).
+// Flieger nutzen DIESELBE Ausrichtung wie alles andere (HEADING_TO_YAW, siehe
+// client/core/yaw.js). Hier stand einmal, Flieger bräuchten eine gespiegelte
+// Formel — der Code tat das schon länger nicht mehr, der Kommentar blieb stehen.
+//
+// WD_FLY_YAW_OFFSET ist ein Notnagel für ein Modell, das verkehrt herum
+// modelliert ist. Der richtige Ort dafür ist MODEL_YAW_RAD im Client: Der Agent
+// kennt die GLB-Datei gar nicht, kann die Eigenheit also nicht kennen. Der
+// Regler bleibt, bis kein Modell ihn mehr braucht.
+// WD_FLY_BANK_MAX = Roll-Amplitude in Kurven (rad; Vorzeichen umkehren, falls
+// es in die falsche Richtung kippt).
 const FLY_YAW_OFFSET = parseFloat(process.env.WD_FLY_YAW_OFFSET || '0')
 const FLY_BANK_MAX   = parseFloat(process.env.WD_FLY_BANK_MAX   || '0.5')  // ~30° max. Schräglage
 
@@ -320,19 +393,36 @@ const DESCRIPTION_GEN = {
 // `actions` = {key,label}: key landet in der ACE (Autorisierung) UND in
 // state.actions (Menü-Beschriftung im Client). Ein "talk" auf einem NPC
 // löst die Dialog-Antwort aus (Client zeigt state.dialog).
+// Reichweite des Angriffs (m). Unter 500 m verlangt das die Standort-Freigabe
+// „Nähe" oder „Genau" — siehe client/core/aktionsReichweite.js. Der Tausch ist
+// bewusst: Wer kämpfen will, lässt für den Kampf die Deckung fallen.
+const KAMPF_REICHWEITE_M = parseFloat(process.env.WD_ATTACK_RANGE_M || '30')
+
 const ARCHETYPES = {
   npc:    { count: 2, actions: [{ key: 'talk', label: 'Sprechen' }, { key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: false },
-  enemy:  { count: 1, actions: [{ key: 'attack', label: 'Angreifen' }, { key: 'talk', label: 'Sprechen' }, { key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: false },
+  enemy:  { count: 1, actions: [{ key: 'attack', label: 'Angreifen', max_distance: KAMPF_REICHWEITE_M }, { key: 'talk', label: 'Sprechen' }, { key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: false },
   animal: { count: 2, actions: [{ key: 'feed', label: 'Füttern' }, { key: 'talk', label: 'Ansprechen' }, { key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: false },
   dragon: { count: 1, actions: [{ key: 'call', label: 'Rufen' }, { key: 'talk', label: 'Sprechen' }, { key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: true  },
-  item:   { count: 2, actions: [],                                         initialAnim: 'idle', flying: false },
+  item:   { count: 2, actions: [{ key: 'examine', label: 'Untersuchen' }], initialAnim: 'idle', flying: false },
   hint:   { count: 1, actions: [{ key: 'examine', label: 'Lesen' }],       initialAnim: 'idle', flying: false },
   // Diamanten: bewusst SELTEN (kleiner count), einsammelbar + stapelbar. Später
   // Zahlungsmittel / Loot / NPC-Belohnung. Kein explizites collect in actions —
   // portable=true blendet „🎒 Einsammeln" ohnehin ein.
-  diamond: { count: 3, actions: [],                                        initialAnim: null,  flying: false }
+  diamond: { count: 3, actions: [{ key: 'examine', label: 'Untersuchen' }], initialAnim: null,  flying: false }
 }
 const actionKeys = a => ARCHETYPES[a].actions.map(x => x.key)
+// Zustand OHNE die Felder eines einzelnen Laufs. `walk_path` und `motion`
+// beschreiben, wo die Figur gerade hinwill — nicht, wer sie ist. Wandern sie in
+// den baseState, schreibt sie jeder spätere Patch wieder mit, und ein
+// Gefallener zeigt noch seine Route.
+const ohneLauf = (state) => {
+  const { walk_path, motion, ...rest } = state || {}
+  return rest
+}
+// Archetypen, die ein Spieler aufheben kann. `portable` allein blendet
+// „🎒 Einsammeln" ein UND ist die Bedingung der Pickup-Route — ohne das Flag
+// bleibt ein Fundstück für immer liegen.
+const TRAGBAR = new Set(['item', 'diamond'])
 
 // ── 3D-Modelle pro Archetyp ──────────────────────────────────────────────
 // Dateien liegen unter client/models/ und werden von Caddy als /models/<x>.glb
@@ -407,7 +497,8 @@ function buildSpawn(archetype, center = { lat: CENTER_LAT, lon: CENTER_LON }, op
   if (opts.onDemand) state.on_demand = true   // vom Spieler angefordert, nicht Teil der Soll-Population
   if (archetype === 'npc')  state.dialogs = sample(DIALOG_LINES, 4)   // Reihe zufälliger Antworten
   if (archetype === 'hint') state.hint   = pick(HINT_LINES)
-  if (archetype === 'diamond') { state.stackable = true; state.portable = true }   // einsammel-/stapelbar
+  if (TRAGBAR.has(archetype)) state.portable = true            // einsammelbar
+  if (archetype === 'diamond') state.stackable = true           // und stapelbar
 
   const spawn = {
     name,
@@ -425,7 +516,7 @@ function buildSpawn(archetype, center = { lat: CENTER_LAT, lon: CENTER_LON }, op
     // Darstellungs-Felder aus dem Modell-Profil (yaw/animSpeed/anim) wandern
     // MIT in die appearance — der Client interpretiert nur diese Daten
     // (kein Director-Wissen im Viewer, siehe world-director.profiles.mjs).
-    spawn.appearance = { gltf: MODEL_BASE + model, ...profileAppearance(model) }
+    spawn.appearance = { gltf: MODEL_BASE + model, ...profileAppearance(model, state.spawn_id) }
     if (sizeScale !== 1) spawn.appearance.scale = sizeScale
     if (archetype === 'diamond') {
       spawn.appearance.color = '#8fe3ff'   // Diamant-Cyan (untexturiert → gefärbt)
@@ -500,9 +591,12 @@ async function ensureAce(objId, interact) {
 async function ensureActions(obj) {
   const arch = ARCHETYPES[obj.state?.archetype]
   if (!arch) return
-  if (JSON.stringify(obj.state?.actions ?? null) === JSON.stringify(arch.actions)) return
+  const tragbar = TRAGBAR.has(obj.state.archetype)
+  const actionsGleich = JSON.stringify(obj.state?.actions ?? null) === JSON.stringify(arch.actions)
+  if (actionsGleich && (!tragbar || obj.state?.portable === true)) return
   try {
     const next = { ...obj.state, actions: arch.actions }
+    if (tragbar) next.portable = true
     const updated = await ajna.updateObject(obj.id, { state: next })
     obj.state = updated?.state || next
   } catch (err) {
@@ -570,7 +664,7 @@ try {
       const model = modelOf(obj)
       if (model) {
         const cur = (obj.appearance && typeof obj.appearance === 'object') ? obj.appearance : {}
-        const merged = { ...cur, ...profileAppearance(model) }
+        const merged = { ...cur, ...profileAppearance(model, obj.state?.spawn_id || obj.id) }
         if (JSON.stringify(merged) !== JSON.stringify(cur)) patch.appearance = merged
       }
       if (Object.keys(patch).length) {
@@ -656,6 +750,9 @@ const speedFor = (obj) => {
 // auch, wenn Figuren über mehrere Areale verteilt sind (kein Teleport an ein
 // fixes Zentrum). Zusätzlich zum Server-Cache in server/geo.js (1 h).
 const GRAPH_CELL_M = 300
+// Frist der Wegenetz-Abfrage (ms) und Abstand wiederholter Warnungen.
+const GRAPH_TIMEOUT_MS = parseFloat(process.env.WD_GRAPH_TIMEOUT_S || '10') * 1000
+const GEO_WARN_INTERVALL_MS = 5 * 60_000
 const graphCache = new Map()          // cellKey → { graph, at }
 const graphInflight = new Map()       // cellKey → Promise (dedupe parallele Fetches)
 function graphCellKey(lat, lon) {
@@ -669,7 +766,20 @@ async function getGraphNear(lat, lon) {
   if (graphInflight.has(key)) return graphInflight.get(key)
   const p = (async () => {
     try {
-      const res = await geo.waysNear(lat, lon, GRAPH_RADIUS_M, 'walkable')
+      // MIT FRIST. Gemessen: Fällt Overpass aus, antwortet die Geo-API erst
+      // nach über 70 Sekunden mit 502 — und solange steckt der Tick DIESER
+      // Figur fest. Bei einem Dutzend NPCs blockiert das den halben Director.
+      // Auf die Raster-Zelle des Servers runden (3 Nachkommastellen ≈ 110 m).
+      // Sonst bekommt jede Figur ihren eigenen Cache-Eintrag, und der
+      // gemeinsame Vorrat wird nie genutzt.
+      const rLat = Math.round(lat * 1000) / 1000
+      const rLon = Math.round(lon * 1000) / 1000
+      const res = await mitFrist(
+        geo.waysNear(rLat, rLon, GRAPH_RADIUS_M, 'walkable'),
+        GRAPH_TIMEOUT_MS, 'Wegegraph')
+      if (res?.source && res.source !== 'overpass') {
+        console.log(`[director] Wegegraph aus dem Zwischenspeicher (${res.source})`)
+      }
       const graph = buildWayGraph(res.features || [])
       if (graph.nodes.size >= 2) {
         graphCache.set(key, { graph, at: Date.now() })
@@ -687,7 +797,7 @@ function makeController(obj) {
   return {
     id: obj.id,
     archetype: obj.state.archetype,
-    baseState: { ...obj.state },          // Identitätsfelder (ohne walk_path)
+    baseState: ohneLauf(obj.state),       // Identitätsfelder (ohne Weg/Bewegung)
     lat: obj.lat, lon: obj.lon,
     speed: speedFor(obj),
     fsm: 'idle',                          // 'idle' | 'planning' | 'walking'
@@ -725,6 +835,11 @@ function makeRoamer(obj, flying) {
   return {
     id: obj.id,
     archetype: obj.state?.archetype,
+    // OHNE DAS ging beim Schreiben der ganze `state` verloren: Aktionen
+    // („Rufen" beim Drachen), Quelle, Archetyp, Dialoge. Der Straßen-Controller
+    // führte ihn längst mit, der Roamer nicht — was nicht auffiel, solange
+    // dieser Weg nur lat/lon/rotation schrieb.
+    baseState: ohneLauf(obj.state),
     kind: 'roam',
     flying,
     lat: obj.lat, lon: obj.lon,
@@ -751,22 +866,90 @@ function makeRoamer(obj, flying) {
   }
 }
 
-let geoWarned = false
+let geoWarned = 0   // Zeitpunkt der letzten Warnung
+/**
+ * Auf fehlendes Routing hinweisen — einmal ausführlich, danach in Abständen.
+ *
+ * „Nur einmal warnen" klang sparsam, verbarg aber einen DAUERZUSTAND: Als
+ * Overpass stundenlang ausfiel, stand im Protokoll nichts, während 25 Figuren
+ * reglos herumstanden. Ein Fehler, der sich wiederholt, muss sich auch
+ * wiederholt melden — sonst sucht man ihn an der falschen Stelle.
+ */
 function geoWarnOnce(err) {
-  if (geoWarned) return
-  geoWarned = true
-  console.warn(`[director] Geo/Routing nicht verfügbar — Figuren warten, Retry läuft${err ? ` (${err.message || err})` : ''}.`)
-  console.warn(`[director] Tipp: Geo-API (npm run start) + Caddy nötig; AJNA_URL muss die Caddy-URL sein.`)
+  const jetzt = Date.now()
+  if (geoWarned && (jetzt - geoWarned) < GEO_WARN_INTERVALL_MS) return
+  const ersteMal = !geoWarned
+  geoWarned = jetzt
+  console.warn(`[director] Geo/Routing nicht verfügbar${err ? ` (${err.message || err})` : ''}`
+    + ` — Figuren streifen frei statt Straßen zu folgen.`)
+  if (ersteMal) {
+    console.warn(`[director] Tipp: Geo-API (npm run start) + Caddy nötig; AJNA_URL muss die Caddy-URL sein.`)
+  }
+}
+
+/** Versprechen mit Frist — nach `ms` wird abgebrochen statt zu warten. */
+function mitFrist(versprechen, ms, was) {
+  let t
+  return Promise.race([
+    versprechen.finally(() => clearTimeout(t)),
+    new Promise((_, ab) => { t = setTimeout(() => ab(new Error(`${was}: Frist ${ms} ms überschritten`)), ms) }),
+  ])
+}
+
+/**
+ * Ersatzweg ohne Wegenetz: ein paar Stützpunkte über eine kurze Strecke.
+ *
+ * Bewusst mehrere Punkte statt einer einzigen Geraden — so bekommt die Figur
+ * einen leichten Knick im Weg und wirkt nicht wie auf Schienen. Die Länge
+ * bleibt bescheiden: Wer blind läuft, soll nicht quer durch die Stadt marschieren.
+ */
+function ersatzWeg(c) {
+  const richtung = Math.random() * Math.PI * 2
+  const gesamt = 25 + Math.random() * 45
+  const punkte = [[c.lat, c.lon]]
+  let lat = c.lat, lon = c.lon, kurs = richtung
+  for (let i = 0; i < 3; i++) {
+    kurs += (Math.random() - 0.5) * 0.8      // leichter Schlenker je Abschnitt
+    const p = destPoint(lat, lon, kurs, gesamt / 3)
+    lat = p.lat; lon = p.lon
+    punkte.push([lat, lon])
+  }
+  return punkte
 }
 
 async function planFor(c) {
   c.busy = true; c.fsm = 'planning'
   try {
-    const graph = await getGraphNear(c.lat, c.lon)
-    if (!graph) { geoWarnOnce(); c.fsm = 'idle'; c.nextPlanAt = Date.now() + PLAN_RETRY_MS; return }
-    const startKey = nearestNodeKey(graph, c.lat, c.lon)
-    const targetKey = startKey && randomReachableTarget(graph, startKey, { minDistM: 40, maxDistM: WAY_RADIUS_M })
-    const path = targetKey ? shortestPath(graph, startKey, targetKey) : null
+    // Der Wegegraph darf nicht darüber entscheiden, OB sich die Figur bewegt —
+    // nur WORAUF. Ein Fehler (Zeitüberschreitung, 502) wurde bisher vom
+    // äußeren catch gefangen, und dort gab es keinen Rückfall: Die Figur ging
+    // auf idle und versuchte es 15 s später erneut. Bei einem dauerhaften
+    // Ausfall hieß das „steht für immer" — und genau so sah es aus.
+    let graph = null
+    try { graph = await getGraphNear(c.lat, c.lon) }
+    catch (err) { geoWarnOnce(err) }
+
+    let path = null
+    if (graph) {
+      const startKey = nearestNodeKey(graph, c.lat, c.lon)
+      const targetKey = startKey && randomReachableTarget(graph, startKey, { minDistM: 40, maxDistM: WAY_RADIUS_M })
+      path = targetKey ? shortestPath(graph, startKey, targetKey) : null
+    }
+
+    // OHNE WEGENETZ WIRD GESTREIFT, NICHT GEWARTET.
+    //
+    // Das Wegenetz kommt von Overpass — einem fremden Dienst, der heute
+    // stundenlang ausgefallen ist. Bisher hieß das: 25 Figuren stehen reglos
+    // herum, ohne Meldung, bis er zurückkommt. Eine Welt, deren Leben an der
+    // Verfügbarkeit eines Dritten hängt, ist zu spröde.
+    //
+    // Der Ersatzweg ist eine gerade Strecke zu einem Punkt in der Nähe. Sie
+    // kann durch ein Haus führen — dafür bewegt sich die Figur überhaupt.
+    // Sobald das Wegenetz wieder da ist, plant der nächste Durchgang normal.
+    if (!path || path.length < 2) {
+      geoWarnOnce()
+      path = ersatzWeg(c)
+    }
     if (!path || path.length < 2) { c.fsm = 'idle'; c.nextPlanAt = Date.now() + PLAN_RETRY_MS; return }
 
     let lengthM = 0
@@ -775,7 +958,7 @@ async function planFor(c) {
     c.cursor = { segIdx: 0, segT: 0 }
     c.lastTickAt = Date.now()
     c.fsm = 'walking'
-    await ajna.setAnimation(c.id, 'walk')
+    setzeAnim(c, 'walk')
     // walk_path für die grüne AR-Debug-Linie (wie client/agent.js).
     await ajna.updateObject(c.id, { state: { ...c.baseState, walk_path: path } })
     console.log(`[director] ▶ ${c.archetype} "${c.id}" läuft ${lengthM.toFixed(0)} m (${path.length} Pkt.)`)
@@ -795,10 +978,11 @@ async function advanceFor(c) {
     // fortgesetzt (kein Neuplanen, die Figur läuft einfach weiter).
     if (now < (c.attendUntil || 0)) {
       if (now < (c.gestureUntil || 0)) return   // Geste aus einem Gespraech laeuft
-      if (c.anim !== 'idle') { c.anim = 'idle'; await ajna.setAnimation(c.id, 'idle') }
+      setzeAnim(c, 'idle')
+      await schreibeAnimFalls(c)
       return
     }
-    if (c.anim === 'idle' && c.fsm === 'walking') { c.anim = 'walk'; await ajna.setAnimation(c.id, 'walk') }
+    if (c.anim === 'idle' && c.fsm === 'walking') setzeAnim(c, 'walk')
 
     const step = stepAlongPath(c.path, c.cursor, c.speed * dt)
     c.lat = step.lat; c.lon = step.lon
@@ -815,14 +999,17 @@ async function advanceFor(c) {
     if (step.done) {
       const pauseMs = PAUSE_MS + randInt(0, 15) * 1000   // 10–25 s, gestreut (nicht im Gleichschritt)
       c.fsm = 'idle'; c.path = null; c.nextPlanAt = now + pauseMs
-      await ajna.setAnimation(c.id, 'idle')
+      setzeAnim(c, 'idle')
       // Stillstand MUSS raus: Ohne diesen Plan liefe die Figur beim Betrachter
       // endlos geradeaus weiter — die Vorausrechnung kennt kein Ziel.
       const halt = planFuer(c).haltAn({ lat: c.lat, lon: c.lon, altitude: c.altBase ?? 0, trk: 0 })
-      await ajna.updateObject(c.id, { state: { ...c.baseState, motion: halt } })   // walk_path entfernen
+      const schluss = { state: { ...c.baseState, motion: halt } }   // walk_path entfernen
+      if (c.animOffen) { schluss.animation_state = c.anim; c.animOffen = false }
+      await ajna.updateObject(c.id, schluss)
       console.log(`[director] ⏸ ${c.archetype} "${c.id}" angekommen — Pause ${(pauseMs / 1000) | 0} s`)
     }
   } catch (err) {
+    if (istWeg(err)) { c.tot = true; return }   // Objekt gelöscht — nicht weiter ansteuern
     console.warn(`[director] tick "${c.id}" fehlgeschlagen: ${err?.message || err}`)
     c.fsm = 'idle'; c.nextPlanAt = Date.now() + PLAN_RETRY_MS
   } finally { c.busy = false }
@@ -833,11 +1020,42 @@ async function advanceFor(c) {
 // Landeplatz suchen: Gebäude in der Nähe holen (für „nicht im Haus landen" und
 // die Dach-Kür). Fällt die Geo-Abfrage aus, landet er eben ohne Gebäudewissen —
 // besser ein Landeplatz auf freiem Feld als gar keine Landung.
+/**
+ * Landeplatz ohne Gebäudewissen: ein Punkt im Ring um den Spieler.
+ *
+ * Bewusst dieselben Abstände wie die richtige Suche — er soll nicht IM Spieler
+ * landen und nicht am Horizont. Dass dabei ein Haus getroffen werden kann, ist
+ * der Preis dafür, überhaupt zu landen.
+ */
+function notLandeplatz(s) {
+  const winkel = Math.random() * Math.PI * 2
+  const r = CALL_LAND_MIN_M + Math.random() * Math.max(1, CALL_LAND_MAX_M - CALL_LAND_MIN_M)
+  const p = destPoint(s.lat, s.lon, winkel, r)
+  return { lat: p.lat, lon: p.lon, altitude: 0, kind: 'ground', distance: r }
+}
+
 async function pickLandingSpot(c, s) {
   let buildings = []
   try {
-    const res = await geo.buildingsNear(s.lat, s.lon, CALL_BUILDING_R, 'all')
+    // AUF DEN CACHE ZIELEN, nicht daran vorbei.
+    //
+    // Der Server bündelt Geo-Antworten auf ein ~110-m-Raster, und Radius sowie
+    // Filter gehören mit zum Schlüssel (server/geo.js). Mit der EXAKTEN
+    // Spielerposition und einem eigenen kleinen Radius traf die Abfrage deshalb
+    // praktisch nie einen vorhandenen Eintrag — jeder Ruf ging live an Overpass,
+    // und wenn das gerade nicht antwortete, kreiste der Drache minutenlang.
+    //
+    // Auf dieselbe Auflösung gerundet und mit dem Radius, den die Kulisse
+    // ohnehin abfragt, reitet die Landung auf Daten, die meist schon da sind.
+    // Der Umkreis ist großzügiger als nötig — ein Landeplatz liegt 8–20 m vom
+    // Spieler, die Gebäude drumherum stecken alle darin.
+    const rLat = Math.round(s.lat * 1000) / 1000
+    const rLon = Math.round(s.lon * 1000) / 1000
+    const res = await geo.buildingsNear(rLat, rLon, CALL_BUILDING_CACHE_R, 'all')
     buildings = Array.isArray(res?.features) ? res.features : []
+    if (res?.source && res.source !== 'overpass') {
+      console.log(`[director] 🐉 Landeplatz-Gebäude aus dem Zwischenspeicher (${res.source})`)
+    }
   } catch (err) {
     console.warn(`[director] Gebäude-Abfrage für Landung fehlgeschlagen: ${err?.message || err}`)
   }
@@ -892,8 +1110,18 @@ async function advanceSummon(c, dt, now) {
         // los in der Luft (die await-Pause blockiert den ganzen Tick).
         // undefined = Suche läuft noch; wird zu Spot-Objekt oder null.
         s.spot = undefined
-        pickLandingSpot(c, s).then(spot => { s.spot = spot || null })
-                             .catch(() => { s.spot = null })
+        // MIT FRIST. Die Gebäudeabfrage geht über Overpass, und das ist ein
+        // fremder Dienst, der regelmäßig minutenlang nicht antwortet. Ohne
+        // Frist kreiste der Drache genau so lange — beobachtet: rund eine
+        // Minute. Ein Landeplatz auf freiem Feld ist allemal besser als ein
+        // Drache, der am Himmel Runden dreht, bis jemand die Geduld verliert.
+        pickLandingSpot(c, s).then(spot => { if (s.spot === undefined) s.spot = spot || null })
+                             .catch(() => { if (s.spot === undefined) s.spot = null })
+        setTimeout(() => {
+          if (s.spot !== undefined) return
+          s.spot = notLandeplatz(s)
+          console.warn(`[director] 🐉 "${c.id}" Landeplatz-Suche zu langsam → Notlandeplatz`)
+        }, CALL_SPOT_TIMEOUT_MS)
         console.log(`[director] 🐉 "${c.id}" kreist über dem Spieler`)
       }
       break
@@ -948,7 +1176,7 @@ async function advanceSummon(c, dt, now) {
         await ajna.updateObject(c.id, {
           lat: c.lat, lon: c.lon, altitude: c.altBase,
           animation_state: 'idle',
-          rotation: { x: 0, y: wrapPi(Math.PI - c.heading + FLY_YAW_OFFSET), z: 0 },
+          rotation: { x: 0, y: wrapPi(HEADING_TO_YAW(c.heading) + FLY_YAW_OFFSET), z: 0 },
           state: { ...c.baseState, motion: gelandet }
         })
         s.phase = 'landed'
@@ -963,7 +1191,8 @@ async function advanceSummon(c, dt, now) {
       // Position zu senden wäre Last, und ein Rotations-Update ließe ihn dem
       // umherlaufenden Spieler nachdrehen. Idle + Ausrichtung stehen aus dem
       // Aufsetz-Tick. Nur nachziehen, falls ein fremdes Update dazwischenkam.
-      if (c.anim !== 'idle') { c.anim = 'idle'; await ajna.setAnimation(c.id, 'idle') }
+      setzeAnim(c, 'idle')
+      await schreibeAnimFalls(c)
       if (now >= s.until) {
         s.phase = 'takeoff'
         console.log(`[director] 🐉 "${c.id}" hebt wieder ab`)
@@ -991,11 +1220,11 @@ async function advanceSummon(c, dt, now) {
     }
   }
 
-  if (anim !== c.anim) { c.anim = anim; await ajna.setAnimation(c.id, anim) }
+  setzeAnim(c, anim)
   await schreibeBewegung(c, {
     lat: c.lat, lon: c.lon, altitude: c.altBase,
     v: c.speed, trk: KURS_GRAD(c.heading),
-    rotation: { x: 0, y: wrapPi(Math.PI - c.heading + FLY_YAW_OFFSET), z: clamp(turnRatio, -1, 1) * FLY_BANK_MAX }
+    rotation: { x: 0, y: wrapPi(HEADING_TO_YAW(c.heading) + FLY_YAW_OFFSET), z: clamp(turnRatio, -1, 1) * FLY_BANK_MAX }
   })
 }
 
@@ -1013,7 +1242,7 @@ async function advanceRoamer(c) {
     // Nur Bodenfiguren: ein Flieger würde sonst mitten in der Luft einfrieren
     // (und hat gar keine Idle-Animation).
     if (!c.flying && now < (c.attendUntil || 0)) {
-      if (now >= (c.gestureUntil || 0) && c.anim !== 'idle') { c.anim = 'idle'; await ajna.setAnimation(c.id, 'idle') }
+      if (now >= (c.gestureUntil || 0)) setzeAnim(c, 'idle')
       c.phaseUntil = c.attendUntil          // danach frisch entscheiden
       return
     }
@@ -1024,7 +1253,7 @@ async function advanceRoamer(c) {
       const [lo, hi] = c.paused ? [ROAM_REST_MIN, ROAM_REST_MAX] : [ROAM_MOVE_MIN, ROAM_MOVE_MAX]
       c.phaseUntil = now + randInt(lo, hi) * 1000
       const wantAnim = c.paused ? 'idle' : 'walk'
-      if (wantAnim !== c.anim) { c.anim = wantAnim; await ajna.setAnimation(c.id, wantAnim) }
+      setzeAnim(c, wantAnim)
       if (c.paused) console.log(`[director] ⏸ ${c.archetype} "${c.id}" rastet`)
     }
     if (c.paused) return   // steht still (idle) — keine Positions-/Rotations-Updates (spart Last)
@@ -1059,14 +1288,14 @@ async function advanceRoamer(c) {
       // (Nord=-Z) ist das π − heading (fixt die Kurven-Handedness; die alte Formel
       // h−π/2 lief mit falscher Drehrichtung). Banking: proportional zur Drehrate
       // in die Kurve rollen.
-      yaw = wrapPi(Math.PI - c.heading + FLY_YAW_OFFSET)
+      yaw = wrapPi(HEADING_TO_YAW(c.heading) + FLY_YAW_OFFSET)
       roll = clamp(turn / maxTurn, -1, 1) * FLY_BANK_MAX
     } else {
       altitude = c.altBase                // Boden-Tier bleibt auf seiner Höhe
       wantAnim = 'walk'
       yaw = HEADING_TO_YAW(c.heading)     // Boden/NPC-Konvention unverändert
     }
-    if (wantAnim !== c.anim) { c.anim = wantAnim; await ajna.setAnimation(c.id, wantAnim) }
+    setzeAnim(c, wantAnim)
 
     // Flieger drehen laufend — der Knick-Auslöser greift hier also öfter als
     // bei einer Figur auf der Straße. Das ist richtig so: Eine kreisende Möwe
@@ -1079,14 +1308,28 @@ async function advanceRoamer(c) {
       rotation: { x: 0, y: yaw, z: roll },
     })
   } catch (err) {
+    // 404 heißt: das Objekt gibt es nicht mehr (gelöscht, aufgeräumt, Bereinigung
+    // während der Entwicklung). Ohne diese Unterscheidung steuerte der Director
+    // die Leiche bei jedem Tick weiter an und schrieb bei jedem Start ein
+    // Dutzend Fehlerzeilen ins Protokoll — Rauschen, das echte Fehler verdeckt.
+    if (istWeg(err)) { c.tot = true; return }
     console.warn(`[director] Roam "${c.id}" fehlgeschlagen: ${err?.message || err}`)
   } finally { c.busy = false }
 }
 
 function tick() {
   const now = Date.now()
+  // Als weg erkannte Figuren aussortieren, bevor irgendetwas sie ansteuert.
+  // Der nächste reconcile() legt sie ohnehin nicht neu an — sie existieren
+  // serverseitig nicht mehr.
+  if (controllers.some(c => c.tot)) {
+    const weg = controllers.filter(c => c.tot)
+    for (const c of weg) { try { c.unsubInteract?.() } catch {} }
+    controllers = controllers.filter(c => !c.tot)
+    console.log(`[director] ${weg.length} gelöschte Figur(en) aus der Führung genommen`)
+  }
   for (const c of controllers) {
-    if (c.busy) continue
+    if (c.busy || c.tot || c.gefallen) continue
     if (c.kind === 'roam') { advanceRoamer(c); continue }
     if (c.fsm === 'walking') advanceFor(c)
     else if (c.fsm === 'idle' && now >= c.nextPlanAt) planFor(c)
@@ -1102,6 +1345,18 @@ function controllerFor(obj) {
   if (STREET_ARCHETYPES.has(obj.state?.archetype)) return makeController(obj)
   return null
 }
+/**
+ * War das ein „gibt es nicht mehr"?
+ *
+ * PocketBase meldet es als 404 mit wechselndem Wortlaut; geprüft wird deshalb
+ * beides. Ein Netzfehler darf NICHT darunterfallen — sonst würfe der Director
+ * bei einem kurzen Aussetzer seine halbe Besetzung weg.
+ */
+function istWeg(err) {
+  if (err?.status === 404) return true
+  return /404|requested resource wasn't found|not found/i.test(String(err?.message || ''))
+}
+
 function controllerMode(c) {
   return c.kind === 'roam' ? (c.flying ? 'flug' : 'streift') : 'straße'
 }
@@ -1112,6 +1367,142 @@ let controllers = []
 // Auf Interaktionen mit DIESER Figur hören. Der interact-Hook broadcastet
 // ephemer ({action, source, ts}) — der Kanal lag bisher brach. Fire-and-forget:
 // scheitert das Abo, läuft die Figur einfach ohne Reaktion weiter.
+const kampf = new Kampf({ log: (m) => console.log(`[director] ${m}`) })
+
+/**
+ * Angriff auswerten und die Folgen schreiben.
+ *
+ * Die Rechnung macht `agents/lib/kampf.mjs`, das Schreiben passiert hier — so
+ * lässt sich die Regel prüfen, ohne einen Server zu starten, und ein anderer
+ * Agent kann dieselbe Regel anders umsetzen.
+ */
+/**
+ * Stehenbleiben — und den Betrachtern den Stillstand auch mitteilen.
+ *
+ * Ohne Halt-Plan liefe die Figur beim Betrachter geradeaus weiter: Die
+ * Vorausrechnung im Client kennt kein Ziel, nur Kurs und Tempo. Genau das
+ * ließ einen getroffenen Gegner davonspazieren, während seine Beute an der
+ * zuletzt geschriebenen Position landete.
+ *
+ * @param {object}  c
+ * @param {number}  o.bis       bis wann die Figur nichts Eigenes plant (Zeitstempel)
+ * @param {object?} o.blickAuf  {lat, lon} — dorthin drehen (der Angreifer)
+ * @param {object?} o.zusatz    Felder, die dauerhaft in den state gehören (z. B. hp)
+ * @param {string?} o.anim      Animationszustand, der mitgeschrieben wird
+ */
+async function halteAn(c, { bis = 0, blickAuf = null, zusatz = null, anim = 'idle', wegBehalten = false } = {}) {
+  // Nicht gleichzeitig mit dem Bewegungs-Tick auf denselben Datensatz
+  // schreiben: PocketBase bricht dann eine der beiden Anfragen ab
+  // („autocancelled") — und ausgerechnet der Halt darf nicht die verlorene
+  // sein, sonst läuft die Figur beim Betrachter einfach weiter.
+  for (let i = 0; c.busy && i < 30; i++) await new Promise(r => setTimeout(r, 50))
+  c.busy = true
+  if (!wegBehalten) {
+    c.path = null
+    c.fsm = 'idle'
+    c.paused = true
+    c.summon = null                        // ein laufender Ruf ist damit erledigt
+  }
+  c.attendUntil = Math.max(c.attendUntil || 0, bis)
+  c.phaseUntil = Math.max(c.phaseUntil || 0, bis)
+  c.nextPlanAt = Math.max(c.nextPlanAt || 0, bis)
+  // hp & Co. gehören in baseState: Jeder folgende Bewegungs-Schreibvorgang baut
+  // den state daraus neu auf und würde sie sonst wieder wegwerfen.
+  if (zusatz) c.baseState = { ...c.baseState, ...zusatz }
+
+  const stelle = { lat: c.lat, lon: c.lon, altitude: c.altBase ?? 0 }
+  const patch = { ...stelle }
+  let trk = 0
+  const zLat = Number(blickAuf?.lat), zLon = Number(blickAuf?.lon)
+  if (Number.isFinite(zLat) && Number.isFinite(zLon)) {
+    const b = bearingRad(c.lat, c.lon, zLat, zLon)
+    c.heading = b
+    trk = KURS_GRAD(b)
+    patch.rotation = { x: 0, y: HEADING_TO_YAW(b), z: 0 }
+  }
+  // Beim Innehalten bleibt walk_path stehen (die Figur läuft danach weiter),
+  // beim Abbrechen fällt er weg — sonst zeichnete der Client eine Route, die
+  // niemand mehr geht.
+  patch.state = { ...c.baseState, motion: planFuer(c).haltAn({ ...stelle, trk }) }
+  if (wegBehalten && c.path) patch.state.walk_path = c.path
+  else delete patch.state.walk_path
+  if (anim) { c.anim = anim; c.animOffen = false; patch.animation_state = anim }
+  try { await ajna.updateObject(c.id, patch) }
+  catch (err) {
+    if (istWeg(err)) c.tot = true
+    else console.warn(`[director] Halt "${c.id}": ${err?.message || err}`)
+  } finally { c.busy = false }
+}
+
+async function verarbeiteAngriff(c, evt) {
+  const obj = ajna.getObjectById(c.id)
+  if (!obj) return
+  const at = evt?.payload?.at || null
+  // Gegen die LIVE-Position prüfen, nicht gegen die zuletzt geschriebene:
+  // dazwischen liegen bis zu ein paar Sekunden Weg (Bewegungsplan statt
+  // Positions-Ticker). Eine Reichweitenprüfung gegen einen veralteten Standort
+  // lehnt Treffer ab, die aus Spielersicht sitzen.
+  const ziel = { ...obj, lat: c.lat ?? obj.lat, lon: c.lon ?? obj.lon }
+  const r = kampf.schlag({ ziel, angreifer: evt?.source, absender: at })
+  if (!r.ok) {
+    if (r.grund !== 'zu-schnell') console.log(`[director] ⚔ Angriff auf "${c.id}" abgelehnt: ${r.grund}`)
+    return
+  }
+
+  if (!r.tot) {
+    // Getroffen: Route abbrechen, den Angreifer ansehen, stehenbleiben. Wer
+    // angegriffen wird, setzt seine Runde nicht einfach fort.
+    await halteAn(c, { bis: Date.now() + KAMPF_HALT_MS, blickAuf: at, zusatz: { hp: r.hp }, anim: 'hit' })
+    console.log(`[director] ⚔ "${c.id}" getroffen — ${r.hp.ist}/${r.hp.max}, bleibt stehen`)
+    setTimeout(() => {
+      if (c.gefallen || c.tot) return
+      setzeAnim(c, 'idle')
+      schreibeAnimFalls(c)
+    }, ZUCK_MS)
+    return
+  }
+
+  // Gefallen: liegen bleiben, nichts mehr planen, Beute AUF DEN BODEN.
+  c.gefallen = true
+  await halteAn(c, {
+    bis: Number.MAX_SAFE_INTEGER, blickAuf: at,
+    zusatz: { hp: r.hp, tot: true }, anim: 'death',
+  })
+  console.log(`[director] ☠ "${c.id}" gefallen — Beute: ${r.beute.join(', ') || 'nichts'}`)
+
+  for (const name of r.beute) {
+    // Leicht gestreut, damit mehrere Stücke nicht ineinander liegen — und um die
+    // LIVE-Position herum, nicht um die zuletzt geschriebene: Sonst liegt die
+    // Beute meterweit neben der Leiche.
+    const winkel = Math.random() * Math.PI * 2
+    const p = destPoint(c.lat ?? obj.lat, c.lon ?? obj.lon, winkel, 0.6 + Math.random() * 1.4)
+    try {
+      const rec = await ajna.createObject(beuteObjekt(name, {
+        lat: p.lat, lon: p.lon, altitude: c.altBase ?? obj.altitude ?? 0, quelle: 'world-director',
+      }))
+      // Sichtbar für alle — sonst könnte sie niemand aufheben. ensureAce statt
+      // addPermission: Der afterCreate-Hook legt bereits eine
+      // (authenticated, view)-ACE an; ein zweites Anlegen scheitert.
+      await ensureAce(rec.id, ['collect', 'examine'])
+    } catch (err) {
+      console.warn(`[director] Beute "${name}": ${err?.message || err}`)
+    }
+  }
+}
+
+/** Leichen abräumen, deren Liegezeit um ist. Der Reconcile spawnt danach nach. */
+async function raeumeGefallene() {
+  for (const id of kampf.abgelaufen()) {
+    kampf.vergiss(id)
+    try {
+      await ajna.deleteObject(id)
+      console.log(`[director] ☠ "${id}" verblasst`)
+    } catch (err) { /* schon weg */ }
+    const c = controllers.find(x => x.id === id)
+    if (c) c.tot = true
+  }
+}
+
 function attachInteractListener(c) {
   ajna.onInteract(c.id, (evt) => {
     const action = evt?.action
@@ -1120,11 +1511,18 @@ function attachInteractListener(c) {
     // „Rufen": der Spieler hat eine Position mitgeschickt → Anflug starten.
     if (action === 'call' && c.flying) { startSummon(c, evt); return }
 
+    // „Angreifen": Trefferpunkte, Tod, Beute — die Mechanik steht in
+    // agents/lib/kampf.mjs und ist bewusst NICHT Director-eigen. Wer eigene
+    // Gegner in die Welt stellt, importiert dieselben Funktionen.
+    if (action === 'attack') { verarbeiteAngriff(c, evt); return }
+
     // „Sprechen": der Client hat gerade den Privatchat geoeffnet. Die Figur
     // ergreift das Wort — sonst saehe der Spieler ein leeres Fenster.
     if (action === 'talk' && evt?.source) eroeffneGespraech(evt.source, c.id)
 
-    c.attendUntil = Date.now() + ATTEND_MS
+    // Nicht nur intern innehalten: Ohne Halt-Plan liefe die Figur beim
+    // Betrachter geradeaus weiter, während sie hier in Wahrheit steht.
+    halteAn(c, { bis: Date.now() + ATTEND_MS, blickAuf: evt?.payload?.at, wegBehalten: true })
     console.log(`[director] 👂 "${c.id}" hält inne (${action})`)
   }).then(unsub => { c.unsubInteract = unsub })
     .catch(err => console.warn(`[director] interact-Abo (${c.id}): ${err?.message || err}`))
@@ -1188,6 +1586,8 @@ syncControllers()
 if (AUTONOMY) {
   console.log(`[director] Autonomie aktiv für ${controllers.length} Figur(en) (Tick ${TICK_MS} ms, Pause ${(PAUSE_MS / 1000) | 0} s)`)
   setInterval(tick, TICK_MS)
+  // Gefallene verblassen lassen (Liegezeit aus agents/lib/kampf.mjs).
+  setInterval(() => { raeumeGefallene().catch(() => {}) }, 2000)
 } else {
   console.log(`[director] keine autonomen Figuren (AUTONOMY off)`)
 }

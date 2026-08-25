@@ -55,6 +55,7 @@ import { bboxAroundKm, centerOf, flatDistKm, KM_PER_DEG_LAT } from '../client/co
 import { watchInterestAreas } from '../client/core/interestAreas.js'
 
 import { simpleSetup } from './lib/setup-wizard.mjs'
+import { yawFuerKursGrad } from '../client/core/yaw.js'
 
 // Login + geschichtete .env (Env > agents/.env.adsb > Root-.env) + System-CA.
 // Erststart ohne Pflichtwerte (oder --setup): Mini-Wizard fragt sie ab.
@@ -286,8 +287,15 @@ function describe(a) {
   return parts.join(' · ') + ` (Quelle: ${SOURCE.label})`
 }
 
-// AIS-Konvention: Kompass-Grad (CW von Nord) → Babylon-Yaw.
-const degToYaw = deg => (deg * Math.PI / 180) - Math.PI / 2
+// Kompasskurs (Grad, CW von Nord) → Babylon-Yaw.
+//
+// Die Umrechnung liegt in client/core/yaw.js — sie ist eine RENDER-Konvention
+// und gehört dorthin, wo gezeichnet wird. Hier stand `h − π/2`, gestimmt gegen
+// die UNGEKIPPTE Achsenlage (Z = Nord), die es nicht gibt: die Szene läuft mit
+// invertNorthSouth (Nord = −Z). Aufgefallen war es nie, weil diese Objekte als
+// Emoji-Tafel mit Kugel gezeichnet werden — eine Kugel hat keine Vorderseite.
+// Sobald ein Schiff ein Modell bekommt, zählt es.
+const degToYaw = deg => yawFuerKursGrad(deg)
 
 // ─── Reconcile ─────────────────────────────────────────────────────────────
 async function tick(areas) {

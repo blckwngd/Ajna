@@ -159,9 +159,12 @@ export const DIRECTOR_SPAWNS = [
  * @param {{lat:number, lon:number}} o.position   angeklickte Stelle
  * @param {boolean} o.enabled
  * @param {(msg:string) => void} [o.notify]       Rückmeldung an den Nutzer
+ * @param {(stelle:{lat:number, lon:number}) => void} [o.angefordert]
+ *        Wird gerufen, sobald das Kommando NACHWEISLICH angekommen ist — für
+ *        den Platzhalter, der die Lücke bis zum fertigen Objekt überbrückt.
  * @param {string} [o.source]                     Agent-Quelle (Default world-director)
  */
-export function directorSpawnItems({ ajna, position, enabled = true, notify, source = 'world-director' }) {
+export function directorSpawnItems({ ajna, position, enabled = true, notify, angefordert, source = 'world-director' }) {
   const send = async (archetype, label) => {
     try {
       const res = await ajna.sendAgentCommand(source, 'spawn', {
@@ -171,7 +174,12 @@ export function directorSpawnItems({ ajna, position, enabled = true, notify, sou
       // delivered === 0 → niemand hört zu. Das ist der häufigste Stolperstein
       // (Director läuft nicht), also klar benennen statt still zu scheitern.
       if (!res?.delivered) notify?.(`${label}: der World-Director läuft nicht — nichts erzeugt.`)
-      else notify?.(`${label} wird erzeugt…`)
+      else {
+        notify?.(`${label} wird erzeugt…`)
+        // Erst JETZT den Platzhalter zeigen: Läuft kein Director, entstünde
+        // sonst eine Wolke an einer Stelle, an der nie etwas erscheint.
+        angefordert?.({ lat: position.lat, lon: position.lon })
+      }
     } catch (err) {
       notify?.(err?.message || `${label} konnte nicht angefordert werden`)
     }

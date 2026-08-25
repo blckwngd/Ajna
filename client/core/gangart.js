@@ -14,9 +14,14 @@
 // Seit die Agents ihren Bewegungsplan veröffentlichen (`state.motion`, siehe
 // agents/lib/bewegung.mjs), steht sie dort: `v` in Metern pro Sekunde.
 //
-// SCHRITTLÄNGE SKALIERT MIT DER BEINLÄNGE. Ein Fuchs bei 1,4 m/s rennt, ein
-// Pferd geht. Deshalb wird das Referenztempo mit der Figurengröße gestreckt —
-// sonst bräuchte jedes Modell eine eigene Tabelle.
+// DAS ZYKLUS-TEMPO KOMMT AUS DEM MODELL-PROFIL, nicht aus einer Schätzung.
+// Es steht als `appearance.gehTempo` am Objekt: für welches Tempo der Gehzyklus
+// dieses Modells gezeichnet ist.
+//
+// Der erste Entwurf leitete es aus der FIGURENGRÖSSE ab — das war falsch. Ein
+// Zyklus wird nicht langsamer, weil man das Modell kleiner skaliert. Beim Fuchs
+// kam so 0,47 m/s heraus statt 0,92; das Abspieltempo lief in den Anschlag, und
+// er lief auf der Stelle. Die Größe sagt über die Zeichnung eines Clips nichts.
 //
 // Diese Datei ist bewusst frei von Babylon: Sie rechnet nur, und genau das
 // lässt sich ohne Browser prüfen.
@@ -29,9 +34,6 @@ export const GEH_TEMPO = 1.4
 
 /** Dasselbe für einen Laufzyklus. */
 export const LAUF_TEMPO = 4.0
-
-/** Bezugsgröße der Referenztempi (Meter) — Menschengröße. */
-export const BEZUGS_GROESSE = 1.8
 
 /**
  * Wie weit das Abspieltempo verstellt werden darf.
@@ -59,7 +61,6 @@ const klemme = (v, a, b) => Math.min(b, Math.max(a, v))
  *
  * @param {number} v          Geschwindigkeit über Grund (m/s)
  * @param {{
- *   groesse?: number,        Höhe der Figur in Metern (skaliert die Schrittlänge)
  *   gehTempo?: number,       Tempo, für das der Gehzyklus gezeichnet ist
  *   laufTempo?: number,
  *   hatLauf?: boolean,       Bringt das Modell einen Laufzyklus mit?
@@ -72,20 +73,22 @@ const klemme = (v, a, b) => Math.min(b, Math.max(a, v))
  * }}
  */
 export function gangartFuer(v, {
-  groesse = BEZUGS_GROESSE,
   gehTempo = GEH_TEMPO,
-  laufTempo = LAUF_TEMPO,
+  laufTempo = null,
   hatLauf = true,
 } = {}) {
   const tempoV = Math.max(0, Number(v) || 0)
-  // Schrittlänge wächst mit der Beinlänge — ein Pferd geht bei einem Tempo,
-  // bei dem ein Fuchs rennt.
-  const skala = klemme((Number(groesse) || BEZUGS_GROESSE) / BEZUGS_GROESSE, 0.25, 4)
-  const gehen = Math.max(0.1, gehTempo * skala)
-  const laufen = Math.max(gehen * 1.2, laufTempo * skala)
+  const gehen = Math.max(0.1, Number(gehTempo) || GEH_TEMPO)
+  // Ohne eigene Angabe: Ein Laufzyklus deckt üblicherweise das Knapp-Dreifache
+  // des Gehzyklus ab. Aus dem Verhältnis abgeleitet statt aus einer absoluten
+  // Zahl — sonst liefe ein Pferd bei 2 m/s schon im „Sprint".
+  const laufen = Number.isFinite(laufTempo) && laufTempo > gehen
+    ? laufTempo
+    : gehen * (LAUF_TEMPO / GEH_TEMPO)
 
   if (tempoV < STEHT_UNTER) {
-    return { zustand: 'idle', misch: { von: 'idle', nach: 'idle', anteil: 0 }, tempo: 1, gleitet: 1 }
+    return { zustand: 'idle', misch: { von: 'idle', nach: 'idle', anteil: 0 },
+             tempo: 1, tempoFuer: { walk: 1, run: 1, idle: 1 }, gleitet: 1 }
   }
 
   // Ganz langsam: zwischen Stand und Gehen überblenden, statt den Gehzyklus in
@@ -96,6 +99,7 @@ export function gangartFuer(v, {
       zustand: 'walk',
       misch: { von: 'idle', nach: 'walk', anteil },
       tempo: klemme(tempoV / gehen, TEMPO_MIN, TEMPO_MAX),
+      tempoFuer: tempoTabelle(tempoV, gehen, laufen),
       gleitet: gleitFaktor(tempoV, gehen),
     }
   }
@@ -105,6 +109,7 @@ export function gangartFuer(v, {
       zustand: 'walk',
       misch: { von: 'walk', nach: 'walk', anteil: 0 },
       tempo: klemme(tempoV / gehen, TEMPO_MIN, TEMPO_MAX),
+      tempoFuer: tempoTabelle(tempoV, gehen, laufen),
       gleitet: gleitFaktor(tempoV, gehen),
     }
   }
@@ -114,19 +119,45 @@ export function gangartFuer(v, {
       zustand: 'run',
       misch: { von: 'run', nach: 'run', anteil: 0 },
       tempo: klemme(tempoV / laufen, TEMPO_MIN, TEMPO_MAX),
+      tempoFuer: tempoTabelle(tempoV, gehen, laufen),
       gleitet: gleitFaktor(tempoV, laufen),
     }
   }
 
   // Dazwischen: Gehen und Laufen mischen. Der Übergang ist der Bereich, in dem
   // ein harter Wechsel am meisten stört.
+  //
+  // ACHTUNG, hier lag ein Denkfehler: Zuerst wurde das Abspieltempo gegen ein
+  // INTERPOLIERTES Bezugstempo gerechnet — und das ergibt zwangsläufig immer
+  // 1,0, weil der Bezug per Konstruktion dem Ist-Tempo entspricht. Im gesamten
+  // Misch-Bereich fand also gar keine Anpassung statt, und dort leben die
+  // meisten Figuren. Genau das war als „Füße rutschen" zu sehen.
+  //
+  // Solange nur EIN Zyklus abgespielt wird (echtes Gewichte-Blending gibt es
+  // nicht), muss das Tempo zu genau DIESEM Zyklus passen. Deshalb beide Werte
+  // ausweisen; wer führt, entscheidet der Aufrufer (er kennt seine Hysterese).
   const anteil = (tempoV - gehen) / (laufen - gehen)
-  const bezug = gehen + (laufen - gehen) * anteil
+  const zustand = anteil > 0.5 ? 'run' : 'walk'
+  const bezug = zustand === 'run' ? laufen : gehen
   return {
-    zustand: anteil > 0.5 ? 'run' : 'walk',
+    zustand,
     misch: { von: 'walk', nach: 'run', anteil },
     tempo: klemme(tempoV / bezug, TEMPO_MIN, TEMPO_MAX),
+    tempoFuer: {
+      walk: klemme(tempoV / gehen, TEMPO_MIN, TEMPO_MAX),
+      run: klemme(tempoV / laufen, TEMPO_MIN, TEMPO_MAX),
+      idle: 1,
+    },
     gleitet: gleitFaktor(tempoV, bezug),
+  }
+}
+
+/** Abspieltempo je möglichem Zyklus — der Aufrufer wählt, welcher führt. */
+function tempoTabelle(v, gehen, laufen) {
+  return {
+    walk: klemme(v / gehen, TEMPO_MIN, TEMPO_MAX),
+    run: klemme(v / laufen, TEMPO_MIN, TEMPO_MAX),
+    idle: 1,
   }
 }
 

@@ -218,7 +218,11 @@ export class Terrain {
     // PICKBAR: „Rechtsklick → hier etwas erzeugen" trifft damit das echte
     // Gelände statt der gedachten Ebene — der Spawnpunkt bekommt die reale Höhe.
     mesh.isPickable = true
-    mesh.receiveShadows = false
+    // SCHATTEN AUFS RELIEF. Vorher fing sie eine flache Ebene bei y = 0,02 —
+    // auf Gelände schwebte der Schatten dadurch irgendwo in der Luft, bei
+    // stärkerem Relief auf Brusthöhe. Die Fläche, auf der die Figur steht, ist
+    // die einzige, auf der ihr Schatten liegen kann.
+    mesh.receiveShadows = true
     mesh.alphaIndex = 0          // Fläche zuerst, Gitter darüber (s. u.)
     this.mesh = mesh
 
@@ -250,8 +254,11 @@ export class Terrain {
     gridMesh.receiveShadows = false
     gridMesh.alphaIndex = 1      // nach der Relieffläche zeichnen
     this.gridMesh = gridMesh
-    // Flache Ersatz-Ebene stilllegen, solange das Relief steht.
+    // Flache Ersatz-Ebenen stilllegen, solange das Relief steht — auch die
+    // Schatten-Ebene: Sie liegt starr bei y ≈ 0 und würde den Schatten ein
+    // zweites Mal zeichnen, an der falschen Höhe.
     this.scene.getMeshByName('debugGround')?.setEnabled(false)
+    this.scene.getMeshByName('shadowGround')?.setEnabled(false)
 
     this._loaded = true
     applyLayer(this.scene, 'terrain')
@@ -286,7 +293,10 @@ export class Terrain {
     this.center = null
     this._loaded = false
     // Ohne Relief übernimmt wieder die flache Ersatzebene — mit der zuletzt
-    // gewählten Sichtbarkeit der Ebene „Bodengitter".
+    // gewählten Sichtbarkeit der Ebene „Bodengitter". Die Schatten-Ebene muss
+    // dabei zurückkommen: Ohne Relief gibt es sonst gar keine Fläche mehr, die
+    // einen Schatten aufnimmt (AR-Durchsicht lebt allein davon).
+    try { this.scene.getMeshByName('shadowGround')?.setEnabled(true) } catch {}
     try { applyLayer(this.scene, 'grid') } catch {}
   }
 }

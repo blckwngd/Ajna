@@ -33,10 +33,19 @@ export class LabelComponent extends BaseComponent {
     this._sync()
   }
 
-  /** An-/abmelden je nachdem, ob der Datensatz gerade eine Vorlage trägt. */
+  /**
+   * An-/abmelden je nachdem, ob es etwas zu zeigen gibt.
+   *
+   * Neben der Vorlage zählen TREFFERPUNKTE: Der Balken lebt in derselben Ebene,
+   * soll aber ohne Beschriftung auskommen. Andernfalls müsste jede kampffähige
+   * Figur eine Tafel tragen — und dann stünden die Namen aller Gegner, nah wie
+   * fern, dauerhaft im Bild.
+   */
   _sync() {
     const layer = labelLayerFor(this.scene)
-    const wanted = !!labelOf(this.record)
+    const hp = this.record?.state?.hp
+    const hatHp = Number.isFinite(Number(hp?.ist)) && Number(hp?.max) > 0
+    const wanted = !!labelOf(this.record) || hatHp
     if (wanted) {
       layer.register(this.gameObject, this.record)   // register aktualisiert auch
       this._registered = true

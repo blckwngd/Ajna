@@ -15,6 +15,7 @@ import { renderServerBadgeText } from './ServerBadge.js'
 import { provenanceText } from './Provenance.js'
 import { applyInteractionSideEffect } from './InteractionReply.js'
 import { privacy } from './PrivacyPolicy.js'
+import { aktionErlaubt, reichweiteVon, abstandM } from './aktionsReichweite.js'
 import { wikiLinkOf } from './wikiLinks.js'
 
 const FALLBACK_ACTIONS = [
@@ -139,10 +140,18 @@ export class ObjectActions {
       ownerRight && { label: 'Löschen', danger: true, onClick: () => this._confirmDelete(record) },
       { separator: true },
       { sectionLabel: 'Interaktionen' },
-      ...shownActions.map(a => ({
-        label: a.label,
-        onClick: () => this._triggerAction(record, a.key)
-      }))
+      // Aktionen mit Reichweite (`max_distance`) ausgrauen statt anbieten:
+      // Ein Knopf, der nichts tut, ist schlimmer als kein Knopf. Der Grund
+      // steht in der Zeile, sonst bliebe der Spieler ratlos.
+      ...shownActions.map(a => {
+        const roh = (record?.state?.actions || []).find(x => x?.key === a.key)
+        const pruef = this._reichweitePruefen(record, roh)
+        return {
+          label: pruef.ok ? a.label : `${a.label} — ${pruef.kurz}`,
+          disabled: !pruef.ok,
+          onClick: () => this._triggerAction(record, a.key)
+        }
+      })
     ].filter(Boolean)
 
     // Server-Hinweis im Titel — Plain-Text-Suffix, da der ContextMenu
@@ -192,6 +201,23 @@ export class ObjectActions {
   // Ruft die serverseitige Route auf, die nach Permission-Check ein
   // ephemeres Event über den PocketBase-Subscriptions-Broker an alle
   // interessierten Clients (inkl. dem zugewiesenen Agent) verteilt.
+  /**
+   * Reichweite einer Aktion prüfen — für die Menü-Darstellung.
+   * Kurzform fürs Menü, ausführlich beim Auslösen (dort ist Platz).
+   */
+  _reichweitePruefen(record, aktion) {
+    if (!reichweiteVon(aktion)) return { ok: true, kurz: '' }
+    const stufe = privacy.levelFor(record?._origin)
+    const p = this.getPosition?.()
+    const d = p ? abstandM(record.lat, record.lon, p.lat, p.lon) : null
+    const e = aktionErlaubt(aktion, stufe, d)
+    if (e.ok) return { ok: true, kurz: '' }
+    return {
+      ok: false,
+      kurz: e.grund === 'stufe' ? 'Standort-Freigabe nötig' : 'zu weit weg',
+    }
+  }
+
   async _triggerAction(record, actionKey) {
     // „Sprechen“ ist kein Interaktions-Ereignis, sondern der Einstieg in ein
     // Gespräch: Das Chatfenster wechselt in den Privatchat mit dem Konto, dem
@@ -208,10 +234,35 @@ export class ObjectActions {
       return
     }
     try {
+      // REICHWEITE (`max_distance` an der Aktion): Nähe lässt sich nur prüfen,
+      // wenn der Standort überhaupt freigegeben ist. Hier wird ABGEBROCHEN
+      // statt gesendet — der Agent lehnte sonst ab, und der Spieler stünde vor
+      // einer Aktion, die scheinbar nichts tut. Siehe core/aktionsReichweite.js.
+      const aktion = (record?.state?.actions || []).find(a => a?.key === actionKey)
+      const reichw = reichweiteVon(aktion)
+      if (reichw > 0) {
+        const stufe = privacy.levelFor(record?._origin)
+        const p = this.getPosition?.()
+        const d = p ? abstandM(record.lat, record.lon, p.lat, p.lon) : null
+        const erlaubt = aktionErlaubt(aktion, stufe, d)
+        if (!erlaubt.ok) {
+          try { this.onInteractError?.(record, actionKey, erlaubt.text) }
+          catch (e) { console.warn('[interact] error feedback', e) }
+          if (!this.onInteractError) alert(erlaubt.text)
+          return
+        }
+      }
+
       // Positions-Aktionen („Rufen"): Payload streng nach Stufe. Bei „Verborgen"
       // gibt es keine Koordinaten — dann die Aktion gar nicht erst senden, sonst
       // flöge der Drache irgendwohin und der Spieler wüsste nicht, warum.
       let payload
+      // Eine Aktion mit Reichweite braucht die Position beim Agent — sonst kann
+      // er sie nicht prüfen. Sie geht wie immer durch die Stufe.
+      if (reichw > 0 && !POSITION_ACTIONS.has(String(actionKey).toLowerCase())) {
+        const at = privacy.positionFor(record?._origin, this.getPosition?.())
+        if (at) payload = { at }
+      }
       if (POSITION_ACTIONS.has(String(actionKey).toLowerCase())) {
         const serverId = record?._origin
         const at = privacy.positionFor(serverId, this.getPosition?.())

@@ -26,12 +26,16 @@
 export const MODEL_PROFILES = {
   // ── Menschen/Roboter (Straße) ────────────────────────────────────────
   'CesiumMan.glb':       { speed: 1.4, animSpeed: 1.0 },
-  'Soldier.glb':         { speed: 1.5, animSpeed: 1.0, yaw: Math.PI, idle: true },
+  'Soldier.glb':         { speed: 1.5, animSpeed: 1.0, yaw: Math.PI, idle: true, kampf: true },
   'RobotExpressive.glb': { speed: 1.2, animSpeed: 1.1, idle: true },
 
   // ── Gegner ───────────────────────────────────────────────────────────
-  'MawGooey.glb':        { speed: 0.9, animSpeed: 1.2, idle: true },
-  'Slime.glb':           { speed: 0.7, animSpeed: 1.2, idle: true },
+  // Gallertwesen: Beide Modelle sind UNTEXTURIERT und damit von Haus aus grau.
+  // Der „Jelly"-Charakter steckt in Farbe und Durchsicht, nicht in der Form.
+  'MawGooey.glb':        { speed: 0.9, animSpeed: 1.2, idle: true, kampf: true,
+                           gelee: ['#5fd08a', '#4fb8d0', '#c86fd0', '#d8b44f'], deckkraft: 0.72 },
+  'Slime.glb':           { speed: 0.7, animSpeed: 1.2, idle: true, kampf: true,
+                           gelee: ['#7fd04f', '#4fd0b8', '#d0724f', '#8f7fd0'], deckkraft: 0.68 },
 
   // ── Boden-Tiere (Streifen) ───────────────────────────────────────────
   'Fox.glb':             { speed: 1.2, animSpeed: 1.3, idle: true },
@@ -63,11 +67,51 @@ export const modelOf = (obj) => {
 }
 
 /** Darstellungs-Felder des Profils für appearance (nur belegte Schlüssel). */
-export function profileAppearance(modelFile) {
+/**
+ * Kleiner, stabiler Hash über eine Zeichenkette. Nur zur Auswahl aus einer
+ * Palette — er muss nicht gut streuen, nur IMMER dasselbe liefern.
+ */
+function saatZahl(text) {
+  let h = 0
+  for (let i = 0; i < String(text).length; i++) h = (h * 31 + String(text).charCodeAt(i)) >>> 0
+  return h
+}
+
+export function profileAppearance(modelFile, saat = '') {
   const p = profileFor(modelFile)
   const out = {}
   if (Number.isFinite(p.yaw)) out.yaw = p.yaw
   if (Number.isFinite(p.animSpeed) && p.animSpeed !== 1) out.animSpeed = p.animSpeed
   if (p.anim && typeof p.anim === 'object') out.anim = p.anim
+  // ABSICHTLICH KEINE Beschriftung für kampffähige Figuren: Der
+  // Trefferpunkte-Balken ist ein eigenes Element in der LabelLayer und braucht
+  // keine Tafel. Stand hier einmal `{name} {hp}` — damit hingen die Namen aller
+  // Gegner, nah wie fern, dauerhaft fett im Bild.
+
+  // Für welches Tempo der Gehzyklus dieses Modells gezeichnet ist (m/s).
+  //
+  // Diese Zahl steckte schon immer in der Tabelle, nur verkleidet: `animSpeed`
+  // ist der von Hand gefundene Faktor, bei dem die Figur BEI IHREM `speed`
+  // richtig aussieht. Also gilt  Zyklus-Tempo = speed / animSpeed.
+  //
+  // Der Client braucht sie, um das Abspieltempo mitzuführen, wenn die Figur mal
+  // schneller oder langsamer läuft als ihr Normaltempo. Sie zu RATEN — etwa
+  // über die Figurengröße — geht schief: Beim Fuchs kam so ein Zyklus-Tempo von
+  // 0,47 m/s heraus statt 0,92, und er lief auf der Stelle.
+  if (Number.isFinite(p.speed) && p.speed > 0) {
+    const anim = Number.isFinite(p.animSpeed) && p.animSpeed > 0 ? p.animSpeed : 1
+    out.gehTempo = Math.round((p.speed / anim) * 100) / 100
+  }
+
+  // Gallertfarbe aus der Palette — über die Saat (Spawn-ID), NICHT zufällig:
+  // Die Profil-Heilung beim Boot rechnet dieselbe appearance neu aus. Mit
+  // Math.random() bekäme jede Figur bei jedem Neustart eine andere Farbe, und
+  // der Director schriebe sie jedes Mal neu.
+  if (Array.isArray(p.gelee) && p.gelee.length) {
+    out.color = p.gelee[saatZahl(saat) % p.gelee.length]
+  }
+  if (Number.isFinite(p.deckkraft) && p.deckkraft > 0 && p.deckkraft < 1) {
+    out.opacity = p.deckkraft
+  }
   return out
 }

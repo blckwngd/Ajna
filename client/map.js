@@ -15,7 +15,7 @@ import { PositionSmoother } from "./core/PositionSmoother.js"
 import { encStyleOf } from "./core/wifiStyle.js"
 import { shapeOf, emojiOf, iconOf, colorOf, radiusOf, glowOf, textureOf } from "./core/Appearance.js"
 import { isWikimediaUrl } from "./core/wikiLinks.js"
-import { interactionReply, describeRequires } from "./core/InteractionReply.js"
+import { interactionReply, describeRequires, protokolliereInteraktion } from "./core/InteractionReply.js"
 import { spawnRandomAndEdit, directorSpawnItems } from "./core/SpawnHere.js"
 import { PRESENCE_TYPE, zeigeAnwesenheit, anwesenheitsText } from "./core/PresenceService.js"
 import { InterestArea } from "./core/InterestArea.js"
@@ -100,7 +100,9 @@ function handleMarkerInteract(objectId, data) {
 
   // Antwort des Objekts (examine→Beschreibung, talk→Dialog, attack/feed/…→
   // Flavor). Identische Ableitung wie im AR-Client (InteractionReply).
-  toast.show(interactionReply(obj, data.action, label), { title: label })
+  const antwort = interactionReply(obj, data.action, label)
+  toast.show(antwort, { title: label, log: false })
+  protokolliereInteraktion(obj || { id: objectId }, data.action, antwort)
   // Akustische Ansage ("<Aktion> - <Ergebnis>"), gegated über Audio-Schalter.
   _announcer?.interaction(obj || objectId, data.action)
 

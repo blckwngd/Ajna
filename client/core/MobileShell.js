@@ -21,7 +21,7 @@ import { infoHint } from './InfoHint.js'
 import { NearbyList } from './NearbyList.js'
 import { ObjectActions } from './ObjectActions.js'
 import { Toast } from './Toast.js'
-import { interactionReply } from './InteractionReply.js'
+import { interactionReply, protokolliereInteraktion } from './InteractionReply.js'
 import { privacy } from './PrivacyPolicy.js'
 import { messageLog, CATS } from './MessageLog.js'
 import { MessageLogPanel } from './MessageLogPanel.js'
@@ -87,6 +87,10 @@ export class MobileShell {
     // Chat-/Verlaufsfenster: schwebender Auslöser (💬) in jeder View. Der Verlauf
     // selbst ist persistent (MessageLog); hier nur die Ansicht.
     this._logPanel = new MessageLogPanel({ ajna: this.ajna, toast: this._toast })
+    // Global erreichbar: Der Toast lebt in JEDEM Bündel, das Fenster nur hier.
+    // Ohne diesen Haken könnte ein Toast aus der Karten- oder AR-Ansicht das
+    // Gespräch nicht öffnen (siehe Bündel-Falle bei window.ajnaLog).
+    window.ajnaLogPanel = this._logPanel
     // Aufträge: eigener Bereich mit drei Reitern (verfügbar / aktiv / prüfen).
     // Bewusst in JEDER Ansicht erreichbar — anders als die Minimap, die über
     // der großen Karte sinnlos wäre. Ein Auftrag interessiert unabhängig davon,
@@ -159,7 +163,10 @@ export class MobileShell {
       onTalk: (rec) => this._talkTo(rec),
       onInteract: (rec, key) => {
         const name = rec?.name || rec?.id || 'Objekt'
-        this._toast.show(interactionReply(rec, key, name), { title: name })
+        const antwort = interactionReply(rec, key, name)
+        // `log: false` — die Verlaufszeile schreiben wir selbst, mit Objekt-ID.
+        this._toast.show(antwort, { title: name, log: false })
+        protokolliereInteraktion(rec, key, antwort)
         hub.announcer?.interaction?.(rec, key)
       },
       onInteractError: (rec, key, msg) => { this._logEvent(`interact ${key} abgelehnt: ${msg}`); this._flashNotice(msg) },
@@ -354,6 +361,7 @@ export class MobileShell {
     this._debugTimer = null
     this._selPopup?.remove(); this._selPopup = null
     this._logPanel?.destroy(); this._logPanel = null
+    if (window.ajnaLogPanel) delete window.ajnaLogPanel
     this._questPanel?.destroy(); this._questPanel = null
     this._questEditor?.destroy(); this._questEditor = null
     this._quests = null
@@ -538,12 +546,18 @@ export class MobileShell {
         { title: rec.name || 'Objekt' })
       return
     }
+    // FENSTER NICHT AUFREISSEN. „Sprechen" legte bisher sofort den Verlauf über
+    // die Szene — genau in dem Moment, in dem man die Figur ansieht. Die Antwort
+    // kommt als Toast; wer weiterreden will, tippt darauf. Das Gespräch ist
+    // trotzdem eröffnet, die Eingabezeile also bereit, sobald das Fenster offen ist.
     this._logPanel?.talkTo({
       userId: rec.owner,
       name: rec.name || 'Unbekannt',
       objectId: rec.id,
       serverId: rec._origin || null,
-    })
+    }, { open: false })
+    this._toast?.show('Antippen zum Antworten',
+      { title: rec.name || 'Gespräch', onClick: () => this._logPanel?.open() })
   }
 
   // ── Aufträge ───────────────────────────────────────────────────────────

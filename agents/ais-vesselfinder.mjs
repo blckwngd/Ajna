@@ -46,6 +46,7 @@ import { bboxAroundKm, centerOf, flatDistKm } from '../client/core/geoMath.js'
 import { haversine, bearingRad } from '../client/core/StreetNav.js'
 import { watchInterestAreas } from '../client/core/interestAreas.js'
 import { simpleSetup } from './lib/setup-wizard.mjs'
+import { yawFuerKursGrad } from '../client/core/yaw.js'
 
 const { ajna } = await bootAgent('ais-vf', {
   tag: 'ais-vf',
@@ -241,7 +242,15 @@ function motionBetween(prev, lat, lon, tMs) {
 }
 
 // ─── Abruf ─────────────────────────────────────────────────────────────────
-const degToYaw = deg => (deg * Math.PI / 180) - Math.PI / 2
+// Kompasskurs (Grad, CW von Nord) → Babylon-Yaw.
+//
+// Die Umrechnung liegt in client/core/yaw.js — sie ist eine RENDER-Konvention
+// und gehört dorthin, wo gezeichnet wird. Hier stand `h − π/2`, gestimmt gegen
+// die UNGEKIPPTE Achsenlage (Z = Nord), die es nicht gibt: die Szene läuft mit
+// invertNorthSouth (Nord = −Z). Aufgefallen war es nie, weil diese Objekte als
+// Emoji-Tafel mit Kugel gezeichnet werden — eine Kugel hat keine Vorderseite.
+// Sobald ein Schiff ein Modell bekommt, zählt es.
+const degToYaw = deg => yawFuerKursGrad(deg)
 
 async function fetchArea(lat, lon) {
   const b = bboxAroundKm(lat, lon, RADIUS_KM)

@@ -45,6 +45,7 @@ import { bboxAroundKm } from '../client/core/geoMath.js'
 import { watchInterestAreas } from '../client/core/interestAreas.js'
 
 import { simpleSetup } from './lib/setup-wizard.mjs'
+import { yawFuerKursGrad } from '../client/core/yaw.js'
 
 // Login + geschichtete .env (Env > agents/.env.ais > Root-.env) + System-CA.
 // Erststart ohne Pflichtwerte (oder --setup): Mini-Wizard fragt sie ab.
@@ -355,12 +356,15 @@ setInterval(() => {
   )
 }, CLEANUP_INTERVAL_MS)
 
-// AIS-Heading in Grad (Kompass, CW von Nord) → Babylon-Yaw in Radianten.
-// Empirischer Offset matched die ungekippte GeoTransformer-Convention
-// (Z=Nord, X=Ost) — siehe Fox-Agent für die analoge Diskussion.
-function degToYaw(deg) {
-  return (deg * Math.PI / 180) - Math.PI / 2
-}
+// Kompasskurs (Grad, CW von Nord) → Babylon-Yaw.
+//
+// Die Umrechnung liegt in client/core/yaw.js — sie ist eine RENDER-Konvention
+// und gehört dorthin, wo gezeichnet wird. Hier stand `h − π/2`, gestimmt gegen
+// die UNGEKIPPTE Achsenlage (Z = Nord), die es nicht gibt: die Szene läuft mit
+// invertNorthSouth (Nord = −Z). Aufgefallen war es nie, weil diese Objekte als
+// Emoji-Tafel mit Kugel gezeichnet werden — eine Kugel hat keine Vorderseite.
+// Sobald ein Schiff ein Modell bekommt, zählt es.
+const degToYaw = deg => yawFuerKursGrad(deg)
 
 // Subscription periodisch an die aktiven Bereiche anpassen (Spieler bewegen
 // sich / kommen + gehen). Nur neu senden, wenn sich die BBOX-Menge ändert.

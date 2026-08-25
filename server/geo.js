@@ -114,6 +114,58 @@ function cacheKey(endpoint, lat, lon, radius, filter) {
   return `${endpoint}|${lat.toFixed(3)}|${lon.toFixed(3)}|${radius}|${filter}`
 }
 
+/**
+ * Passt eine bereits gespeicherte, WEITERE Antwort derselben Gegend?
+ *
+ * Gesucht wird im Speicher-Cache: gleicher Endpunkt, gleicher Filter, gleiche
+ * Raster-Zelle, Radius mindestens so groß wie der angefragte — und noch frisch.
+ * Von mehreren passenden gewinnt der kleinste, damit nicht unnötig viel Geometrie
+ * zurückgeht.
+ */
+function groessererTreffer(endpoint, params) {
+  const praefix = `${endpoint}|${params.lat.toFixed(3)}|${params.lon.toFixed(3)}|`
+  // Ein WEITER gefasster Filter enthält den engeren. Der Client zeichnet die
+  // Kulisse mit „all", der Director plant mit „walkable" — bisher zwei
+  // getrennte Overpass-Abfragen für dieselbe Straße. Jetzt reicht eine, und die
+  // engere Sicht wird hier herausgeschnitten.
+  const kandidaten = [params.filter, ...(BREITER[endpoint]?.[params.filter] || [])]
+  let beste = null
+  for (const [k, eintrag] of cache) {
+    if (!k.startsWith(praefix)) continue
+    if ((Date.now() - eintrag.ts) > CACHE_TTL_MS) continue
+    const rest = k.slice(praefix.length)
+    const i = rest.lastIndexOf('|')
+    if (i < 0) continue
+    const r = Number(rest.slice(0, i))
+    const f = rest.slice(i + 1)
+    if (!Number.isFinite(r) || r < params.radius) continue
+    if (!kandidaten.includes(f)) continue
+    // Gleicher Filter gewinnt vor einem weiteren; sonst der kleinste Radius.
+    const rang = f === params.filter ? 0 : 1
+    if (!beste || rang < beste.rang || (rang === beste.rang && r < beste.radius)) {
+      beste = { radius: r, rang, filter: f, payload: eintrag.payload }
+    }
+  }
+  if (!beste) return null
+  if (beste.filter === params.filter) return beste
+  const eng = ENGER[endpoint]?.[params.filter]
+  if (!eng) return null
+  return { ...beste, payload: { ...beste.payload, features: (beste.payload.features || []).filter(eng) } }
+}
+
+/** Welcher gespeicherte Filter enthält den angefragten? */
+const BREITER = {
+  ways: { walkable: ['all'] },
+}
+
+/** Wie man aus dem weiteren Satz den engeren herausschneidet. */
+const ENGER = {
+  ways: {
+    walkable: (f) => /^(footway|path|pedestrian|residential|service|living_street|cycleway|track|unclassified|tertiary)$/
+      .test(String(f?.tags?.highway || '')),
+  },
+}
+
 function cacheGet(key) {
   const entry = cache.get(key)
   if (!entry) return null
@@ -335,6 +387,22 @@ async function handleQuery(req, res, endpoint, defaultFilter, outDirective = 'ou
   if (vonPlatte && (Date.now() - vonPlatte.ts) <= CACHE_TTL_MS) {
     cache.set(key, vonPlatte)
     return res.json({ ...vonPlatte.payload, source: 'cache-disk' })
+  }
+
+  // GRÖSSERE ANTWORT WIEDERVERWENDEN.
+  //
+  // Der Radius steckt im Schlüssel, also verfehlte jede Anfrage mit einem
+  // anderen Radius den Zwischenspeicher — auch dann, wenn längst eine WEITERE
+  // Antwort derselben Gegend danebenlag. Beobachtet: Der Client zeichnet die
+  // Straßen ringsum, und trotzdem lief die Routenplanung des Directors in einen
+  // Overpass-Ausfall, weil sie 600 m statt 300 m anfragte.
+  //
+  // Ein größerer Umkreis ENTHÄLT den kleineren. Die Extra-Elemente am Rand
+  // stören niemanden: Die Kulisse zeichnet ohnehin nur, was in Sicht ist, und
+  // ein Wegegraph mit ein paar Straßen mehr ist kein Fehler, sondern Auswahl.
+  const groesser = groessererTreffer(endpoint, params)
+  if (groesser) {
+    return res.json({ ...groesser.payload, source: 'cache-weiter', radiusIst: groesser.radius })
   }
 
   // BBOX statt `around:` — Overpass kann die Bounding-Box direkt über seinen

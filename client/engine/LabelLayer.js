@@ -29,6 +29,23 @@
 import * as GUI from 'babylonjs-gui'
 import { resolveLabel, labelScaleForDistance } from '../core/Appearance.js'
 
+// Trefferpunkte-Balken: bewusst schmal — er soll die Figur begleiten, nicht
+// überdecken. Jenseits von HP_SICHT_M wäre er nur noch ein flimmernder Punkt.
+const HP_BREITE_PX = 46
+const HP_HOEHE_PX = 5
+const HP_SICHT_M = 120
+
+/**
+ * Farbe nach Anteil: grün → gelb → rot.
+ * Die Schwellen sind so gesetzt, dass „gelb" tatsächlich als Warnung wirkt und
+ * nicht schon bei der ersten Schramme erscheint.
+ */
+function hpFarbe(anteil) {
+  if (anteil > 0.6) return '#4caf50'
+  if (anteil > 0.3) return '#e0b020'
+  return '#d84a3a'
+}
+
 const UPDATE_MS = 250          // schwerer Durchlauf: 4×/s reicht fürs Auge
 const MAX_DISTANCE_M = 1500    // darüber: ausblenden
 
@@ -114,14 +131,44 @@ class LabelLayer {
     t.transformCenterY = 1
     this._ensureTexture().addControl(t)
 
+    // TREFFERPUNKTE ALS BALKEN, nicht als Text.
+    //
+    // Ein ASCII-Balken in der Beschriftung war zwar billig, aber er zwang jede
+    // kampffähige Figur zu einer dauerhaft sichtbaren Tafel — Namen aller
+    // Gegner, nah wie fern, fett im Bild. Der Balken ist jetzt ein eigenes,
+    // schmales Element: Er erscheint NUR bei Verletzung, und der Name muss
+    // dafür nicht mehr eingeblendet werden.
+    const bar = new GUI.Rectangle(`hpbg_${gameObject.id}`)
+    bar.width = `${HP_BREITE_PX}px`
+    bar.height = `${HP_HOEHE_PX}px`
+    bar.thickness = 1
+    bar.color = 'rgba(0,0,0,0.75)'
+    bar.background = 'rgba(0,0,0,0.45)'
+    bar.cornerRadius = 2
+    bar.isPointerBlocker = false
+    bar.isVisible = false
+    const fill = new GUI.Rectangle(`hpfill_${gameObject.id}`)
+    fill.height = '100%'
+    fill.thickness = 0
+    fill.cornerRadius = 1
+    fill.isPointerBlocker = false
+    // Links andocken, damit der Balken von rechts nach links leer läuft.
+    fill.horizontalAlignment = GUI.Control.HORIZONTAL_ALIGNMENT_LEFT
+    bar.addControl(fill)
+    this._ensureTexture().addControl(bar)
+
     // Mast bauen und die Tafel an SEINE SPITZE hängen, nicht an das Objekt:
     // So sitzt die Beschriftung wie ein Schild auf einem Pfahl, und die Säule
     // führt das Auge zum Boden hinunter.
     const pole = this._buildPole(gameObject)
     t.linkWithMesh(pole ? pole.tip : gameObject.root)
     t.linkOffsetY = -14
+    // Balken über die Figur, unabhängig von der Tafel: Er soll auch dann
+    // stehen, wenn gar keine Beschriftung gezeigt wird.
+    bar.linkWithMesh(pole ? pole.tip : gameObject.root)
+    bar.linkOffsetY = -2
 
-    this.entries.set(gameObject, { text: t, record, pole, scale: 1, target: 1, dist: Infinity })
+    this.entries.set(gameObject, { text: t, bar, fill, record, pole, scale: 1, target: 1, dist: Infinity })
   }
 
   /** Breite der GUI-Textur in Pixeln (= Renderpuffer-Breite). */
@@ -192,6 +239,7 @@ class LabelLayer {
     const e = this.entries.get(gameObject)
     if (!e) return
     try { e.text.linkWithMesh(null); this.texture?.removeControl(e.text); e.text.dispose() } catch { /* Szene evtl. weg */ }
+    try { e.bar?.linkWithMesh(null); this.texture?.removeControl(e.bar); e.bar?.dispose() } catch {}
     try { e.pole?.mesh.dispose(false, true); e.pole?.tip.dispose() } catch {}
     this.entries.delete(gameObject)
     if (this._focus === gameObject) this._focus = null
@@ -291,5 +339,35 @@ class LabelLayer {
       e.text.zIndex = focused ? 10 : 0
       e.text.alpha = focused ? 1 : 0.9
     }
+
+    // Trefferpunkte getrennt pflegen — auch für Figuren OHNE Beschriftung.
+    for (const c of shown) this._pflegeHp(c.e, c.dist)
+  }
+
+  /**
+   * Balken zeichnen: schmal, grün → gelb → rot.
+   *
+   * Sichtbar nur, wenn die Figur verletzt UND nah genug ist. Ein voller Balken
+   * über jeder Figur wäre Rauschen, und aus 300 m ist ein 3 Pixel hoher Balken
+   * ohnehin nicht mehr lesbar — er würde nur flimmern.
+   */
+  _pflegeHp(e, dist) {
+    const hp = e.record?.state?.hp
+    const ist = Number(hp?.ist), max = Number(hp?.max)
+    const zeigen = Number.isFinite(ist) && Number.isFinite(max) && max > 0
+      && ist < max && dist <= HP_SICHT_M
+    if (!zeigen) {
+      if (e.bar.isVisible) e.bar.isVisible = false
+      return
+    }
+    const anteil = Math.max(0, Math.min(1, ist / max))
+    e.fill.width = `${Math.round(anteil * 100)}%`
+    e.fill.background = hpFarbe(anteil)
+    // Nahe Figuren bekommen einen etwas größeren Balken — dieselbe Logik wie
+    // bei der Schrift, damit beides zusammenpasst.
+    const s = Math.max(0.55, Math.min(1.35, 1.35 - dist / (HP_SICHT_M * 1.4)))
+    e.bar.width = `${Math.round(HP_BREITE_PX * s)}px`
+    e.bar.height = `${Math.max(3, Math.round(HP_HOEHE_PX * s))}px`
+    if (!e.bar.isVisible) e.bar.isVisible = true
   }
 }

@@ -59,6 +59,11 @@ const MAX_DR_MS = 150000
 // gegen einen Sprung, den jeder sieht.
 const KORREKTUR_TEMPO = 1.2
 
+// … und höchstens dieser Anteil der Eigengeschwindigkeit. Eine Korrektur, die
+// so schnell ist wie der Schritt selbst, hebt ihn auf: Die Figur wird sichtbar
+// rückwärts oder seitwärts gezogen, statt unauffällig einzuschwenken.
+const KORREKTUR_ANTEIL = 0.25
+
 // Grenzen der Korrekturdauer (ms) — winzige Versätze sofort, große nicht endlos.
 const KORREKTUR_MIN_MS = 200
 const KORREKTUR_MAX_MS = 3000
@@ -107,8 +112,14 @@ export class PositionSmoother {
       // quer durch die Welt gleiten zu lassen — dort ist Springen richtig.
       const weitM = Math.hypot(dLat * 111320, dLon * 111320 * Math.cos(gezeigt.lat * Math.PI / 180))
       if (weitM <= MAX_KORREKTUR_M) {
+        // Die Korrektur darf nie einen nennenswerten Teil der Eigenbewegung
+        // ausmachen. Sonst zieht sie eine gehende Figur sichtbar zurück oder
+        // zur Seite — genau das war zu sehen: Ein Fuchs bei 1,2 m/s, gegen den
+        // eine Korrektur von 1,2 m/s arbeitet, bleibt fast stehen.
+        const eigen = Math.max(0.3, Number(snap.dr.v) || 0)
+        const tempo = Math.min(KORREKTUR_TEMPO, eigen * KORREKTUR_ANTEIL)
         const dauer = Math.min(KORREKTUR_MAX_MS,
-          Math.max(KORREKTUR_MIN_MS, (weitM / KORREKTUR_TEMPO) * 1000))
+          Math.max(KORREKTUR_MIN_MS, (weitM / tempo) * 1000))
         snap.fix = { lat: dLat, lon: dLon, altitude: dAlt, t: now, dauer }
       }
     }

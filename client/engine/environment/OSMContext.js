@@ -29,6 +29,12 @@ const DEFAULT_RADIUS_M = 300
 const STREET_Y = 0.05          // leicht über Ground, gegen Z-Fighting
 const BUILDING_Y_OFFSET = 0.0
 
+// Abstand der Höhen-Stützpunkte entlang eines Linienzugs (Meter). Kleiner =
+// treuer am Relief, mehr Geometrie. 12 m liegt unter der Auflösung der
+// Höhendaten und ist damit fein genug, ohne Punkte zu verschwenden.
+const STUETZ_ABSTAND_M = 12
+const MAX_STUETZ_JE_KANTE = 200
+
 const STREET_COLOR   = new BABYLON.Color4(1.0, 0.85, 0.3, 0.9)
 const BUILDING_COLOR = new BABYLON.Color4(0.55, 0.7, 1.0, 0.85)
 
@@ -490,10 +496,44 @@ export class OSMContext {
   // `y` bleibt der kleine Stapel-Offset gegen Z-Fighting (Wasser < Straße).
   // Ohne geladenes Relief liefert terrainHeightAt 0 → altes, ebenes Verhalten.
   _toLocalPoints(coords, y) {
-    return coords.map(([lat, lon]) => {
+    return this._nachtasten(coords).map(([lat, lon]) => {
       const v = this.geo.toLocal(lat, lon, 0)
       return new BABYLON.Vector3(v.x, this.geo.terrainHeightAt(lat, lon) + y, v.z)
     })
+  }
+
+  /**
+   * Linienzug feiner abtasten, BEVOR die Geländehöhe gesetzt wird.
+   *
+   * OSM setzt Stützpunkte dort, wo die Straße die RICHTUNG ändert — auf einer
+   * schnurgeraden Landstraße liegen sie hundert Meter auseinander. Die Höhe nur
+   * dort zu nehmen heißt, das Band als GERADE über eine gekrümmte Landschaft zu
+   * spannen: Über einer Kuppe schneidet es ins Gelände, über einer Senke
+   * schwebt es. Und weil Figuren dem Relief exakt folgen, standen sie dann
+   * sichtbar bis zu den Knöcheln im Asphalt.
+   *
+   * Die Zwischenpunkte kosten Geometrie, aber nur linear in der Streckenlänge —
+   * und ohne sie hilft die beste Höhenabfrage nichts, weil sie nie gestellt wird.
+   */
+  _nachtasten(coords, schrittM = STUETZ_ABSTAND_M) {
+    if (!Array.isArray(coords) || coords.length < 2) return coords || []
+    const raus = [coords[0]]
+    for (let i = 1; i < coords.length; i++) {
+      const [aLat, aLon] = coords[i - 1]
+      const [bLat, bLon] = coords[i]
+      const dLat = (bLat - aLat) * 111320
+      const dLon = (bLon - aLon) * 111320 * Math.cos(aLat * Math.PI / 180)
+      const laenge = Math.sqrt(dLat * dLat + dLon * dLon)
+      // Deckel gegen Ausreißer: eine einzelne, fehlerhaft lange Kante soll
+      // nicht Tausende Punkte erzeugen.
+      const teile = Math.min(MAX_STUETZ_JE_KANTE, Math.floor(laenge / schrittM))
+      for (let k = 1; k <= teile; k++) {
+        const t = k / (teile + 1)
+        raus.push([aLat + (bLat - aLat) * t, aLon + (bLon - aLon) * t])
+      }
+      raus.push(coords[i])
+    }
+    return raus
   }
 
   dispose() {

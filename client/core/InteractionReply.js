@@ -96,6 +96,42 @@ export function callExamineText(record) {
   return parts.join(' · ')
 }
 
+/**
+ * Verlaufs-Zeile zu einer Interaktion — MIT Objekt-ID.
+ *
+ * Der Toast zeigt nur, was ein Spieler sehen will: Name und Antwort. Für die
+ * Fehlersuche fehlt genau das Entscheidende — WELCHES Objekt es war. Bei
+ * gleichnamigen Figuren („Papagei", „Soldat") ist ohne Kennung nicht
+ * feststellbar, welche gemeint ist, und ein Blick in die Datenbank scheitert
+ * daran zuerst.
+ *
+ * Deshalb steht sie hier im Verlauf: dort ist sie lesbar, kopierbar und
+ * überdauert das Wegblenden des Toasts.
+ */
+export function interaktionsZeile(record, action, text) {
+  const name = record?.name || 'Objekt'
+  const id = record?.id ? ` [${record.id}]` : ''
+  const was = String(action || '').toLowerCase()
+  return `${name}${id} · ${was}: ${text}`
+}
+
+/**
+ * Interaktion in den Verlauf schreiben — über `window.ajnaLog`, NICHT über den
+ * importierten `messageLog`.
+ *
+ * DIE FALLE: Der Client besteht aus vier Webpack-Bündeln (ar, map, agent,
+ * mobile). Jedes bekommt seine EIGENE Modulinstanz des Verlaufs. Wer aus
+ * `map.js` in den importierten `messageLog` schreibt, schreibt in den Verlauf
+ * des Karten-Bündels — das Fenster gehört aber der Shell und liest ihren
+ * eigenen. Die Zeilen landen nirgends sichtbar, ohne dass etwas fehlschlägt.
+ *
+ * `window.ajnaLog` ist die eine geteilte Instanz. Der Toast macht es seit jeher
+ * so; hier stand es nur nicht, und ich bin prompt hineingelaufen.
+ */
+export function protokolliereInteraktion(record, action, text) {
+  try { window.ajnaLog?.push(interaktionsZeile(record, action, text), 'interact') } catch {}
+}
+
 export function interactionReply(record, action, name) {
   const label = name || record?.name || record?.id || 'das Objekt'
   switch (String(action || '').toLowerCase()) {

@@ -60,6 +60,59 @@ welcher Archetyp welches Modell spawnt) UND [`LOCAL_MODELS`](../client/core/loca
 > Quelle wyvern.glb: [Sketchfab „Wyvern Animated"](https://sketchfab.com/3d-models/wyvern-animated-1dc70bbf15c2456a85290c8613b6c1ff)
 > — Lizenzbedingungen (Namensnennung o. Ä.) vor einer Veröffentlichung prüfen.
 
+## Ausrichtung (`rotation.y`)
+
+Ein Objekt, das sich bewegt, soll dorthin schauen, wohin es läuft. Dafür gibt es
+**genau eine** Umrechnung: `yawFuerKurs()` in
+[`client/core/yaw.js`](../client/core/yaw.js).
+
+```js
+import { yawFuerKurs, yawFuerKursGrad } from '../client/core/yaw.js'
+
+rotation: { x: 0, y: yawFuerKurs(kursRad), z: 0 }
+```
+
+**Die Konvention**
+
+| | |
+|---|---|
+| Kurs | Kompass: 0 = Nord, im Uhrzeigersinn (wie `StreetNav.bearingRad`) |
+| Ost | +X |
+| Nord | **−Z** (`GeoTransformer` läuft mit `invertNorthSouth`) |
+| Modellfront | **+Z** — das ist die Annahme, mit der jeder Agent rechnet |
+
+Daraus folgt `yaw = π − kurs`. Die Herleitung steht in `yaw.js` und wird in
+`yaw.test.mjs` nachgerechnet: Für jeden Kurs wird die Blickrichtung ausgerechnet
+und mit der Bewegungsrichtung verglichen.
+
+**Die Trennlinie — wichtig beim Hinzufügen von Modellen**
+
+Agents rechnen **immer** mit der +Z-Annahme. Ist ein GLB anders herum
+modelliert, wird das im Client korrigiert: `MODEL_YAW_RAD` in
+`client/engine/GameObject.js`, je Datei, auf einem Wrapper-Node zwischen `root`
+und Modell — die Geo-Rotation bleibt unberührt.
+
+> Ein Agent kennt die GLB-Datei gar nicht. Jede Umrechnung, die die Eigenheit
+> eines Modells im Agent auszugleichen versucht, sitzt an der falschen Stelle.
+
+**Zeigt eine neue Figur in die falsche Richtung?**
+
+1. Läuft sie **rückwärts** (180° daneben): Eintrag in `MODEL_YAW_RAD` mit `Math.PI`.
+2. Läuft sie **seitwärts** (90° daneben): Die Front des Modells liegt auf +X.
+   Entweder `MODEL_YAW_RAD` mit `±Math.PI/2`, oder das Modell im
+   3D-Werkzeug ausrichten — Letzteres ist sauberer, weil es die Ausnahme entfernt
+   statt sie zu verwalten.
+3. Zeigt sie mal richtig, mal falsch: Dann rechnet jemand doch wieder selbst.
+   `yaw.test.mjs` prüft, dass keine Agent-Datei eine eigene `π/2`-Formel enthält.
+
+**Historie.** Bis 2026-08-24 gab es drei Formeln: `π − h` (Director, Boden),
+dieselbe mit Env-Regler `WD_FLY_YAW_OFFSET` (Flug) und `h − π/2` in den
+Fahrzeug-Brücken. Die letzte war gegen die *ungekippte* Achsenlage (Z = Nord)
+gestimmt, die es hier nicht gibt. Aufgefallen ist es nie, weil Schiffe und
+Flugzeuge als Emoji-Tafel mit Kugel gezeichnet werden — eine Kugel hat keine
+Vorderseite.
+
+
 ## Objekt-`state`-Identitätsschema
 
 Jedes vom Director erzeugte Objekt trägt eine stabile Identität im `state`-JSON, damit
@@ -91,6 +144,193 @@ nächste Schritt — der Director abonniert dann die interact-Events seiner Obje
 
 Felder, die der Client/Director sonst nutzt: `walk_path` (aktuell verfolgte Polyline,
 für die grüne AR-Debug-Linie), `hp` (enemy, ab P3).
+
+## Aktions-Reichweite (`max_distance`)
+
+Jede Aktion in `state.actions` kann eine Reichweite tragen:
+
+```json
+{ "key": "attack", "label": "Angreifen", "max_distance": 30 }
+```
+
+Ab da gilt sie nur noch in der Nähe. Fehlt die Angabe oder ist sie `0`, gibt es
+keine Einschränkung — bestehende Objekte ändern ihr Verhalten also nicht.
+
+**Nähe lässt sich nur prüfen, wenn der Standort freigegeben ist.** Deshalb
+ergibt sich aus dem Wert, welche Stufe der Spieler mindestens eingestellt haben
+muss ([Privatsphäre-Stufen](../client/core/PrivacyPolicy.js)):
+
+| `max_distance` | nötige Stufe | warum |
+|---|---|---|
+| nicht gesetzt / 0 | keine | keine Prüfung |
+| ≥ 500 m | **Gegend** | die auf ~100 m gerundete Position reicht |
+| < 500 m | **Nähe** oder **Genau** | 100-m-Rundung kann eine 30-m-Frage nicht beantworten |
+
+Der Tausch ist bewusst und nachvollziehbar: **Wer kämpfen will, lässt für den
+Kampf die Deckung fallen.** Niemand wird gedrängt — die Aktion ist dann eben
+nicht verfügbar, mit sichtbarer Begründung im Menü.
+
+Bei Stufe **Nähe** gibt es gar keine Koordinaten, nur die Meldung „jemand ist an
+diesem Objekt" (`ProximityReporter`). Für eine Nahbereichs-Aktion ist das die
+**beste** Auskunft, nicht die schlechteste: Sie beantwortet genau die Frage,
+ohne einen Ort preiszugeben.
+
+Die Logik steht in [`client/core/aktionsReichweite.js`](../client/core/aktionsReichweite.js)
+und wird von beiden Seiten benutzt — der Client entscheidet damit, ob er den
+Menüpunkt anbietet, der Agent prüft damit, was bei ihm ankommt. Zwei
+Implementierungen würden auseinanderlaufen.
+
+> Derselbe Mechanismus trägt später „Auftrag nur vor Ort annehmen".
+
+---
+
+## Kampf
+
+Kampf ist eine **Spielregel, keine Plattformregel**. Es gibt dafür keine
+PocketBase-Route und kein Feld im Schema: Treuhand, Rechte und Karma gehören ins
+Basissystem, weil sie über Besitz entscheiden — Trefferpunkte nicht. Ein
+Vereins- oder Firmenserver will vielleicht gar keine Gegner.
+
+Alles steht deshalb in [`agents/lib/kampf.mjs`](../agents/lib/kampf.mjs) und ist
+für **jeden Agent** nutzbar. Der World-Director ist nur der erste Nutzer.
+
+### Eigene Gegner in die Welt bringen
+
+```js
+import { bootAgent } from './lib/agent-base.mjs'
+import { Kampf, hpVon, beuteObjekt } from './lib/kampf.mjs'
+
+const { ajna } = await bootAgent('mein-agent')
+const kampf = new Kampf()
+
+// Gegner anlegen — Reichweite an der Aktion setzt die Standort-Anforderung.
+await ajna.createObject({
+  name: 'Wegelagerer', type: 'enemy',
+  lat, lon, altitude: 0,
+  state: {
+    source: 'mein-agent',
+    hp: { ist: 40, max: 40 },
+    schaden: 8,                       // was EIN Schlag gegen ihn ausrichtet
+    actions: [{ key: 'attack', label: 'Angreifen', max_distance: 30 }],
+    // Optional: feste Beute statt Tabelle
+    loot: [{ name: 'Beutel', anzahl: 1, chance: 0.5 }],
+  },
+})
+
+ajna.onInteract(id, async (evt) => {
+  if (evt.action !== 'attack') return
+  const ziel = ajna.getObjectById(id)
+  const r = kampf.schlag({ ziel, angreifer: evt.source, absender: evt.payload?.at })
+  if (!r.ok) return                                  // zu weit, zu schnell, schon tot
+  await ajna.updateObject(id, {
+    state: { ...ziel.state, hp: r.hp },
+    animation_state: r.tot ? 'death' : 'hit',
+  })
+  if (r.tot) for (const name of r.beute) {
+    await ajna.createObject(beuteObjekt(name, { lat: ziel.lat, lon: ziel.lon }))
+  }
+})
+
+// Liegezeit abwarten, dann abräumen
+setInterval(async () => {
+  for (const tot of kampf.abgelaufen()) { kampf.vergiss(tot); await ajna.deleteObject(tot) }
+}, 2000)
+```
+
+### Wer schreibt die Zahlen
+
+Der **Besitzer** des Objekts, also der Agent. `state` darf sein Besitzer frei
+schreiben — ein Angreifer kann Trefferpunkte damit nicht selbst setzen.
+Dieselbe Trennlinie wie beim Karma: Eine Zahl, die der Client setzen darf, ist
+keine Zahl, sondern eine Behauptung.
+
+`Kampf.schlag()` **rechnet und entscheidet, schreibt aber nicht**. Der Aufrufer
+schreibt. So lässt sich die Regel ohne laufenden Server prüfen, und ein Agent
+kann das Ergebnis anders umsetzen als der World-Director.
+
+### Beute
+
+**Beute wird erzeugt, nicht gedeckt.** Auftrags-Belohnungen kommen
+treuhänderisch aus einem echten Inventar; Beute entsteht aus dem Nichts. Damit
+„ein Diamant" seine Bedeutung behält, sind Diamanten in den Tabellen
+ausdrücklich selten (unter 1 %), der Rest sind eigene Gattungen — brauchbar als
+Material für spätere Aufträge („bring mir drei Wolfsfelle"), ohne die
+Auftragswährung zu verwässern.
+
+Die Beute **gehört niemandem**: Sie liegt herum und ist tragbar. Das erspart die
+Frage nach Schadensanteilen und Todesstoß und passt zum Weltmodell.
+
+`state.loot` am Objekt geht vor jeder Tabelle — ein besonderer Gegner soll etwas
+Bestimmtes hinterlassen können.
+
+### Anzeige
+
+Ein verletztes Objekt bekommt **von selbst** einen schmalen Balken über dem
+Kopf — grün, dann gelb, dann rot. Er erscheint nur bei Verletzung und nur in
+der Nähe; eine `appearance.label` braucht es dafür nicht. Wer die Zahl im Text
+haben will, schreibt `{hp}` in die Vorlage (`15/30`, leer solange unverletzt).
+
+Für **Treffer** und **Tod** nutzt der Client die Clips `Hit`/`Death` des
+Modells, falls vorhanden. Fehlen sie, zuckt die Figur kurz zurück bzw. kippt
+zur Seite — jedes Modell reagiert also sichtbar, ohne dass ein Agent etwas
+dafür tun muss. **Beide laufen EINMAL** und halten die Endpose; in der Schleife
+fiele ein Gefallener alle zwei Sekunden neu in sich zusammen.
+
+`hit` ist dabei eine Geste, kein Zustand: Der Agent schreibt kurz darauf `idle`
+nach (der Director nach 1,2 s). Bliebe `hit` stehen, liefe die Figur beim
+Betrachter ihre Geh-Animation auf der Stelle weiter.
+
+### Aussehen von Modellen steuern
+
+`appearance.color` färbt **untexturierte** Materialien eines geladenen Modells,
+`appearance.opacity` (0…1) macht es durchscheinend. Damit werden aus den grauen
+Gallert-Modellen farbige Wesen, ohne dass eine neue Datei nötig wäre.
+
+Materialien, deren Name auf ein Auge hindeutet (`eye`, `auge`, `pupil`, `iris`),
+bleiben von beidem verschont — ein durchsichtiges Auge in einem durchsichtigen
+Körper ist kein Auge mehr.
+
+> Farbe pro Figur aus einer Palette zu wählen, ist reizvoll — dann aber
+> **deterministisch aus einer stabilen Saat** (z. B. `state.spawn_id`), nicht
+> mit `Math.random()`. Der Director rechnet die appearance bei jedem Start neu
+> aus; mit Zufall bekäme jede Figur bei jedem Neustart eine andere Farbe, und
+> er schriebe sie jedes Mal neu.
+
+### Ein Getroffener bleibt stehen
+
+Wer angegriffen wird, setzt seine Runde nicht fort. Dafür genügt es **nicht**,
+den Agenten intern anhalten zu lassen: Solange kein neuer `state.motion` mit
+`v: 0` geschrieben ist, rechnet der Betrachter den alten Kurs weiter — die
+Figur spaziert dem Angreifer davon, während sie beim Agenten längst steht.
+
+```js
+plan.haltAn({ lat, lon, altitude, trk })   // → state.motion mit v = 0
+```
+
+Dasselbe gilt fürs Zuhören bei „Sprechen". Der Director hält Kämpfende deutlich
+länger an als Gesprächspartner (`WD_KAMPF_HALT_S`, Vorgabe 30 s) und dreht sie
+zum Angreifer.
+
+### Fallen
+
+- **Abklingzeit nicht vergessen.** Ohne sie erschlägt ein Skript die halbe Welt.
+  `Kampf` führt sie je (Spieler, Ziel).
+- **Eine Leiche ist kein Ziel.** `schlag()` lehnt mit `schon-tot` ab, bis
+  `vergiss()` gerufen wurde.
+- **Nachspawnen ist geschenkt**, wenn der Agent eine Soll-Population führt: Die
+  Leiche löschen genügt, der nächste Abgleich stellt anderswo einen neuen hin.
+- **Gegen die LIVE-Position prüfen und ablegen.** Zwischen zwei
+  Bewegungs-Schreibvorgängen liegen Sekunden Weg. Wer `record.lat` benutzt,
+  lehnt Treffer ab, die aus Spielersicht sitzen — und legt die Beute meterweit
+  neben die Leiche.
+- **Beute braucht `state.portable`.** Ohne das Flag blendet der Client kein
+  „🎒 Einsammeln" ein und die Pickup-Route lehnt ab: Das Fundstück liegt für
+  immer da.
+- **Beute braucht eine Manifest-Schicht.** Ein Agent-Objekt, das zu keiner
+  Schicht des eigenen Manifests passt, wird vom Inhaltsfilter ausgeblendet,
+  sobald ein Spieler dort einmal etwas ausgewählt hat. `beuteObjekt()` setzt
+  darum `state.archetype: 'item'`.
+
 
 ## Sichtbarkeit (ACE)
 
