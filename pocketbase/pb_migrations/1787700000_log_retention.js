@@ -58,14 +58,20 @@ migrate((app) => {
     console.log('[migration] Log-Aufbewahrung nicht gesetzt: ' + (err && err.message))
   }
 
-  // Den Altbestand nicht auf den nächsten Prune-Lauf warten lassen. Auch das
-  // ist Kür: PocketBase räumt ihn beim nächsten eigenen Lauf ohnehin ab.
-  try {
-    const grenze = new Date(Date.now() - TAGE * 86400000).toISOString().replace('T', ' ').slice(0, 19) + 'Z'
-    app.deleteOldLogs(new DateTime(grenze))
-  } catch (err) {
-    console.log('[migration] Logs ausmisten: ' + (err && err.message))
-  }
+  // DER ALTBESTAND WIRD HIER NICHT GELÖSCHT — bewusst, nach einem Vorfall.
+  //
+  // Die erste Fassung tat es: `deleteOldLogs()` gleich mit. Auf einem Server mit
+  // knapp einer Million Logzeilen dauert das. Und MIGRATIONEN LAUFEN, BEVOR
+  // POCKETBASE DEN PORT BINDET — in diesem Fenster steht kein Dienst. pm2 meldet
+  // „online", Caddy bekommt `connection refused`, und es sieht aus wie ein
+  // Absturz. (VPS, 2026-08-28.)
+  //
+  // Die Regel dahinter: Eine Migration richtet das SCHEMA ein und hält sich
+  // kurz. Datenmengen abzuräumen ist Betrieb und gehört in einen Cron, der
+  // laufen darf, wenn der Dienst schon steht.
+  //
+  // PocketBase prunt ab jetzt selbst nach `maxDays`; den Platz gibt SQLite beim
+  // wöchentlichen `aux_vacuum` zurück (pb_hooks/main.pb.js).
 }, (app) => {
   try {
     const s = app.settings()
