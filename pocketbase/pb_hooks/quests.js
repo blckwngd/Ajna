@@ -205,7 +205,14 @@ function resolveSwap(app, call, callData, completerId, extraRequireIds) {
   // Damit begrenzt der Treuhand-Vorrat die Wiederholungen von selbst — es kann
   // nie mehr herausgegeben werden, als der Aussteller hinterlegt hat.
   const repeatable = callData.repeatable === true
-  const perRun = repeatable ? Math.max(1, Number(callData.rewardPerRun) || 1) : rewardIds.length
+  // „Belohnung steigt je Durchlauf": Der n-te Durchlauf zahlt
+  // rewardPerRun + steigt·n. Die Einstellung wurde bisher gespeichert und an
+  // die Oberfläche zurückgegeben — und nie angewandt. Ein Regler ohne Wirkung.
+  const steigt = repeatable ? Math.max(0, Number(callData.steigt) || 0) : 0
+  const gelaufen = Math.max(0, Number(callData.completions) || 0)
+  const perRun = repeatable
+    ? Math.max(1, (Number(callData.rewardPerRun) || 1) + steigt * gelaufen)
+    : rewardIds.length
   if (rewardIds.length < perRun) {
     return { ok: false, code: 409, error: "reward pool exhausted: needs " + perRun + " per run, " + rewardIds.length + " left" }
   }
@@ -229,7 +236,8 @@ function resolveSwap(app, call, callData, completerId, extraRequireIds) {
 
   return {
     ok: true, issuer: issuer, rewards: rewards, required: required,
-    remainingRewards: rewardIds.slice(perRun), repeatable: repeatable, perRun: perRun
+    remainingRewards: rewardIds.slice(perRun), repeatable: repeatable, perRun: perRun,
+    steigt: steigt
   }
 }
 
@@ -263,7 +271,11 @@ function executeSwap(app, call, callState, callData, swap, completerId) {
     callData.completions = (Number(callData.completions) || 0) + 1
     callData.completedBy = completerId          // zuletzt abgeschlossen von
     delete callData.pendingBy
-    if (swap.repeatable && swap.remainingRewards.length >= swap.perRun) {
+    // Gegen den Bedarf des NÄCHSTEN Durchlaufs prüfen, nicht des gerade
+    // bezahlten: Mit Steigerung kostet der nächste mehr. Sonst bliebe der
+    // Auftrag offen, und der nächste Spieler liefe beim Abschluss in ein 409.
+    const naechsterBedarf = swap.perRun + (Number(swap.steigt) || 0)
+    if (swap.repeatable && swap.remainingRewards.length >= naechsterBedarf) {
       callData.status = "open"                  // zurück in den Umlauf
       delete callData.claimedBy
     } else {
@@ -475,8 +487,13 @@ function pruefeNachweis(callRec, c, proof) {
   const bilder = Array.isArray(p.photos)
     ? p.photos.map(function (x) { return String(x || "").slice(0, 300) }).filter(Boolean)
     : []
-  if (noetig.indexOf("foto") !== -1 && bilder.length === 0) {
-    fehlend.push("foto: mindestens ein Bildverweis")
+  // Der übliche Weg ist heute ein Datensatz in `quest_proofs` mit bis zu drei
+  // Bildern; die Route prüft vorher, dass er dem Melder und diesem Auftrag
+  // gehört. `photos` bleibt als Verweis-Liste bestehen — ein Agent, der
+  // Bilder woanders ablegt, soll deswegen nicht scheitern.
+  const beleg = p.proofId ? String(p.proofId).slice(0, 40) : ""
+  if (noetig.indexOf("foto") !== -1 && !beleg && bilder.length === 0) {
+    fehlend.push("foto: mindestens ein Bild")
   }
 
   let ort = null
@@ -503,6 +520,7 @@ function pruefeNachweis(callRec, c, proof) {
     gespeichert: {
       note: p.note ? String(p.note).slice(0, 1000) : "",
       photos: bilder.slice(0, 8),
+      proofId: beleg || undefined,
       at: ort,
     },
   }

@@ -28,6 +28,7 @@
 // (`canAccept`, `canVerify`); die Einordnung passiert hier.
 
 import { KARMA_WAHL } from './karma.js'
+import { t } from './i18n.js'
 
 /** Editor-Verfahren → Server-Abnahmeweg. */
 export const ABNAHME_ZU_VERIFY = {
@@ -49,8 +50,8 @@ export const VERIFY_ZU_ABNAHME = {
 /** Nachweis-Kennung → Klartext für die Detailansicht. */
 export const NACHWEIS_LABEL = {
   foto: 'Vorher-/Nachher-Foto',
-  vorOrt: 'Anwesenheit am Einsatzort',
-  gegenstand: 'Geforderten Gegenstand dabeihaben',
+  vorOrt: t('Anwesenheit am Einsatzort'),
+  gegenstand: t('Geforderten Gegenstand dabeihaben'),
 }
 
 /**
@@ -59,16 +60,16 @@ export const NACHWEIS_LABEL = {
  */
 export function pruefungText(rec) {
   const v = rec?.verify || 'items'
-  if (v === 'items') return 'Übergabe an die Figur'
-  if (v === 'group') return 'Abnahme durch die Prüfgruppe'
+  if (v === 'items') return t('Übergabe an die Figur')
+  if (v === 'group') return t('Abnahme durch die Prüfgruppe')
   if (v === 'crowd') {
     const noetig = Number(rec?.votesNeeded) || 3
     const ja = Number(rec?.votes?.ja)
     return Number.isFinite(ja)
-      ? `Schwarm — ${ja} von ${noetig} Bestätigungen`
-      : `Schwarm — ${noetig} Bestätigungen nötig`
+      ? t('Schwarm — {ja} von {noetig} Bestätigungen', { ja, noetig })
+      : t('Schwarm — {noetig} Bestätigungen nötig', { noetig })
   }
-  return 'Stichprobe durch den Auftraggeber'
+  return t('Stichprobe durch den Auftraggeber')
 }
 
 /** Nachweis-Liste in Klartextzeilen. */
@@ -140,8 +141,8 @@ export function istRelevant(rec, meineId) {
  * Sechsfache dessen, was am Ende ausgezahlt wird.
  */
 function belohnungAus(rec) {
-  const teile = Array.isArray(rec?.rewardParts) ? rec.rewardParts.filter(t => t && t.was) : []
-  const gesamt = teile.reduce((n, t) => n + (Number(t.anzahl) || 0), 0) || Number(rec?.rewards) || 0
+  const teile = Array.isArray(rec?.rewardParts) ? rec.rewardParts.filter(x => x && x.was) : []
+  const gesamt = teile.reduce((n, x) => n + (Number(x.anzahl) || 0), 0) || Number(rec?.rewards) || 0
   const proLauf = Number(rec?.rewardPerRun) || 0
   const erst = teile[0] || null
   if (proLauf > 0 && proLauf < gesamt) {

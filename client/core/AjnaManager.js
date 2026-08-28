@@ -434,6 +434,18 @@ export class AjnaManager {
   //  Interaktionen
   // ===================================================================
 
+  async ladeNachweisHoch(compositeId, opts) {
+    return this._clientFor(compositeId).ladeNachweisHoch(compositeId, opts)
+  }
+
+  async nachweiseZu(compositeId) {
+    return this._clientFor(compositeId).nachweiseZu(compositeId)
+  }
+
+  nachweisBildUrl(rec, dateiname, opts) {
+    return this._clientFor(rec?.id || '').nachweisBildUrl(rec, dateiname, opts)
+  }
+
   async interact(compositeId, action, payload) {
     return this._clientFor(compositeId).interact(compositeId, action, payload)
   }

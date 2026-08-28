@@ -22,6 +22,7 @@
 // Übersetzt wird in core/questMapping.js, nicht hier.
 
 import { makeDraggable } from './draggable.js'
+import { t } from './i18n.js'
 import { karmaLabel } from './karma.js'
 
 const STYLE_ID = 'ajna-quest-style'
@@ -97,9 +98,9 @@ export function fmtFrist(bisMs, jetzt = Date.now()) {
 export function fmtBelohnung(q) {
   // Ein Auftrag kann mehrere Gattungen hinterlegen („2× Diamant, 1× Talisman").
   // Steht nur eine Zahl da, wäre nicht erkennbar, was man eigentlich bekommt.
-  const teile = Array.isArray(q?.belohnung?.teile) ? q.belohnung.teile.filter(t => t?.was) : []
+  const teile = Array.isArray(q?.belohnung?.teile) ? q.belohnung.teile.filter(x => x?.was) : []
   const basis = teile.length
-    ? teile.map(t => `${Number(t.anzahl) || 0}× ${t.was}`).join(', ')
+    ? teile.map(x => `${Number(x.anzahl) || 0}× ${x.was}`).join(', ')
     : (() => {
         const n = Number(q?.belohnung?.anzahl) || 0
         const was = q?.belohnung?.was || 'Belohnung'
@@ -124,9 +125,14 @@ export class QuestPanel {
    * }} opts
    */
   constructor({ parent = document.body, quests = null, onAction = null, onShowOnMap = null,
-                onEdit = null, onReload = null } = {}) {
+                onEdit = null, onReload = null, onNachweis = null, onBelege = null } = {}) {
     this.parent = parent
     this.onAction = onAction
+    // Bilder ablegen, bevor gemeldet wird. Getrennt von onAction, weil es ein
+    // anderer Weg ist: Dateifeld statt JSON-Route.
+    this.onNachweis = onNachweis
+    // Beweisbilder für die Abnahme nachladen.
+    this.onBelege = onBelege
     this.onShowOnMap = onShowOnMap
     // Bearbeiten/Neu öffnet den QuestEditor — der Panel kennt ihn nicht selbst,
     // damit er ohne Editor benutzbar bleibt.
@@ -134,7 +140,7 @@ export class QuestPanel {
     this.onReload = onReload
     this._quests = Array.isArray(quests) ? quests : []
     this._tab = (() => {
-      try { const t = localStorage.getItem(KEY_TAB); return TABS.some(x => x.key === t) ? t : 'verfuegbar' }
+      try { const g = localStorage.getItem(KEY_TAB); return TABS.some(x => x.key === g) ? g : 'verfuegbar' }
       catch { return 'verfuegbar' }
     })()
     this._detail = null      // ID des aufgeklappten Auftrags
@@ -309,10 +315,10 @@ export class QuestPanel {
     this._tabsEl.hidden = !!detail
     if (detail) { this._renderDetail(detail); return }
 
-    this._tabsEl.innerHTML = TABS.map(t => {
-      const n = this.questsIn(t.key).length
-      return `<button type="button" role="tab" data-tab="${t.key}"${t.key === this._tab ? ' class="on"' : ''}>`
-        + `${esc(t.label)}${n ? ` <span class="qp-count">${n}</span>` : ''}</button>`
+    this._tabsEl.innerHTML = TABS.map(reiter => {
+      const n = this.questsIn(reiter.key).length
+      return `<button type="button" role="tab" data-tab="${reiter.key}"${reiter.key === this._tab ? ' class="on"' : ''}>`
+        + `${esc(t(reiter.label))}${n ? ` <span class="qp-count">${n}</span>` : ''}</button>`
     }).join('')
     this._tabsEl.querySelectorAll('button').forEach(b =>
       b.addEventListener('click', () => this._setTab(b.dataset.tab)))
@@ -335,13 +341,13 @@ export class QuestPanel {
   _leerText() {
     // Solange nie eine Antwort da war, ist „nichts zu tun" eine Behauptung
     // über Daten, die es noch gar nicht gibt.
-    if (this._laedt) return 'Aufträge werden geladen …'
-    if (this._fehler) return 'Die Liste konnte nicht geladen werden.'
-    if (!this._gefuellt && this.onReload) return 'Noch nichts geladen.'
-    if (this._tab === 'verfuegbar') return 'Hier gibt es gerade nichts zu tun.'
-    if (this._tab === 'aktiv') return 'Du hast keinen Auftrag angenommen.'
-    if (this._tab === 'meine') return 'Du hast noch keinen Auftrag ausgeschrieben.'
-    return 'Nichts zu prüfen.'
+    if (this._laedt) return t('Aufträge werden geladen …')
+    if (this._fehler) return t('Die Liste konnte nicht geladen werden.')
+    if (!this._gefuellt && this.onReload) return t('Noch nichts geladen.')
+    if (this._tab === 'verfuegbar') return t('Hier gibt es gerade nichts zu tun.')
+    if (this._tab === 'aktiv') return t('Du hast keinen Auftrag angenommen.')
+    if (this._tab === 'meine') return t('Du hast noch keinen Auftrag ausgeschrieben.')
+    return t('Nichts zu prüfen.')
   }
 
   _zeileHtml(q) {
@@ -351,7 +357,7 @@ export class QuestPanel {
     return `<div class="qp-row" data-id="${esc(q.id)}">
       <div class="qp-row-kopf">
         <span class="qp-titel">${esc(q.titel)}</span>
-        <span class="qp-status" style="background:${st.farbe}">${esc(st.label)}</span>
+        <span class="qp-status" style="background:${st.farbe}">${esc(t(st.label))}</span>
       </div>
       <div class="qp-kurz">${esc(q.kurz || '')}</div>
       <div class="qp-meta">
@@ -374,7 +380,7 @@ export class QuestPanel {
       <div class="qp-detail">
         <div class="qp-row-kopf">
           <span class="qp-titel gross">${esc(q.titel)}</span>
-          <span class="qp-status" style="background:${st.farbe}">${esc(st.label)}</span>
+          <span class="qp-status" style="background:${st.farbe}">${esc(t(st.label))}</span>
         </div>
         <div class="qp-von">von ${esc(q.quelle || 'unbekannt')}${q.einreicher ? ` · eingereicht von ${esc(q.einreicher)}` : ''}</div>
         <p class="qp-text">${esc(q.text || q.kurz || '')}</p>
@@ -391,7 +397,7 @@ export class QuestPanel {
         <div class="qp-fehler" data-role="aktionsfehler" hidden></div>
         <div class="qp-aktionen">
           ${this.onShowOnMap ? `<button type="button" class="qp-btn" data-a="map">Auf Karte</button>` : ''}
-          ${aktionen.map(a => `<button type="button" class="qp-btn${a.primaer ? ' primaer' : ''}" data-a="${esc(a.key)}">${esc(a.label)}</button>`).join('')}
+          ${aktionen.map(a => `<button type="button" class="qp-btn${a.primaer ? ' primaer' : ''}" data-a="${esc(a.key)}">${esc(t(a.label))}</button>`).join('')}
         </div>
       </div>`
     this._bodyEl.querySelectorAll('.qp-btn').forEach(b =>
@@ -425,23 +431,55 @@ export class QuestPanel {
     this._bodyEl.innerHTML = `
       <div class="qp-detail">
         <div class="qp-row-kopf"><span class="qp-titel gross">${esc(q.titel)}</span></div>
-        <div class="qp-von">Erledigt melden</div>
-        ${anf ? `<div class="qp-anf"><span>Beizulegen</span><ul>${anf}</ul></div>` : ''}
-        <label class="qp-feld">Was hast du getan?
-          <textarea data-role="notiz" rows="3" placeholder="Kurz beschreiben, was erledigt ist."></textarea>
+        <div class="qp-von">${esc(t('Erledigt melden'))}</div>
+        ${anf ? `<div class="qp-anf"><span>${esc(t('Beizulegen'))}</span><ul>${anf}</ul></div>` : ''}
+        <label class="qp-feld">${esc(t('Was hast du getan?'))}
+          <textarea data-role="notiz" rows="3" placeholder="${esc(t('Kurz beschreiben, was erledigt ist.'))}"></textarea>
         </label>
-        ${(q.roh?.nachweis || []).includes('foto')
-          ? `<div class="qp-hinweis">Noch nicht implementiert — Bilder lassen sich nicht hochladen. Dieser Auftrag verlangt sie.</div>` : ''}
+        ${(q.roh?.nachweis || []).includes('foto') ? `
+        <label class="qp-feld">${esc(t('Bilder (bis zu drei)'))}
+          <input type="file" data-role="bilder" accept="image/*" capture="environment" multiple>
+        </label>
+        <div class="qp-hinweis">${esc(t('Ein Vorher-Bild hilft bei der Abnahme, ist aber nicht nötig. Standort und Aufnahmezeit werden vor dem Senden aus den Bildern entfernt.'))}</div>
+        <div class="qp-bildstand" data-role="bildstand" hidden></div>` : ''}
         <div class="qp-fehler" data-role="aktionsfehler" hidden></div>
         <div class="qp-aktionen">
-          <button type="button" class="qp-btn" data-z="zurueck">Zurück</button>
-          <button type="button" class="qp-btn primaer" data-z="senden">Absenden</button>
+          <button type="button" class="qp-btn" data-z="zurueck">${esc(t('Zurück'))}</button>
+          <button type="button" class="qp-btn primaer" data-z="senden">${esc(t('Absenden'))}</button>
         </div>
       </div>`
     this._bodyEl.querySelector('[data-z="zurueck"]').addEventListener('click', () => this._render())
-    this._bodyEl.querySelector('[data-z="senden"]').addEventListener('click', () => {
+    const senden = this._bodyEl.querySelector('[data-z="senden"]')
+    senden.addEventListener('click', async () => {
       const note = this._bodyEl.querySelector('[data-role="notiz"]')?.value?.trim() || ''
-      this._aktion(q, 'submit', { note })
+      const auswahl = this._bodyEl.querySelector('[data-role="bilder"]')
+      const stand = this._bodyEl.querySelector('[data-role="bildstand"]')
+      const dateien = auswahl?.files ? Array.from(auswahl.files) : []
+
+      // Bilder ZUERST ablegen: Erst danach hat die Meldung eine Kennung, auf die
+      // sie sich berufen kann. Scheitert das Hochladen, ist der Auftrag noch
+      // unangetastet — besser als eine Meldung ohne den verlangten Nachweis.
+      let proofId = ''
+      if (dateien.length) {
+        senden.disabled = true
+        if (stand) { stand.hidden = false; stand.textContent = t('Bilder werden vorbereitet …') }
+        try {
+          const r = await this.onNachweis?.(q, dateien, { notiz: note })
+          proofId = r?.proofId || ''
+          if (stand) {
+            stand.textContent = r?.uebersprungen
+              ? t('{n} Bild(er) gesendet, {zuviel} zu viel — es gehen höchstens {max}.',
+                  { n: r.anzahl, zuviel: r.uebersprungen, max: r.max })
+              : t('{n} Bild(er) gesendet.', { n: r?.anzahl || 0 })
+          }
+        } catch (err) {
+          senden.disabled = false
+          if (stand) { stand.hidden = false; stand.textContent = err?.message || t('Bilder konnten nicht gesendet werden.') }
+          return
+        }
+        senden.disabled = false
+      }
+      this._aktion(q, 'submit', { note, proofId })
     })
   }
 
@@ -454,15 +492,16 @@ export class QuestPanel {
     this._bodyEl.innerHTML = `
       <div class="qp-detail">
         <div class="qp-row-kopf"><span class="qp-titel gross">${esc(q.titel)}</span></div>
-        <div class="qp-von">${ablehnung ? 'Ablehnen' : 'Bestätigen'}</div>
+        <div class="qp-von">${esc(t(ablehnung ? 'Ablehnen' : 'Bestätigen'))}</div>
         ${this._nachweisHtml(q)}
-        <label class="qp-feld">${ablehnung ? 'Warum reicht das nicht?' : 'Anmerkung (freiwillig)'}
+        <div class="qp-belege" data-role="belege"></div>
+        <label class="qp-feld">${esc(t(ablehnung ? 'Warum reicht das nicht?' : 'Anmerkung (freiwillig)'))}
           <textarea data-role="notiz" rows="3"></textarea>
         </label>
         <div class="qp-fehler" data-role="aktionsfehler" hidden></div>
         <div class="qp-aktionen">
-          <button type="button" class="qp-btn" data-z="zurueck">Zurück</button>
-          <button type="button" class="qp-btn primaer" data-z="senden">${ablehnung ? 'Ablehnen' : 'Bestätigen'}</button>
+          <button type="button" class="qp-btn" data-z="zurueck">${esc(t('Zurück'))}</button>
+          <button type="button" class="qp-btn primaer" data-z="senden">${esc(t(ablehnung ? 'Ablehnen' : 'Bestätigen'))}</button>
         </div>
       </div>`
     this._bodyEl.querySelector('[data-z="zurueck"]').addEventListener('click', () => this._render())
@@ -470,6 +509,26 @@ export class QuestPanel {
       const note = this._bodyEl.querySelector('[data-role="notiz"]')?.value?.trim() || ''
       this._aktion(q, key, { note })
     })
+    this._zeigeBelege(q)
+  }
+
+  /**
+   * Beweisbilder nachladen und anzeigen. Nachgeladen, weil sie hinter einer
+   * eigenen Berechtigung liegen — nur Melder und Aussteller sehen sie, und ein
+   * Fehlschlag darf das Abnahme-Formular nicht blockieren.
+   */
+  async _zeigeBelege(q) {
+    const ziel = this._bodyEl?.querySelector('[data-role="belege"]')
+    if (!ziel || !this.onBelege) return
+    let belege = []
+    try { belege = await this.onBelege(q) } catch { return }
+    const bilder = belege.flatMap(b => b.bilder || [])
+    if (!bilder.length) return
+    ziel.innerHTML = `<div class="qp-belege-kopf">${esc(t('Beigelegte Bilder'))}</div>
+      <div class="qp-belege-reihe">${bilder.map(b =>
+        `<a href="${esc(b.gross)}" target="_blank" rel="noopener noreferrer">
+           <img src="${esc(b.klein)}" alt="${esc(t('Beweisbild'))}" loading="lazy">
+         </a>`).join('')}</div>`
   }
 
   /**
@@ -485,7 +544,8 @@ export class QuestPanel {
     if (key === 'edit') { this.onEdit?.(q); return }
     // Verlangt der Auftrag einen Nachweis, wird er vorher erhoben — sonst
     // schickte der Knopf eine Meldung los, die der Server zu Recht ablehnt.
-    if (key === 'submit' && !extra && (q.anforderungen || []).length) {
+    if (key === 'submit' && !extra
+        && ((q.anforderungen || []).length || (q.roh?.nachweis || []).length)) {
       this._meldeFormular(q)
       return
     }
@@ -568,6 +628,15 @@ export class QuestPanel {
     .ajna-quest .qp-eingereicht div{margin-top:3px;color:#c8c8d0}
     .ajna-quest .qp-notiz{font-style:italic}
     .ajna-quest .qp-reload[hidden]{display:none}
+    .ajna-quest .qp-belege{margin-bottom:10px}
+    .ajna-quest .qp-belege:empty{display:none}
+    .ajna-quest .qp-belege-kopf{font:12px system-ui,sans-serif;color:#9aa0a6;margin-bottom:5px}
+    .ajna-quest .qp-belege-reihe{display:flex;gap:6px;flex-wrap:wrap}
+    .ajna-quest .qp-belege-reihe img{width:96px;height:72px;object-fit:cover;border-radius:6px;
+      display:block;background:rgba(255,255,255,.06)}
+    .ajna-quest .qp-bildstand{font:12px system-ui,sans-serif;color:#9aa0a6;margin:-4px 0 10px}
+    .ajna-quest .qp-bildstand[hidden]{display:none}
+    .ajna-quest input[type=file]{font:13px system-ui,sans-serif;color:#c8c8d0;width:100%}
     .ajna-quest .qp-feld{display:block;font:12px system-ui,sans-serif;color:#9b9ba6;margin-bottom:12px}
     .ajna-quest .qp-feld textarea{display:block;width:100%;margin-top:5px;box-sizing:border-box;
       background:#16161b;border:1px solid #33343e;border-radius:7px;color:#e6e6ea;

@@ -415,6 +415,57 @@ export class AjnaClient {
   }
 
   /**
+   * Beweisbilder zu einem Auftrag ablegen — VOR dem Melden.
+   *
+   * Warum vorher und als eigener Datensatz: Ein Dateifeld kann eine JSON-Route
+   * nicht entgegennehmen, und die Größen-/Typprüfung soll die Collection
+   * machen, nicht handgeschriebener Code. Die Kennung des Datensatzes wandert
+   * dann als `proof.proofId` in `quest/complete`; der Server prüft dort, dass
+   * er dem Melder und diesem Auftrag gehört.
+   *
+   * Die Bilder müssen bereits aufbereitet sein (verkleinert, ohne Metadaten) —
+   * siehe core/BildAufbereitung.js.
+   *
+   * @param {string} callId    Auftrags-ID (composite oder roh)
+   * @param {{marke: string, bilder: File[], notiz?: string}} o
+   */
+  async ladeNachweisHoch(callId, { marke, bilder = [], notiz = '' }) {
+    const raw = this._toRaw(callId)
+    const ich = this.pb.authStore.record?.id
+    if (!ich) throw new Error('nicht angemeldet')
+    const fd = new FormData()
+    fd.append('call', raw)
+    fd.append('user', ich)
+    fd.append('submission', String(marke || '').slice(0, 40))
+    if (notiz) fd.append('note', String(notiz).slice(0, 500))
+    for (const b of bilder.slice(0, 3)) fd.append('images', b)
+    return this._tagOrigin(await this.pb.collection('quest_proofs').create(fd))
+  }
+
+  /** Beweis-Datensätze zu einem Auftrag (nur Melder und Aussteller sehen sie). */
+  async nachweiseZu(callId) {
+    const raw = this._toRaw(callId)
+    return (await this.pb.collection('quest_proofs').getFullList({
+      filter: `call = "${raw}"`, sort: '-created',
+    })).map(r => this._tagOrigin(r))
+  }
+
+  /**
+   * Adresse eines Beweisbildes; `thumb` z. B. "320x240" für die Übersicht.
+   *
+   * Der Name der Methode wechselte in der SDK-Reihe (getUrl → getURL). Beide
+   * abfragen, statt sich auf eine Fassung festzulegen — ein kaputter Bildlink
+   * wäre ein stiller Fehler, den niemand im Log sieht.
+   */
+  nachweisBildUrl(rec, dateiname, { thumb = '' } = {}) {
+    const opt = thumb ? { thumb } : {}
+    const f = this.pb.files
+    if (typeof f?.getURL === 'function') return f.getURL(rec, dateiname, opt)
+    if (typeof f?.getUrl === 'function') return f.getUrl(rec, dateiname, opt)
+    return this.pb.getFileUrl(rec, dateiname, opt)
+  }
+
+  /**
    * Regionsliste der Aufträge. Der Server entscheidet, was ich sehen und
    * annehmen darf — der Client baut diese Regeln nicht nach.
    *
@@ -887,7 +938,11 @@ export class AjnaClient {
    * aktualisiert es, oder legt ein neues an. Wird von Bridge-Agents beim
    * Boot aufgerufen.
    *
-   * @param {{source: string, agent_name: string, description?: string, layers?: any[]}} manifest
+   * @param {{source: string, agent_name: string, description?: string, layers?: any[],
+   *          delegates?: string[]}} manifest
+   *   `delegates`: weitere Konto-IDs, die diesen Namen führen dürfen. Setzen
+   *   kann sie nur, wem das Manifest gehört (updateRule) — und gelesen werden
+   *   nur die des Namensinhabers. Siehe Migration 1787800000.
    */
   async upsertAgentManifest(manifest) {
     if (!manifest?.source) throw new Error('upsertAgentManifest: source missing')
@@ -910,6 +965,11 @@ export class AjnaClient {
       description: manifest.description || '',
       layers: manifest.layers || [],
       owner: me.id
+    }
+    // Nur mitschreiben, wenn der Aufrufer sich dazu äußert — sonst löschte ein
+    // Agent, der nichts von Delegation weiß, bei jedem Start die Liste.
+    if (Array.isArray(manifest.delegates)) {
+      payload.delegates = manifest.delegates.map(x => String(x || '').trim()).filter(Boolean)
     }
 
     if (existing) {

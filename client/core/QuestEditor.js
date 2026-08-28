@@ -31,6 +31,7 @@
 // zugestimmt hat. Übersetzt wird in core/questMapping.js.
 
 import { KARMA_WAHL, KARMA_PRO_STUFE, KARMA_GUTSCHRIFT } from './karma.js'
+import { t } from './i18n.js'
 
 const STYLE_ID = 'ajna-questedit-style'
 
@@ -47,10 +48,10 @@ export const ABNAHME = [
  * „Vor Ort bestätigen" allein ließ offen, WER dort bestätigt.
  */
 export const NACHWEIS = [
-  { key: 'foto', label: 'Vorher-/Nachher-Foto',
-    hinweis: 'Zwei Bilder vom selben Blickwinkel. Für die Abnahme durch Menschen, kein Maschinenbeweis.' },
+  { key: 'foto', label: 'Foto-Beweis',
+    hinweis: 'Bis zu drei Bilder. Ein Vorher-Bild hilft der Abnahme, ist aber nicht Pflicht.' },
   { key: 'vorOrt', label: 'Anwesenheit am Einsatzort',
-    hinweis: 'Der Bearbeiter meldet sich am Ort. Wo eine NFC-Marke oder ein Beacon hängt, ist das belastbar — sonst zählt nur die GPS-Angabe des Geräts, und die ist nicht fälschungssicher.' },
+    hinweis: 'Der Bearbeiter meldet sich am Ort. NFC-Marke oder Beacon machen das belastbar, GPS allein nicht.' },
   { key: 'gegenstand', label: 'Geforderten Gegenstand dabeihaben',
     hinweis: 'Der Server prüft beim Abschluss das Inventar. Die Gattung legst du unten unter „Geforderte Gegenstände" fest.' },
 ]
@@ -61,7 +62,8 @@ export const NACHWEIS = [
  * sie gerade in seinen Auftrag schreibt.
  */
 export const OHNE_FUNKTION = {
-  foto: 'Noch nicht implementiert — Bilder lassen sich derzeit nicht hochladen.',
+  // Leer — und das ist die Absicht. Der Mechanismus bleibt für die nächste
+  // Nachweisart, die im Formular vor ihrem Ablauf steht.
 }
 
 export const SICHTBARKEIT = [
@@ -98,9 +100,12 @@ export function sperrenFuer(status) {
   }
   if (status === 'angenommen' || status === 'eingereicht' || status === 'pruefung') {
     return {
-      gesperrt: ['text', 'belohnung', 'abnahme', 'nachweis', 'karma', 'sichtbarkeit'],
+      // Die Belohnung bleibt bewusst offen: Erhöhen ist immer erlaubt, kürzen
+      // weist der Server ab (409). Sie hier zu sperren nahm dem Aussteller die
+      // einzige Möglichkeit, einen zäh laufenden Auftrag attraktiver zu machen.
+      gesperrt: ['text', 'abnahme', 'nachweis', 'karma', 'sichtbarkeit'],
       schreibbar: true,
-      hinweis: 'Jemand arbeitet daran. Änderbar ist nur noch die Frist — und nur nach oben.',
+      hinweis: 'Jemand arbeitet daran. Änderbar sind nur noch Frist und Belohnung — und beide nur nach oben.',
     }
   }
   if (status === 'offen' || status === 'angeboten') {
@@ -155,7 +160,19 @@ export function vorratVon(q) {
 /** Wie oft der Auftrag mit diesem Vorrat erledigt werden kann. */
 export function durchlaeufeVon(q) {
   const pro = Math.max(1, Number(q?.belohnung?.anzahl) || 1)
-  return Math.max(1, Math.floor(vorratVon(q) / pro))
+  const steigt = Math.max(0, Number(q?.belohnung?.steigt) || 0)
+  const vorrat = vorratVon(q)
+  if (!q?.wiederholbar || !steigt) return Math.max(1, Math.floor(vorrat / pro))
+  // Mit Steigerung kostet der n-te Durchlauf pro + steigt·n. Eine Division
+  // wäre hier schlicht falsch — aufsummieren, bis der Vorrat nicht mehr reicht.
+  let n = 0, gebraucht = 0
+  for (;;) {
+    const naechster = pro + steigt * n
+    if (gebraucht + naechster > vorrat) break
+    gebraucht += naechster
+    n++
+  }
+  return Math.max(1, n)
 }
 
 const esc = (s) => String(s ?? '')
@@ -173,32 +190,32 @@ export function pruefeAuftrag(q) {
   if (String(q?.titel || '').length > 80) fehler.push('Der Titel ist länger als 80 Zeichen.')
   if (!String(q?.text || '').trim()) fehler.push('Die Aufgabe ist leer — sonst weiß niemand, was zu tun ist.')
   const n = Number(q?.belohnung?.anzahl)
-  if (!Number.isFinite(n) || n < 0) fehler.push('Die Belohnung muss eine Zahl ab 0 sein.')
+  if (!Number.isFinite(n) || n < 0) fehler.push(t('Die Belohnung muss eine Zahl ab 0 sein.'))
   if (q?.abnahme === 'schwarm') {
     const s = Number(q?.schwarmZahl)
-    if (!Number.isFinite(s) || s < 1 || s > 9) fehler.push('Beim Schwarm sind 1 bis 9 Bestätigungen sinnvoll.')
+    if (!Number.isFinite(s) || s < 1 || s > 9) fehler.push(t('Beim Schwarm sind 1 bis 9 Bestätigungen sinnvoll.'))
   }
   // Ohne benannte Gruppe könnte niemand ausser dem Aussteller abnehmen — der
   // Auftrag wäre dann eine Stichprobe unter falschem Namen.
   if (q?.abnahme === 'pruefgruppe' && !String(q?.pruefgruppe || '').trim()) {
-    fehler.push('Wähle die Gruppe, die abnehmen soll.')
+    fehler.push(t('Wähle die Gruppe, die abnehmen soll.'))
   }
   if (q?.sichtbarkeit === 'gruppe' && !String(q?.sichtbarGruppe || '').trim()) {
-    fehler.push('Wähle die Gruppe, die den Auftrag sehen soll.')
+    fehler.push(t('Wähle die Gruppe, die den Auftrag sehen soll.'))
   }
   if (q?.sichtbarkeit === 'region' && !String(q?.kurz || '').trim()) {
-    fehler.push('Für die Regionsliste braucht es eine Kurzbeschreibung.')
+    fehler.push(t('Für die Regionsliste braucht es eine Kurzbeschreibung.'))
   }
   // Eine Forderung ohne Gattung träfe JEDEN Gegenstand — der Server lehnt sie
   // beim Veröffentlichen ab, und das ist der unangenehmere Zeitpunkt.
   if ((q?.forderungen || []).some(f => !String(f?.name || '').trim())) {
-    fehler.push('Jede Forderung braucht eine Gattung — sonst zählt jeder beliebige Gegenstand.')
+    fehler.push(t('Jede Forderung braucht eine Gattung — sonst zählt jeder beliebige Gegenstand.'))
   }
   if (q?.wiederholbar) {
     const v = Number(q?.vorrat)
-    if (!Number.isFinite(v) || v < 1) fehler.push('Der Vorrat muss mindestens 1 sein.')
+    if (!Number.isFinite(v) || v < 1) fehler.push(t('Der Vorrat muss mindestens 1 sein.'))
     else if (v < n) {
-      fehler.push('Der Vorrat kann nicht kleiner sein als die Belohnung für einen Durchlauf.')
+      fehler.push(t('Der Vorrat kann nicht kleiner sein als die Belohnung für einen Durchlauf.'))
     }
   }
   return fehler
@@ -250,11 +267,11 @@ export class QuestEditor {
     this._veroeffentlichen = veroeffentlichen !== false
     const ov = document.createElement('div')
     ov.className = 'ajna-qe-overlay'
-    ov.innerHTML = `<div class="ajna-qe" role="dialog" aria-modal="true" aria-label="Auftrag bearbeiten">
+    ov.innerHTML = `<div class="ajna-qe" role="dialog" aria-modal="true" aria-label="${esc(t('Auftrag bearbeiten'))}">
       <header>
-        <h3>${this._q.id ? 'Auftrag bearbeiten' : 'Neuer Auftrag'}</h3>
+        <h3>${esc(t(this._q.id ? 'Auftrag bearbeiten' : 'Neuer Auftrag'))}</h3>
         <span class="qe-serverwahl" data-role="serverwahl"></span>
-        <button class="qe-close" type="button" aria-label="Schließen">×</button>
+        <button class="qe-close" type="button" aria-label="${esc(t('Schließen'))}">×</button>
       </header>
       <div class="qe-body" data-role="body"></div>
       <div class="qe-fuss">
@@ -294,29 +311,29 @@ export class QuestEditor {
     const aus = (feld) => sp.gesperrt.includes('*') || sp.gesperrt.includes(feld) ? ' disabled' : ''
 
     this._body.innerHTML = `
-      ${sp.hinweis ? `<div class="qe-hinweis">${esc(sp.hinweis)}</div>` : ''}
+      ${sp.hinweis ? `<div class="qe-hinweis">${esc(t(sp.hinweis))}</div>` : ''}
 
       <div class="qe-abschnitt">Text</div>
       <label>Titel
         <input type="text" data-f="titel" maxlength="80" value="${esc(q.titel)}"
-               placeholder="Müll sammeln am Rheinufer"${aus('text')}>
+               placeholder="${esc(t('Müll sammeln am Rheinufer'))}"${aus('text')}>
       </label>
-      <label>Kurz — eine Zeile für die Liste
+      <label>${esc(t('Kurz — eine Zeile für die Liste'))}
         <input type="text" data-f="kurz" maxlength="120" value="${esc(q.kurz)}"
-               placeholder="Uferweg zwischen Brücke und Bootshaus, ein Sack reicht."${aus('text')}>
+               placeholder="${esc(t('Uferweg zwischen Brücke und Bootshaus, ein Sack reicht.'))}"${aus('text')}>
       </label>
-      <label>Aufgabe
-        <textarea data-f="text" rows="4" placeholder="Was genau ist zu tun? Wo liegt Werkzeug?"${aus('text')}>${esc(q.text)}</textarea>
+      <label>${esc(t('Aufgabe'))}
+        <textarea data-f="text" rows="4" placeholder="${esc(t('Was genau ist zu tun? Wo liegt Werkzeug?'))}"${aus('text')}>${esc(q.text)}</textarea>
       </label>
-      <label>Ort — Beschreibung für die Liste
+      <label>${esc(t('Ort — Beschreibung für die Liste'))}
         <input type="text" data-f="ort" maxlength="80" value="${esc(q.ort)}"
-               placeholder="Rheinufer, Höhe Bootshaus"${aus('text')}>
+               placeholder="${esc(t('Rheinufer, Höhe Bootshaus'))}"${aus('text')}>
       </label>
 
       <div class="qe-abschnitt">Frist und Belohnung</div>
       <label>Frist
         <select data-f="fristMs">
-          ${FRISTEN.map(f => `<option value="${f.ms}"${Number(q.fristMs) === f.ms ? ' selected' : ''}>${esc(f.label)}</option>`).join('')}
+          ${FRISTEN.map(f => `<option value="${f.ms}"${Number(q.fristMs) === f.ms ? ' selected' : ''}>${esc(t(f.label))}</option>`).join('')}
         </select>
       </label>
       <div class="qe-zeile">
@@ -347,10 +364,10 @@ export class QuestEditor {
       <div class="qe-abschnitt">Abnahme</div>
       <label>Verfahren
         <select data-f="abnahme"${aus('abnahme')}>
-          ${ABNAHME.map(a => `<option value="${a.key}"${a.key === q.abnahme ? ' selected' : ''}>${esc(a.label)}</option>`).join('')}
+          ${ABNAHME.map(a => `<option value="${a.key}"${a.key === q.abnahme ? ' selected' : ''}>${esc(t(a.label))}</option>`).join('')}
         </select>
       </label>
-      <div class="qe-fussnote">${esc(ABNAHME.find(a => a.key === q.abnahme)?.hinweis || '')}</div>
+      <div class="qe-fussnote">${esc(t(ABNAHME.find(a => a.key === q.abnahme)?.hinweis || ''))}</div>
       ${q.abnahme === 'schwarm' ? `<label>Nötige Bestätigungen
         <input type="number" data-f="schwarmZahl" min="1" max="9" value="${esc(q.schwarmZahl)}"${aus('abnahme')}>
       </label>` : ''}
@@ -363,8 +380,8 @@ export class QuestEditor {
           const an = q.nachweis.includes(n.key)
           return `<label class="qe-haken-zeile">
           <input type="checkbox" data-n="${n.key}"${an ? ' checked' : ''}${aus('nachweis')}>
-          <span><span class="qe-haken-titel">${esc(n.label)}</span>
-          <span class="qe-haken-hinweis">${esc(n.hinweis)}</span>
+          <span><span class="qe-haken-titel">${esc(t(n.label))}</span>
+          <span class="qe-haken-hinweis">${esc(t(n.hinweis))}</span>
           ${an && OHNE_FUNKTION[n.key] ? `<span class="qe-haken-offen">${esc(OHNE_FUNKTION[n.key])}</span>` : ''}
           </span></label>`
         }).join('')}
@@ -385,7 +402,7 @@ export class QuestEditor {
       ` : ''}
       <label>Nötiges Karma des Bearbeiters
         <select data-f="karma"${aus('karma')}>
-          ${KARMA_WAHL.map(v => `<option value="${v.stufe}"${v.stufe === Number(q.karma || 0) ? ' selected' : ''}>${esc(v.label)}</option>`).join('')}
+          ${KARMA_WAHL.map(v => `<option value="${v.stufe}"${v.stufe === Number(q.karma || 0) ? ' selected' : ''}>${esc(t(v.label))}</option>`).join('')}
         </select>
       </label>
       <div class="qe-fussnote">${KARMA_PRO_STUFE} Punkte je Stufe, Stufe 0 bis 5.
@@ -394,7 +411,7 @@ export class QuestEditor {
       <div class="qe-abschnitt">Sichtbarkeit</div>
       <label>Wer sieht den Auftrag
         <select data-f="sichtbarkeit"${aus('sichtbarkeit')}>
-          ${SICHTBARKEIT.map(v => `<option value="${v.key}"${v.key === q.sichtbarkeit ? ' selected' : ''}>${esc(v.label)}</option>`).join('')}
+          ${SICHTBARKEIT.map(v => `<option value="${v.key}"${v.key === q.sichtbarkeit ? ' selected' : ''}>${esc(t(v.label))}</option>`).join('')}
         </select>
       </label>
       ${q.sichtbarkeit === 'gruppe' ? `<label>Welche Gruppe
@@ -402,7 +419,7 @@ export class QuestEditor {
       </label>` : ''}
       <label>Ab wann steht der Auftrag auch in der Regionsliste
         <select data-f="anbietenNachH"${aus('sichtbarkeit')}>
-          ${ANBIETEN.map(a => `<option value="${a.h}"${Number(q.anbietenNachH || 0) === a.h ? ' selected' : ''}>${esc(a.label)}</option>`).join('')}
+          ${ANBIETEN.map(a => `<option value="${a.h}"${Number(q.anbietenNachH || 0) === a.h ? ' selected' : ''}>${esc(t(a.label))}</option>`).join('')}
         </select>
       </label>
       <div class="qe-fussnote">Vergibt eine Figur den Auftrag, ist er zunächst nur im Gespräch
@@ -459,7 +476,7 @@ export class QuestEditor {
     const fest = !!this._q.id
     this._serverEl.innerHTML = `
       <button type="button" class="qe-badge" data-role="badge"${fest ? ' disabled' : ''}
-              title="${fest ? 'Ein bestehender Auftrag bleibt auf seinem Server.' : 'Server wählen'}">
+              title="${fest ? t('Ein bestehender Auftrag bleibt auf seinem Server.') : t('Server wählen')}">
         ${esc(aktiv?.label || aktiv?.id || '?')}${fest ? '' : ' ▾'}
       </button>
       <div class="qe-serverliste" data-role="liste" hidden>
@@ -517,7 +534,8 @@ export class QuestEditor {
     const knapp = vorrat > bestand
       ? ` Im Inventar liegen nur ${bestand}.`
       : ''
-    return `Reicht für ${mal}× erledigen${rest > 0 ? ` (${rest} bleibt übrig)` : ''}.${knapp}`
+    return t('Reicht für {mal}× erledigen', { mal })
+      + (rest > 0 ? ' ' + t('({rest} bleibt übrig)', { rest }) : '') + '.' + knapp
   }
 
   /**

@@ -564,6 +564,100 @@ routerAdd("POST", "/api/objects/{id}/place", (e) => {
 // verify: "crowd"           — andere Spieler nehmen ab (quest/confirm).
 // verify: "agent"           — der Aussteller-Agent entscheidet mit eigener
 //                             Logik (siehe quest/approve).
+// ---------------------------------------------------------------------
+// Die Logdatei auch WIRKLICH schrumpfen.
+//
+// SQLite gibt gelöschten Platz nicht von selbst ans Dateisystem zurück. Nach
+// dem Ausmisten von 948.000 Logzeilen standen 1.300 Zeilen in einer 898 MB
+// großen Datei — die Aufbewahrungsfrist wirkte, man sah es nur nicht. Jede
+// Sicherung packte diese 898 MB weiterhin mit ein.
+//
+// Sonntags um 4 Uhr, weil VACUUM die Datei exklusiv sperrt. Betroffen ist nur
+// die LOG-Datenbank; Objekte, Aufträge und Rechte liegen in data.db und laufen
+// ungestört weiter. Schlägt es fehl (jemand liest gerade), passiert nichts —
+// nächste Woche wieder.
+cronAdd("aux_vacuum", "0 4 * * 0", () => {
+  try {
+    const db = $app.auxDB && $app.auxDB()
+    if (!db) return
+    db.newQuery("VACUUM").execute()
+    console.log("[aux_vacuum] Logdatenbank verdichtet")
+  } catch (err) {
+    console.log("[aux_vacuum] " + (err && err.message ? err.message : err))
+  }
+})
+
+// ---------------------------------------------------------------------
+// Beweisbilder aufräumen.
+//
+// Ein Auftragsfoto hat einen Zweck, und der endet. Nach der Abnahme ist es
+// weder Beweis noch Erinnerung, sondern nur noch ein Bild von einem realen Ort,
+// womöglich mit Menschen darauf. Löschen ist hier keine Hausordnung, sondern
+// Datenschutz.
+//
+// ZWEI FRISTEN, weil es zwei Fälle gibt:
+//   • ABGESCHLOSSEN (done/cancelled/expired) → kurze Schonzeit. Sie gibt es
+//     nur, damit eine irrtümliche Ablehnung noch angesehen werden kann.
+//   • ALLES ANDERE → harte Obergrenze. Deckt ab, was durch die Ritzen fällt:
+//     angefangene und nie gemeldete Einreichungen, verwaiste Uploads.
+//
+// Beide über die `settings`-Collection zur Laufzeit änderbar (Schlüssel
+// `proof.graceHours` und `proof.maxAgeDays`) — genau der Fall, für den es sie
+// gibt: eine Betriebsentscheidung, die niemand per Neustart treffen will.
+//
+// PocketBase löscht die Dateien mit dem Datensatz. Deshalb reicht hier delete().
+cronAdd("proof_cleanup", "17 * * * *", () => {
+  const einstellung = (schluessel, vorgabe) => {
+    try {
+      const r = $app.findFirstRecordByFilter("settings", "key = {:k}", { k: schluessel })
+      const v = Number(r.get("value"))
+      if (isFinite(v) && v > 0) return v
+    } catch (err) { /* nicht gesetzt → Vorgabe */ }
+    return vorgabe
+  }
+  const schonzeitH = einstellung("proof.graceHours", 24)
+  const maxAlterT  = einstellung("proof.maxAgeDays", 30)
+
+  const isoVor = (ms) => new Date(Date.now() - ms).toISOString().replace("T", " ").slice(0, 19) + "Z"
+  let weg = 0
+
+  try {
+    // 1) Harte Obergrenze — unabhängig vom Zustand des Auftrags.
+    const alt = $app.findRecordsByFilter("quest_proofs",
+      "created < {:t}", "created", 500, 0, { t: isoVor(maxAlterT * 86400000) })
+    for (let i = 0; i < alt.length; i++) {
+      try { $app.delete(alt[i]); weg++ } catch (err) { /* schon weg */ }
+    }
+
+    // 2) Zu abgeschlossenen Aufträgen, Schonzeit vorbei. Der Zustand steht im
+    //    JSON von `objects.state` — dafür gibt es keinen Filter, also holen wir
+    //    die Kandidaten nach Alter und sehen am Auftrag nach.
+    const kandidaten = $app.findRecordsByFilter("quest_proofs",
+      "created < {:t}", "created", 500, 0, { t: isoVor(schonzeitH * 3600000) })
+    const { parseState, callDataOf } = require(`${__hooks}/quests.js`)
+    for (let i = 0; i < kandidaten.length; i++) {
+      let auftrag
+      try { auftrag = $app.findRecordById("objects", kandidaten[i].get("call")) }
+      catch (err) {
+        // Auftrag weg, Beweis übrig — sollte der Cascade erledigen, kommt aber
+        // vor, wenn er anders gelöscht wurde.
+        try { $app.delete(kandidaten[i]); weg++ } catch (e2) {}
+        continue
+      }
+      const c = callDataOf(parseState(auftrag))
+      const zu = c.status === "done" || c.status === "cancelled" || c.status === "expired"
+      if (!zu) continue
+      try { $app.delete(kandidaten[i]); weg++ } catch (err) {}
+    }
+  } catch (err) {
+    console.log("[proof_cleanup] " + (err && err.message ? err.message : err))
+    return
+  }
+
+  if (weg) console.log(`[proof_cleanup] ${weg} Beweis-Datensatz/-Dateien entfernt`)
+})
+
+
 routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
   try {
     const { parseState, activeEscrowOf, callDataOf, idList, validateSpecs } = require(`${__hooks}/quests.js`)
@@ -587,6 +681,29 @@ routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
     }
     const specCheck = validateSpecs(specs)
     if (!specCheck.ok) return e.json(400, { error: specCheck.error })
+
+    // „Erhöhen darf man immer, kürzen nie." Sobald jemand mitarbeitet, ist die
+    // Ausschreibung eine Zusage — der Aussteller darf noch etwas drauflegen,
+    // aber nichts zurücknehmen. Ohne diese Prüfung stand die Regel nur als
+    // Satz in der Oberfläche und war serverseitig frei umgehbar.
+    {
+      const cVorher = callDataOf(parseState(call))
+      const inArbeit = cVorher.status === "claimed" || cVorher.status === "pending"
+      if (inArbeit) {
+        const alt = idList(cVorher.rewardItems)
+        for (let i = 0; i < alt.length; i++) {
+          if (rewardIds.indexOf(alt[i]) < 0) {
+            // `code` ist der stabile Teil: Der Client macht daraus einen Satz in
+            // der Sprache des Lesers. Der englische Text bleibt als Rückfall
+            // stehen — er soll im Log lesbar sein.
+            return e.json(409, {
+              error: "someone is working on this call — the reward may be raised, not reduced",
+              code: "reward_reduced",
+            })
+          }
+        }
+      }
+    }
 
     // Wiederholbar: pro Durchlauf wird nur ein Teil des Vorrats ausgezahlt.
     // Der Vorrat begrenzt damit die Wiederholungen — es kann nie mehr
@@ -802,7 +919,29 @@ routerAdd("POST", "/api/objects/{id}/quest/complete", (e) => {
     // Nachweis zuerst: Fehlt er, ist der Auftrag nicht gemeldet, sondern
     // unvollständig. Das soll der Bearbeiter erfahren, bevor irgendetwas
     // anderes passiert — und der Prüfer soll ihn später vorliegen haben.
-    const nw = pruefeNachweis(call, c, (info.body || {}).proof)
+    // Beweisbilder: Der Client legt sie VOR dem Melden in `quest_proofs` ab
+    // (dort greifen Dateifeld, Größen- und Typprüfung) und schickt hier nur die
+    // Kennung. Ohne diese Prüfung könnte jemand die Kennung einer FREMDEN
+    // Einreichung mitschicken und sich deren Bilder als eigenen Nachweis
+    // anrechnen lassen.
+    const eingang = (info.body || {}).proof || {}
+    if (eingang.proofId) {
+      let beleg
+      try { beleg = $app.findRecordById("quest_proofs", String(eingang.proofId)) }
+      catch (err) { return e.json(400, { error: "proof record not found", code: "proof_not_found" }) }
+      if (beleg.get("user") !== user.id) {
+        return e.json(403, { error: "that proof belongs to someone else", code: "proof_foreign" })
+      }
+      if (beleg.get("call") !== callId) {
+        return e.json(400, { error: "that proof belongs to another call", code: "proof_other_call" })
+      }
+      const dateien = beleg.get("images")
+      if (!dateien || !dateien.length) {
+        return e.json(400, { error: "proof record has no images", code: "proof_empty" })
+      }
+    }
+
+    const nw = pruefeNachweis(call, c, eingang)
     if (!nw.ok) {
       return e.json(400, { error: "proof incomplete", missing: nw.fehlend })
     }

@@ -20,6 +20,7 @@ import {
   listeZuAnsicht, zuFormular, callZustandAus, publishPayloadAus,
   inventarAus, waehleBelohnung, benoetigterVorrat,
 } from './questMapping.js'
+import { t } from './i18n.js'
 
 /** Wie weit die Regionsliste reicht (Meter). */
 export const RADIUS_M = 3000
@@ -100,7 +101,7 @@ export class QuestService {
    */
   async aktion(q, aktion, opts = {}) {
     const id = q?.id
-    if (!id) throw new Error('Auftrag ohne Kennung')
+    if (!id) throw new Error(t('Auftrag ohne Kennung'))
 
     if (aktion === 'accept') return this.ajna.acceptQuest(id)
 
@@ -146,6 +147,44 @@ export class QuestService {
     const p = this._position()
     if (p) proof.at = { lat: p.lat, lon: p.lon }
     return proof
+  }
+
+  /**
+   * Bilder aufbereiten und ablegen; gibt die Kennung für `proof.proofId`.
+   *
+   * Aufbereiten heißt: verkleinern und neu kodieren. Damit sind die
+   * Aufnahme-Metadaten weg — ein Beweisfoto darf nicht die GPS-Koordinate
+   * mitliefern, die die Standort-Stufe gerade zurückhält.
+   *
+   * @param {object} q          Anzeige-Auftrag
+   * @param {File[]} dateien    bis zu drei, mehr werden verworfen
+   * @returns {Promise<{proofId: string, anzahl: number, uebersprungen: number, fehler: string[]}>}
+   */
+  async nachweisBilder(q, dateien, { notiz = '' } = {}) {
+    const { bereiteBilderAuf, MAX_BILDER } = await import('./BildAufbereitung.js')
+    const { bilder, uebersprungen, fehler } = await bereiteBilderAuf(dateien)
+    if (!bilder.length) {
+      throw new Error(fehler[0] || t('Kein verwertbares Bild dabei.'))
+    }
+    // Kennung des Anlaufs. Die endgültige Einreichungs-Kennung vergibt der
+    // Server erst beim Melden — diese hier gruppiert nur, was zusammengehört.
+    const marke = `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
+    const rec = await this.ajna.ladeNachweisHoch(q.id, { marke, bilder, notiz })
+    return { proofId: rec?.id || '', anzahl: bilder.length, uebersprungen, fehler, max: MAX_BILDER }
+  }
+
+  /** Beweisbilder eines Auftrags — für die Abnahme-Ansicht. */
+  async nachweiseAnsehen(q) {
+    const liste = await this.ajna.nachweiseZu(q.id).catch(() => [])
+    return liste.map(r => ({
+      id: r.id,
+      notiz: r.note || '',
+      wann: r.created,
+      bilder: (r.images || []).map(name => ({
+        gross: this.ajna.nachweisBildUrl(r, name),
+        klein: this.ajna.nachweisBildUrl(r, name, { thumb: '320x240' }),
+      })),
+    }))
   }
 
   // ── Schreiben (Editor) ─────────────────────────────────────────────────
@@ -239,11 +278,11 @@ export class QuestService {
     if (id) {
       await this.ajna.updateObject(id, daten)
     } else {
-      if (!pos) throw new Error('Ohne bekannte Position lässt sich kein Auftrag anlegen.')
+      if (!pos) throw new Error(t('Ohne bekannte Position lässt sich kein Auftrag anlegen.'))
       // Ein getrennter Server nimmt nichts entgegen. Das hier zu sagen ist
       // freundlicher, als den Netzwerkfehler durchzureichen.
       if (!this.serverListe().length) {
-        throw new Error('Kein verbundener Server — der Auftrag kann nirgends angelegt werden.')
+        throw new Error(t('Kein verbundener Server — der Auftrag kann nirgends angelegt werden.'))
       }
       daten.lat = pos.lat
       daten.lon = pos.lon
@@ -256,7 +295,7 @@ export class QuestService {
       // Ohne Angabe der Standardserver — die Wahl im Kopf des Fensters geht vor.
       const rec = await this.ajna.createObject(daten, { serverId: f.server || undefined })
       id = rec?.id
-      if (!id) throw new Error('Der Auftrag wurde nicht angelegt.')
+      if (!id) throw new Error(t('Der Auftrag wurde nicht angelegt.'))
     }
 
     await this._sichtbarkeitSetzen(id, f)
@@ -276,7 +315,7 @@ export class QuestService {
     if (fehlt > 0) {
       throw new Error(`Es fehlen ${fehlt}× ${f.belohnung?.was || 'Belohnung'} in deinem Inventar auf diesem Server.`)
     }
-    if (!ids.length) throw new Error('Ohne Belohnung lässt sich kein Auftrag ausschreiben.')
+    if (!ids.length) throw new Error(t('Ohne Belohnung lässt sich kein Auftrag ausschreiben.'))
 
     await this.ajna.publishQuest(id, publishPayloadAus(f, ids))
     return { id, published: true }
@@ -284,7 +323,7 @@ export class QuestService {
 
   /** Ausschreibung zurückziehen — die Treuhand wird wieder frei. */
   async zurueckziehen(formular) {
-    if (!formular?.id) throw new Error('Auftrag ohne Kennung')
+    if (!formular?.id) throw new Error(t('Auftrag ohne Kennung'))
     return this.ajna.cancelQuest(formular.id)
   }
 
