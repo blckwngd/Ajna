@@ -13,6 +13,7 @@
 
 import { animalNameFor } from './animalNames.js'
 import { randomHexColor } from './randomColor.js'
+import { t } from './i18n.js'
 
 const pick = arr => arr[Math.floor(Math.random() * arr.length)]
 
@@ -91,9 +92,9 @@ export function randomSpawnData(position) {
  */
 export async function spawnRandomHere({ ajna, position }) {
   if (!position || !Number.isFinite(position.lat) || !Number.isFinite(position.lon)) {
-    throw new Error('Keine Position — Spawn braucht deinen Standort')
+    throw new Error(t('Keine Position — Erzeugen braucht deinen Standort'))
   }
-  if (!ajna?.isLoggedIn?.()) throw new Error('Zum Spawnen bitte einloggen')
+  if (!ajna?.isLoggedIn?.()) throw new Error(t('Zum Erzeugen bitte anmelden'))
 
   const data = randomSpawnData(position)
   const obj = await ajna.createObject(data)
@@ -186,11 +187,11 @@ export function directorSpawnItems({ ajna, position, enabled = true, notify, ang
   }
   return [
     ...DIRECTOR_SPAWNS.map(s => ({
-      label: `${s.label} hier erzeugen`,
+      label: t('{was} hier erzeugen', { was: t(s.label) }),
       disabled: !enabled,
       onClick: () => send(s.archetype, s.label)
     })),
-    { label: 'Zufällig hier erzeugen', disabled: !enabled, onClick: () => send('random', 'Zufälliges Objekt') },
+    { label: t('Zufällig hier erzeugen'), disabled: !enabled, onClick: () => send('random', t('Zufälliges Objekt')) },
     questSpawnItem({ position, enabled, notify })
   ]
 }
@@ -210,12 +211,12 @@ export function directorSpawnItems({ ajna, position, enabled = true, notify, ang
  */
 export function questSpawnItem({ position, enabled = true, notify }) {
   return {
-    label: 'Auftrag hier erzeugen',
+    label: t('Auftrag hier erzeugen'),
     disabled: !enabled,
     onClick: () => {
       const oeffnen = window.ajnaQuestEditor
       if (typeof oeffnen !== 'function') {
-        notify?.('Das Auftrags-Fenster ist in dieser Ansicht nicht verfügbar.')
+        notify?.(t('Das Auftrags-Fenster gibt es in dieser Ansicht nicht.'))
         return
       }
       oeffnen(null, { lat: position.lat, lon: position.lon })

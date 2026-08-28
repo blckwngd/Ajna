@@ -45,6 +45,8 @@ export function talkResponse(record) {
 }
 
 import { TYPE_LABEL } from './SpawnHere.js'
+import { inSprache } from './Sprachwahl.js'
+import { t } from './i18n.js'
 
 const CALL_STATUS_TEXT = {
   open: 'offen', claimed: 'angenommen', pending: 'wird geprüft',
@@ -79,18 +81,19 @@ export function describeRequires(call) {
 export function callExamineText(record) {
   const c = record?.state?.call || {}
   const parts = []
-  parts.push(c.task ? String(c.task) : 'Ein Auftrag ohne Beschreibung.')
+  parts.push(c.task ? String(c.task) : t('Ein Auftrag ohne Beschreibung.'))
   const rewards = Array.isArray(c.rewardItems) ? c.rewardItems.length : 0
   const req = describeRequires(c)
   if (req.length) parts.push('Gefordert: ' + req.join(', '))
   if (c.repeatable) {
     // Der hinterlegte Vorrat sagt, wie oft der Auftrag noch spielbar ist.
     const perRun = Math.max(1, Number(c.rewardPerRun) || 1)
-    parts.push(`Belohnung: ${perRun} pro Durchlauf · wiederholbar, noch ${Math.floor(rewards / perRun)}× möglich`)
+    parts.push(t('Belohnung: {pro} pro Durchlauf · wiederholbar, noch {rest}× möglich',
+        { pro: perRun, rest: Math.floor(rewards / perRun) }))
   } else {
     parts.push(rewards
       ? `Belohnung: ${rewards} Gegenstand${rewards > 1 ? '/Gegenstände' : ''}`
-      : 'Noch keine Belohnung hinterlegt')
+      : t('Noch keine Belohnung hinterlegt'))
   }
   parts.push('Status: ' + (CALL_STATUS_TEXT[c.status] || 'offen'))
   return parts.join(' · ')
@@ -139,7 +142,10 @@ export function interactionReply(record, action, name) {
     case 'read':
     case 'lesen':
       if (record?.type === 'call') return callExamineText(record)
-      return record?.description || record?.state?.hint || record?.state?.dialog
+      // Ein Feld darf eine Zeichenkette ODER eine Sprachkarte sein — kein Agent
+      // MUSS übersetzen, wer mag, kann (siehe core/Sprachwahl.js).
+      return inSprache(record?.description) || inSprache(record?.state?.hint)
+        || inSprache(record?.state?.dialog)
           || `Nichts Besonderes an ${label}.`
     case 'talk':
     case 'sprechen':

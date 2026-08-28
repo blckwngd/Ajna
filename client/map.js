@@ -1,6 +1,14 @@
 import { AjnaManager } from "./core/AjnaManager.js"
 import { EditorUI } from "./core/EditorUI.js"
 import { GPSProvider } from "./core/GPSProvider.js"
+import { t, starteSprache, setzeSprache, sprache, fehlende } from "./core/i18n.js"
+
+// Sprache laden, bevor irgendetwas gezeichnet wird. Ohne Datei bleibt es
+// Deutsch — die Oberfläche ist nie halb leer, nur unübersetzt.
+const spracheBereit = starteSprache()
+window.ajnaSprache = setzeSprache
+window.ajnaSpracheJetzt = sprache
+window.ajnaFehlendeTexte = fehlende
 import { ContextMenu } from "./core/ContextMenu.js"
 import { PermissionDialog } from "./core/PermissionDialog.js"
 import { GroupDialog } from "./core/GroupDialog.js"
@@ -17,7 +25,7 @@ import { shapeOf, emojiOf, iconOf, colorOf, radiusOf, glowOf, textureOf } from "
 import { isWikimediaUrl } from "./core/wikiLinks.js"
 import { interactionReply, describeRequires, protokolliereInteraktion } from "./core/InteractionReply.js"
 import { spawnRandomAndEdit, directorSpawnItems } from "./core/SpawnHere.js"
-import { PRESENCE_TYPE, zeigeAnwesenheit, anwesenheitsText } from "./core/PresenceService.js"
+import { PresenceService, PRESENCE_TYPE, zeigeAnwesenheit, anwesenheitsText } from "./core/PresenceService.js"
 import { InterestArea } from "./core/InterestArea.js"
 import { ProximityReporter } from "./core/ProximityReporter.js"
 import { InterestAreaDebug } from "./core/InterestAreaDebug.js"
@@ -324,8 +332,8 @@ function makeMarker(obj) {
 // nur `.acft-rot` dreht sich). Rotation wird beim Reconcile per applyAircraftHeading
 // direkt am DOM nachgezogen — ohne den Marker (und damit den Smoother) neu zu bauen.
 function aircraftHeading(obj) {
-  const t = Number(obj.state?.adsb?.trk)
-  return Number.isFinite(t) ? t : 0
+  const kurs = Number(obj.state?.adsb?.trk)
+  return Number.isFinite(kurs) ? kurs : 0
 }
 function aircraftIcon(obj) {
   const color = colorOf(obj) || '#39a0ff'
@@ -365,7 +373,7 @@ const CALL_STATUS_TEXT = {
 function popupDetail(o) {
   if ((o?.type || '').toLowerCase() === 'call') {
     const c = o.state?.call || {}
-    const bits = [escHtml(c.task || 'Auftrag ohne Beschreibung')]
+    const bits = [escHtml(c.task || t('Auftrag ohne Beschreibung'))]
     const req = describeRequires(c)
     if (req.length) bits.push('Gefordert: ' + escHtml(req.join(', ')))
     const rw = Array.isArray(c.rewardItems) ? c.rewardItems.length : 0
@@ -623,6 +631,7 @@ function enabledSources() {
 }
 
 async function init() {
+  await spracheBereit          // siehe main.js: erst Sprache, dann Oberfläche
   if (!window.L) {
     throw new Error('Leaflet ist nicht geladen')
   }
@@ -723,6 +732,17 @@ async function init() {
     })
     proximityReporter.start()
     window.ajnaProximity = proximityReporter
+
+    // Eigene Anwesenheit — bisher nur im 3D-Bündel. Wer die Karte benutzt, sah
+    // andere zwar, blieb selbst aber unsichtbar: einseitig und darum falsch.
+    // Kurs gibt es hier keinen (die Karte hat keine Blickrichtung).
+    const presence = new PresenceService({
+      ajna,
+      getPosition: () => _hub.positionSource?.getWorldPosition?.() || null,
+    })
+    presence.start()
+    window.ajnaPresence = presence
+    window.addEventListener('pagehide', () => { try { presence.stop() } catch {} })
   }
 
   // Debug-Overlay „📡 IA" (oben links): zeigt eigenen + Server-Interessensbereiche
@@ -762,8 +782,8 @@ async function init() {
     attribution: 'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'
   })
   const BASEMAPS = {
-    light:     { label: 'Karte hell',   layer: lightTiles, contrast: 'light' },
-    dark:      { label: 'Karte dunkel', layer: darkTiles,  contrast: 'dark'  },
+    light:     { label: t('Karte hell'),   layer: lightTiles, contrast: 'light' },
+    dark:      { label: t('Karte dunkel'), layer: darkTiles,  contrast: 'dark'  },
     satellite: { label: 'Satellit',     layer: satTiles,   contrast: 'dark'  },
   }
   let mapBase = 'light'
@@ -796,8 +816,8 @@ async function init() {
     onManageFilters: () => filterDialog.open(),
     objectFilter: obj => agentFilters.matches(obj),
     onSaved: (obj, err) => {
-      if (obj) toast.show('Änderungen übernommen', { title: obj.name || 'Objekt' })
-      else if (err) toast.show('Speichern fehlgeschlagen', { title: 'Editor' })
+      if (obj) toast.show(t('Änderungen übernommen'), { title: obj.name || 'Objekt' })
+      else if (err) toast.show(t('Speichern fehlgeschlagen'), { title: 'Editor' })
     }
   })
 
@@ -824,7 +844,7 @@ async function init() {
       handleMarkerInteract(record.id, { action: key, source: ajna.currentUser()?.id }),
     // Server hat die Wirkung abgelehnt → Grund zeigen statt Erfolg vortäuschen.
     onInteractError: (record, key, message) =>
-      toast.show(message || 'Aktion nicht möglich', { title: record?.name || 'Aktion' })
+      toast.show(message || t('Aktion nicht möglich'), { title: record?.name || 'Aktion' })
   })
   // EditorUI nachträglich exponieren (ajnaUI entsteht vor init) — die Shell
   // (Objekte-Tab „Bearbeiten") öffnet darüber den Karten-Editor.
@@ -834,7 +854,7 @@ async function init() {
   let _placing = null
   const _placeAt = async (rec, latlng) => {
     try { await ajna.place(rec.id, { lat: latlng.lat, lon: latlng.lng }) }
-    catch (err) { toast.show('Platzieren fehlgeschlagen: ' + (err?.response?.error || err?.message || err), { title: 'Platzieren' }) }
+    catch (err) { toast.show(t('Platzieren fehlgeschlagen: ') + (err?.response?.error || err?.message || err), { title: 'Platzieren' }) }
   }
   const _endPlacing = () => { _placing = null; if (window.map) window.map.getContainer().style.cursor = '' }
   window.map.on('click', (e) => { if (_placing) { const r = _placing; _endPlacing(); _placeAt(r, e.latlng) } })
@@ -907,17 +927,17 @@ async function init() {
       title: `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
       items: [
         {
-          label: 'Neues Objekt…',
+          label: t('Neues Objekt…'),
           disabled: !loggedIn,
           onClick: () => editorUI.startNewObjectAt(lat, lng, 0)
         },
         {
-          label: 'Zufälliges Objekt (mir gehörend)…',
+          label: t('Zufälliges Objekt (mir gehörend)…'),
           disabled: !loggedIn,
           onClick: () => spawnRandomAndEdit({
             ajna, editorUI, announcer: _announcer,
             position: { lat, lon: lng, altitude: 0 }
-          }).catch(err => toast.show(err?.message || 'Spawn fehlgeschlagen', { title: 'Spawn' }))
+          }).catch(err => toast.show(err?.message || t('Erzeugen fehlgeschlagen'), { title: 'Spawn' }))
         },
         // Vom World-Director erzeugen lassen → gehört ihm, bewegt sich auch.
         ...directorSpawnItems({

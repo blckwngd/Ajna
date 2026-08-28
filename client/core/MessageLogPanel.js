@@ -10,6 +10,7 @@
 import { messageLog, CATS } from './MessageLog.js'
 import { makeDraggable } from './draggable.js'
 import { Toast } from './Toast.js'
+import { t } from './i18n.js'
 
 const FILTER_KEY = 'ajna.msglog.filter'   // 'player' | 'all'
 // Abstand zum unteren Rand, bis zu dem die Liste noch als „unten" gilt. Etwas
@@ -18,7 +19,7 @@ const FILTER_KEY = 'ajna.msglog.filter'   // 'player' | 'all'
 const BOTTOM_TOLERANZ = 48
 const STYLE_ID = 'ajna-msglog-style'
 
-const fmtTime = (t) => { try { return new Date(t).toTimeString().slice(0, 5) } catch { return '' } }
+const fmtTime = (zeit) => { try { return new Date(zeit).toTimeString().slice(0, 5) } catch { return '' } }
 
 export class MessageLogPanel {
   constructor({ parent = document.body, ajna = null, toast = null } = {}) {
@@ -179,7 +180,7 @@ export class MessageLogPanel {
             <button type="button" data-f="player" class="${this._filter === 'player' ? 'on' : ''}">Verlauf</button>
             <button type="button" data-f="all" class="${this._filter === 'all' ? 'on' : ''}">Alle</button>
           </div>
-          <button class="mlg-clear" type="button" title="Verlauf leeren">Leeren</button>
+          <button class="mlg-clear" type="button" title="${t('Verlauf leeren')}">${t('Leeren')}</button>
           <button class="mlg-close" type="button" aria-label="Schließen">×</button>
         </header>
         <div class="mlg-list" data-role="list"></div>
@@ -188,7 +189,7 @@ export class MessageLogPanel {
           <div class="mlg-choices" data-role="choices" hidden></div>
           <div class="mlg-inputrow">
             <input type="text" data-role="input" autocomplete="off"
-                   placeholder="Nachricht …" maxlength="2000">
+                   placeholder="${t('Nachricht …')}" maxlength="2000">
             <button type="submit" title="Senden">➤</button>
           </div>
         </form>
@@ -196,7 +197,7 @@ export class MessageLogPanel {
     ov.addEventListener('click', e => { if (e.target === ov) this.close() })
     ov.querySelector('.mlg-close').addEventListener('click', () => this.close())
     ov.querySelector('.mlg-clear').addEventListener('click', () => {
-      if (window.confirm('Verlauf wirklich leeren?')) messageLog.clear()
+      if (window.confirm(t('Verlauf wirklich leeren?'))) messageLog.clear()
     })
     ov.querySelectorAll('.mlg-filter button').forEach(b =>
       b.addEventListener('click', () => this._setFilter(b.dataset.f, ov)))
@@ -209,10 +210,10 @@ export class MessageLogPanel {
     this._hinweisEl = ov.querySelector('[data-role="hinweis"]')
     this._composeEl.addEventListener('submit', (ev) => {
       ev.preventDefault()
-      const t = this._inputEl.value.trim()
-      if (!t) return
+      const text = this._inputEl.value.trim()
+      if (!text) return
       this._inputEl.value = ''
-      this._send(t)
+      this._send(text)
     })
     // Öffnen heißt: das Neueste sehen wollen. Egal, wo die Liste beim letzten
     // Schließen stand.

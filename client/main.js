@@ -51,6 +51,15 @@ import { PresenceService, PRESENCE_TYPE, zeigeAnwesenheit } from "./core/Presenc
 import { inventoryDevices } from "./core/inventoryDevices.js"
 import { spawnRandomAndEdit, directorSpawnItems } from "./core/SpawnHere.js"
 import { SpawnFunken } from "./engine/SpawnFunken.js"
+import { t, starteSprache, setzeSprache, sprache, fehlende } from "./core/i18n.js"
+
+// Sprache laden, bevor irgendetwas gezeichnet wird. Ohne Datei bleibt es
+// Deutsch — die Oberfläche ist nie halb leer, nur unübersetzt.
+const spracheBereit = starteSprache()
+// Aus der Konsole erreichbar: umstellen und nachsehen, was noch fehlt.
+window.ajnaSprache = setzeSprache
+window.ajnaSpracheJetzt = sprache
+window.ajnaFehlendeTexte = fehlende
 import { CameraComponent } from "./engine/components/CameraComponent.js"
 import { DebugCameraComponent } from "./engine/components/DebugCameraComponent.js"
 import { PlayerGPSComponent } from "./engine/components/PlayerGPSComponent.js"
@@ -184,6 +193,10 @@ function createLoadingOverlay(arRoot) {
 }
 
 async function init() {
+  // Erst die Sprache, dann die Oberfläche — sonst ist der erste Aufbau deutsch,
+  // egal was eingestellt ist. Der Katalog liegt in einem eigenen Bündelstück
+  // und braucht einen Rundgang.
+  await spracheBereit
 
   // Babylon Setup
   const canvas = document.getElementById("renderCanvas")
@@ -439,7 +452,7 @@ async function init() {
     worldTracker.start({ worldTracking: SLAM_ENABLED }).catch(err => {
       console.warn('[slam] Start fehlgeschlagen, Fallback Kompass:', err?.message || err)
       const pg = player.getComponent(PlayerGPSComponent); if (pg) pg.paused = false
-      try { if (!_toast) _toast = new Toast(); _toast.show('SLAM nicht verfügbar — Kompass', { title: 'AR' }) } catch {}
+      try { if (!_toast) _toast = new Toast(); _toast.show(t('SLAM nicht verfügbar — Kompass'), { title: 'AR' }) } catch {}
       arPassthrough.enable().catch(() => {})
     })
     markerTracking?.startOverlay()   // Umriss+Name erkannter Marker im Kamerabild
@@ -686,9 +699,9 @@ async function init() {
       // Gyro-adaptive Glättung (headingStabilizer): bei Ruhe stark (Objekte
       // schwimmen nicht mehr), bei echter Drehung ohne spürbaren Lag. q ist das
       // Ziel; wir slerpen den gehaltenen Zustand darauf zu und schreiben zurück.
-      const t = _headingStab.factor()
+      const anteil = _headingStab.factor()
       if (!_smoothedHeadingQ) _smoothedHeadingQ = q.clone()
-      else { BABYLON.Quaternion.SlerpToRef(_smoothedHeadingQ, q, t, _smoothedHeadingQ); q.copyFrom(_smoothedHeadingQ) }
+      else { BABYLON.Quaternion.SlerpToRef(_smoothedHeadingQ, q, anteil, _smoothedHeadingQ); q.copyFrom(_smoothedHeadingQ) }
 
       // Marker-Snap auch OHNE SLAM (Marker-only/Kompass-Modus): die Engine
       // liefert die kamera-relative Marker-Pose, die Rotation kommt vom Kompass.
@@ -765,14 +778,14 @@ async function init() {
     if (ENGINE_ENABLED && slamCfg.range > 0) {
       // Nah-Gating: zunächst Kamera-Passthrough + Kompass; Engine schaltet sich
       // je nach Objekt-Nähe selbst zu/ab (Akku sparen, nur einer hält die Kamera).
-      arPassthrough.enable().catch(err => { try { if (!_toast) _toast = new Toast(); _toast.show(err?.message || "Kamera nicht verfügbar", { title: "AR" }) } catch {} })
+      arPassthrough.enable().catch(err => { try { if (!_toast) _toast = new Toast(); _toast.show(err?.message || t('Kamera nicht verfügbar'), { title: "AR" }) } catch {} })
       arFov?.activate()
       _startSlamGate()
     } else if (ENGINE_ENABLED) {
       arPassthrough.disable()   // range=0 → Engine immer an; Kamera frei → Engine übernimmt
       _slamOn()
     } else {
-      arPassthrough.enable().catch(err => { if (!_toast) _toast = new Toast(); _toast.show(err?.message || "Kamera nicht verfügbar", { title: "AR" }) })
+      arPassthrough.enable().catch(err => { if (!_toast) _toast = new Toast(); _toast.show(err?.message || t('Kamera nicht verfügbar'), { title: "AR" }) })
       arFov?.activate()   // FOV an Kamerabild angleichen
     }
   }
@@ -958,17 +971,20 @@ async function init() {
   // Spieler einen sehen. Bewusst NUR bei „Genau" — die gröberen Stufen liefern
   // absichtlich keine Position, die man als Figur zeichnen könnte, ohne genau
   // das preiszugeben, was sie zurückhalten. Siehe core/PresenceService.js.
-  const presence = new PresenceService({
+  // In der Mobile-Shell gehört die Anwesenheit der Shell: Dort steht sie auch,
+  // wenn der AR-Tab nie geöffnet wurde — und zwei Schreiber auf demselben
+  // Datensatz wären ein Fehler, kein Sicherheitsnetz.
+  const presence = document.querySelector('.shell-tabbar') ? null : new PresenceService({
     ajna: ajnaManager,
     getPosition: () => positionSource?.getWorldPosition?.() || null,
     getHeading: () => (typeof window.ajnaHeadingRad === 'number' ? window.ajnaHeadingRad : null),
   })
-  presence.start()
-  window.ajnaPresence = presence
+  presence?.start()
+  if (presence) window.ajnaPresence = presence
   // Beim Verlassen der Seite aufräumen: Ohne das bliebe die letzte Position
   // stehen, bis sie veraltet — und das ist genau die Stelle, an der jemand
   // gesehen wird, der sich längst abgemeldet hat.
-  window.addEventListener('pagehide', () => { try { presence.stop() } catch {} })
+  window.addEventListener('pagehide', () => { try { presence?.stop() } catch {} })
   // Manifeste selbst aktuell halten (Erst-Load deckt persistierte Session ab, wo
   // onAuthChanged nicht feuert) und die Area neu publishen, sobald die Quellen
   // geladen/geändert sind — sonst ginge sie ohne Quellen raus (Agents sehen sie nicht).
@@ -997,8 +1013,8 @@ async function init() {
     onManageFilters: () => filterDialog.open(),
     onSaved: (obj, err) => {
       if (!_toast) _toast = new Toast()
-      if (obj) _toast.show('Änderungen übernommen', { title: obj.name || 'Objekt' })
-      else if (err) _toast.show('Speichern fehlgeschlagen', { title: 'Editor' })
+      if (obj) _toast.show(t('Änderungen übernommen'), { title: obj.name || 'Objekt' })
+      else if (err) _toast.show(t('Speichern fehlgeschlagen'), { title: 'Editor' })
     },
     // Open the editor panel when editing or creating an object (if minimized).
     onEditorActivate: () => _openArEditor(),
@@ -1057,7 +1073,7 @@ async function init() {
     go._smoother?.feed?.({ lat: w.lat, lon: w.lon, altitude: alt, rotation: rot })
     ajnaManager.updateObject(go.id, { lat: w.lat, lon: w.lon, altitude: alt, rotation: rot, scale: scl })
       .then(() => { if (!_toast) _toast = new Toast(); _toast.show(`${kind} gespeichert`, { title: go.name || 'Objekt' }) })
-      .catch(err => { if (!_toast) _toast = new Toast(); _toast.show('Speichern fehlgeschlagen: ' + (err?.message || err), { title: 'Editor' }) })
+      .catch(err => { if (!_toast) _toast = new Toast(); _toast.show(t('Speichern fehlgeschlagen: ') + (err?.message || err), { title: 'Editor' }) })
   }
   const _detachGizmo = () => {
     if (!_gizmoMgr || !_gizmoGo) return
@@ -1086,8 +1102,8 @@ async function init() {
     }
     if (!allowed) {
       if (!_toast) _toast = new Toast()
-      _toast.show(!me ? 'Bitte einloggen — Objekt-Werkzeuge erfordern Bearbeitungsrechte.'
-        : 'Keine Berechtigung: Verschieben erfordert Besitz oder ein edit/move-Recht.', { title: go.name || 'Objekt' })
+      _toast.show(!me ? t('Bitte anmelden — die Objekt-Werkzeuge brauchen Bearbeitungsrechte.')
+        : t('Zum Verschieben fehlt dir das Recht.'), { title: go.name || 'Objekt' })
       return
     }
     if (!_gizmoMgr) {
@@ -1113,7 +1129,7 @@ async function init() {
     _gizmoMgr.attachToNode(go.root)
     _gizmoGo = go
     if (!_toast) _toast = new Toast()
-    _toast.show('Pfeile = verschieben · Ring = drehen · Würfel außen = Achse skalieren, Mitte = proportional. Daneben klicken/Esc = fertig.', { title: go.name || 'Objekt' })
+    _toast.show(t('Pfeile verschieben · Ring dreht · Würfel skalieren. Esc beendet.'), { title: go.name || 'Objekt' })
   }
 
   // ── Wand pointing → AR highlight (audio cues handled by the hub) ──────
@@ -1195,7 +1211,7 @@ async function init() {
     // Server hat die Wirkung abgelehnt → Grund zeigen statt Erfolg vortäuschen.
     onInteractError: (record, key, message) => {
       if (!_toast) _toast = new Toast()
-      _toast.show(message || 'Aktion nicht möglich', { title: record?.name || 'Aktion' })
+      _toast.show(message || t('Aktion nicht möglich'), { title: record?.name || 'Aktion' })
     }
   })
 
@@ -1218,7 +1234,7 @@ async function init() {
 
   // Fokus-Quellen: Zauberstab-Ziel + Lock. Die Gaze-Pfade (immersives XR und
   // Handy-AR) speisen weiter unten zusätzlich ein.
-  wand.onTarget((t) => _quickFocus(t?.id ? ajnaManager.getObjectById?.(t.id) : null))
+  wand.onTarget((ziel) => _quickFocus(ziel?.id ? ajnaManager.getObjectById?.(ziel.id) : null))
   wand.onLock((o) => {
     _qaLocked = o?.id ? (ajnaManager.getObjectById?.(o.id) || null) : null
     // Beim Entsperren übernimmt wieder der Blick (nächster Gaze-/Ziel-Tick).
@@ -1329,7 +1345,7 @@ async function init() {
     try { await ajnaManager.place(rec.id, { lat: geoPos.lat, lon: geoPos.lon, altitude: 0 }) }
     catch (err) {
       if (!_toast) _toast = new Toast()
-      _toast.show('Platzieren fehlgeschlagen: ' + (err?.response?.error || err?.message || err), { title: 'Platzieren' })
+      _toast.show(t('Platzieren fehlgeschlagen: ') + (err?.response?.error || err?.message || err), { title: 'Platzieren' })
     }
   }
 
@@ -1554,12 +1570,12 @@ async function init() {
       title: `${geoPos.lat.toFixed(5)}, ${geoPos.lon.toFixed(5)}`,
       items: [
         {
-          label: 'Neues Objekt…',
+          label: t('Neues Objekt…'),
           disabled: !ajnaManager.isLoggedIn(),
           onClick: () => editorUI.startNewObjectAt(geoPos.lat, geoPos.lon, spawnAlt)
         },
         {
-          label: 'Zufälliges Objekt (mir gehörend)…',
+          label: t('Zufälliges Objekt (mir gehörend)…'),
           disabled: !ajnaManager.isLoggedIn(),
           onClick: () => spawnRandomAndEdit({
             ajna: ajnaManager, editorUI, announcer: _announcer,

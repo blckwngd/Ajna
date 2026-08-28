@@ -594,8 +594,11 @@ const offen = sperrenFuer('offen')
 check('veröffentlicht bleibt bearbeitbar', offen.gesperrt.length === 0 && !!offen.hinweis)
 for (const st of ['angenommen', 'eingereicht', 'pruefung']) {
   const sp = sperrenFuer(st)
-  check(`„${st}": Aufgabe und Belohnung gesperrt`,
-    sp.gesperrt.includes('text') && sp.gesperrt.includes('belohnung'))
+  check(`„${st}": Aufgabe gesperrt`, sp.gesperrt.includes('text'))
+  // Erhoehen darf man immer — die Belohnung bleibt darum offen, das KUERZEN
+  // weist der Server ab. Sie hier zu sperren nahm dem Aussteller die einzige
+  // Moeglichkeit, einen zaeh laufenden Auftrag attraktiver zu machen.
+  check(`„${st}": Belohnung bleibt erhoehbar`, !sp.gesperrt.includes('belohnung'))
   check(`„${st}": Frist bleibt änderbar`, !sp.gesperrt.includes('fristMs') && sp.schreibbar)
 }
 for (const st of ['erledigt', 'abgelaufen']) {
@@ -631,7 +634,7 @@ check('Nachweisarten sind erklärt, nicht nur benannt',
   NACHWEIS.every(n => n.key && n.label && n.hinweis && n.hinweis.length > 30))
 check('„Anwesenheit" sagt, wer bestätigt und wie belastbar das ist',
   /Bearbeiter/.test(NACHWEIS.find(n => n.key === 'vorOrt').hinweis) &&
-  /nicht fälschungssicher/.test(NACHWEIS.find(n => n.key === 'vorOrt').hinweis))
+  /GPS/.test(NACHWEIS.find(n => n.key === 'vorOrt').hinweis))
 check('Sichtbarkeit reicht von privat bis Region',
   SICHTBARKEIT.map(v => v.key).join() === 'privat,gruppe,region')
 check('neuer Auftrag startet als Entwurf und gehört mir',
@@ -952,27 +955,110 @@ console.log('\n── Aufträge: Anbindung verdrahtet')
 }
 
 // ── Nachweis „Foto": Hinweis auf die fehlende Funktion ──────────────
-// Der Bild-Upload gibt es noch nicht. Wer die Art trotzdem in seinen Auftrag
-// schreibt, soll das erfahren — aber erst dann, nicht als Dauerwarnung.
-console.log('\n── Nachweis: fehlende Funktion benannt')
+// ── Foto-Beweis: bis zu drei Bilder, „Vorher" freiwillig ────────────────
+// Als „Vorher/Nachher" gedacht war es eine Falle: Ein sauber erledigter Auftrag
+// scheiterte daran, dass jemand vergessen hat, VORHER zu fotografieren.
+console.log('\n── Foto-Beweis')
 {
   const { OHNE_FUNKTION, NACHWEIS } = await import('../client/core/QuestEditor.js')
-  check('Foto ist als noch nicht umgesetzt vermerkt',
-    /[Nn]icht implementiert/.test(OHNE_FUNKTION.foto || ''))
-  check('die anderen Nachweisarten funktionieren',
+  check('Foto gilt nicht mehr als unfertig', !OHNE_FUNKTION.foto)
+  check('die anderen Nachweisarten ebenfalls nicht',
     !OHNE_FUNKTION.vorOrt && !OHNE_FUNKTION.gegenstand)
-  check('jeder Vermerk gehoert zu einer echten Nachweisart',
-    Object.keys(OHNE_FUNKTION).every(k => NACHWEIS.some(n => n.key === k)))
+  const foto = NACHWEIS.find(n => n.key === 'foto')
+  check('drei Bilder sind angesagt', /drei/.test(foto.hinweis))
+  check('und „Vorher" ist ausdruecklich keine Pflicht', /nicht Pflicht/.test(foto.hinweis))
 
-  const quelle = readFileSync(new URL('../client/core/QuestEditor.js', import.meta.url), 'utf8')
-  check('Hinweis erscheint nur bei gesetztem Haken',
-    /an && OHNE_FUNKTION\[n\.key\]/.test(quelle))
-  check('Haken zeichnet neu, sonst bliebe der Hinweis aus',
-    /\[data-n\][\s\S]{0,160}this\._lese\(\); this\._render\(\)/.test(quelle))
+  const { MAX_BILDER, passeGroesseAn } = await import('../client/core/BildAufbereitung.js')
+  check('mehr als drei nimmt der Client gar nicht erst an', MAX_BILDER === 3)
+  // Kleinere Bilder NICHT aufblasen — das braechte Dateigroesse ohne Bildinhalt.
+  const klein = passeGroesseAn(800, 600, 1600)
+  check('kleine Bilder bleiben, wie sie sind', klein.width === 800 && klein.height === 600)
+  const gross = passeGroesseAn(4000, 3000, 1600)
+  check('grosse werden auf die lange Kante gebracht', gross.width === 1600 && gross.height === 1200)
+  const hoch = passeGroesseAn(3000, 4000, 1600)
+  check('auch hochkant', hoch.height === 1600 && hoch.width === 1200)
+
+  const ba = readFileSync(new URL('../client/core/BildAufbereitung.js', import.meta.url), 'utf8')
+  // EXIF traegt die GPS-Koordinate. Ein Beweisfoto darf nicht liefern, was die
+  // Standort-Stufe gerade zurueckhaelt.
+  check('neu kodieren statt Metadaten putzen', /toBlob\([\s\S]{0,120}image\/jpeg/.test(ba))
+  // Ohne das laege jedes hochkant aufgenommene Bild quer, sobald EXIF fehlt.
+  check('die Ausrichtung wird vorher angewandt', /imageOrientation: 'from-image'/.test(ba))
 
   const panel = readFileSync(new URL('../client/core/QuestPanel.js', import.meta.url), 'utf8')
-  check('auch der Bearbeiter erfaehrt es beim Melden',
-    /nicht implementiert[\s\S]{0,80}hochladen/i.test(panel))
+  check('das Meldeformular nimmt Bilder entgegen', /data-role="bilder"/.test(panel))
+  check('und sagt, dass Metadaten entfernt werden', /Aufnahmezeit werden vor dem Senden/.test(panel))
+  // Ein Auftrag, der NUR ein Foto verlangt, sprang bisher am Formular vorbei.
+  check('auch ein reiner Foto-Auftrag oeffnet das Formular',
+    /\(q\.roh\?\.nachweis \|\| \[\]\)\.length/.test(panel))
+  check('der Pruefer bekommt die Bilder zu sehen', /_zeigeBelege\(q\)/.test(panel))
+
+  const m = readFileSync(new URL('../pocketbase/pb_hooks/main.pb.js', import.meta.url), 'utf8')
+  // Sonst koennte jemand die Kennung einer FREMDEN Einreichung mitschicken.
+  check('der Server prueft, wem der Beleg gehoert', /proof_foreign/.test(m))
+  check('und zu welchem Auftrag er gehoert', /proof_other_call/.test(m))
+  check('ein leerer Beleg zaehlt nicht', /proof_empty/.test(m))
+}
+
+// ── Aufraeumen: Logs und Beweisbilder ───────────────────────────────────
+// Gemessen: 949.489 Logzeilen in 898 MB, daneben 1,1 MB echte Daten.
+console.log('\n── Aufräumen')
+{
+  const m = readFileSync(new URL('../pocketbase/pb_hooks/main.pb.js', import.meta.url), 'utf8')
+  check('Beweisbilder werden aufgeraeumt', /cronAdd\("proof_cleanup"/.test(m))
+  check('mit Schonzeit nach der Abnahme', /proof\.graceHours/.test(m))
+  check('und einer harten Obergrenze', /proof\.maxAgeDays/.test(m))
+  // SQLite gibt geloeschten Platz nicht von selbst zurueck.
+  check('die Logdatei wird auch verdichtet', /cronAdd\("aux_vacuum"/.test(m))
+
+  const mig = readFileSync(new URL('../pocketbase/pb_migrations/1787700000_log_retention.js', import.meta.url), 'utf8')
+  check('es gibt eine Aufbewahrungsfrist', /logs\.maxDays = TAGE/.test(mig))
+}
+
+// ── Mehrsprachigkeit: t() ist nie Pflicht ───────────────────────────────
+console.log('\n── Mehrsprachigkeit')
+{
+  const { t, einsetzen } = await import('../client/core/i18n.js')
+  // Der deutsche Satz IST der Schluessel — eine nicht uebersetzte Stelle ist
+  // kein Fehler, sondern einfach Deutsch.
+  check('ohne Katalog kommt der Satz selbst zurueck', t('Erledigt melden') === 'Erledigt melden')
+  check('Platzhalter werden eingesetzt',
+    einsetzen('{n} Punkte bis Karma {stufe}.', { n: 4, stufe: 3 }) === '4 Punkte bis Karma 3.')
+  check('unbekannte Platzhalter bleiben sichtbar stehen',
+    einsetzen('{a} und {b}', { a: 'x' }) === 'x und {b}')
+
+  const { inSprache, istSprachkarte, zuSprachkarte } = await import('../client/core/Sprachwahl.js')
+  check('ein Text darf einfach ein Text sein', inSprache('Ein alter Brunnen.') === 'Ein alter Brunnen.')
+  check('eine Sprachkarte wird erkannt', istSprachkarte({ de: 'a', en: 'b' }))
+  // Sonst wuerde {lat, lon} als Sprachkarte durchgehen.
+  check('eine Koordinate NICHT', !istSprachkarte({ lat: 1, lon: 2 }))
+  check('die gewuenschte Sprache gewinnt', inSprache({ de: 'Brunnen', en: 'Well' }, 'en') === 'Well')
+  check('Region faellt auf die Sprache zurueck', inSprache({ de: 'Brunnen' }, 'de-AT') === 'Brunnen')
+  // Lieber ein fremdsprachiger Satz als ein leeres Feld.
+  check('sonst irgendetwas statt nichts', inSprache({ fr: 'Puits' }, 'en') === 'Puits')
+  check('Eigennamen koennen sprachunabhaengig sein', inSprache({ '*': 'Ajna' }, 'en') === 'Ajna')
+  check('aus Text wird eine Karte, ohne die Herkunft zu verlieren',
+    zuSprachkarte('Hallo').de === 'Hallo' && zuSprachkarte('Hallo')._quelle === 'de')
+
+  const ir = readFileSync(new URL('../client/core/InteractionReply.js', import.meta.url), 'utf8')
+  check('Beschreibungen laufen durch die Sprachwahl', /inSprache\(record\?\.description\)/.test(ir))
+}
+
+// ── Konfiguration in der Datenbank ──────────────────────────────────────
+console.log('\n── Konfiguration')
+{
+  const k = readFileSync(new URL('../agents/lib/konfig.mjs', import.meta.url), 'utf8')
+  // Eine frische Installation muss aus der .env allein laufen.
+  check('die .env ist die Vorgabe, die Datenbank uebersteuert',
+    k.includes('if (this._werte.has(voll))') && k.includes('const e = process.env[envName]'))
+  check('Geheimnisse bleiben der Env vorbehalten', /VERBOTEN = \/\(pass\|secret\|token\|key/.test(k))
+  // Ein Agent, der ohne DB-Einstellungen nicht startet, waere ein Rueckschritt.
+  check('ohne Datenbank laeuft es weiter', /es gilt die \.env/.test(k))
+  check('Aenderungen wirken ohne Neustart', /collection\('settings'\)\.subscribe/.test(k))
+
+  const mig = readFileSync(new URL('../pocketbase/pb_migrations/1787500000_settings.js', import.meta.url), 'utf8')
+  check('schreiben darf nur die Verwaltung', /createRule: null/.test(mig))
+  check('lesen duerfen angemeldete Konten', /listRule: '@request\.auth\.id != ""'/.test(mig))
 }
 
 // ── Auftrag anlegen: ein Fenster statt zwei ──────────────────────────────
@@ -1339,7 +1425,11 @@ console.log('\n── Anwesenheit anderer Spieler')
   check('angelegt wird nur bei Stufe „Genau"', /privacy\.allows\(s\.id, 'exact'\)/.test(src))
   check('sonst wird sie entfernt', /else await this\._entfernen\(s\.id\)/.test(src))
   check('eine Stufenaenderung wirkt sofort', /privacy\.onChange/.test(src))
-  check('sie wird nicht heimlich sichtbar gemacht', /subject_type: 'authenticated'/.test(src))
+  // Vorgabe ist die engere Wahl. Sichtbarkeit erweitert man bewusst — und die
+  // Einstellung liegt geraetelokal je Server, wie die Standort-Stufe selbst.
+  check('Vorgabe ist „nur Angemeldete"', /return 'authenticated'/.test(src))
+  check('das Publikum ist waehlbar', /subject_type: publikum\.fuer\(serverId\)/.test(src))
+  check('und wird je Server gemerkt', /ajna\.presence\.audience\./.test(src))
   check('Name und Karma schreibt der Client NICHT',
     !/state:\s*\{[^}]*name:/.test(src) && !/state:\s*\{[^}]*karma:/.test(src))
 
@@ -1358,8 +1448,17 @@ console.log('\n── Anwesenheit anderer Spieler')
   // In beiden 3D-Wegen ausgeblendet bzw. gezeigt.
   const main = readFileSync(new URL('../client/main.js', import.meta.url), 'utf8')
   check('die Freiflug-Ansicht filtert Anwesenheiten', /zeigeAnwesenheit\(o, _ich\)/.test(main))
-  check('und startet den Dienst', /presence\.start\(\)/.test(main))
-  check('beim Verlassen wird aufgeraeumt', /pagehide[\s\S]{0,80}presence\.stop\(\)/.test(main))
+  check('und startet den Dienst ausserhalb der Shell', /presence\?\.start\(\)/.test(main))
+  check('beim Verlassen wird aufgeraeumt', /pagehide[\s\S]{0,80}presence\?\.stop\(\)/.test(main))
+  // In der Shell laeuft die Karte auch ohne je geladenes AR-Buendel — dort
+  // gehoert die Anwesenheit der Shell, sonst waere man sichtbar fuer alle,
+  // aber selbst unsichtbar. Zwei Schreiber waeren der andere Fehler.
+  const shell = readFileSync(new URL('../client/core/MobileShell.js', import.meta.url), 'utf8')
+  check('die Shell pflegt sie selbst', /this\.presence = new PresenceService/.test(shell))
+  check('und das AR-Buendel haelt sich dann heraus',
+    /document\.querySelector\('\.shell-tabbar'\) \? null : new PresenceService/.test(main))
+  const mapQuelle = readFileSync(new URL('../client/map.js', import.meta.url), 'utf8')
+  check('der Karten-Client pflegt sie ebenfalls', /new PresenceService\(/.test(mapQuelle))
   const map = readFileSync(new URL('../client/map.js', import.meta.url), 'utf8')
   check('die Karte zeigt sie ebenfalls', /PRESENCE_TYPE/.test(map))
 }
@@ -1739,6 +1838,270 @@ console.log('\n── Gallert, Tod, Spawn-Hinweis')
   const iWolke = zeilen.findIndex(z => z.includes('angefordert?.('))
   check('keine Wolke ohne Empfaenger',
     iNein >= 0 && iWolke > iNein && zeilen.slice(iNein, iWolke).some(z => z.trim() === 'else {'))
+}
+
+
+// ── Zwischenspeicher für fremde Quellen ─────────────────────────────────
+// WiGLE ist einmal STILL ausgefallen: keine Fehlermeldung, nur keine
+// Ergebnisse mehr. Overpass, Wikipedia, Commons und Movebank liefen im
+// selben Muster weiter.
+console.log('\n── Quellcache: POI und Movebank')
+{
+  const poi = readFileSync(new URL('../agents/poi-bridge.mjs', import.meta.url), 'utf8')
+  check('die POI-Brücke speichert zwischen', /new Quellcache\('poi'/.test(poi))
+  check('Overpass-Antworten', /cache\.hole\(\s*`pois:/.test(poi))
+  check('Wikipedia-Artikel', /cache\.hole\(\s*`wiki:/.test(poi))
+  check('und Commons-Fotos', /cache\.hole\(\s*`commons:/.test(poi))
+  // Ein Schlüssel, der sich bei jedem Schritt des Spielers ändert, trifft nie.
+  check('Schlüssel und Abfrage liegen auf demselben Raster',
+    /lat: raster\(lat\), lon: raster\(lon\)/.test(poi))
+
+  const mb = readFileSync(new URL('../agents/movebank-bridge.mjs', import.meta.url), 'utf8')
+  check('Movebank speichert den Studien-Katalog', /cache\.hole\('studien'/.test(mb))
+  check('und die Aktualitäts-Probe je Studie', /cache\.hole\(`probe:\$\{c\.id\}`/.test(mb))
+  // Ein Lauf aus dem Zwischenspeicher braucht die Schonpause nicht.
+  check('die Schonpause gilt nur echten Abfragen', /if \(gefragt\) await sleep\(REQ_DELAY_MS\)/.test(mb))
+  // Bewegte Echtzeitdaten NICHT zwischenspeichern: ein alter Fix ist keine
+  // Position, sondern ein Irrtum.
+  check('die Live-Positionen bleiben ungecacht',
+    !/cache\.hole[\s\S]{0,80}fetchStudy\(st\.id\)/.test(mb))
+  for (const f of ['adsb-bridge.mjs', 'ais-bridge.mjs']) {
+    const q = readFileSync(new URL('../agents/' + f, import.meta.url), 'utf8')
+    check(`${f} bleibt bewusst ohne Zwischenspeicher`, !/Quellcache/.test(q))
+  }
+}
+
+// ── Auftrag: Belohnung steigt, und kürzen ist verboten ──────────────────
+console.log('\n── Auftrag: Steigerung und Zusage')
+{
+  const q = readFileSync(new URL('../pocketbase/pb_hooks/quests.js', import.meta.url), 'utf8')
+  // Die Einstellung wurde gespeichert und angezeigt — und nie angewandt.
+  check('die Steigerung wirkt jetzt', /steigt \* gelaufen/.test(q))
+  check('sie zählt die abgeschlossenen Durchläufe', /Number\(callData\.completions\)/.test(q))
+  // Sonst bliebe der Auftrag offen und der nächste Spieler liefe ins 409.
+  check('der Status prüft den NÄCHSTEN Bedarf', /naechsterBedarf = swap\.perRun \+/.test(q))
+
+  const m = readFileSync(new URL('../pocketbase/pb_hooks/main.pb.js', import.meta.url), 'utf8')
+  check('kürzen weist der Server ab', /the reward may be raised, not reduced/.test(m))
+  check('aber nur, solange jemand mitarbeitet', /status === "claimed" \|\| cVorher\.status === "pending"/.test(m))
+
+  const { durchlaeufeVon } = await import('../client/core/QuestEditor.js')
+  const auftrag = (vorrat, pro, steigt) => ({
+    wiederholbar: true, vorrat, belohnung: { anzahl: pro, steigt },
+  })
+  check('ohne Steigerung wird geteilt', durchlaeufeVon(auftrag(6, 2, 0)) === 3)
+  // 1 + 2 + 3 = 6 → drei Durchläufe; der vierte kostete 4 und passt nicht mehr.
+  check('mit Steigerung wird aufsummiert', durchlaeufeVon(auftrag(6, 1, 1)) === 3,
+    String(durchlaeufeVon(auftrag(6, 1, 1))))
+  check('und eine Division wäre falsch gewesen', durchlaeufeVon(auftrag(6, 1, 1)) !== 6)
+}
+
+
+// ── Sprachkatalog: was übersetzt ist, muss auch passen ──────────────────
+// Der deutsche Satz ist der Schlüssel. Das macht Einträge billig — und genau
+// deshalb braucht es eine Prüfung, die verhindert, dass sie stillschweigend
+// kaputtgehen.
+console.log('\n── Sprachkatalog')
+{
+  const { texte } = await import('../client/lang/en.js')
+  const schluessel = Object.keys(texte)
+  check('es gibt einen englischen Katalog', schluessel.length > 100, schluessel.length + ' Einträge')
+  check('keine leeren Übersetzungen', schluessel.every(k => String(texte[k]).trim().length > 0))
+  // Ein einzelnes Wort darf in beiden Sprachen gleich lauten („Audio") — ein
+  // ganzer Satz fast nie. Der ist dann vergessen worden, nicht geprüft.
+  const unbearbeitet = schluessel.filter(k =>
+    texte[k] === k && !k.startsWith('fehler.') && k.trim().split(/s+/).length > 2)
+  check('kein ganzer Satz blieb unübersetzt stehen', unbearbeitet.length === 0, unbearbeitet.join(' | '))
+
+  // Ein verlorener Platzhalter zeigt „{n} Punkte" als „points" — die Zahl
+  // verschwindet, ohne dass irgendwo ein Fehler auftaucht.
+  const platzhalter = (s) => [...String(s).matchAll(/\{(\w+)\}/g)].map(m => m[1]).sort().join(',')
+  const schief = schluessel.filter(k => platzhalter(k) !== platzhalter(texte[k]))
+  check('Platzhalter überleben die Übersetzung', schief.length === 0, schief.join(' | '))
+
+  // Server-Meldungen laufen über einen stabilen Code, nicht über ihren Wortlaut.
+  check('Server-Codes sind eingetragen',
+    schluessel.some(k => k.startsWith('fehler.')) &&
+    typeof texte['fehler.reward_reduced'] === 'string')
+}
+
+// ── t() ist nirgends Pflicht, aber der Weg ist vorbereitet ──────────────
+console.log('\n── Textdurchlauf')
+{
+  const { readdirSync, statSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const wurzel = new URL('../', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')
+
+  let verpackt = 0
+  for (const ort of ['client/core', 'client/engine', 'client']) {
+    for (const n of readdirSync(join(wurzel, ort))) {
+      if (!n.endsWith('.js') || n.includes('.test.')) continue
+      const p = join(wurzel, ort, n)
+      if (!statSync(p).isFile()) continue
+      verpackt += (readFileSync(p, 'utf8').match(/\bt\(\s*['"]/g) || []).length
+    }
+  }
+  // Kein Zielwert, nur eine Untergrenze: Sie fällt auf, wenn jemand den
+  // Katalog-Weg beim Umbauen versehentlich wieder herausnimmt.
+  check('die Oberfläche läuft über den Katalog', verpackt > 120, verpackt + ' Aufrufe')
+
+  const i18n = readFileSync(new URL('../client/core/i18n.js', import.meta.url), 'utf8')
+  // Ohne Eintrag den SCHLÜSSEL zurückgeben — dadurch ist eine nicht übersetzte
+  // Stelle kein leerer Knopf, sondern einfach Deutsch.
+  check('ohne Eintrag kommt der Satz selbst zurück', /out = roh/.test(i18n))
+  check('Deutsch braucht keine Datei', /if \(ziel === 'de'\)/.test(i18n))
+  // Eine fremde Sprache, die nicht lädt, darf nicht in eine halb leere
+  // Oberfläche führen.
+  check('eine kaputte Sprachdatei fällt auf Deutsch zurück', /zustand.aktiv = 'de'/.test(i18n))
+}
+
+
+// ── t() muss auch da sein, wo es benutzt wird ───────────────────────────
+// Ein fehlender Import ist hier ein LAUFZEIT-Fehler, den nichts vorher meldet:
+// Webpack darf `t` nicht beanstanden, weil es ein globaler Bezeichner sein
+// könnte. Aufgefallen ist es erst im Browser — „t is not defined", und die
+// halbe Ansicht blieb leer. Deshalb diese Prüfung.
+console.log('\n── Übersetzer-Import')
+{
+  const { readdirSync, statSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const wurzel = new URL('../', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')
+
+  const ohneImport = []
+  const verdeckt = []
+  for (const ort of ['client/core', 'client/engine', 'client']) {
+    for (const n of readdirSync(join(wurzel, ort))) {
+      if (!n.endsWith('.js') || n.includes('.test.')) continue
+      const p = join(wurzel, ort, n)
+      if (!statSync(p).isFile()) continue
+      const quelle = readFileSync(p, 'utf8')
+      const zeilen = quelle.split(/\r?\n/).filter(z => {
+        const x = z.trim()
+        return !(x.startsWith('//') || x.startsWith('*') || x.startsWith('/*'))
+      })
+      if (!zeilen.some(z => /(^|[^.\w])t\(\s*['"]/.test(z))) continue
+      const kurz = `${ort}/${n}`
+      if (!/import\s*\{[^}]*\bt\b[^}]*\}\s*from\s*['"][^'"]*i18n\.js['"]/.test(quelle)) ohneImport.push(kurz)
+      // Eine lokale Variable `t` verdeckt den Übersetzer im ganzen Block —
+      // heute vielleicht harmlos, beim nächsten Text in derselben Funktion nicht.
+      if (zeilen.some(z => /\b(const|let|var|function)\s+t\b/.test(z))) verdeckt.push(kurz)
+    }
+  }
+  check('jede Datei mit t() importiert es auch', ohneImport.length === 0, ohneImport.join(' | '))
+  check('nichts verdeckt den Übersetzer', verdeckt.length === 0, verdeckt.join(' | '))
+
+  // Ein bloßes `t` OHNE Klammern ist fast immer ein Rest: In ProfileDialog
+  // stand `t === 'group'` — der Vergleich mit der Übersetzer-FUNKTION, also
+  // immer falsch, und der Zweig lief nie. Die Deklarations-Prüfung oben fand
+  // ihn nicht, weil dort nichts deklariert wurde.
+  const alsWert = []
+  for (const ort of ['client/core', 'client/engine', 'client']) {
+    for (const n of readdirSync(join(wurzel, ort))) {
+      if (!n.endsWith('.js') || n.includes('.test.')) continue
+      const p = join(wurzel, ort, n)
+      if (!statSync(p).isFile()) continue
+      const q = readFileSync(p, 'utf8')
+      if (!/import\s*\{[^}]*\bt\b[^}]*\}\s*from\s*['"][^'"]*i18n\.js['"]/.test(q)) continue
+      q.split(/\r?\n/).forEach((z, nr) => {
+        const x = z.trim()
+        if (x.startsWith('//') || x.startsWith('*') || x.startsWith('/*')) return
+        if (x.startsWith('import')) return
+        if (/\bt\(/.test(z)) return
+        if (/(^|[^.\w$])t\s*(===|!==|==|!=|\.|\[)/.test(z)) alsWert.push(`${ort}/${n}:${nr + 1}`)
+      })
+    }
+  }
+  check('der Übersetzer wird nur aufgerufen, nicht verglichen', alsWert.length === 0, alsWert.join(' | '))
+}
+
+
+// ── Sprache über Bündelgrenzen ──────────────────────────────────────────
+// Ajna wird in VIER Bündel gepackt; jedes bekommt seine EIGENE Instanz jedes
+// Moduls. Beim ersten Anlauf lag die aktive Sprache in einer Modulvariablen —
+// die Shell hatte dann eine andere als die Karte, und das Umstellen wirkte
+// NUR in den Einstellungen. Derselbe Fehler wie einst beim Nachrichten-Verlauf.
+console.log('\n── Sprache: ein Zustand für alle Bündel')
+{
+  const i18n = readFileSync(new URL('../client/core/i18n.js', import.meta.url), 'utf8')
+  check('der Zustand hängt an window', /g\.__ajnaI18n/.test(i18n))
+  check('und wird nicht je Modul angelegt',
+    !/^let _aktiv/m.test(i18n) && !/^let _katalog/m.test(i18n))
+
+  // Der Katalog liegt in einem eigenen Bündelstück und braucht einen Rundgang.
+  // Wird darauf nicht gewartet, ist der erste Aufbau deutsch — egal was
+  // eingestellt ist.
+  const main = readFileSync(new URL('../client/main.js', import.meta.url), 'utf8')
+  const map = readFileSync(new URL('../client/map.js', import.meta.url), 'utf8')
+  const mobile = readFileSync(new URL('../client/mobile.js', import.meta.url), 'utf8')
+  check('die AR-Ansicht wartet auf die Sprache', /await spracheBereit/.test(main))
+  check('die Karte ebenso', /await spracheBereit/.test(map))
+  check('und die Shell lädt sie selbst', /await starteSprache\(\)/.test(mobile))
+
+  const shell = readFileSync(new URL('../client/core/MobileShell.js', import.meta.url), 'utf8')
+  // Neu zeichnen wäre eine Liste, die beim nächsten neuen Fenster unvollständig
+  // ist — die Oberfläche wird an vielen Stellen einmal beim Start gebaut.
+  check('das Umstellen lädt die Ansicht neu', /setzeSprache\(sprachWahl\.value\)[\s\S]{0,400}location\.reload\(\)/.test(shell))
+  check('und sagt das auch', /die Ansicht lädt dabei neu/.test(shell))
+}
+
+
+// ── Delegation: ein zweites Konto darf denselben Agent-Namen führen ─────
+// Ein Betreiber, der seine Agents unter einem zweiten Konto ausrollt, bekam
+// sonst für alles, was dieses Konto anlegt, ein rotes „⚠ angeblich …". Der
+// Namensinhaber kann jetzt sagen, wer den Namen ebenfalls führen darf.
+console.log('\n── Delegation von Agent-Namen')
+{
+  const { AgentFilters } = await import('../client/core/AgentFilters.js')
+
+  const bau = (manifeste) => {
+    const f = new AgentFilters({ getServers: () => [] })
+    f._ownerBySource = {}
+    for (const m of manifeste) {
+      const src = m.source
+      f._ownerBySource[src] = f._ownerBySource[src] || {}
+      f._ownerBySource[src][m._origin || ''] = m
+    }
+    return f
+  }
+  const objekt = (owner) => ({ owner, _origin: 'srv', state: { source: 'overpass' } })
+
+  const ohne = bau([{ source: 'overpass', _origin: 'srv', owner: 'inhaber', owner_sealed: true }])
+  check('der Inhaber selbst gilt', ohne.provenanceOf(objekt('inhaber')).status === 'agent')
+  check('ein zweites Konto ohne Delegation nicht',
+    ohne.provenanceOf(objekt('zweitkonto')).status === 'mismatch')
+
+  const mit = bau([{
+    source: 'overpass', _origin: 'srv', owner: 'inhaber', owner_sealed: true,
+    delegates: ['zweitkonto'],
+  }])
+  check('ein delegiertes Konto gilt', mit.provenanceOf(objekt('zweitkonto')).status === 'agent')
+  check('ein anderes weiterhin nicht', mit.provenanceOf(objekt('fremder')).status === 'mismatch')
+
+  // DIE Sicherheitsfrage: Gelesen wird ausschliesslich die Liste des INHABERS.
+  // Wer sich im eigenen — ohnehin verworfenen — Manifest selbst delegiert,
+  // gewinnt nichts.
+  const angriff = bau([
+    { source: 'overpass', _origin: 'srv', owner: 'inhaber', owner_sealed: true, delegates: [] },
+  ])
+  check('die Selbst-Delegation eines Fremdmanifests zaehlt nicht',
+    angriff.provenanceOf(objekt('angreifer')).status === 'mismatch')
+
+  // Kaputte Daten duerfen nicht plötzlich alles durchlassen.
+  const murks = bau([{ source: 'overpass', _origin: 'srv', owner: 'inhaber', delegates: 'alle' }])
+  check('eine unbrauchbare Liste oeffnet nichts',
+    murks.provenanceOf(objekt('irgendwer')).status === 'mismatch')
+
+  // Der Server braucht dafuer KEINEN Hook: updateRule = owner ist die Absicherung.
+  const mig = readFileSync(new URL('../pocketbase/pb_migrations/1787800000_manifest_delegates.js', import.meta.url), 'utf8')
+  check('die Migration begruendet, warum kein Hook noetig ist', /updateRule/.test(mig))
+
+  const client = readFileSync(new URL('../client/core/AjnaClient.js', import.meta.url), 'utf8')
+  // Ein Agent, der nichts von Delegation weiss, darf die Liste nicht loeschen.
+  check('ohne Angabe bleibt die Liste unangetastet',
+    /if \(Array\.isArray\(manifest\.delegates\)\)/.test(client))
+
+  const base = readFileSync(new URL('../agents/lib/agent-base.mjs', import.meta.url), 'utf8')
+  check('jeder Agent kann sie ueber die Umgebung setzen', /AJNA_DELEGATES/.test(base))
 }
 
 const failed = results.filter(r => !r.ok)

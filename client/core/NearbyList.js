@@ -15,6 +15,8 @@
 
 import { renderServerBadge, injectServerBadgeStyles } from './ServerBadge.js'
 import { renderProvenanceBadge, injectProvenanceStyles } from './Provenance.js'
+import { inSprache } from './Sprachwahl.js'
+import { t } from './i18n.js'
 
 const MAX_ROWS = 20
 const DATA_THROTTLE_MS = 500     // In-Place-Updates bündeln
@@ -38,7 +40,7 @@ const TYPE_LABELS = {
   dragon: 'Drache', animal: 'Tier', wifi: 'WLAN', ship: 'Schiff',
   aircraft: 'Flugzeug', call: 'Auftrag', uwb_anchor: 'UWB-Anker',
 }
-const typeLabel = (t) => { const k = String(t || '').toLowerCase(); return k ? (TYPE_LABELS[k] || k) : '' }
+const typeLabel = (typ) => { const k = String(typ || '').toLowerCase(); return k ? (TYPE_LABELS[k] || k) : '' }
 
 export class NearbyList {
   /**
@@ -133,7 +135,7 @@ export class NearbyList {
   _dataTick() {
     if (!this._active) return
     const { pos, list } = this._collect()
-    if (!pos) return this._showEmpty('Warte auf Position …')
+    if (!pos) return this._showEmpty(t('Warte auf Position …'))
     const ids = list.map(e => e.o.id)
     const structural = ids.length !== this._order.length || ids.some(id => !this._rows.has(id))
     const moved = this._lastSortPos && distM(this._lastSortPos.lat, this._lastSortPos.lon, pos.lat, pos.lon) > RESORT_MOVE_M
@@ -146,8 +148,8 @@ export class NearbyList {
   _resort() {
     if (!this._active) return
     const { pos, list } = this._collect()
-    if (!pos) return this._showEmpty('Warte auf Position …')
-    if (!list.length) return this._showEmpty('Keine Objekte in der Nähe.')
+    if (!pos) return this._showEmpty(t('Warte auf Position …'))
+    if (!list.length) return this._showEmpty(t('Keine Objekte in der Nähe.'))
     this._emptyEl.hidden = true
     this._lastSortPos = pos
     const keep = new Set(list.map(e => e.o.id))
@@ -188,7 +190,7 @@ export class NearbyList {
       try { await this.actions?._pickup?.(getRec()) } finally { pickBtn.disabled = false }
     })
     const mapBtn = document.createElement('button')
-    mapBtn.className = 'nb-map'; mapBtn.title = 'Auf der Karte zeigen'; mapBtn.textContent = '🗺️'
+    mapBtn.className = 'nb-map'; mapBtn.title = t('Auf der Karte zeigen'); mapBtn.textContent = '🗺️'
     mapBtn.addEventListener('click', () => this.onShowOnMap?.(getRec()))
     // Reihenfolge: Einsammeln · Bearbeiten · Karte · Entfernung — die Distanz
     // steht ganz rechts in fester Spaltenbreite, damit alle Zeilen exakt
@@ -222,7 +224,7 @@ export class NearbyList {
     const owner = this._isOwner(o)
     row.editBtn.hidden = !owner
     row.pickBtn.hidden = !(!o.carried_by && (owner || !!o.state?.portable))
-    const desc = (o.description || '').trim()
+    const desc = inSprache(o.description).trim()
     row.descEl.textContent = desc
     row.descEl.hidden = !desc
     // Buttons nur neu bauen, wenn sich die Aktionsliste WIRKLICH ändert —
@@ -257,7 +259,7 @@ export class NearbyList {
     this.container.classList.add('nb-container')
     this._emptyEl = document.createElement('div')
     this._emptyEl.className = 'nb-empty'
-    this._emptyEl.textContent = 'Warte auf Position …'
+    this._emptyEl.textContent = t('Warte auf Position …')
     this._listEl = document.createElement('div')
     this._listEl.className = 'nb-list'
     this.container.append(this._emptyEl, this._listEl)

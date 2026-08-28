@@ -2,6 +2,7 @@
 // Liest und schreibt ACEs gegen das PocketBase-Backend über AjnaManager.
 
 import { injectServerBadgeStyles, renderServerBadge } from './ServerBadge.js'
+import { t } from './i18n.js'
 
 const ALL_RIGHTS = ['view', 'edit', 'move', 'owner']
 const IMPLICIT_AUDIENCES = new Set(['authenticated', 'anonymous', 'everyone'])
@@ -165,7 +166,7 @@ export class PermissionDialog {
     backdrop.innerHTML = `
       <div class="ajna-perm-dialog">
         <h3>Berechtigungen</h3>
-        <div class="pd-sub">${this._escape(obj?.name || obj?.id || 'Unbenanntes Objekt')}${renderServerBadge(this.ajna, obj?._origin)}</div>
+        <div class="pd-sub">${this._escape(obj?.name || obj?.id || t('Unbenanntes Objekt'))}${renderServerBadge(this.ajna, obj?._origin)}</div>
 
         <h4>Aktuelle Einträge</h4>
         <div class="pd-ace-list">
@@ -225,8 +226,8 @@ export class PermissionDialog {
 
     typeEl.addEventListener('change', () => this._refreshSubjectOptions())
     typeEl.addEventListener('change', () => {
-      const t = typeEl.value
-      if (IMPLICIT_AUDIENCES.has(t)) {
+      const art = typeEl.value
+      if (IMPLICIT_AUDIENCES.has(art)) {
         ownerCb.checked = false
         ownerCb.disabled = true
       } else {
@@ -267,16 +268,16 @@ export class PermissionDialog {
     if (!this._backdrop) return
     const typeEl    = this._backdrop.querySelector('.pd-subject-type')
     const subjectEl = this._backdrop.querySelector('.pd-subject')
-    const t = typeEl.value
+    const art = typeEl.value
 
-    if (IMPLICIT_AUDIENCES.has(t)) {
+    if (IMPLICIT_AUDIENCES.has(art)) {
       subjectEl.innerHTML = '<option value="">— (implizit, kein Subjekt nötig) —</option>'
       subjectEl.disabled = true
       return
     }
     subjectEl.disabled = false
 
-    if (t === 'user') {
+    if (art === 'user') {
       // users.listRule ist privacy-bedingt streng: jeder eingeloggte
       // Spieler sieht nur sich selbst. Direkte Spieler-zu-Spieler-Zuweisung
       // ist daher in der UI nicht möglich. Stattdessen läuft das später
@@ -288,7 +289,7 @@ export class PermissionDialog {
             `<option value="${u.id}">${this._escape(u.email || u.name || u.id)}</option>`
           ).join('')
         : '<option value="">— direkte Spieler-Zuweisung nicht möglich (über Gruppen) —</option>'
-    } else if (t === 'group') {
+    } else if (art === 'group') {
       subjectEl.innerHTML = (this._groups || []).length
         ? this._groups.map(g =>
             `<option value="${g.id}">${this._escape(g.name || g.id)}</option>`
@@ -351,8 +352,8 @@ export class PermissionDialog {
       }
     }
     const map = {
-      authenticated: 'Authentifizierte Spieler',
-      anonymous:     'Anonyme Spieler',
+      authenticated: t('Angemeldete Spieler'),
+      anonymous:     t('Nicht angemeldete Besucher'),
       everyone:      'Jeder'
     }
     return { label: map[ace.subject_type] || ace.subject_type, meta: 'implizite Audience' }
@@ -375,8 +376,8 @@ export class PermissionDialog {
     if (!IMPLICIT_AUDIENCES.has(subject_type) && !subject) {
       this._showError(
         subject_type === 'user'
-          ? 'Direkte Spieler-Zuweisung wird in einer späteren Version über ein Einladungs-System unterstützt. Aktuell bitte Gruppen verwenden.'
-          : 'Bitte ein Subjekt auswählen'
+          ? t('Einzelne Spieler lassen sich noch nicht zuweisen — dafür Gruppen benutzen.')
+          : t('Bitte auswählen, für wen die Regel gilt')
       )
       return
     }
@@ -390,7 +391,7 @@ export class PermissionDialog {
       bd.querySelector('.pd-interact').value = ''
       await this._reloadAces()
     } catch (err) {
-      this._showError(`Hinzufügen fehlgeschlagen: ${err?.message || err}`)
+      this._showError(t('Hinzufügen fehlgeschlagen: {grund}', { grund: err?.message || err }))
     } finally {
       addBtn.disabled = false
     }

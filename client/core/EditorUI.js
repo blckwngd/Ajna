@@ -3,6 +3,7 @@ import { LOCAL_MODELS } from './localModels.js'
 import { randomHexColor } from './randomColor.js'
 import { SPAWN_ARCHETYPES } from './SpawnHere.js'
 import { emojiOf } from './Appearance.js'
+import { t } from './i18n.js'
 
 const EXT_MODELS_KEY = 'ajna_allow_ext_models'
 
@@ -15,7 +16,7 @@ const parseNum = v => parseFloat(String(v ?? '').replace(',', '.'))
 // SpawnHere-Archetypen abgeleitet, damit „Neuer NPC" dieselben Default-Aktionen
 // bekommt wie ein per SpawnHere erzeugter. emoji/portable sind sinnvolle
 // Startwerte, die der Nutzer danach überschreiben kann.
-const _archActions = (t) => SPAWN_ARCHETYPES.find(a => a.type === t)?.actions || null
+const _archActions = (typ) => SPAWN_ARCHETYPES.find(a => a.type === typ)?.actions || null
 const EDITOR_TYPES = [
   { key: 'default', label: 'Allgemein',   emoji: '' },
   { key: 'npc',     label: 'NPC',         emoji: '🧑' },
@@ -108,7 +109,7 @@ export class EditorUI {
     this.container.innerHTML = `
       <header class="ed-header">
         <h3>Editor</h3>
-        <code class="ed-objid" data-role="objid" title="Objekt-ID — zum Kopieren anklicken" hidden></code>
+        <code class="ed-objid" data-role="objid" title="${t('Objekt-ID — zum Kopieren anklicken')}" hidden></code>
       </header>
 
       ${(this.onFocusPlayer || this.onToggleArMode) ? `
@@ -448,12 +449,12 @@ export class EditorUI {
     this.loginBtn.addEventListener('click', async () => {
       try {
         await this.ajna.login(this.emailInput.value, this.passwordInput.value)
-        this.setStatus('Login erfolgreich')
+        this.setStatus(t('Anmeldung erfolgreich'))
         // Auth-Stand hat sich geändert → neu sichtbare Objekte mit aufnehmen.
         // emitObjectsChanged triggert Listenrefresh und (im AR) syncSceneObjects.
         await this.ajna.loadObjects()
       } catch (err) {
-        this.setStatus('Login fehlgeschlagen: ' + err.message)
+        this.setStatus(t('Anmeldung fehlgeschlagen: ') + err.message)
       }
       this.updateAuthUI()
     })
@@ -469,7 +470,7 @@ export class EditorUI {
     this.refreshBtn.addEventListener('click', async () => {
       await this.ajna.loadObjects()
       this.renderObjectList()
-      this.setStatus('Objekte geladen')
+      this.setStatus(t('Objekte geladen'))
     })
 
     this.editorForm.addEventListener('submit', async (ev) => {
@@ -480,11 +481,11 @@ export class EditorUI {
       try {
         state = this.editorForm.stateJson.value.trim() ? JSON.parse(this.editorForm.stateJson.value) : {}
       } catch (err) {
-        this.setStatus('State-JSON ungültig: ' + err.message)
+        this.setStatus(t('Zustand (JSON) ist ungültig: ') + err.message)
         return
       }
       if (typeof state !== 'object' || Array.isArray(state) || state === null) {
-        this.setStatus('State muss ein JSON-Objekt sein')
+        this.setStatus(t('Der Zustand muss ein JSON-Objekt sein.'))
         return
       }
       state.altitude_ref = this.editorForm.altitude_ref?.value === 'msl' ? 'msl' : 'ground'
@@ -496,7 +497,7 @@ export class EditorUI {
       const lat = parseNum(this.editorForm.lat.value)
       const lon = parseNum(this.editorForm.lon.value)
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-        this.setStatus('Lat/Lon müssen gültige Zahlen sein')
+        this.setStatus(t('Breite und Länge müssen Zahlen sein.'))
         return
       }
       const data = {
@@ -513,13 +514,13 @@ export class EditorUI {
       try {
         obj = !id ? await this.ajna.createObject(data) : await this.ajna.updateObject(id, data)
       } catch (err) {
-        this.setStatus('Speichern fehlgeschlagen: ' + (err?.response?.error || err?.message || err))
+        this.setStatus(t('Speichern fehlgeschlagen: ') + (err?.response?.error || err?.message || err))
         this.onSaved?.(null, err)
         return
       }
       this.fillEditor(obj)
       this.renderObjectList()
-      this.setStatus('Objekt gespeichert')
+      this.setStatus(t('Objekt gespeichert'))
       this.onSaved?.(obj)   // Host zeigt eine kurze Bestätigung (Toast)
     })
 
@@ -538,7 +539,7 @@ export class EditorUI {
       this.editorForm.reset()
       this._closeEditor()
       this.renderObjectList()
-      this.setStatus('Objekt gelöscht')
+      this.setStatus(t('Objekt gelöscht'))
     })
 
     // Objekt-Liste NUR neu bauen, wenn sich die Liste STRUKTURELL ändert (Objekt
@@ -595,7 +596,7 @@ export class EditorUI {
           await this.onToggleArMode(want)
         } catch (err) {
           this.arModeToggle.checked = !want   // Wechsel fehlgeschlagen → zurück
-          this.setStatus(err?.message || 'AR-Moduswechsel fehlgeschlagen')
+          this.setStatus(err?.message || t('AR-Moduswechsel fehlgeschlagen'))
         }
       })
     }
@@ -709,14 +710,14 @@ export class EditorUI {
     sel.innerHTML = ''
     sel.appendChild(new Option('(kein Modell)', ''))
     for (const m of LOCAL_MODELS) sel.appendChild(new Option(m.replace(/\.glb$/i, ''), m))
-    sel.appendChild(new Option('Externe URL…', '__url__'))
+    sel.appendChild(new Option(t('Externe URL…'), '__url__'))
   }
 
   _populateTypeSelect() {
     const sel = this.typeSelect
     if (!sel) return
     sel.innerHTML = ''
-    for (const t of EDITOR_TYPES) sel.appendChild(new Option(t.label, t.key))
+    for (const typ of EDITOR_TYPES) sel.appendChild(new Option(typ.label, typ.key))
   }
 
   // Typ-Feld setzen; unbekannte Bestandstypen (z. B. 'poi', 'ship') als eigene
@@ -733,16 +734,16 @@ export class EditorUI {
   // Aufnehmbar, Default-Aktionen im State). Bestehende State-Keys bleiben.
   _applyTypeDefaults(typeKey) {
     const f = this.editorForm
-    const t = EDITOR_TYPES.find(x => x.key === typeKey)
-    if (!t) return
-    if (t.emoji) f.emoji.value = t.emoji
-    if (f.portable) f.portable.checked = !!t.portable
+    const typ = EDITOR_TYPES.find(x => x.key === typeKey)
+    if (!typ) return
+    if (typ.emoji) f.emoji.value = typ.emoji
+    if (f.portable) f.portable.checked = !!typ.portable
     let state = {}
     try { state = f.stateJson.value.trim() ? JSON.parse(f.stateJson.value) : {} } catch { state = {} }
     if (typeof state !== 'object' || Array.isArray(state) || state === null) state = {}
-    const actions = t.actions || _archActions(typeKey)
+    const actions = typ.actions || _archActions(typeKey)
     if (actions) state.actions = actions
-    if (t.portable) state.portable = true
+    if (typ.portable) state.portable = true
     f.stateJson.value = JSON.stringify(state, null, 2)
   }
 
@@ -795,7 +796,7 @@ export class EditorUI {
     const req = Array.isArray(c.requiresItems) ? c.requiresItems.length : 0
     info.textContent = n
       ? `Hinterlegt: ${n} Gegenstand/Gegenstände${req ? `, gefordert: ${req}` : ''} · Status: ${c.status || 'open'}`
-      : 'Noch nicht ausgeschrieben.'
+      : t('Noch nicht ausgeschrieben.')
   }
 
   // `state.call` gehört dem Auftrags-Fenster und dem Server.
@@ -835,7 +836,7 @@ export class EditorUI {
     if (label) label.hidden = !isUrl
     f.gltfUrl.disabled = isUrl && !allow
     f.gltfUrl.placeholder = (isUrl && !allow)
-      ? 'Externe URLs deaktiviert (Checkbox oben)'
+      ? t('Externe URLs sind oben ausgeschaltet.')
       : 'https://…/modell.glb'
   }
 
@@ -872,7 +873,7 @@ export class EditorUI {
       const text = el.textContent || ''
       if (!text) return
       navigator.clipboard?.writeText(text)
-        .then(() => this.setStatus('Objekt-ID kopiert'))
+        .then(() => this.setStatus(t('Objekt-ID kopiert')))
         .catch(() => {})
     })
   }
@@ -933,7 +934,7 @@ export class EditorUI {
     this._updateCallSectionVisible()
     this._editingAppearance = { ...ap }
     const isCall = (obj.type || '').toLowerCase() === 'call'
-    if (this.editorTitle) this.editorTitle.textContent = isAnchor ? 'UWB-Anker bearbeiten' : isCall ? 'Auftrag bearbeiten' : 'Objekt bearbeiten'
+    if (this.editorTitle) this.editorTitle.textContent = isAnchor ? t('UWB-Anker bearbeiten') : isCall ? t('Auftrag bearbeiten') : t('Objekt bearbeiten')
     this._openEditor()
   }
 
@@ -944,7 +945,7 @@ export class EditorUI {
    */
   startNewObjectAt(lat, lon, altitude = 0) {
     this.onEditorActivate?.()
-    if (!this.ajna.isLoggedIn()) { this.setStatus('Zum Anlegen bitte einloggen.'); return }
+    if (!this.ajna.isLoggedIn()) { this.setStatus(t('Zum Anlegen bitte anmelden.')); return }
     const f = this.editorForm
     f.objectId.value = ''
     this._zeigeObjektId('')
@@ -967,7 +968,7 @@ export class EditorUI {
     this._fillCallFields({})
     this._updateCallSectionVisible()
     this._editingAppearance = {}
-    if (this.editorTitle) this.editorTitle.textContent = 'Neues Objekt'
+    if (this.editorTitle) this.editorTitle.textContent = t('Neues Objekt')
     this._openEditor()
     f.name.focus()
     this.setStatus(`Neues Objekt @ ${lat.toFixed(5)}, ${lon.toFixed(5)}`)

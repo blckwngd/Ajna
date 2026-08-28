@@ -12,6 +12,7 @@
 
 import { TYPE_LABEL } from './SpawnHere.js'
 import { talkResponse, callExamineText } from './InteractionReply.js'
+import { t } from './i18n.js'
 
 const typeLabel = record => TYPE_LABEL[record?.type] || record?.type || 'Objekt'
 const nameOf = record => record?.name || record?.id || 'Objekt'
@@ -41,21 +42,21 @@ export function announceTargetText(record) {
  * Ergebnis. Wird vom Announcer noch auf 100 Zeichen gekürzt.
  */
 export function announceInteractionText(record, action) {
-  const t = typeLabel(record)
+  const typ = typeLabel(record)
   const name = nameOf(record)
   switch (String(action || '').toLowerCase()) {
     case 'examine': case 'lesen': case 'read':
       // Auftrag: die Aufgabe vorlesen — sonst hört der Spieler sie nie.
       if (record?.type === 'call') return callExamineText(record)
-      return record?.description || record?.state?.hint || record?.state?.dialog || `Ein ${t}.`
+      return record?.description || record?.state?.hint || record?.state?.dialog || `Ein ${typ}.`
     case 'talk': case 'sprechen':
       return talkResponse(record)
     case 'attack': case 'angreifen':
-      return `Angriff - ${t} getötet`
+      return t('Angriff — {was} getötet', { was: typ })
     case 'feed': case 'füttern':
-      return `Füttern - ${t} gefüttert`
+      return t('Füttern — {was} gefüttert', { was: typ })
     case 'collect': case 'einsammeln':
-      return `${name} eingesammelt`
+      return t('{name} eingesammelt', { name })
     default:
       return `${action} - ${name}`
   }
@@ -105,7 +106,7 @@ export class Announcer {
   /** Objekt gesperrt/gewählt (Knopf 2). null = Auswahl aufgehoben. */
   selected(recordOrId) {
     const rec = this._rec(recordOrId)
-    const text = rec ? forSpeech(`${announceTargetText(rec)} gewählt`) : 'Auswahl aufgehoben'
+    const text = rec ? forSpeech(`${announceTargetText(rec)} gewählt`) : t('Auswahl aufgehoben')
     if (!text) return
     this.log?.(text, 'interact')
     if (this._on()) this.audio.speak(text)

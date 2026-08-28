@@ -16,6 +16,7 @@
 
 import { iconOf } from './Appearance.js'
 import { makeDraggable } from './draggable.js'
+import { t } from './i18n.js'
 
 export const DRAG_MIME = 'application/x-ajna-inventory-item'
 
@@ -217,7 +218,7 @@ export class InventoryUI {
   async _delete(rec) {
     if (!window.confirm(`"${rec.name || rec.id}" wirklich löschen?`)) return
     try { await this.ajna.deleteObject(rec.id); this._selectedId = null; this._render() }
-    catch (err) { alert('Löschen fehlgeschlagen: ' + (err?.message || err)) }
+    catch (err) { alert(t('Löschen fehlgeschlagen: {grund}', { grund: err?.message || err })) }
   }
 
   dispose() { try { this._unsub?.() } catch {} ; try { this._dragCleanup?.() } catch {} ; this.root?.remove(); this.fab?.remove() }

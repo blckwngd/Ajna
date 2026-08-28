@@ -17,6 +17,8 @@ import { WandAudioFeedback } from './WandAudioFeedback.js'
 import { PermissionDialog } from './PermissionDialog.js'
 import { InterestArea } from './InterestArea.js'
 import { ProximityReporter } from './ProximityReporter.js'
+import { PresenceService } from './PresenceService.js'
+import { t, SPRACHEN, sprache, setzeSprache } from './i18n.js'
 import { infoHint } from './InfoHint.js'
 import { NearbyList } from './NearbyList.js'
 import { ObjectActions } from './ObjectActions.js'
@@ -108,11 +110,15 @@ export class MobileShell {
     this._questPanel = new QuestPanel({
       parent: document.body,
       onShowOnMap: (q) => {
-        this._toast?.show(q.ort || 'Ort unbekannt', { title: q.titel || 'Auftrag' })
+        this._toast?.show(q.ort || t('Ort unbekannt'), { title: q.titel || 'Auftrag' })
       },
       onEdit: (q) => this._questBearbeiten(q),
       onReload: () => this._questsLaden(),
       onAction: (q, aktion, extra) => this._questAktion(q, aktion, extra),
+      // Bilder gehen vor der Meldung raus — sie brauchen ein Dateifeld, das
+      // eine JSON-Route nicht entgegennimmt.
+      onNachweis: (q, dateien, opts) => this._quests.nachweisBilder(q, dateien, opts),
+      onBelege: (q) => this._quests.nachweiseAnsehen(q),
     })
     // Der Bearbeiten-Dialog und das Kontextmenü (AR- und Karten-Bündel)
     // erreichen den Auftrags-Editor über diesen Haken — dasselbe Muster wie
@@ -215,7 +221,7 @@ export class MobileShell {
         // wechseln und dort den Editor mit dem Record öffnen.
         onEdit: (rec) => {
           const ui = this.getUI?.()
-          if (!ui?.editorUI?.fillEditor) { this._flashNotice('Editor nicht verfügbar.'); return }
+          if (!ui?.editorUI?.fillEditor) { this._flashNotice(t('Editor nicht verfügbar.')); return }
           this.switchTo('map')
           try { ui.editorUI.fillEditor(rec) } catch (e) { this._flashNotice('Editor: ' + (e?.message || e)) }
         },
@@ -250,6 +256,18 @@ export class MobileShell {
     this.proximityReporter.start()
     window.ajnaProximity = this.proximityReporter   // Debug-Zugriff
     this._unsubs.push(() => this.proximityReporter?.stop())
+
+    // Stufe „Genau": eigene Anwesenheit als Objekt. Hier und nicht im
+    // AR-Bündel, weil die Shell auch läuft, wenn der AR-Tab nie geöffnet wurde
+    // — sonst wäre man auf der Karte sichtbar für alle, aber selbst unsichtbar.
+    this.presence = new PresenceService({
+      ajna: this.ajna,
+      getPosition: () => this.positionSource?.getWorldPosition?.() || window.ajnaGeo?.position || null,
+      getHeading: () => (typeof window.ajnaHeadingRad === 'number' ? window.ajnaHeadingRad : null),
+    })
+    this.presence.start()
+    window.ajnaPresence = this.presence
+    this._unsubs.push(() => { try { this.presence?.stop() } catch {} })
     // Apply a persisted manual north-alignment offset (optional calibration).
     const align = parseFloat(localStorage.getItem(ALIGN_KEY) || '0')
     if (Number.isFinite(align)) this.wand.setAlignmentDeg(align)
@@ -385,7 +403,7 @@ export class MobileShell {
   }
 
   switchTo(tabId) {
-    if (!TAB_DEFS.find(t => t.id === tabId)) return
+    if (!TAB_DEFS.find(x => x.id === tabId)) return
     this.activeTab = tabId
     document.querySelectorAll('.shell-tabbar button[data-tab]').forEach(b =>
       b.classList.toggle('active', b.dataset.tab === tabId)
@@ -458,7 +476,7 @@ export class MobileShell {
     const apiBase = this._arWebBase()   // entfernter Ajna-Server (API + Auth)
     if (!apiBase) {
       if (meta) meta.textContent =
-        'Kein erreichbarer Server konfiguriert — bitte zuerst unter Einstellungen → Verwaltung → Server eintragen.'
+        t('Kein erreichbarer Server konfiguriert — bitte zuerst unter Einstellungen → Verwaltung → Server eintragen.')
       return
     }
     let pageBase = apiBase
@@ -527,7 +545,7 @@ export class MobileShell {
     s.onload = () => { if (loading) loading.remove() }
     s.onerror = () => {
       this._arLoaded = false
-      if (loading) loading.textContent = 'AR-Bundle konnte nicht geladen werden'
+      if (loading) loading.textContent = t('Die AR-Ansicht konnte nicht geladen werden.')
     }
     document.body.appendChild(s)
   }
@@ -542,7 +560,7 @@ export class MobileShell {
   _talkTo(rec) {
     if (!rec) return
     if (!rec.owner) {
-      this._toast?.show('Diese Figur hat kein Konto — niemand kann antworten.',
+      this._toast?.show(t('Diese Figur hat kein Konto — niemand kann antworten.'),
         { title: rec.name || 'Objekt' })
       return
     }
@@ -556,7 +574,7 @@ export class MobileShell {
       objectId: rec.id,
       serverId: rec._origin || null,
     }, { open: false })
-    this._toast?.show('Antippen zum Antworten',
+    this._toast?.show(t('Antippen zum Antworten'),
       { title: rec.name || 'Gespräch', onClick: () => this._logPanel?.open() })
   }
 
@@ -585,6 +603,9 @@ export class MobileShell {
     const proof = aktion === 'submit'
       ? this._quests.nachweisBauen({ note: extra?.note || '' })
       : null
+    // Kennung der zuvor abgelegten Bilder mitgeben; der Server prüft, dass sie
+    // dem Melder und diesem Auftrag gehören.
+    if (proof && extra?.proofId) proof.proofId = extra.proofId
     const res = await this._quests.aktion(q, aktion, { ...(extra || {}), proof })
     // Der Server antwortet bei fehlendem Nachweis mit einer Liste der Lücken —
     // die gehört in die Meldung, nicht nur der nackte Fehlertext.
@@ -706,7 +727,7 @@ export class MobileShell {
       </section>
 
       <section class="settings-section">
-        <h3>Verwaltung</h3>
+        <h3>${t('Verwaltung')}</h3>
         <button class="settings-btn secondary" data-action="server">Server</button>
         <button class="settings-btn secondary" data-action="profile" ${loggedIn ? '' : 'disabled'}>Profil</button>
         <button class="settings-btn secondary" data-action="filter" ${loggedIn ? '' : 'disabled'}>Inhaltsfilter</button>
@@ -726,7 +747,17 @@ export class MobileShell {
       </section>
 
       <section class="settings-section">
-        <h3>Audio</h3>
+        <h3>${t('Sprache')}</h3>
+        <select data-field="sprache" class="settings-select">
+          ${SPRACHEN.map(s => `<option value="${s.code}">${s.label}</option>`).join('')}
+        </select>
+        <div class="meta" style="margin-top:6px">
+          ${t('Nur die Oberfläche — die Ansicht lädt dabei neu. Auftragstexte und Namen bleiben, wie ihre Verfasser sie geschrieben haben.')}
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <h3>${t('Audio')}</h3>
         <label class="meta" style="display:flex;align-items:center;gap:8px">
           <input type="checkbox" data-field="wand-audio" ${WandAudioFeedback.isEnabled() ? 'checked' : ''}>
           Audio-Hinweise (Name/Aktion vorlesen)
@@ -734,7 +765,7 @@ export class MobileShell {
       </section>
 
       <section class="settings-section">
-        <h3>Sichtweite</h3>
+        <h3>${t('Sichtweite')}</h3>
         <div class="meta" style="margin-bottom:10px">
           Begrenzt, was die 3D-/AR-Ansicht zeichnet. Kleinere Werte = flüssigeres Bild.
           Wirkt sofort, pro Gerät gespeichert.
@@ -875,7 +906,7 @@ export class MobileShell {
           <button class="settings-btn-inline" data-action="wand-settings">Einstellungen</button>
         </div>
         <button class="settings-btn secondary" data-action="wand" style="margin-top:8px">
-          ${this.wandConnected ? 'Zauberstab trennen' : 'Zauberstab verbinden'}
+          ${this.wandConnected ? t('Zauberstab trennen') : t('Zauberstab verbinden')}
         </button>
 
         <div class="settings-row" style="margin-top:14px">
@@ -896,7 +927,7 @@ export class MobileShell {
           gefundener DW-Knoten — bei mehreren Nutzern/Ankern mit BLE nicht eindeutig!
         </div>
         <button class="settings-btn secondary" data-action="uwb" style="margin-top:8px">
-          ${this.uwbConnected ? 'UWB trennen' : 'UWB verbinden'}
+          ${this.uwbConnected ? t('UWB trennen') : t('UWB verbinden')}
         </button>
       </section>
 
@@ -1054,7 +1085,7 @@ export class MobileShell {
           <span class="meta">Feinkorrektur zusätzlich zur Auto-Deklination</span>
         </label>
         <div class="meta" data-role="wand-orientation" style="margin-top:8px">
-          ${this.wandConnected ? 'Orientierung: —' : 'Orientierung: (Stab nicht verbunden)'}
+          ${this.wandConnected ? t('Orientierung: —') : t('Orientierung: (Stab nicht verbunden)')}
         </div>
       </section>`
   }
@@ -1105,8 +1136,8 @@ export class MobileShell {
         <button class="settings-btn secondary" data-action="uwb-net-share" style="width:100%;margin-top:6px">Netz teilen (Rechte)</button>
         <details style="margin-top:8px">
           <summary class="meta">Neues UWB-Netz veröffentlichen</summary>
-          <input class="settings-input" data-field="uwb-net-name" placeholder="Name (z. B. Wohnzimmer)" style="margin-top:6px">
-          <input class="settings-input" data-field="uwb-net-pan" placeholder="PANS-Netz-ID (aus DRTLS, z. B. 0x89AB)" style="margin-top:6px">
+          <input class="settings-input" data-field="uwb-net-name" placeholder="${t('Name (z. B. Wohnzimmer)')}" style="margin-top:6px">
+          <input class="settings-input" data-field="uwb-net-pan" placeholder="${t('PANS-Netz-ID (aus DRTLS, z. B. 0x89AB)')}" style="margin-top:6px">
           <button class="settings-btn secondary" data-action="uwb-net-create" style="margin-top:6px;width:100%">Netz anlegen &amp; teilen</button>
         </details>
         <div class="meta" data-role="uwb-net-status" style="margin-top:6px"></div>
@@ -1128,7 +1159,7 @@ export class MobileShell {
     root.querySelector('[data-action="wand-calibrate"]')?.addEventListener('click', () => {
       this.wand?.calibrate('staff')
       const el = root.querySelector('[data-role="wand-orientation"]')
-      if (el) el.textContent = 'Kalibriere … Stab senkrecht halten'
+      if (el) el.textContent = t('Kalibriere … Stab senkrecht halten')
     })
     const audioDebugToggle = root.querySelector('[data-field="wand-audio-debug"]')
     audioDebugToggle?.addEventListener('change', () => {
@@ -1138,10 +1169,10 @@ export class MobileShell {
       if (!on) return
       if (!WandAudioFeedback.ttsAvailable()) {
         console.warn('[mobile] Web Speech TTS not available in this WebView')
-        if (statusEl) statusEl.textContent = 'TTS in dieser WebView nicht verfügbar (natives TTS nötig)'
+        if (statusEl) statusEl.textContent = t('Sprachausgabe steht in dieser Ansicht nicht zur Verfügung.')
         return
       }
-      this.wandAudio?.speak('Audio-Debugging aktiviert')
+      this.wandAudio?.speak(t('Audio-Diagnose eingeschaltet'))
       if (statusEl) statusEl.textContent = 'Audio-Test gesendet — hörst du „Audio-Debugging aktiviert"?'
     })
     const alignInput = root.querySelector('[data-field="wand-align"]')
@@ -1186,15 +1217,15 @@ export class MobileShell {
       const pwd = root.querySelector('[data-field="password"]')?.value || ''
       const status = root.querySelector('[data-role="login-status"]')
       if (!email || !pwd) {
-        if (status) status.textContent = 'E-Mail und Passwort erforderlich'
+        if (status) status.textContent = t('E-Mail und Passwort erforderlich')
         return
       }
-      if (status) status.textContent = 'Login läuft…'
+      if (status) status.textContent = t('Anmeldung läuft …')
       try {
         await this.ajna.login(email, pwd)
         // _renderSettings wird ueber onAuthChanged neu gerendert.
       } catch (err) {
-        if (status) status.textContent = err?.message || 'Login fehlgeschlagen'
+        if (status) status.textContent = err?.message || t('Anmeldung fehlgeschlagen')
       }
     })
 
@@ -1222,6 +1253,23 @@ export class MobileShell {
 
     const audioToggle = root.querySelector('[data-field="wand-audio"]')
     audioToggle?.addEventListener('change', () => WandAudioFeedback.setEnabled(audioToggle.checked))
+
+    // Sprache der Oberfläche. Neu gezeichnet wird über das Ereignis
+    // "ajna:sprache" — die Panels hängen sich selbst daran, statt dass die
+    // Shell jedes einzelne kennen muss.
+    const sprachWahl = root.querySelector('[data-field="sprache"]')
+    if (sprachWahl) {
+      sprachWahl.value = sprache()
+      sprachWahl.addEventListener('change', async () => {
+        await setzeSprache(sprachWahl.value)
+        // Neu laden statt neu zeichnen. Die Oberfläche wird an vielen Stellen
+        // EINMAL beim Start gebaut — Dialoge, Menüs, Beschriftungen in der
+        // 3D-Szene. Sie alle nachträglich einzusammeln wäre eine Liste, die
+        // beim nächsten neuen Fenster wieder unvollständig ist. Ein Neuladen
+        // ist an dieser Stelle ehrlicher: einmal, sichtbar, vollständig.
+        location.reload()
+      })
+    }
 
     // AR-FOV-Kalibrierung: live über den AR-Client anwenden (falls initialisiert),
     // sonst nur persistieren, damit es beim nächsten AR-Start greift.
@@ -1402,7 +1450,7 @@ export class MobileShell {
       if (privOverrides) {
         privOverrides.textContent = n
           ? `${n} Server ${n === 1 ? 'hat eine eigene' : 'haben eigene'} Einstellung — der Standard ändert daran nichts.`
-          : 'Alle Server folgen diesem Standard.'
+          : t('Alle Server folgen diesem Standard.')
       }
     }
     privSelect?.addEventListener('change', () => {
@@ -1445,7 +1493,7 @@ export class MobileShell {
   _wireUwbNetwork(root) {
     const sel = root.querySelector('[data-field="uwb-network"]')
     const statusEl = root.querySelector('[data-role="uwb-net-status"]')
-    const setStatus = (t) => { if (statusEl) statusEl.textContent = t || '' }
+    const setStatus = (text) => { if (statusEl) statusEl.textContent = text || '' }
     if (!sel) return
 
     this._populateUwbNetworkSelect(root)   // options + active value + PAN display
@@ -1486,7 +1534,7 @@ export class MobileShell {
       nets.map(n => `<option value="${escapeHtml(n.networkId)}">${escapeHtml(n.name)}</option>`).join('')
     sel.value = active
     const n = nets.find(x => x.networkId === (this.uwb?.network || null))
-    if (panEl) panEl.textContent = n ? `PANS-Netz-ID: ${n.networkId} — diese ID in DRTLS für weitere Anker verwenden` : ''
+    if (panEl) panEl.textContent = n ? t('PANS-Netz-ID: {id} — diese ID in DRTLS für weitere Anker verwenden', { id: n.networkId }) : ''
   }
 
   _activeNetworkObj() {
@@ -1503,17 +1551,17 @@ export class MobileShell {
     try {
       this._permDialog = this._permDialog || new PermissionDialog({ ajna: this.ajna })
       await this._permDialog.open(obj)
-    } catch (e) { setStatus(e?.message || 'Teilen fehlgeschlagen') }
+    } catch (e) { setStatus(e?.message || t('Teilen fehlgeschlagen')) }
   }
 
   async _createUwbNetwork(root, setStatus) {
-    if (!this.ajna?.currentUser?.()) { setStatus('Zum Anlegen bitte einloggen'); return }
+    if (!this.ajna?.currentUser?.()) { setStatus(t('Zum Anlegen bitte anmelden')); return }
     const name = root.querySelector('[data-field="uwb-net-name"]')?.value?.trim()
     const pan = root.querySelector('[data-field="uwb-net-pan"]')?.value?.trim()
-    if (!pan) { setStatus('PANS-Netz-ID erforderlich (aus der DRTLS-App)'); return }
+    if (!pan) { setStatus(t('PANS-Netz-ID erforderlich (aus der DRTLS-App)')); return }
     const pos = this.positionSource?.getWorldPosition?.() || window.ajnaGeo?.position || null
     try {
-      setStatus('Lege Netz an …')
+      setStatus(t('Lege Netz an …'))
       const obj = await this.ajna.createObject({
         name: name || `UWB-Netz ${pan}`,
         type: 'uwb_network',
@@ -1530,23 +1578,23 @@ export class MobileShell {
       // Refresh the select in place (NOT a full _renderSettings, which would wipe this status).
       this._populateUwbNetworkSelect(root)
       setStatus(`Netz angelegt${shareWarn}. „Netz teilen" öffnet die Rechte (edit = Anker beitragen).`)
-    } catch (e) { setStatus(e?.message || 'Anlegen fehlgeschlagen') }
+    } catch (e) { setStatus(e?.message || t('Anlegen fehlgeschlagen')) }
   }
 
   async _addUwbAnchor(root, setStatus) {
-    if (!this.ajna?.currentUser?.()) { setStatus('Zum Anlegen bitte einloggen'); return }
+    if (!this.ajna?.currentUser?.()) { setStatus(t('Zum Anlegen bitte anmelden')); return }
     const netId = this.uwb?.network
-    if (!netId) { setStatus('Erst ein Netz auswählen, dann den Anker beitragen'); return }
+    if (!netId) { setStatus(t('Erst ein Netz auswählen, dann den Anker beitragen')); return }
     const pos = this.positionSource?.getWorldPosition?.() || window.ajnaGeo?.position || null
-    if (!pos || !Number.isFinite(pos.lat)) { setStatus('Keine Position — Anker braucht seinen genauen Standort'); return }
+    if (!pos || !Number.isFinite(pos.lat)) { setStatus(t('Keine Position — Anker braucht seinen genauen Standort')); return }
     // Node-ID may be entered decimal or hex (0x…, as DRTLS shows it). Reject
     // empty/NaN explicitly — Number('') is 0 and would silently create "Anker 0".
     const raw = root.querySelector('[data-field="uwb-anchor-node"]')?.value?.trim()
-    if (!raw) { setStatus('Node-ID erforderlich (uint16, aus DRTLS)'); return }
+    if (!raw) { setStatus(t('Node-ID erforderlich (uint16, aus DRTLS)')); return }
     const nodeId = /^0x[0-9a-f]+$/i.test(raw) ? parseInt(raw, 16) : parseInt(raw, 10)
-    if (!Number.isInteger(nodeId) || nodeId < 0 || nodeId > 0xFFFF) { setStatus('Ungültige Node-ID (0…65535)'); return }
+    if (!Number.isInteger(nodeId) || nodeId < 0 || nodeId > 0xFFFF) { setStatus(t('Ungültige Node-ID (0…65535)')); return }
     try {
-      setStatus('Lege Anker an …')
+      setStatus(t('Lege Anker an …'))
       const obj = await this.ajna.createObject({
         name: `UWB-Anker ${nodeId}`,
         type: 'uwb_anchor',
@@ -1558,16 +1606,16 @@ export class MobileShell {
       catch (e) { console.warn('[mobile] Anker-Freigabe fehlgeschlagen', e?.message || e); shareWarn = ' (Freigabe fehlgeschlagen)' }
       this.uwb?.refreshAnchors()
       setStatus(`Anker ${nodeId} an aktueller Position angelegt (Netz ${netId})${shareWarn}.`)
-    } catch (e) { setStatus(e?.message || 'Anker anlegen fehlgeschlagen') }
+    } catch (e) { setStatus(e?.message || t('Anker anlegen fehlgeschlagen')) }
   }
 
   async _toggleUwb(root) {
     const statusEl = root.querySelector('[data-role="uwb-status"]')
-    const setStatus = (t) => { if (statusEl) statusEl.textContent = t }
-    if (!(await UwbManager.isAvailable())) { setStatus('Nur in der App (Capacitor) verfügbar'); return }
+    const setStatus = (text) => { if (statusEl) statusEl.textContent = text }
+    if (!(await UwbManager.isAvailable())) { setStatus(t('Nur in der App (Capacitor) verfügbar')); return }
     if (this.uwbConnected) { await this.uwb.disconnect('viewer'); this.uwbConnected = false; this._renderSettings(); return }
     try {
-      setStatus('Verbinde …')
+      setStatus(t('Verbinde …'))
       // Konfigurierter Tag-Name (Einstellungen) gewinnt: nur dieses Gerät. Ein
       // gemerktes Gerät wird NUR genutzt, wenn sein Name dazu passt — sonst
       // würde die App stur zum falschen Modul (z. B. einem Anker) reconnecten.
@@ -1578,20 +1626,20 @@ export class MobileShell {
         ? { role: 'viewer', address: dev.address, name: dev.name || wanted || 'DW' }
         : { role: 'viewer', name: wanted || 'DW' })
     } catch (err) {
-      setStatus(err?.message || 'Verbindung fehlgeschlagen')
+      setStatus(err?.message || t('Verbindung fehlgeschlagen'))
     }
   }
 
   async _toggleWand(root) {
     const statusEl = root.querySelector('[data-role="wand-status"]')
-    const setStatus = (t) => { if (statusEl) statusEl.textContent = t }
-    if (!(await WandManager.isAvailable())) { setStatus('Nur in der App (Capacitor) verfügbar'); return }
+    const setStatus = (text) => { if (statusEl) statusEl.textContent = text }
+    if (!(await WandManager.isAvailable())) { setStatus(t('Nur in der App (Capacitor) verfügbar')); return }
     if (this.wandConnected) { await this.wand.stop(); this.wandConnected = false; this._renderSettings(); return }
     try {
-      setStatus('Verbinde …')
+      setStatus(t('Verbinde …'))
       await this.wand.start({ name: 'WizardStaff' })
     } catch (err) {
-      setStatus(err?.message || 'Verbindung fehlgeschlagen')
+      setStatus(err?.message || t('Verbindung fehlgeschlagen'))
     }
   }
 

@@ -17,6 +17,7 @@
 // „welchen Servern bin ich verbunden?" bewertet, nicht in einem Extra-Dialog.
 
 import { privacy } from './PrivacyPolicy.js'
+import { t } from './i18n.js'
 import { infoHint, closeInfoHint } from './InfoHint.js'
 
 export class ServerDialog {
@@ -91,7 +92,7 @@ export class ServerDialog {
       <h4>Server hinzufügen</h4>
       <form class="sd-add-form" autocomplete="off">
         <input type="url"  name="url"   placeholder="http://server.example:8090" required>
-        <input type="text" name="label" placeholder="Label (optional)">
+        <input type="text" name="label" placeholder="${t('Label (optional)')}">
         <button type="submit">Hinzufügen</button>
       </form>
     `
@@ -149,20 +150,20 @@ export class ServerDialog {
       if (title) b.title = title
       badges.appendChild(b)
     }
-    if (s.isDefault) add('default', 'Standard', 'Standard-Server (Default für neue Objekte und Operationen).')
-    if (s.isConnected) add('online', 'verbunden', 'Angemeldet und Realtime-Verbindung aktiv (Live-Updates).')
+    if (s.isDefault) add('default', 'Standard', t('Standard-Server — neue Objekte landen hier.'))
+    if (s.isConnected) add('online', 'verbunden', t('Angemeldet, Live-Verbindung steht.'))
     if (s.isLoggedIn && !s.isConnected) {
       const v = this._verify.get(s.id)
       if (v === 'unreachable') {
-        add('warn', 'Token (offline)', 'Lokales Token vorhanden, aber der Server hat es nicht bestätigt '
+        add('warn', t('Token (offline)'), t('Zugang liegt lokal vor, der Server hat ihn nicht bestätigt.') + ' '
           + '(nicht erreichbar oder Timeout). Über „Verbinden" erneut versuchen.')
       } else if (v === 'confirmed') {
-        add('idle', 'eingeloggt', 'Angemeldet — Token vom Server bestätigt, aber keine Realtime-Verbindung. '
+        add('idle', 'eingeloggt', t('Angemeldet, aber ohne Live-Verbindung.') + ' '
           + '„Verbinden" baut sie auf.')
       } else {
         // undefined | 'pending' — lokal gültig, Server-Check läuft noch.
-        add('idle', v === 'pending' ? 'eingeloggt …' : 'eingeloggt', 'Gültiges Token (lokal). '
-          + 'Wird gegen den Server verifiziert …')
+        add('idle', v === 'pending' ? 'eingeloggt …' : 'eingeloggt', t('Gültiges Token (lokal).') + ' '
+          + t('Wird gegen den Server verifiziert …'))
       }
     }
   }
@@ -258,7 +259,7 @@ export class ServerDialog {
       const email = loginRow.querySelector('.sd-login-email').value.trim()
       const pw    = loginRow.querySelector('.sd-login-password').value
       if (!email || !pw) {
-        this._setStatus('E-Mail und Passwort erforderlich', 'error')
+        this._setStatus(t('E-Mail und Passwort erforderlich'), 'error')
         return
       }
       try {
@@ -301,7 +302,7 @@ export class ServerDialog {
     try {
       this.ajna.addServer(url, label)
       form.reset()
-      this._setStatus(`Hinzugefügt: ${label}`)
+      this._setStatus(t('Hinzugefügt: {name}', { name: label }))
     } catch (err) {
       this._setStatus(err?.message || String(err), 'error')
     }

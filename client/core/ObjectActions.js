@@ -17,6 +17,7 @@ import { applyInteractionSideEffect } from './InteractionReply.js'
 import { privacy } from './PrivacyPolicy.js'
 import { aktionErlaubt, reichweiteVon, abstandM } from './aktionsReichweite.js'
 import { wikiLinkOf } from './wikiLinks.js'
+import { t } from './i18n.js'
 
 const FALLBACK_ACTIONS = [
   { key: 'examine', label: 'Untersuchen' }
@@ -29,8 +30,8 @@ const ACTION_LABELS = {
   examine: 'Untersuchen', lesen: 'Lesen', read: 'Lesen',
   talk: 'Sprechen', sprechen: 'Sprechen',
   attack: 'Angreifen', feed: 'Füttern', collect: 'Einsammeln',
-  accept: 'Auftrag annehmen', annehmen: 'Auftrag annehmen',
-  complete: 'Auftrag erledigen', erledigt: 'Auftrag erledigen', erledigen: 'Auftrag erledigen',
+  accept: t('Auftrag annehmen'), annehmen: t('Auftrag annehmen'),
+  complete: t('Auftrag erledigen'), erledigt: t('Auftrag erledigen'), erledigen: t('Auftrag erledigen'),
   call: 'Rufen', rufen: 'Rufen',
 }
 
@@ -214,7 +215,7 @@ export class ObjectActions {
     if (e.ok) return { ok: true, kurz: '' }
     return {
       ok: false,
-      kurz: e.grund === 'stufe' ? 'Standort-Freigabe nötig' : 'zu weit weg',
+      kurz: e.grund === 'stufe' ? t('Standort-Freigabe nötig') : 'zu weit weg',
     }
   }
 
@@ -269,7 +270,7 @@ export class ObjectActions {
         if (!at) {
           const why = this.getPosition?.()
             ? `„${labelFor({ key: actionKey })}" braucht eine Standort-Freigabe für diesen Server (Einstellungen → Privatsphäre).`
-            : 'Keine Position verfügbar.'
+            : t('Keine Position verfügbar.')
           try { this.onInteractError?.(record, actionKey, why) }
           catch (e) { console.warn('[interact] error feedback', e) }
           if (!this.onInteractError) alert(why)
@@ -288,7 +289,7 @@ export class ObjectActions {
       if (effect?.handled && !effect.ok) {
         try { this.onInteractError?.(record, actionKey, effect.error) }
         catch (e) { console.warn('[interact] error feedback', e) }
-        if (!this.onInteractError) alert(`Aktion nicht möglich: ${effect.error}`)
+        if (!this.onInteractError) alert(t('Aktion nicht möglich: {grund}', { grund: effect.error }))
         return
       }
       // Sicht-/hörbares Feedback (Reply-Toast, Highlight-Puls, TTS-Ansage).
@@ -314,7 +315,7 @@ export class ObjectActions {
     } catch (err) {
       const detail = err?.response?.error || err?.message || String(err)
       console.warn('[inventory] Aufnehmen fehlgeschlagen:', detail)
-      alert('Aufnehmen nicht möglich: ' + detail)
+      alert(t('Aufnehmen nicht möglich: {grund}', { grund: detail }))
     }
   }
 
@@ -325,7 +326,7 @@ export class ObjectActions {
       await this.ajna.deleteObject(record.id)
     } catch (err) {
       console.warn('deleteObject fehlgeschlagen', err)
-      alert('Löschen fehlgeschlagen: ' + (err?.message || err))
+      alert(t('Löschen fehlgeschlagen: {grund}', { grund: err?.message || err }))
     }
   }
 }

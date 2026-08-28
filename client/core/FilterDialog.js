@@ -8,6 +8,8 @@
 // Sobald der User INTERAGIERT (Häkchen setzt oder entfernt), persistieren
 // wir die Auswahl explizit — auch "leeres Array" = "ausgeblendet".
 
+import { t } from './i18n.js'
+
 const STYLE_ID = 'ajnaFilterDialogStyles'
 
 export class FilterDialog {
@@ -83,7 +85,7 @@ export class FilterDialog {
     if (sources.length === 0) {
       const empty = document.createElement('div')
       empty.className = 'filter-empty'
-      empty.textContent = 'Keine Agents haben sich registriert. Starte einen Bridge-Agent (z. B. npm run poi), damit Filter-Optionen erscheinen.'
+      empty.textContent = t('Keine Quelle hat sich angemeldet. Ohne laufende Agents gibt es nichts zu filtern.')
       list.appendChild(empty)
       return
     }
@@ -156,7 +158,7 @@ export class FilterDialog {
     if (selected !== undefined) {
       const reset = document.createElement('button')
       reset.className = 'filter-reset'
-      reset.textContent = 'Zurücksetzen (alles anzeigen)'
+      reset.textContent = t('Zurücksetzen (alles anzeigen)')
       reset.addEventListener('click', () => {
         this.filters.clearSelection(src.source)
         this._render()

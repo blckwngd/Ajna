@@ -4,6 +4,7 @@
 // und window.ajnaUI bereits gesetzt.
 
 import { MobileShell } from "./core/MobileShell.js"
+import { starteSprache } from "./core/i18n.js"
 
 window.addEventListener('DOMContentLoaded', () => {
   // map.bundle.js init() ist async (await editorUI.init()). Wir verzoegern
@@ -11,6 +12,10 @@ window.addEventListener('DOMContentLoaded', () => {
   // Modul-Konstanten (Dialoge, AgentFilters, etc.) auf window.ajnaUI sicher
   // verfuegbar sind.
   queueMicrotask(async () => {
+    // Die Shell ist ein EIGENES Bündel. Der Zustand der Sprache liegt zwar an
+    // window (siehe core/i18n.js), der KATALOG muss hier aber trotzdem geladen
+    // sein, bevor die Shell ihre Oberfläche baut.
+    await starteSprache()
     const ajna = window.ajna
     if (!ajna) {
       console.error('[mobile] window.ajna nicht gesetzt — map.bundle.js fehlt?')

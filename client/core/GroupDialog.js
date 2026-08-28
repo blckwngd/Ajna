@@ -13,6 +13,8 @@
 // Floating-Panel für immersive XR konvertierbar sind — ein in sich
 // geschlossenes Modal-Element ohne Bezug zur umgebenden 2D-UI.
 
+import { t } from './i18n.js'
+
 export class GroupDialog {
   /**
    * @param {{ajna: import('./AjnaManager.js').AjnaManager}} opts
@@ -219,7 +221,7 @@ export class GroupDialog {
 
   async open() {
     if (!this.ajna || !this.ajna.isLoggedIn()) {
-      window.alert('Bitte erst einloggen.')
+      window.alert(t('Bitte zuerst anmelden.'))
       return
     }
 
@@ -237,7 +239,7 @@ export class GroupDialog {
         <h4>Meine Gruppen</h4>
         <div class="gd-owned-list"><div class="gd-status">lade …</div></div>
         <div class="gd-create-row">
-          <input class="gd-new-name" placeholder="Neue Gruppe (Name)">
+          <input class="gd-new-name" placeholder="${t('Neue Gruppe (Name)')}">
           <button class="primary gd-create-btn">Anlegen</button>
         </div>
 
@@ -299,7 +301,7 @@ export class GroupDialog {
       this._renderOwned(owned)
       this._renderMemberships(memberships)
     } catch (err) {
-      this._showError('Konnte Daten nicht laden: ' + (err?.message || err))
+      this._showError(t('Konnte Daten nicht laden: ') + (err?.message || err))
     }
   }
 
@@ -503,7 +505,7 @@ export class GroupDialog {
       row.className = 'gd-membership-row'
       row.innerHTML = `
         <div class="gd-membership-name">${this._escape(g.name)}</div>
-        <button class="gd-leave" disabled title="Austreten folgt im nächsten Schritt">Austreten</button>
+        <button class="gd-leave" disabled title="${t('Austreten folgt im nächsten Schritt')}">Austreten</button>
         <div class="gd-membership-meta">Besitzer: ${this._escape(g.owner)} · Mitglieder: ${(g.members || []).length}</div>
       `
       container.appendChild(row)
@@ -523,7 +525,7 @@ export class GroupDialog {
       input.value = ''
       await this._reload()
     } catch (err) {
-      this._showError('Anlegen fehlgeschlagen: ' + (err?.message || err))
+      this._showError(t('Anlegen fehlgeschlagen: ') + (err?.message || err))
     }
   }
 
@@ -532,7 +534,7 @@ export class GroupDialog {
       await this.ajna.updateGroup(id, { name: newName })
       await this._reload()
     } catch (err) {
-      this._showError('Umbenennen fehlgeschlagen: ' + (err?.message || err))
+      this._showError(t('Umbenennen fehlgeschlagen: ') + (err?.message || err))
     }
   }
 
@@ -544,7 +546,7 @@ export class GroupDialog {
       await this.ajna.deleteGroup(group.id)
       await this._reload()
     } catch (err) {
-      this._showError('Löschen fehlgeschlagen: ' + (err?.message || err))
+      this._showError(t('Löschen fehlgeschlagen: ') + (err?.message || err))
     }
   }
 
@@ -554,7 +556,7 @@ export class GroupDialog {
       await this._reload()
     } catch (err) {
       const detail = err?.response?.data?.error || err?.message || String(err)
-      this._showError('Einladung fehlgeschlagen: ' + detail)
+      this._showError(t('Einladung fehlgeschlagen: ') + detail)
     }
   }
 
@@ -564,7 +566,7 @@ export class GroupDialog {
       await this._reload()
     } catch (err) {
       const detail = err?.response?.data?.error || err?.message || String(err)
-      this._showError('Annehmen fehlgeschlagen: ' + detail)
+      this._showError(t('Annehmen fehlgeschlagen: ') + detail)
     }
   }
 
@@ -574,17 +576,17 @@ export class GroupDialog {
       await this._reload()
     } catch (err) {
       const detail = err?.response?.data?.error || err?.message || String(err)
-      this._showError('Ablehnen fehlgeschlagen: ' + detail)
+      this._showError(t('Ablehnen fehlgeschlagen: ') + detail)
     }
   }
 
   async _handleCancel(invId) {
-    if (!window.confirm('Einladung wirklich zurückziehen?')) return
+    if (!window.confirm(t('Einladung wirklich zurückziehen?'))) return
     try {
       await this.ajna.cancelInvitation(invId)
       await this._reload()
     } catch (err) {
-      this._showError('Zurückziehen fehlgeschlagen: ' + (err?.message || err))
+      this._showError(t('Zurückziehen fehlgeschlagen: ') + (err?.message || err))
     }
   }
 
@@ -595,14 +597,14 @@ export class GroupDialog {
       })
       await this._reload()
     } catch (err) {
-      this._showError('Mitglied entfernen fehlgeschlagen: ' + (err?.message || err))
+      this._showError(t('Mitglied entfernen fehlgeschlagen: ') + (err?.message || err))
     }
   }
 
   async _handleAddSubgroup(group, subId) {
     if ((group.subgroups || []).includes(subId)) return
     if (subId === group.id) {
-      this._showError('Gruppe kann nicht sich selbst enthalten')
+      this._showError(t('Gruppe kann nicht sich selbst enthalten'))
       return
     }
     try {
@@ -611,7 +613,7 @@ export class GroupDialog {
       })
       await this._reload()
     } catch (err) {
-      this._showError('Untergruppe hinzufügen fehlgeschlagen: ' + (err?.message || err))
+      this._showError(t('Untergruppe hinzufügen fehlgeschlagen: ') + (err?.message || err))
     }
   }
 
@@ -622,7 +624,7 @@ export class GroupDialog {
       })
       await this._reload()
     } catch (err) {
-      this._showError('Untergruppe entfernen fehlgeschlagen: ' + (err?.message || err))
+      this._showError(t('Untergruppe entfernen fehlgeschlagen: ') + (err?.message || err))
     }
   }
 

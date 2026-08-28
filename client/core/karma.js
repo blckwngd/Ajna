@@ -38,9 +38,9 @@ export const KARMA_MAX_STUFE = 5
  * kostet eine abgelehnte Abnahme auch nichts.
  */
 export const KARMA_GUTSCHRIFT = [
-  { grund: 'Auftrag erledigt', punkte: +2 },
-  { grund: 'Erledigung von jemandem abgenommen', punkte: +3 },
-  { grund: 'Abnahme für andere übernommen', punkte: +1 },
+  { grund: t('Auftrag erledigt'), punkte: +2 },
+  { grund: t('Erledigung von jemandem abgenommen'), punkte: +3 },
+  { grund: t('Abnahme für andere übernommen'), punkte: +1 },
 ]
 
 /** Was Punkte kostet — bewusst kurz und auf Nachweise beschränkt. */
@@ -102,6 +102,8 @@ export const KARMA_WAHL = Array.from({ length: KARMA_MAX_STUFE + 1 }, (_, i) => 
 // Gefühl. Bewusst ★/☆ statt Emoji: 🌟 und ⭐ sehen je nach Gerät fast gleich
 // aus, gefüllt gegen leer ist überall eindeutig.
 
+import { t } from './i18n.js'
+
 const KARMA_STYLE_ID = 'ajna-karma-style'
 
 /**
@@ -153,7 +155,7 @@ export function renderKarma(el, punkte, { satz = true } = {}) {
     <div class="ak-balken"><span class="ak-ist" style="width:${f.max ? 100 : f.prozent}%"></span></div>
     <div class="ak-zahlen"><span>${f.punkte}</span><span>${ziel}</span></div>
     ${satz ? `<div class="ak-satz">${f.max
-      ? 'Höchste Stufe erreicht.'
+      ? t('Höchste Stufe erreicht.')
       : `${f.bisNaechste} Punkte bis ${karmaLabel(f.stufe + 1)}.`}
       Karma erhöht sich durch das Erledigen von Aufträgen auf diesem Server.</div>` : ''}`
 }

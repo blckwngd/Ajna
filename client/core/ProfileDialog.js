@@ -14,14 +14,16 @@
 // (Anzeigename, Avatar-URL, Sync-Server-Liste etc.).
 
 
+import { t } from './i18n.js'
+
 const IMPLICIT_AUDIENCES = new Set(['authenticated', 'anonymous', 'everyone'])
 const ALL_RIGHTS = ['view', 'edit', 'move']
 const SUBJECT_TYPE_LABELS = {
-  authenticated: 'Authentifizierte Spieler',
-  anonymous:     'Anonyme Spieler',
-  everyone:      'Jeder (auch ausgeloggt)',
-  user:          'Bestimmter Spieler',
-  group:         'Bestimmte Gruppe'
+  authenticated: t('Angemeldete Spieler'),
+  anonymous:     t('Nicht angemeldete Besucher'),
+  everyone:      t('Alle, auch nicht angemeldete'),
+  user:          t('Bestimmter Spieler'),
+  group:         t('Bestimmte Gruppe')
 }
 
 export class ProfileDialog {
@@ -138,10 +140,10 @@ export class ProfileDialog {
 
     // Subject-type-Optionen füllen
     const typeEl = dlg.querySelector('.prof-subject-type')
-    for (const t of Object.keys(SUBJECT_TYPE_LABELS)) {
+    for (const art of Object.keys(SUBJECT_TYPE_LABELS)) {
       const opt = document.createElement('option')
-      opt.value = t
-      opt.textContent = SUBJECT_TYPE_LABELS[t]
+      opt.value = art
+      opt.textContent = SUBJECT_TYPE_LABELS[art]
       typeEl.appendChild(opt)
     }
 
@@ -171,11 +173,11 @@ export class ProfileDialog {
   _updateSubjectField() {
     const bd = this._backdrop
     if (!bd) return
-    const t = bd.querySelector('.prof-subject-type').value
+    const art = bd.querySelector('.prof-subject-type').value
     const row = bd.querySelector('.prof-add-row-subject')
     const sel = bd.querySelector('.prof-subject')
 
-    if (IMPLICIT_AUDIENCES.has(t)) {
+    if (IMPLICIT_AUDIENCES.has(art)) {
       row.style.display = 'none'
       sel.innerHTML = ''
       return
@@ -184,7 +186,7 @@ export class ProfileDialog {
     row.style.display = ''
     sel.innerHTML = ''
 
-    if (t === 'user') {
+    if (art === 'user') {
       // Eigene User-ID ausklammern — ein selbst-ACE ist sinnlos, weil
       // der Owner sowieso alle Rechte hat.
       const me = this.ajna.currentUser()
@@ -199,7 +201,7 @@ export class ProfileDialog {
         opt.textContent = u.email || u.name || u.id
         sel.appendChild(opt)
       }
-    } else if (t === 'group') {
+    } else if (art === 'group') {
       if (this._groups.length === 0) {
         sel.innerHTML = '<option value="">— keine Gruppen vorhanden —</option>'
         return
@@ -220,13 +222,13 @@ export class ProfileDialog {
       ? ''
       : bd.querySelector('.prof-subject').value
     if (!IMPLICIT_AUDIENCES.has(type) && !subject) {
-      return this._setStatus('Bitte ein Subjekt wählen.', 'error')
+      return this._setStatus(t('Bitte auswählen, für wen die Regel gilt'), 'error')
     }
 
     const rights = Array.from(bd.querySelectorAll('.prof-rights input:checked'))
       .map(i => i.value)
     if (rights.length === 0) {
-      return this._setStatus('Mindestens ein Recht wählen.', 'error')
+      return this._setStatus(t('Mindestens ein Recht wählen.'), 'error')
     }
 
     const interactRaw = bd.querySelector('.prof-interact').value.trim()
@@ -242,13 +244,13 @@ export class ProfileDialog {
       _sameArr(a.interact_actions, interact_actions)
     )
     if (dupe) {
-      return this._setStatus('Identischer Eintrag existiert bereits.', 'error')
+      return this._setStatus(t('Identischer Eintrag existiert bereits.'), 'error')
     }
 
     this._aces.push({ subject_type: type, subject, rights, interact_actions })
     bd.querySelector('.prof-interact').value = ''
     this._renderList()
-    this._setStatus('Hinzugefügt — vergiss nicht zu speichern.')
+    this._setStatus(t('Hinzugefügt — vergiss nicht zu speichern.'))
   }
 
   _renderList() {
@@ -296,7 +298,7 @@ export class ProfileDialog {
       rm.addEventListener('click', () => {
         this._aces.splice(i, 1)
         this._renderList()
-        this._setStatus('Eintrag entfernt — vergiss nicht zu speichern.')
+        this._setStatus(t('Eintrag entfernt — vergiss nicht zu speichern.'))
       })
 
       row.appendChild(label)
@@ -332,7 +334,7 @@ export class ProfileDialog {
       this._setStatus('Gespeichert.', 'ok')
       setTimeout(() => this.close(), 700)
     } catch (err) {
-      this._setStatus('Speichern fehlgeschlagen: ' + (err?.message || err), 'error')
+      this._setStatus(t('Speichern fehlgeschlagen: ') + (err?.message || err), 'error')
     }
   }
 
