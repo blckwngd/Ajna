@@ -31,6 +31,8 @@
 //   POI_WIKI_MAX         Artikel je Areal (Default: 20 — API-Extract-Limit)
 //   POI_COMMONS          Commons-Fotos als "Bilder"-Layer (Default: an)
 //   POI_COMMONS_MAX      Fotos je Areal nach Clustering (Default: 15, max 50)
+//   POI_CACHE_H          Haltbarkeit der Overpass-Antworten in Stunden (Default: 6)
+//   POI_WIKI_CACHE_H     Haltbarkeit von Artikeln und Fotos (Default: 24)
 //
 //   AJNA_URL   PocketBase-URL  (Default: http://127.0.0.1:8090)
 //   AJNA_USER  Pflicht — dedizierter PB-User für den Agent
@@ -49,6 +51,7 @@ import { bootAgent, die, envNum, envInt, envBool, envStr, publishManifest } from
 import { AjnaGeo } from '../client/core/AjnaGeo.js'
 
 import { simpleSetup } from './lib/setup-wizard.mjs'
+import { Quellcache } from './lib/quellcache.mjs'
 
 // Login + geschichtete .env (Env > agents/.env.poi > Root-.env) + System-CA.
 // Erststart ohne Pflichtwerte (oder --setup): Mini-Wizard fragt sie ab.
@@ -61,6 +64,25 @@ const CENTER_LAT = envNum('POI_CENTER_LAT', 50.3569)
 const CENTER_LON = envNum('POI_CENTER_LON', 7.5890)
 const RADIUS_KM  = envNum('POI_RADIUS_KM', 1)
 const FILTER     = envStr('POI_FILTER') || 'common'
+
+// ── Zwischenspeicher ────────────────────────────────────────────────────
+// Diese Brücke fragte BISHER alle 120 s alles neu ab — auch Wikipedia und
+// Commons. Artikel und Fotos ändern sich nicht im Zwei-Minuten-Takt; das waren
+// je Areal rund 700 Anfragen am Tag gegen fremde Dienste, ohne Gegenwert.
+//
+// Overpass läuft ohnehin über den Ajna-Server, der selbst zwischenspeichert.
+// Zwei Dinge kann aber nur der Agent: die Antwort über einen NEUSTART hinweg
+// behalten und beim Ausfall des Servers den letzten guten Stand ausliefern —
+// sonst verschwinden die POIs bei jedem Schluckauf aus der Welt.
+const cache = new Quellcache('poi', {
+  ttlMs: envNum('POI_CACHE_H', 6) * 3600_000,
+})
+const WIKI_CACHE_MS = envNum('POI_WIKI_CACHE_H', 24) * 3600_000
+
+// Schlüssel und Abfrage müssen auf DASSELBE Raster: Interessensbereiche wandern
+// mit dem Spieler, und ein Schlüssel, der sich bei jedem Schritt ändert, trifft
+// nie. 3 Nachkommastellen ≈ 110 m — bei Suchradien von 1–2 km belanglos.
+const raster = (v) => Math.round(v * 1000) / 1000
 // Default kontinuierlich (120 s): die Bridge ist demand-getrieben und muss die
 // aktiven Interessensbereiche fortlaufend pollen. Einmal-Sync via POI_REFRESH_S=0.
 const REFRESH_MS = envNum('POI_REFRESH_S', 120) * 1000
@@ -176,7 +198,12 @@ function bboxToTarget(b) {
   const lon = (b.lonMin + b.lonMax) / 2
   const halfLatM = (b.latMax - b.latMin) / 2 * 111000
   const halfLonM = (b.lonMax - b.lonMin) / 2 * 111000 * Math.cos(lat * Math.PI / 180)
-  return { lat, lon, radiusM: Math.min(2000, Math.round(Math.hypot(halfLatM, halfLonM))) }
+  // Auf das Raster legen (siehe `raster`), sonst geht jede Abfrage an eine neue
+  // Stelle und der Zwischenspeicher bleibt wirkungslos.
+  return {
+    lat: raster(lat), lon: raster(lon),
+    radiusM: Math.min(2000, Math.round(Math.hypot(halfLatM, halfLonM) / 100) * 100) || 100,
+  }
 }
 
 async function fetchPois() {
@@ -195,8 +222,10 @@ async function fetchPois() {
   let errors = 0
   for (const t of targets) {
     try {
-      const res = await geo.poisNear(t.lat, t.lon, t.radiusM, FILTER)
-      for (const f of (res.features || [])) if (f.id) byId.set(f.id, f)
+      const { daten: res } = await cache.hole(
+        `pois:${t.lat}:${t.lon}:${t.radiusM}:${FILTER}`,
+        () => geo.poisNear(t.lat, t.lon, t.radiusM, FILTER))
+      for (const f of (res?.features || [])) if (f.id) byId.set(f.id, f)
     } catch (err) {
       errors++
       console.warn(`[poi] fetch @${t.lat.toFixed(4)},${t.lon.toFixed(4)}: ${err?.message || err}`)
@@ -339,10 +368,14 @@ async function fetchWikipedia() {
       colimit: 'max', inprop: 'url',
     })
     try {
-      const r = await fetch(`https://${WIKI_LANG}.wikipedia.org/w/api.php?${params}`, {
-        headers: { 'User-Agent': WIKI_UA } })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      const data = await r.json()
+      const { daten: data } = await cache.hole(
+        `wiki:${WIKI_LANG}:${t.lat}:${t.lon}:${radius}:${WIKI_MAX}`,
+        async () => {
+          const r = await fetch(`https://${WIKI_LANG}.wikipedia.org/w/api.php?${params}`, {
+            headers: { 'User-Agent': WIKI_UA } })
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
+          return r.json()
+        }, { ttlMs: WIKI_CACHE_MS })
       for (const p of Object.values(data?.query?.pages || {})) {
         const co = Array.isArray(p.coordinates) ? p.coordinates[0] : null
         if (!co || !Number.isFinite(co.lat) || !Number.isFinite(co.lon)) continue
@@ -428,6 +461,63 @@ const stripHtml = (h) => String(h || '')
   .replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&nbsp;/g, ' ')
   .replace(/\s+/g, ' ').trim()
 
+// Fotos für EIN Areal holen — drei Schritte gegen Commons. Als eigene Funktion,
+// damit der Zwischenspeicher das komplette Ergebnis je Areal ablegen kann und
+// nicht drei Teilantworten einzeln.
+async function commonsFuerZiel(t, radius) {
+  // Schritt 1: Titel+Koordinaten. WICHTIG gsprimary=all — viele Fotos
+  // tragen ihre Koordinate als Typ "object", nicht als primary (so fand
+  // die Default-Suche z. B. das Hexen-Mahnmal Heimbach-Weis NICHT).
+  const p1 = new URLSearchParams({
+    action: 'query', format: 'json', list: 'geosearch',
+    gscoord: `${t.lat}|${t.lon}`, gsradius: String(radius), gslimit: '500',
+    gsnamespace: '6', gsprimary: 'all',
+  })
+  const r1 = await fetch(`https://commons.wikimedia.org/w/api.php?${p1}`, { headers: { 'User-Agent': WIKI_UA } })
+  if (!r1.ok) throw new Error(`HTTP ${r1.status}`)
+  const d1 = await r1.json()
+  // Nur echte Fotos (JPEG) — Orthophoto-/Karten-Kacheln sind PNGs und
+  // würden die Welt fluten. Foto-Serien am selben Standort (~11 m Raster)
+  // auf EIN Objekt clustern.
+  const jpgs = (d1?.query?.geosearch || []).filter(f => /\.jpe?g$/i.test(f.title))
+  const clusters = new Map()
+  for (const f of jpgs) {
+    const key = `${f.lat.toFixed(4)},${f.lon.toFixed(4)}`
+    if (!clusters.has(key)) clusters.set(key, f)
+  }
+  const picked = Array.from(clusters.values()).slice(0, COMMONS_MAX)
+  if (!picked.length) return []
+  // Schritt 2: Bild-URL + Beschreibung nur für die Auswahl.
+  const p2 = new URLSearchParams({
+    action: 'query', format: 'json', pageids: picked.map(f => f.pageid).join('|'),
+    prop: 'imageinfo', iiprop: 'url|extmetadata', iiurlwidth: '640',
+    iiextmetadatalanguage: WIKI_LANG,
+  })
+  const r2 = await fetch(`https://commons.wikimedia.org/w/api.php?${p2}`, { headers: { 'User-Agent': WIKI_UA } })
+  if (!r2.ok) throw new Error(`HTTP ${r2.status}`)
+  const d2 = await r2.json()
+  // Schritt 3: Structured-Data-Captions (MediaInfo-Labels) — DAS sind die
+  // menschenlesbaren Namen ("Wegekreuz (Lindenstraße, …)"); der extmetadata-
+  // ObjectName ist meist nur der Dateiname.
+  let labels = {}
+  try {
+    const p3 = new URLSearchParams({
+      action: 'wbgetentities', format: 'json',
+      ids: picked.map(f => `M${f.pageid}`).join('|'), props: 'labels',
+    })
+    const r3 = await fetch(`https://commons.wikimedia.org/w/api.php?${p3}`, { headers: { 'User-Agent': WIKI_UA } })
+    if (r3.ok) labels = (await r3.json())?.entities || {}
+  } catch { /* Captions sind nice-to-have — Dateiname bleibt Fallback */ }
+  return picked.map(f => {
+    const l = labels[`M${f.pageid}`]?.labels || {}
+    return {
+      ...f,
+      info: d2?.query?.pages?.[f.pageid]?.imageinfo?.[0],
+      caption: l[WIKI_LANG]?.value || l.en?.value || null,
+    }
+  })
+}
+
 async function fetchCommons() {
   const { targets, source } = await wikiTargets()
   const radius = Math.max(100, Math.min(10000, WIKI_RADIUS_M))
@@ -435,57 +525,10 @@ async function fetchCommons() {
   let errors = 0
   for (const t of targets) {
     try {
-      // Schritt 1: Titel+Koordinaten. WICHTIG gsprimary=all — viele Fotos
-      // tragen ihre Koordinate als Typ "object", nicht als primary (so fand
-      // die Default-Suche z. B. das Hexen-Mahnmal Heimbach-Weis NICHT).
-      const p1 = new URLSearchParams({
-        action: 'query', format: 'json', list: 'geosearch',
-        gscoord: `${t.lat}|${t.lon}`, gsradius: String(radius), gslimit: '500',
-        gsnamespace: '6', gsprimary: 'all',
-      })
-      const r1 = await fetch(`https://commons.wikimedia.org/w/api.php?${p1}`, { headers: { 'User-Agent': WIKI_UA } })
-      if (!r1.ok) throw new Error(`HTTP ${r1.status}`)
-      const d1 = await r1.json()
-      // Nur echte Fotos (JPEG) — Orthophoto-/Karten-Kacheln sind PNGs und
-      // würden die Welt fluten. Foto-Serien am selben Standort (~11 m Raster)
-      // auf EIN Objekt clustern.
-      const jpgs = (d1?.query?.geosearch || []).filter(f => /\.jpe?g$/i.test(f.title))
-      const clusters = new Map()
-      for (const f of jpgs) {
-        const key = `${f.lat.toFixed(4)},${f.lon.toFixed(4)}`
-        if (!clusters.has(key)) clusters.set(key, f)
-      }
-      const picked = Array.from(clusters.values()).slice(0, COMMONS_MAX)
-      if (!picked.length) continue
-      // Schritt 2: Bild-URL + Beschreibung nur für die Auswahl.
-      const p2 = new URLSearchParams({
-        action: 'query', format: 'json', pageids: picked.map(f => f.pageid).join('|'),
-        prop: 'imageinfo', iiprop: 'url|extmetadata', iiurlwidth: '640',
-        iiextmetadatalanguage: WIKI_LANG,
-      })
-      const r2 = await fetch(`https://commons.wikimedia.org/w/api.php?${p2}`, { headers: { 'User-Agent': WIKI_UA } })
-      if (!r2.ok) throw new Error(`HTTP ${r2.status}`)
-      const d2 = await r2.json()
-      // Schritt 3: Structured-Data-Captions (MediaInfo-Labels) — DAS sind die
-      // menschenlesbaren Namen ("Wegekreuz (Lindenstraße, …)"); der extmetadata-
-      // ObjectName ist meist nur der Dateiname.
-      let labels = {}
-      try {
-        const p3 = new URLSearchParams({
-          action: 'wbgetentities', format: 'json',
-          ids: picked.map(f => `M${f.pageid}`).join('|'), props: 'labels',
-        })
-        const r3 = await fetch(`https://commons.wikimedia.org/w/api.php?${p3}`, { headers: { 'User-Agent': WIKI_UA } })
-        if (r3.ok) labels = (await r3.json())?.entities || {}
-      } catch { /* Captions sind nice-to-have — Dateiname bleibt Fallback */ }
-      for (const f of picked) {
-        const l = labels[`M${f.pageid}`]?.labels || {}
-        byId.set(String(f.pageid), {
-          ...f,
-          info: d2?.query?.pages?.[f.pageid]?.imageinfo?.[0],
-          caption: l[WIKI_LANG]?.value || l.en?.value || null,
-        })
-      }
+      const { daten: eintraege } = await cache.hole(
+        `commons:${WIKI_LANG}:${t.lat}:${t.lon}:${radius}:${COMMONS_MAX}`,
+        () => commonsFuerZiel(t, radius), { ttlMs: WIKI_CACHE_MS })
+      for (const e of (eintraege || [])) byId.set(String(e.pageid), e)
     } catch (err) {
       errors++
       console.warn(`[fotos] fetch @${t.lat.toFixed(4)},${t.lon.toFixed(4)}: ${err?.message || err}`)

@@ -31,11 +31,14 @@
 //   MB_MAX_STUDIES    Deckel Live-Studien (Default: 25)
 //   MB_REQ_DELAY_MS   Pause zwischen Abfragen (Default: 1100 — bitte nicht kürzen)
 //   MB_STUDIES        optional: feste Studien-IDs (Komma-Liste) statt Entdeckung
+//   MB_KATALOG_H      Haltbarkeit des Studien-Katalogs in Stunden (Default: 24)
+//   MB_PROBE_H        Haltbarkeit der „hat aktuelle Daten?"-Probe (Default: 6)
 //
 // Start:  node agents/movebank-bridge.mjs   bzw.   npm run movebank
 
 import { bootAgent, envNum, envInt, envStr, publishManifest } from './lib/agent-base.mjs'
 import { simpleSetup } from './lib/setup-wizard.mjs'
+import { Quellcache } from './lib/quellcache.mjs'
 
 const { ajna } = await bootAgent('movebank', {
   tag: 'movebank',
@@ -48,6 +51,20 @@ const DISCOVER_MS  = envNum('MB_DISCOVER_H', 12) * 3600000
 const MAX_ANIMALS  = envInt('MB_MAX_ANIMALS', 150)
 const MAX_STUDIES  = envInt('MB_MAX_STUDIES', 25)
 const REQ_DELAY_MS = Math.max(1000, envInt('MB_REQ_DELAY_MS', 1100))
+
+// ── Zwischenspeicher NUR für den Entdeckungslauf ────────────────────────
+// Der Entdeckungslauf ist der teure Teil dieser Brücke: Er tastet jede
+// öffentliche Studie einzeln an, mit über einer Sekunde Pause dazwischen.
+// Nach einem Neustart begann das von vorn — zehn Entwicklungs-Neustarts sind
+// zehn vollständige Durchläufe gegen ein Forschungs-Archiv.
+//
+// Die LIVE-POSITIONEN werden ABSICHTLICH NICHT zwischengespeichert. Sie sind
+// der Zweck der Brücke; ein alter Fix ist keine Position, sondern ein Irrtum.
+// Aus demselben Grund haben ADS-B und AIS gar keinen Zwischenspeicher.
+const cache = new Quellcache('movebank', {
+  ttlMs: envNum('MB_KATALOG_H', 24) * 3600_000,
+})
+const PROBE_MS = envNum('MB_PROBE_H', 6) * 3600_000
 const FIXED_STUDIES = envStr('MB_STUDIES').split(',').map(s => s.trim()).filter(Boolean)
 
 const SOURCE = 'movebank'
@@ -109,7 +126,9 @@ async function discover(log) {
     candidates = FIXED_STUDIES.map(id => ({ id, name: `Studie ${id}` }))
     log(`feste Studien aus MB_STUDIES: ${candidates.length}`)
   } else {
-    const all = await jget(`${BASE}?entity_type=study&i_can_see_data=true&there_are_data_available=true`)
+    // Der Studien-Katalog ändert sich in Wochen, nicht in Stunden.
+    const { daten: all = [] } = await cache.hole('studien',
+      () => jget(`${BASE}?entity_type=study&i_can_see_data=true&there_are_data_available=true`))
     candidates = all
       .filter(s => s.suspend_license_terms && /gps/i.test(s.sensor_type_ids || ''))
       .map(s => ({ id: s.id, name: s.name || `Studie ${s.id}` }))
@@ -119,8 +138,15 @@ async function discover(log) {
   const found = []
   for (const c of candidates) {
     if (found.length >= MAX_STUDIES) break
+    let gefragt = false
     try {
-      const j = await fetchStudy(c.id)
+      // „Hat diese Studie überhaupt aktuelle Daten?" ist eine Frage über
+      // Wochen (MB_MAX_AGE_DAYS, Vorgabe 30) — sie alle sechs Stunden neu zu
+      // stellen bringt nichts.
+      const { daten: j, herkunft } = await cache.hole(`probe:${c.id}`,
+        () => fetchStudy(c.id), { ttlMs: PROBE_MS })
+      gefragt = herkunft === 'frisch'
+      if (!j) continue
       const fresh = (j.individuals || []).filter(i => {
         const t = (i.locations || [])[0]?.timestamp
         return Number.isFinite(t) && (now - t) < MAX_AGE_MS
@@ -130,7 +156,9 @@ async function discover(log) {
         log(`  ✓ ${fresh.length.toString().padStart(3)} aktuelle Tiere · ${c.name.slice(0, 58)}`)
       }
     } catch { /* Studie nicht abrufbar → überspringen */ }
-    await sleep(REQ_DELAY_MS)
+    // Nur schonen, wenn wirklich gefragt wurde. Ein Lauf aus dem
+    // Zwischenspeicher braucht keine Pause und ist damit sofort fertig.
+    if (gefragt) await sleep(REQ_DELAY_MS)
   }
   liveStudies = found
   lastDiscover = Date.now()
