@@ -37,6 +37,9 @@ export class AgentFilters {
     /** @type {Record<string, string[]>}  source → ausgewählte Layer-Keys */
     this._selection = this._loadSelection()
     this._listeners = new Set()
+    /** Schon gemeldete Namens-Kollisionen — die Meldung wiederholt sich sonst
+     *  bei jedem Abgleich (alle drei Minuten), obwohl sich nichts geändert hat. */
+    this._gemeldet = new Set()
   }
 
   // ───────────────────────────────────────────────────────────────────
@@ -80,9 +83,22 @@ export class AgentFilters {
       if (frueher) { verworfen.push(bisher); inhaber.set(schluessel, m) }
       else verworfen.push(m)
     }
+    // Einmal je Kollision melden, nicht bei jedem Abgleich. Und den SERVER
+    // benennen: „auf diesem Server" ist nichtssagend, sobald mehrere verbunden
+    // sind — und dann ist es meist ein anderer als der, an den man denkt.
     for (const m of verworfen) {
-      console.warn(`[filters] Manifest für "${m.source}" verworfen — der Name gehört`
-        + ` auf diesem Server einem anderen Konto (Owner ${m.owner}).`)
+      const marke = `${m._origin || ''}|${m.source}|${m.id}`
+      if (this._gemeldet.has(marke)) continue
+      this._gemeldet.add(marke)
+      const inhaberVon = inhaber.get(JSON.stringify([m._origin || '', m.source]))
+      // Die FOLGE mitsagen: Ohne sie wirkt das wie eine Randnotiz, dabei
+      // erklärt sie die roten „angeblich"-Marken an den Objekten des
+      // verworfenen Kontos (siehe Provenance.js). Wer beides nicht in
+      // Verbindung bringt, sucht den Fehler an der falschen Stelle.
+      console.warn(`[filters] Zwei Konten beanspruchen den Namen "${m.source}" auf `
+        + `${this._serverName(m._origin)}. Es gilt der ältere Eintrag (${inhaberVon?.owner}); `
+        + `verworfen wurde der von ${m.owner}. Objekte des verworfenen Kontos `
+        + `erscheinen dadurch als „angeblich ${m.agent_name || m.source}".`)
     }
 
     // 2) Nur die Namensinhaber zu Sources verschmelzen (über Server hinweg).
@@ -161,7 +177,14 @@ export class AgentFilters {
 
     // Objekt-Owner ist roh (Fremdschlüssel werden nicht umgeschrieben),
     // Manifest-Owner ebenso — direkter Vergleich ist also korrekt.
-    const passt = record.owner === inhaber.owner
+    //
+    // Dazu die vom INHABER benannten Konten: Ein Betreiber, der seine Agents
+    // unter einem zweiten Konto ausrollt, soll dafür keine Fälschungs-Marke
+    // bekommen. Sicher ist das, weil nur der Inhaber seine eigene Liste
+    // schreiben kann (updateRule) und nur SEINE Liste gelesen wird — wer sich
+    // im eigenen, ohnehin verworfenen Manifest selbst delegiert, gewinnt nichts.
+    const vertraut = Array.isArray(inhaber.delegates) ? inhaber.delegates : []
+    const passt = record.owner === inhaber.owner || vertraut.includes(record.owner)
     const handle = inhaber.owner_handle || null
     const agentName = inhaber.agent_name || source
     if (!passt) return { status: 'mismatch', source, agentName, handle, sealed: !!inhaber.owner_sealed }
@@ -190,6 +213,15 @@ export class AgentFilters {
     this.ajna.onAuthChanged?.(u => { if (u) this.refreshManifests().catch(() => {}) })
     this._autoTimer = setInterval(tryRefresh, intervalMs)
     return this
+  }
+
+  /** Lesbarer Name eines Servers; ohne Registrierung bleibt die Kennung. */
+  _serverName(origin) {
+    try {
+      const s = (this.ajna.getServers?.() || []).find(x => x.id === origin)
+      if (s) return `"${s.label || s.url || s.id}"`
+    } catch { /* Registry nicht da → Kennung */ }
+    return origin ? `Server ${origin}` : 'dem Standard-Server'
   }
 
   /** Alle bekannten Sources (typisch: 1–N pro registriertem Agent). */

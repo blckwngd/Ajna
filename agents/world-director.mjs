@@ -55,7 +55,7 @@
 // Start:  node agents/world-director.mjs   bzw.   npm run director
 
 import { randomUUID } from 'node:crypto'
-import { bootAgent, die, envNum, envStr, commandAllowed } from './lib/agent-base.mjs'
+import { bootAgent, die, envNum, envStr, commandAllowed, mitDelegierten } from './lib/agent-base.mjs'
 import { MODEL_PROFILES, profileFor, modelOf, profileAppearance } from './world-director.profiles.mjs'
 import { AjnaGeo } from '../client/core/AjnaGeo.js'
 import { findLandingSpot } from './lib/landing-spots.mjs'
@@ -265,13 +265,14 @@ const ROAM_REST_MAX = parseFloat(process.env.WD_ROAM_REST_MAX || '14')
 // client/core/yaw.js). Hier stand einmal, Flieger bräuchten eine gespiegelte
 // Formel — der Code tat das schon länger nicht mehr, der Kommentar blieb stehen.
 //
-// WD_FLY_YAW_OFFSET ist ein Notnagel für ein Modell, das verkehrt herum
-// modelliert ist. Der richtige Ort dafür ist MODEL_YAW_RAD im Client: Der Agent
-// kennt die GLB-Datei gar nicht, kann die Eigenheit also nicht kennen. Der
-// Regler bleibt, bis kein Modell ihn mehr braucht.
+// Der frühere Notnagel WD_FLY_YAW_OFFSET ist WEG. Er war ein globaler Regler
+// für die Eigenheit EINES Modells — und dafür der falsche Ort: Der Agent kennt
+// die GLB-Datei gar nicht. Modell-Eigenheiten korrigiert der Client je Datei
+// (MODEL_YAW_RAD in engine/GameObject.js); ein Agent mit einem Modell, das der
+// Client nicht kennt, gibt `appearance.yaw` mit. Gesetzt war der Regler nie.
+//
 // WD_FLY_BANK_MAX = Roll-Amplitude in Kurven (rad; Vorzeichen umkehren, falls
 // es in die falsche Richtung kippt).
-const FLY_YAW_OFFSET = parseFloat(process.env.WD_FLY_YAW_OFFSET || '0')
 const FLY_BANK_MAX   = parseFloat(process.env.WD_FLY_BANK_MAX   || '0.5')  // ~30° max. Schräglage
 
 // ── Interest-Areas: Welt dort bevölkern, wo Spieler sind (folgt echtem GPS) ──
@@ -535,7 +536,7 @@ console.log(`[director] Zentrum: ${CENTER_LAT.toFixed(4)}, ${CENTER_LON.toFixed(
 
 async function publishManifest() {
   try {
-    await ajna.upsertAgentManifest({
+    await ajna.upsertAgentManifest(mitDelegierten({
       source: 'world-director',
       agent_name: 'World-Director',
       description: FOLLOW_AREAS
@@ -548,7 +549,7 @@ async function publishManifest() {
         label: ({ npc: 'NPCs', enemy: 'Gegner', animal: 'Tiere', dragon: 'Drachen', item: 'Items', hint: 'Hinweise', diamond: 'Diamanten' })[a] || a,
         predicate: { field: 'state.archetype', equals: a },
       }))
-    })
+    }))
   } catch (err) {
     console.warn('[director] manifest-upsert fehlgeschlagen:', err?.message || err)
   }
@@ -1176,7 +1177,7 @@ async function advanceSummon(c, dt, now) {
         await ajna.updateObject(c.id, {
           lat: c.lat, lon: c.lon, altitude: c.altBase,
           animation_state: 'idle',
-          rotation: { x: 0, y: wrapPi(HEADING_TO_YAW(c.heading) + FLY_YAW_OFFSET), z: 0 },
+          rotation: { x: 0, y: HEADING_TO_YAW(c.heading), z: 0 },
           state: { ...c.baseState, motion: gelandet }
         })
         s.phase = 'landed'
@@ -1224,7 +1225,7 @@ async function advanceSummon(c, dt, now) {
   await schreibeBewegung(c, {
     lat: c.lat, lon: c.lon, altitude: c.altBase,
     v: c.speed, trk: KURS_GRAD(c.heading),
-    rotation: { x: 0, y: wrapPi(HEADING_TO_YAW(c.heading) + FLY_YAW_OFFSET), z: clamp(turnRatio, -1, 1) * FLY_BANK_MAX }
+    rotation: { x: 0, y: HEADING_TO_YAW(c.heading), z: clamp(turnRatio, -1, 1) * FLY_BANK_MAX }
   })
 }
 
@@ -1288,7 +1289,7 @@ async function advanceRoamer(c) {
       // (Nord=-Z) ist das π − heading (fixt die Kurven-Handedness; die alte Formel
       // h−π/2 lief mit falscher Drehrichtung). Banking: proportional zur Drehrate
       // in die Kurve rollen.
-      yaw = wrapPi(HEADING_TO_YAW(c.heading) + FLY_YAW_OFFSET)
+      yaw = HEADING_TO_YAW(c.heading)
       roll = clamp(turn / maxTurn, -1, 1) * FLY_BANK_MAX
     } else {
       altitude = c.altBase                // Boden-Tier bleibt auf seiner Höhe

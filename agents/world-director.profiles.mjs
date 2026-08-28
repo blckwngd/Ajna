@@ -26,7 +26,10 @@
 export const MODEL_PROFILES = {
   // ── Menschen/Roboter (Straße) ────────────────────────────────────────
   'CesiumMan.glb':       { speed: 1.4, animSpeed: 1.0 },
-  'Soldier.glb':         { speed: 1.5, animSpeed: 1.0, yaw: Math.PI, idle: true, kampf: true },
+  // Kein `yaw` mehr: Der Client kennt diese Datei und korrigiert sie selbst
+  // (MODEL_YAW_RAD). Zwei Quellen für dieselbe Zahl laufen irgendwann
+  // auseinander. `yaw` bleibt für Modelle, die der Client NICHT kennt.
+  'Soldier.glb':         { speed: 1.5, animSpeed: 1.0, idle: true, kampf: true },
   'RobotExpressive.glb': { speed: 1.2, animSpeed: 1.1, idle: true },
 
   // ── Gegner ───────────────────────────────────────────────────────────

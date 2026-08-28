@@ -19,6 +19,8 @@
 // setzen). `getKarma` überschreibt das nur, wenn ein Aufrufer es braucht.
 
 import { privacy } from './PrivacyPolicy.js'
+import { publikum } from './PresenceService.js'
+import { t } from './i18n.js'
 import { infoHint } from './InfoHint.js'
 import { renderKarma } from './karma.js'
 
@@ -126,8 +128,16 @@ export class ServerProfile {
         <select data-role="priv">
           ${privacy.LEVELS.map(l => `<option value="${l}">${esc(privacy.label(l))}</option>`).join('')}
         </select>
-        <button type="button" data-role="priv-reset" title="Wieder dem Standard folgen">↺</button>
+        <button type="button" data-role="priv-reset" title="${esc(t('Wieder dem Standard folgen'))}">↺</button>
       </div>
+
+      <div class="sp-abschnitt">Wer sieht mich hier</div>
+      <div class="sp-priv-zeile">
+        <select data-role="publikum">
+          ${publikum.WERTE.map(w => `<option value="${w}">${esc(publikum.label(w))}</option>`).join('')}
+        </select>
+      </div>
+      <div class="sp-fussnote">Gilt nur bei Standort-Freigabe „Genau".</div>
 
       <div class="sp-abschnitt">Verwaltung</div>
       <div class="sp-aktionen">
@@ -153,12 +163,23 @@ export class ServerProfile {
     sel.value = privacy.levelFor(s.id)
     reset.style.visibility = privacy.hasOverride(s.id) ? 'visible' : 'hidden'
     sel.addEventListener('change', () => { privacy.setLevel(s.id, sel.value); this._render() })
+
+    // Publikum der eigenen Anwesenheit. Die Berechtigung hängt am Datensatz —
+    // deshalb wird die Anwesenheit neu angelegt, nicht nachträglich umgehängt.
+    const pub = this._body.querySelector('[data-role="publikum"]')
+    if (pub) {
+      pub.value = publikum.fuer(s.id)
+      pub.addEventListener('change', () => {
+        publikum.setze(s.id, pub.value)
+        try { window.ajnaPresence?.erneuere(s.id) } catch {}
+      })
+    }
     reset.addEventListener('click', () => { privacy.clearLevel(s.id); this._render() })
     this._body.querySelector('[data-role="priv-info"]').appendChild(infoHint(() => {
       const lvl = privacy.levelFor(s.id)
       const kopf = privacy.hasOverride(s.id)
-        ? 'Eigene Einstellung für diesen Server.\n\n'
-        : 'Folgt dem Standard aus den Einstellungen (↺ erscheint nur bei einer eigenen Einstellung).\n\n'
+        ? t('Eigene Einstellung für diesen Server.') + '\n\n'
+        : t('Folgt dem Standard aus den Einstellungen.') + '\n\n'
       return kopf + (privacy.LEVEL_INFO[lvl]?.hint || '')
     }, { title: () => `Standort-Freigabe: ${privacy.label(privacy.levelFor(s.id))}` }))
 
@@ -171,7 +192,7 @@ export class ServerProfile {
     if (!s) return
     try {
       if (key === 'rename') {
-        const next = prompt('Neuer Name für diesen Server:', s.label)
+        const next = prompt(t('Neuer Name für diesen Server:'), s.label)
         if (!next || !next.trim()) return
         this.ajna.renameServer(s.id, next.trim())
         this._status(`Umbenannt: ${next.trim()}`)

@@ -88,8 +88,31 @@ export function commandAllowed(evt, allow) {
 
 /** Agent-Manifest publishen — best effort (Fehler nur warnen, nie sterben). */
 export async function publishManifest(ajna, manifest, warn = console.warn) {
-  try { await ajna.upsertAgentManifest(manifest); return true }
+  try { await ajna.upsertAgentManifest(mitDelegierten(manifest)); return true }
   catch (err) { warn('Manifest-Upsert fehlgeschlagen:', err?.message || err); return false }
+}
+
+/**
+ * Delegierte Konten aus `AJNA_DELEGATES` ergänzen — Komma-Liste von Konto-IDs.
+ *
+ * WOFÜR: Ein Betreiber, der seine Agents unter einem ZWEITEN Konto ausrollt,
+ * bekommt sonst für alles, was dieses Konto anlegt, ein rotes „⚠ angeblich …":
+ * Der Name gehört dem Konto, das ihn zuerst registriert hat, und der Client
+ * kann einen zweiten Anspruch nicht von einer Fälschung unterscheiden.
+ *
+ * Gesetzt wird die Liste beim NAMENSINHABER — nur dessen Manifest wird gelesen,
+ * und schreiben kann es nur er selbst (updateRule). Ein Fremdkonto kann sich
+ * damit nicht eintragen; siehe Migration 1787800000.
+ *
+ * Ohne die Variable bleibt `delegates` UNANGETASTET: Ein Agent, der nichts von
+ * Delegation weiß, soll die Liste nicht bei jedem Start löschen.
+ */
+export function mitDelegierten(manifest) {
+  if (Array.isArray(manifest?.delegates)) return manifest
+  const roh = (process.env.AJNA_DELEGATES || '').trim()
+  if (!roh) return manifest
+  const ids = roh.split(',').map(x => x.trim()).filter(Boolean)
+  return ids.length ? { ...manifest, delegates: ids } : manifest
 }
 
 /**

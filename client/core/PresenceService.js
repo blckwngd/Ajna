@@ -22,8 +22,11 @@
 // sichtbar. Die Anwesenheit verschwindet sofort, wenn die Stufe wieder sinkt.
 //
 // WER DARF SIE SEHEN: nichts ohne Zutun. Die Sichtbarkeit wird als gewöhnliche
-// Berechtigung gesetzt (`authenticated`, view). Ohne diesen Eintrag sieht die
-// Anwesenheit niemand außer dem Besitzer — das ist die sichere Vorgabe.
+// Berechtigung gesetzt. Vorgabe ist `authenticated` — angemeldete Konten. Wer
+// will, öffnet sie je Server auf `everyone`, dann sehen auch nicht angemeldete
+// Besucher die Figur. Umgekehrt geht es NICHT: Ein nicht angemeldeter Besucher
+// hat kein Konto und kann deshalb gar keine Anwesenheit anlegen — er ist
+// zwangsläufig Zuschauer.
 //
 // WAS DER SERVER EINSTEMPELT: Name und Karma (siehe `stampeAnwesenheit` in
 // pb_hooks/main.pb.js). Der Client schreibt sie NICHT — ein selbst gesetzter
@@ -33,6 +36,34 @@ import { privacy } from './PrivacyPolicy.js'
 
 /** Objekt-Typ der Anwesenheiten. */
 export const PRESENCE_TYPE = 'player'
+
+// ── Wer darf mich sehen? ────────────────────────────────────────────────
+// Gerätelokal und je Server abgelegt, genau wie die Standort-Stufe: Es ist eine
+// persönliche Entscheidung, keine Eigenschaft des Kontos. Ein Server soll nicht
+// wissen, was man auf einem anderen freigegeben hat.
+export const PUBLIKUM = ['authenticated', 'everyone']
+const PUBLIKUM_LABEL = {
+  authenticated: 'Nur angemeldete Spieler',
+  everyone: 'Alle Besucher, auch nicht angemeldete',
+}
+const publikumKey = (serverId) => `ajna.presence.audience.${serverId || 'default'}`
+
+export const publikum = {
+  WERTE: PUBLIKUM,
+  label: (w) => PUBLIKUM_LABEL[w] || w,
+  /** Vorgabe ist die engere Wahl — Sichtbarkeit erweitert man bewusst. */
+  fuer(serverId) {
+    try {
+      const v = localStorage.getItem(publikumKey(serverId))
+      if (PUBLIKUM.includes(v)) return v
+    } catch { /* gesperrt → Vorgabe */ }
+    return 'authenticated'
+  },
+  setze(serverId, wert) {
+    if (!PUBLIKUM.includes(wert)) return
+    try { localStorage.setItem(publikumKey(serverId), wert) } catch {}
+  },
+}
 
 /** Wie oft die eigene Position höchstens geschrieben wird (ms). */
 export const SCHREIB_MS = 5_000
@@ -169,7 +200,7 @@ export class PresenceService {
     }, { serverId })
     if (!rec?.id) return
     this._eigene.set(serverId, { id: rec.id, lat: pos.lat, lon: pos.lon, t: Date.now() })
-    await this._sichtbarMachen(rec.id)
+    await this._sichtbarMachen(rec.id, serverId)
   }
 
   _daten(pos) {
@@ -195,15 +226,26 @@ export class PresenceService {
     } catch { return null }
   }
 
-  async _sichtbarMachen(id) {
+  async _sichtbarMachen(id, serverId) {
     try {
       await this.ajna.addPermission(id, {
-        subject_type: 'authenticated', subject: '',
+        subject_type: publikum.fuer(serverId), subject: '',
         rights: ['view'], interact_actions: [],
       })
     } catch (err) {
       console.warn('[presence] Sichtbarkeit:', err?.message || err)
     }
+  }
+
+  /**
+   * Anwesenheit auf einem Server verwerfen, damit der nächste Takt sie NEU
+   * anlegt. Nötig, wenn sich das Publikum geändert hat: Die Berechtigung hängt
+   * am Datensatz, und sie nachträglich umzuschreiben hieße, die alte zu finden
+   * und zu ersetzen — neu anlegen ist kürzer und lässt keinen Rest zurück.
+   */
+  async erneuere(serverId) {
+    await this._entfernen(serverId)
+    await this.tick()
   }
 
   async _entfernen(serverId) {
