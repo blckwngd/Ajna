@@ -16,6 +16,8 @@
 import { renderServerBadge, injectServerBadgeStyles } from './ServerBadge.js'
 import { renderProvenanceBadge, injectProvenanceStyles } from './Provenance.js'
 import { inSprache } from './Sprachwahl.js'
+import { rangiereNachPeilung } from './PointingResolver.js'
+import { PRESENCE_TYPE, zeigeAnwesenheit, anwesenheitsText } from './PresenceService.js'
 import { t } from './i18n.js'
 
 const MAX_ROWS = 20
@@ -49,7 +51,21 @@ export class NearbyList {
    *   actions = ObjectActions-Instanz (actionsFor/trigger — gleiche Quelle wie
    *   Kontextmenü/Quick-Actions, damit die Listen nicht auseinanderlaufen).
    */
-  constructor({ ajna, container, getPosition, actions, onShowOnMap, onEdit, filters = null }) {
+  constructor({ ajna, container, getPosition, actions, onShowOnMap, onEdit, filters = null,
+                onOben = null, onAuswahl = null }) {
+    // Zwei verschiedene Ereignisse, absichtlich getrennt:
+    //   onOben    — was gerade oben steht, WÄHREND gepeilt wird. Fließend,
+    //               darf sich im Sekundentakt ändern.
+    //   onAuswahl — was festgehalten (oder gelöst) wurde. Eine Entscheidung.
+    // Der Aufrufer spricht das eine unterbrechend, das andere als Ansage.
+    this.onOben = onOben
+    this.onAuswahl = onAuswahl
+    /** Blickrichtung in Grad, solange gepeilt wird — sonst null. */
+    this._peilung = null
+    /** Entfernungsband beim Peilen ({minM, maxM}) — sonst null. */
+    this._band = null
+    /** Festgehaltenes Objekt (bleibt oben, bis es aufgehoben wird). */
+    this._gesperrt = null
     // `filters` (AgentFilters) nur für die Herkunftsprüfung — ohne sie bleibt
     // die Liste unverändert, das Badge entfällt schlicht.
     this.filters = filters
@@ -95,9 +111,63 @@ export class NearbyList {
     }
   }
 
+  /**
+   * Blickrichtung setzen — solange eine anliegt, sortiert die Liste nach
+   * PEILUNG statt nach reiner Entfernung: Was man ansieht, steht oben.
+   *
+   * `null` schaltet zurück auf Entfernung. Der Aufrufer ruft das im Takt,
+   * solange der Knopf gehalten wird.
+   */
+  setPeilung(kursGrad, band = null) {
+    const k = Number.isFinite(kursGrad) ? kursGrad : null
+    const b = band || null
+    if (this._peilung === k && this._band === b) return
+    this._peilung = k
+    this._band = b
+    this._resort()
+  }
+
+  /**
+   * Oberstes Objekt festhalten und zurückgeben.
+   *
+   * Nach dem Loslassen soll die Auswahl STEHEN bleiben — sonst wandert sie
+   * beim nächsten Schritt weg, und man greift ins Leere. Das gesperrte Objekt
+   * bleibt deshalb auch dann oben, wenn wieder nach Entfernung sortiert wird.
+   */
+  sperreOben() {
+    const id = this._order[0] || null
+    this._gesperrt = id
+    this._peilung = null
+    this._band = null
+    this.select(id)
+    this._resort()
+    return id ? (this.ajna.getObjectById?.(id) || null) : null
+  }
+
+  /** Auswahl aufheben (kurzes Antippen). */
+  entsperren() {
+    this._gesperrt = null
+    this._peilung = null
+    this._band = null
+    this.select(null)
+    this._resort()
+  }
+
+  /** Ist gerade etwas festgehalten? */
+  gesperrtesObjekt() {
+    return this._gesperrt ? (this.ajna.getObjectById?.(this._gesperrt) || null) : null
+  }
+
   /** Andockpunkt für den späteren „Live"-Zeige-Modus: Zeile hervorheben. */
   select(objectId) {
+    const vorher = this._selectedId
     this._selectedId = objectId || null
+    // Nur bei ECHTER Änderung melden — sonst spräche jede Neusortierung
+    // denselben Namen noch einmal.
+    if (this._selectedId !== vorher) {
+      const rec = this._selectedId ? (this.ajna.getObjectById?.(this._selectedId) || null) : null
+      try { this.onAuswahl?.(rec) } catch {}
+    }
     for (const [id, r] of this._rows) r.el.classList.toggle('nb-selected', id === this._selectedId)
     const row = this._rows.get(this._selectedId)
     row?.el?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
@@ -118,6 +188,12 @@ export class NearbyList {
     if (!pos || !Number.isFinite(pos.lat)) return { pos: null, list: [] }
     const list = (this.ajna.getObjectList?.() || [])
       .filter(o => o && Number.isFinite(o.lat) && Number.isFinite(o.lon) && !o.carried_by)
+      // Anwesenheiten gehören dazu — es sind Menschen in der Nähe, und die
+      // sind interessanter als jede Laterne. Aber nur FREMDE und nur
+      // frische: Die eigene stünde als Doppelgänger in der eigenen Liste,
+      // eine veraltete wäre ein Gespenst an der letzten bekannten Stelle.
+      .filter(o => String(o.type || '').toLowerCase() !== PRESENCE_TYPE
+        || zeigeAnwesenheit(o, this._meineId()))
       // Inhaltsfilter wie in Karte und 3D-Szene — was der Nutzer ausgeblendet
       // hat, gehört auch nicht in die Liste. BEWUSST NUR dieser Filter: das
       // Agenten-Budget je Quelle und die Objekt-Sichtweite begrenzen, was die
@@ -125,8 +201,29 @@ export class NearbyList {
       // nicht sichtbar ist.
       .filter(o => !this.filters?.matches || this.filters.matches(o))
       .map(o => ({ o, d: distM(pos.lat, pos.lon, o.lat, o.lon) }))
-      .sort((a, b) => a.d - b.d)
-      .slice(0, MAX_ROWS)
+
+    // Zwei Ordnungen, ein Datenstand: Beim Peilen entscheidet der Winkel zur
+    // Blickrichtung (plus Entfernung), sonst allein die Entfernung.
+    if (Number.isFinite(this._peilung)) {
+      const rang = rangiereNachPeilung({
+        origin: pos, kursGrad: this._peilung, objekte: list.map(e => e.o),
+        ...(this._band || {}),
+      })
+      const nachId = new Map(list.map(e => [e.o.id, e.d]))
+      list.length = 0
+      for (const r of rang) list.push({ o: r.o, d: nachId.get(r.o.id) ?? r.entfernungM, winkel: r.winkelGrad })
+    } else {
+      list.sort((a, b) => a.d - b.d)
+    }
+
+    // Ein festgehaltenes Objekt bleibt oben — auch wenn es weiter weg ist als
+    // alles andere. Sonst wandert die Auswahl beim nächsten Schritt aus dem
+    // Bild, und der Knopf hätte nichts gebracht.
+    if (this._gesperrt) {
+      const i = list.findIndex(e => e.o.id === this._gesperrt)
+      if (i > 0) list.unshift(list.splice(i, 1)[0])
+    }
+    list.splice(MAX_ROWS)
     return { pos, list }
   }
 
@@ -161,6 +258,35 @@ export class NearbyList {
       this._listEl.appendChild(row.el)   // in Sortierreihenfolge (verschiebt)
     }
     this._order = list.map(e => e.o.id)
+
+    // Beim Peilen ansagen, was gerade vorn steht. Nur beim Peilen: Sonst
+    // spräche die Liste bei jedem Schritt vor sich hin.
+    if (Number.isFinite(this._peilung)) {
+      const oben = this._order[0] || null
+      if (oben !== this._obenGemeldet) {
+        this._obenGemeldet = oben
+        try { this.onOben?.(oben ? (this.ajna.getObjectById?.(oben) || null) : null) } catch {}
+      }
+    } else this._obenGemeldet = null
+  }
+
+  /** Eigenes Konto auf dem Ursprungs-Server — für „das bin ich selbst". */
+  _meineId() {
+    try { return this.ajna.currentUser?.()?.id || '' } catch { return '' }
+  }
+
+  /**
+   * Was in der Zeile steht.
+   *
+   * Bei einer Anwesenheit ist `name` immer „Anwesenheit" — der eigentliche
+   * Name steht in `state.name`, den der SERVER einstempelt. Genau deshalb
+   * ist er belastbar: Ein selbst gesetzter Name wäre eine Verkleidung.
+   */
+  _zeilenName(o) {
+    if (String(o.type || '').toLowerCase() === PRESENCE_TYPE) {
+      return String(o.state?.name || '').trim() || t('Jemand')
+    }
+    return o.name || o.id
   }
 
   /** Besitzer-Check (wie Kontextmenü/Gizmo): Client des Ursprungs-Servers fragen. */
@@ -189,13 +315,19 @@ export class NearbyList {
       pickBtn.disabled = true
       try { await this.actions?._pickup?.(getRec()) } finally { pickBtn.disabled = false }
     })
+    // Untersuchen: Beschreibung, Herkunft, Zustand — dasselbe wie im
+    // Kontextmenü, nur einen Griff näher. Steht bei JEDER Zeile, weil es
+    // die einzige Aktion ist, die für jedes Objekt sinnvoll ist.
+    const infoBtn = document.createElement('button')
+    infoBtn.className = 'nb-map'; infoBtn.title = t('Untersuchen'); infoBtn.textContent = 'ℹ️'
+    infoBtn.addEventListener('click', () => this.actions?.trigger?.(getRec(), 'examine'))
     const mapBtn = document.createElement('button')
     mapBtn.className = 'nb-map'; mapBtn.title = t('Auf der Karte zeigen'); mapBtn.textContent = '🗺️'
     mapBtn.addEventListener('click', () => this.onShowOnMap?.(getRec()))
     // Reihenfolge: Einsammeln · Bearbeiten · Karte · Entfernung — die Distanz
     // steht ganz rechts in fester Spaltenbreite, damit alle Zeilen exakt
     // untereinander ausrichten (Icons können je Zeile fehlen).
-    head.append(nameEl, pickBtn, editBtn, mapBtn, distEl)
+    head.append(nameEl, infoBtn, pickBtn, editBtn, mapBtn, distEl)
     const descEl = document.createElement('div'); descEl.className = 'nb-desc'
     const btnBox = document.createElement('div'); btnBox.className = 'nb-actions'
     el.append(head, badgeEl, descEl, btnBox)
@@ -205,7 +337,7 @@ export class NearbyList {
 
   _updateRow(row, o, d) {
     if (!row) return
-    row.nameEl.textContent = o.name || o.id
+    row.nameEl.textContent = this._zeilenName(o)
     row.distEl.textContent = fmtDist(d)
     // Badges: Typ (NPC/Gegner/…) + Ursprungs-Server (leer bei nur einem Server).
     const tl = typeLabel(o.type)
@@ -224,7 +356,12 @@ export class NearbyList {
     const owner = this._isOwner(o)
     row.editBtn.hidden = !owner
     row.pickBtn.hidden = !(!o.carried_by && (owner || !!o.state?.portable))
-    const desc = inSprache(o.description).trim()
+    // Bei einem Menschen steht in der Beschreibungszeile sein Karma —
+    // `anwesenheitsText` liefert dafür fertige Sterne. (Es gibt ein OBJEKT
+    // zurück, keinen Text; direkt eingesetzt stünde dort „[object Object]".)
+    const desc = String(o.type || '').toLowerCase() === PRESENCE_TYPE
+      ? anwesenheitsText(o).sterne
+      : inSprache(o.description).trim()
     row.descEl.textContent = desc
     row.descEl.hidden = !desc
     // Buttons nur neu bauen, wenn sich die Aktionsliste WIRKLICH ändert —

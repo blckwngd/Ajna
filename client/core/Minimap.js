@@ -40,6 +40,8 @@ const KEY_ZOOM   = 'ajna.minimap.zoom'
 // bleibt beim Steigen und Sinken eine Stufe näher.
 const KEY_OFFSET = 'ajna.minimap.zoomoffset'
 const KEY_OPEN   = 'ajna.minimap.open'
+// Ausrichtung: 'blick' (oben ist die Blickrichtung) oder 'nord'.
+const KEY_NORDEN = 'ajna.minimap.norden'
 // Bewusst DERSELBE Schlüssel wie in map.js: wer die große Karte auf dunkel
 // stellt, findet die Minimap ebenso vor (und umgekehrt).
 const KEY_THEME  = 'ajna_map_theme'
@@ -131,7 +133,7 @@ const BASEMAPS = {
     make: L => L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxNativeZoom: 19, maxZoom: ZOOM_MAX, attribution: '&copy; OSM',
     }),
-    voll: '© OpenStreetMap contributors',
+    kurz: '© OSM', voll: '© OpenStreetMap contributors',
   },
   dark: {
     label: 'Karte dunkel', icon: '🌑',
@@ -139,7 +141,7 @@ const BASEMAPS = {
       maxNativeZoom: 20, maxZoom: ZOOM_MAX, subdomains: 'abcd',
       attribution: '&copy; OSM, CARTO',
     }),
-    voll: '© OpenStreetMap contributors, © CARTO',
+    kurz: '© OSM, CARTO', voll: '© OpenStreetMap contributors, © CARTO',
   },
   satellite: {
     label: 'Satellit', icon: '🛰️',
@@ -147,7 +149,7 @@ const BASEMAPS = {
     make: L => L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       maxNativeZoom: 19, maxZoom: ZOOM_MAX, attribution: '&copy; Esri',
     }),
-    voll: 'Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+    kurz: '© Esri', voll: 'Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
   },
 }
 const BASE_ORDER = ['light', 'dark', 'satellite']
@@ -228,6 +230,49 @@ export class Minimap {
    * hängt: sie soll in der 3D- UND der Objekte-Ansicht erscheinen, aber nicht
    * über der Karte — dort wäre eine Minikarte sinnlos.
    */
+  /**
+   * Oben andocken statt frei schweben.
+   *
+   * WOFÜR: In der Objektliste soll die Karte die Liste nicht verdecken,
+   * sondern über ihr stehen — Karte oben, Liste darunter. Das ist nah an
+   * „ich zeige auf etwas und greife es direkt an".
+   *
+   * Die frei gezogene Position wird dabei nur AUSGEBLENDET, nicht vergessen:
+   * Beim Abdocken steht das HUD wieder da, wo der Mensch es hingelegt hat.
+   * Eine Position, die man selbst gewählt hat, darf ein Reiterwechsel nicht
+   * stillschweigend verwerfen.
+   *
+   * Die tatsächliche Höhe geht als `--mm-hoehe` ans Dokument — wer darunter
+   * Platz lassen will, rechnet die Größe nicht nach, sondern liest sie ab.
+   */
+  setDocked(on) {
+    const an = !!on
+    if (this._docked === an) return
+    this._docked = an
+    const p = this._panel
+    if (!p) return
+    if (an) {
+      this._freiePos = { left: p.style.left, top: p.style.top }
+      p.style.left = ''
+      p.style.top = ''
+      p.classList.add('mm-oben')
+    } else {
+      p.classList.remove('mm-oben')
+      if (this._freiePos) {
+        p.style.left = this._freiePos.left
+        p.style.top = this._freiePos.top
+      }
+    }
+    this._meldeHoehe()
+  }
+
+  /** Höhe der Scheibe ans Dokument geben (0, wenn nicht angedockt/sichtbar). */
+  _meldeHoehe() {
+    const sichtbar = this._docked && this._open
+    const h = sichtbar ? (this._panel?.offsetHeight || 0) : 0
+    try { document.documentElement.style.setProperty('--mm-hoehe', `${h}px`) } catch {}
+  }
+
   setVisible(on) {
     this._hidden = !on
     if (this.fab) this.fab.style.display = on ? '' : 'none'
@@ -235,6 +280,7 @@ export class Minimap {
     if (this._panel) this._panel.hidden = !on || !this._open
     if (on) { if (this._open) { this._startLoop(); this._map?.invalidateSize(); this._tick(true) } }
     else this._stopLoop()
+    this._meldeHoehe()
   }
 
   open() {
@@ -245,6 +291,7 @@ export class Minimap {
     write(KEY_OPEN, '1')
     this._ensureMap().then(() => { this._map?.invalidateSize(); this._syncRadius(); this._tick(true) })
     this._startLoop()
+    this._meldeHoehe()
   }
 
   close() {
@@ -252,6 +299,7 @@ export class Minimap {
     this._panel.hidden = true
     this.fab.classList.remove('active')
     write(KEY_OPEN, '0')
+    this._meldeHoehe()
     // Karte bewusst NICHT zerstören: das erneute Öffnen soll sofort stehen,
     // Kacheln sind ohnehin im Browser-Cache. Nur die Nachführung pausiert.
     this._stopLoop()
@@ -307,7 +355,11 @@ export class Minimap {
     panel.innerHTML = `
       <div class="ajna-mm-disc">
         <div class="ajna-mm-canvas" data-role="map"></div>
-        <div class="ajna-mm-north">N</div>
+        <!-- Die Nadel zeigt, wo Norden liegt, und wandert mit der Karte.
+             Der Schalter steht FEST oben: Ein Knopf, der sich beim Drehen
+             mitbewegt, ist auf einem Telefon nicht zu treffen. -->
+        <div class="ajna-mm-nordring"><div class="ajna-mm-nordmarke">N</div></div>
+        <button type="button" class="ajna-mm-north" data-role="norden"></button>
         <div class="ajna-mm-radius" data-role="radius"></div>
         <div class="ajna-mm-self" data-role="self">
           <svg viewBox="-34 -34 68 68" width="68" height="68" aria-hidden="true">
@@ -315,6 +367,7 @@ export class Minimap {
             <circle r="4.5" class="ajna-mm-dot"/>
           </svg>
         </div>
+        <div class="ajna-mm-attr" data-role="attr"></div>
         <div class="ajna-mm-status" data-role="status" hidden></div>
       </div>
       <button type="button" class="ajna-mm-chip mm-tl" data-role="base" title="Kartenstil"></button>
@@ -325,6 +378,9 @@ export class Minimap {
     this._panel = panel
     this._selfEl = panel.querySelector('[data-role="self"]')
     this._statusEl = panel.querySelector('[data-role="status"]')
+    this._attrEl = panel.querySelector('[data-role="attr"]')
+    this._discEl = panel.querySelector('.ajna-mm-disc')
+    this._nordBtn = panel.querySelector('[data-role="norden"]')
     this._radiusEl = panel.querySelector('[data-role="radius"]')
     this._baseBtn = panel.querySelector('[data-role="base"]')
     this._syncBaseBtn()
@@ -333,6 +389,10 @@ export class Minimap {
     this._baseBtn.addEventListener('click', () => this._cycleBase())
     panel.querySelector('[data-role="zoomin"]').addEventListener('click', () => this._zoomBy(+1))
     panel.querySelector('[data-role="zoomout"]').addEventListener('click', () => this._zoomBy(-1))
+    this._nordBtn.addEventListener('click', () => this._toggleNorden())
+    // Der Knopf sitzt auf der Scheibe, und die ist der Zieh-Anfasser.
+    this._nordBtn.addEventListener('pointerdown', e => e.stopPropagation())
+    this._syncNordBtn()
     // Die ganze Scheibe ist der Anfasser (Kartenschwenk ist ohnehin aus, die
     // Mitte IST die Kamera). Die Eckknöpfe dürfen dabei keinen Zug auslösen.
     for (const chip of panel.querySelectorAll('.ajna-mm-chip')) {
@@ -513,6 +573,36 @@ export class Minimap {
     this._statusEl.hidden = !text
   }
 
+  /** Zeigt die Karte nach Norden statt in Blickrichtung? */
+  _nordenOben() { return read(KEY_NORDEN, '0') === '1' }
+
+  _toggleNorden() {
+    write(KEY_NORDEN, this._nordenOben() ? '0' : '1')
+    this._syncNordBtn()
+    this._tick(true)
+  }
+
+  /**
+   * Beschriftung und Erklärung des Schalters.
+   *
+   * Der Knopf zeigt den ZUSTAND, nicht die Aktion — „N" heißt: Norden ist
+   * oben. Was ein Tippen bewirkt, steht im Tooltip. Andersherum (Knopf zeigt
+   * die Aktion) rät man bei jedem Blick neu, was gerade gilt.
+   */
+  _syncNordBtn() {
+    if (!this._nordBtn) return
+    const nord = this._nordenOben()
+    // Was auf dem Knopf steht, ist das, was gerade oben IST: „N" für Norden,
+    // der Pfeil für die Blickrichtung. Kein Zustand, den man erraten muss.
+    this._nordBtn.textContent = nord ? 'N' : '▲'
+    this._nordBtn.classList.toggle('mm-nord-fest', nord)
+    // Die Nadel ist nur nötig, solange Norden NICHT oben ist.
+    this._discEl?.classList.toggle('mm-nadel-aus', nord)
+    this._nordBtn.title = nord
+      ? 'Norden ist oben — tippen für „Blickrichtung oben"'
+      : 'Blickrichtung ist oben — tippen für „Norden oben"'
+  }
+
   _syncBaseBtn() {
     const b = BASEMAPS[this._base]
     this._baseBtn.textContent = b.icon
@@ -533,8 +623,10 @@ export class Minimap {
     this._tiles = BASEMAPS[this._base].make(window.L)
     this._tiles.addTo(this._map)
     // Kurztext in der Scheibe, vollständige Nennung als Tooltip.
-    const attr = this._panel.querySelector('.leaflet-control-attribution')
-    if (attr) attr.title = BASEMAPS[this._base].voll
+    if (this._attrEl) {
+      this._attrEl.textContent = BASEMAPS[this._base].kurz || ''
+      this._attrEl.title = BASEMAPS[this._base].voll
+    }
   }
 
   // ── Karte ──────────────────────────────────────────────────────────────
@@ -556,10 +648,12 @@ export class Minimap {
         touchZoom: false, tap: false, scrollWheelZoom: true,
         // Eigene Eckknöpfe statt Leaflets Zoom-Leiste: die säße im Kreis in
         // einer abgeschnittenen Ecke.
-        zoomControl: false, attributionControl: true,
+        // Leaflets Quellenangabe säße IN der Karte und würde mitdrehen —
+        // kopfüber ist eine Nennung keine Nennung. Wir zeichnen sie selbst,
+        // ausserhalb der Drehung (siehe .ajna-mm-attr).
+        zoomControl: false, attributionControl: false,
         minZoom: ZOOM_MIN, maxZoom: ZOOM_MAX,
       }).setView(center, this._zoom)
-      map.attributionControl.setPrefix('')
       map.on('zoomend', () => {
         this._zoom = map.getZoom()
         write(KEY_ZOOM, String(this._zoom))
@@ -609,7 +703,21 @@ export class Minimap {
     // die letzte behalten statt auf 0 zu springen.
     const heading = Number.isFinite(v.heading) ? v.heading : (this._last?.heading ?? 0)
     if (force || !this._last || Math.abs(angleDelta(heading, this._last.heading)) > HEADING_EPS) {
-      this._selfEl.style.transform = `translate(-50%, -50%) rotate(${heading.toFixed(1)}deg)`
+      // ZWEI ANSICHTEN, EIN WINKEL.
+      //
+      // „Blickrichtung oben": Gedreht wird die KARTE um −heading; der eigene
+      // Pfeil steht fest und zeigt nach oben. Das ist die Ansicht, die man beim
+      // Gehen lesen kann, ohne sie im Kopf zu drehen — dafür muss Norden
+      // sichtbar bleiben (Nordring).
+      //
+      // „Norden oben": Die Karte bleibt stehen (Winkel 0), stattdessen dreht
+      // sich der Pfeil — das alte Verhalten. Beides hängt an derselben
+      // CSS-Variablen, es gibt also keinen zweiten Rechenweg.
+      const nord = this._nordenOben()
+      this._discEl?.style.setProperty('--mm-drehung', nord ? '0deg' : `${(-heading).toFixed(1)}deg`)
+      this._selfEl.style.transform = nord
+        ? `translate(-50%, -50%) rotate(${heading.toFixed(1)}deg)`
+        : 'translate(-50%, -50%)'
     }
     this._last = { lat: v.lat, lon: v.lon, heading }
     this._folgeHoehe(v, force)
@@ -681,11 +789,33 @@ export class Minimap {
       width:var(--mm-size);height:var(--mm-size);--mm-size:clamp(124px,30vw,236px);
       background:transparent;cursor:move;touch-action:none}
     .ajna-mm-panel[hidden]{display:none}
+    /* Angedockt: oben mittig, außerhalb der Sicherheitsabstände. Nicht mehr
+       ziehbar — im angedockten Modus IST die Position die Aussage. */
+    .ajna-mm-panel.mm-oben{top:calc(env(safe-area-inset-top, 0px) + 10px);
+      bottom:auto;right:auto;left:50%;transform:translateX(-50%);cursor:default}
 
     .ajna-mm-disc{position:absolute;inset:0;border-radius:50%;overflow:hidden;
       background:#12141a;border:2px solid rgba(255,255,255,.20);
       box-shadow:0 8px 30px rgba(0,0,0,.55), inset 0 0 24px rgba(0,0,0,.45)}
-    .ajna-mm-canvas{position:absolute;inset:0;background:#12141a}
+    /* Die Scheibe hält den Drehwinkel; alles darin bezieht sich darauf. */
+    .ajna-mm-disc{--mm-drehung:0deg}
+    /* Die Karte dreht sich, der Ausschnitt bleibt. Ein Quadrat, um seinen
+       Mittelpunkt gedreht, deckt den einbeschriebenen Kreis in JEDER Lage —
+       die 2 % Vergrößerung sind nur gegen Kantenglättung an den vier
+       Berührpunkten. */
+    .ajna-mm-canvas{position:absolute;inset:0;background:#12141a;
+      transform:rotate(var(--mm-drehung)) scale(1.02);transform-origin:50% 50%}
+    /* Marker und Beschriftungen drehen gegen — die Karte darf sich drehen,
+       Schrift nicht.
+
+       Gedreht wird das INNERE Element, nie das von Leaflet positionierte:
+       Die Eigenschaft rotate wirkt NACH transform, und Leaflet setzt die
+       Marker-Position ueber transform. Eine Drehung danach schwenkt den
+       Marker um die Scheibenmitte, statt ihn aufzurichten — er wuerde
+       kreisen statt stillzustehen. */
+    .ajna-mm-glyph,
+    .ajna-mm-tip > span{rotate:calc(-1 * var(--mm-drehung));transform-origin:50% 50%}
+    .ajna-mm-tip > span{display:inline-block}
 
     /* Quellenangabe mittig unten — die Ecken schneidet der Kreis ab. */
     .ajna-mm-canvas .leaflet-bottom.leaflet-right{left:0;right:0;
@@ -715,6 +845,8 @@ export class Minimap {
     /* Kamera-Marke: sitzt fest in der Mitte, nur die Rotation ändert sich.
        Keine CSS-Transition — die Nachführung läuft im Bildtakt, eine
        Überblendung würde der Kamera nur hinterherhinken. */
+    /* Steht fest und zeigt nach oben: In dieser Ansicht IST oben die
+       Blickrichtung. Gedreht wird die Karte darunter. */
     .ajna-mm-self{position:absolute;left:50%;top:50%;
       width:calc(var(--mm-size) * .4);height:calc(var(--mm-size) * .4);
       transform:translate(-50%,-50%);transform-origin:50% 50%;pointer-events:none;z-index:500}
@@ -724,10 +856,56 @@ export class Minimap {
     .ajna-mm-cone{fill:rgba(80,160,255,.30);stroke:rgba(120,190,255,.65);stroke-width:1}
     .ajna-mm-dot{fill:#4da3ff;stroke:#fff;stroke-width:1.5}
 
-    .ajna-mm-north,.ajna-mm-radius{position:absolute;left:50%;transform:translateX(-50%);z-index:500;
+    /* Nur noch die Maßstabs-Angabe: Der Nordschalter ist ein Knopf und bringt
+       seine eigene Optik mit (siehe unten). */
+    .ajna-mm-radius{position:absolute;left:50%;transform:translateX(-50%);z-index:500;
       font:600 10px system-ui,sans-serif;color:#eaeaea;pointer-events:none;
       background:rgba(0,0,0,.45);border-radius:5px;padding:0 5px;white-space:nowrap}
-    .ajna-mm-north{top:5px}
+    .ajna-mm-north{position:absolute;z-index:501}
+    /* Der Nordring dreht mit der Karte und trägt die Nadel an den Rand, an dem
+       Norden wirklich liegt. Ohne ihn wüsste in einer gedrehten Karte niemand
+       mehr, wo Norden ist. */
+    .ajna-mm-nordring{position:absolute;inset:0;pointer-events:none;z-index:500;
+      transform:rotate(var(--mm-drehung));transform-origin:50% 50%}
+    /* Der Schalter: fest oben, gross genug für einen Finger. Die sichtbare
+       Marke bleibt klein — die Trefferfläche wächst über das Polster, nicht
+       über die Schrift. 34 px ist die Grenze, unter der Tippen zum Glücksspiel
+       wird. */
+    .ajna-mm-north{top:0;left:50%;transform:translateX(-50%);
+      min-width:34px;min-height:34px;padding:0;border:0;background:none;
+      display:flex;align-items:center;justify-content:center;
+      pointer-events:auto;cursor:pointer;-webkit-tap-highlight-color:transparent;
+      font:600 11px system-ui,sans-serif;color:#eaeaea}
+    /* Die Marke im Knopf — nur sie ist zu sehen. */
+    .ajna-mm-north::before{content:'';position:absolute;left:50%;top:50%;
+      width:22px;height:17px;margin:-8.5px 0 0 -11px;
+      border-radius:5px;background:rgba(0,0,0,.45);z-index:-1}
+    .ajna-mm-north.mm-nord-fest::before{background:rgba(80,160,255,.55);
+      box-shadow:0 0 0 1px rgba(160,205,255,.75)}
+    .ajna-mm-north:active{opacity:.7}
+
+    /* Nordmarke: das „N" wandert am Rand mit und steht dort, wo Norden
+       wirklich liegt. Sie ist Anzeige, kein Bedienelement — angefasst wird der
+       Schalter oben.
+       Eine erste Fassung war ein 2 px schmaler Strich: auf einem Telefon nicht
+       zu sehen, und selbst wenn, sagt ein Strich nicht „Norden". Ein
+       Buchstabe braucht keine Legende. */
+    .ajna-mm-nordmarke{position:absolute;left:50%;top:2px;
+      width:16px;height:16px;margin-left:-8px;border-radius:50%;
+      display:flex;align-items:center;justify-content:center;
+      font:700 10px system-ui,sans-serif;color:#ffd9d2;
+      background:rgba(190,60,45,.85);box-shadow:0 0 0 1px rgba(0,0,0,.45);
+      /* Gegendrehung, damit der Buchstabe aufrecht bleibt, während der Ring
+         dreht — ein kopfstehendes N liest niemand. */
+      rotate:calc(-1 * var(--mm-drehung))}
+    /* Bei „Norden oben" sagt der Schalter es schon; zwei Zeichen für dieselbe
+       Aussage sind eines zu viel. */
+    .ajna-mm-disc.mm-nadel-aus .ajna-mm-nordmarke{display:none}
+    /* Quellenangabe: ausserhalb der Drehung, damit sie waagerecht bleibt. */
+    .ajna-mm-attr{position:absolute;left:0;right:0;bottom:11px;z-index:500;
+      text-align:center;pointer-events:auto;
+      font:8px system-ui,sans-serif;line-height:12px;color:#d6d9e0;white-space:nowrap}
+    .ajna-mm-attr:empty{display:none}
     .ajna-mm-radius{bottom:27px;font-weight:500;color:#c9cdd6}
 
     .ajna-mm-status{position:absolute;inset:0;z-index:600;display:flex;align-items:center;

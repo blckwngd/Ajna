@@ -32,14 +32,28 @@ export class UwbAnchorOverlay {
     this._visible = !!on
     UwbAnchorOverlay.setEnabled(this._visible)
     this._root.setEnabled(this._visible)
-    if (this._visible) this.refresh()
+    // Beim Einschalten IMMER neu setzen: Während das Overlay aus war, hat
+    // `refresh()` gar nichts getan (siehe die Sichtbarkeits-Prüfung dort) —
+    // ein zwischenzeitlich geladenes Relief ist also spurlos an ihm
+    // vorbeigegangen, und die alten Marker stünden auf der ebenen Startfläche.
+    if (this._visible) this.refresh({ neuAufbauen: true })
   }
   toggle() { this.setVisible(!this._visible) }
 
-  // Marker an die aktuelle Anker-Liste angleichen (nur bei struktureller Änderung
-  // neu bauen — id/lat/lon/alt-Signatur, nicht pro Frame).
-  refresh() {
+  /**
+   * Marker an die aktuelle Anker-Liste angleichen (nur bei struktureller
+   * Änderung neu bauen — id/lat/lon/alt-Signatur, nicht pro Frame).
+   *
+   * `neuAufbauen` umgeht die Signatur. Nötig, wenn sich nicht die ANKER
+   * geändert haben, sondern der Boden unter ihnen: Die Höhe steckt in
+   * `toLocalRef(..., 'ground')`, und die liefert 0, solange kein Relief
+   * geladen ist. Wer die Marker vorher setzt, verankert sie auf der ebenen
+   * Startfläche — und die liegt überall dort UNTER dem Gelände, wo der Boden
+   * höher ist als der Origin.
+   */
+  refresh({ neuAufbauen = false } = {}) {
     if (!this._visible || !this.geo?.origin) return
+    if (neuAufbauen) this._sig = null
     const anchors = (this.ajna.getObjectList?.() || [])
       .filter(o => (o.type || '').toLowerCase() === 'uwb_anchor' &&
                    Number.isFinite(o.lat) && Number.isFinite(o.lon))

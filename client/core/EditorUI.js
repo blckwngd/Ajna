@@ -4,6 +4,7 @@ import { randomHexColor } from './randomColor.js'
 import { SPAWN_ARCHETYPES } from './SpawnHere.js'
 import { emojiOf } from './Appearance.js'
 import { t } from './i18n.js'
+import { klickDaneben } from './klickDaneben.js'
 
 const EXT_MODELS_KEY = 'ajna_allow_ext_models'
 
@@ -842,7 +843,9 @@ export class EditorUI {
 
   _wireEditorModal() {
     this.editorOverlay?.querySelector('#editorCloseBtn')?.addEventListener('click', () => this._closeEditor())
-    this.editorOverlay?.addEventListener('click', (e) => { if (e.target === this.editorOverlay) this._closeEditor() })
+    // Nur ein echter Klick DANEBEN schließt — ein Zug, der im Fenster
+    // beginnt (Text markieren), gehört dem Fenster. Siehe core/klickDaneben.js.
+    if (this.editorOverlay) klickDaneben(this.editorOverlay, () => this._closeEditor())
     this.editorForm?.gltfSelect?.addEventListener('change', () => this._updateModelUrlVisibility())
     // Typwechsel wendet Default-Symbol/Aktionen nur bei NEUEN Objekten an, damit
     // ein Umtypisieren eines bestehenden Objekts dessen State nicht überschreibt.

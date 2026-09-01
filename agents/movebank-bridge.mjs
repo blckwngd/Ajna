@@ -28,6 +28,8 @@
 //   MB_POLL_S         Poll-Intervall der Live-Studien (Default: 600)
 //   MB_DISCOVER_H     Abstand der Entdeckungsläufe in Stunden (Default: 12)
 //   MB_MAX_ANIMALS    Deckel gleichzeitiger Tiere (Default: 150)
+//   MB_RADIUS_KM      Sichtradius um die Spieler (Default: 50)
+//   MB_CENTER_LAT/LON Fallback-Zentrum, wenn kein Spieler da ist
 //   MB_MAX_STUDIES    Deckel Live-Studien (Default: 25)
 //   MB_REQ_DELAY_MS   Pause zwischen Abfragen (Default: 1100 — bitte nicht kürzen)
 //   MB_STUDIES        optional: feste Studien-IDs (Komma-Liste) statt Entdeckung
@@ -39,6 +41,7 @@
 import { bootAgent, envNum, envInt, envStr, publishManifest } from './lib/agent-base.mjs'
 import { simpleSetup } from './lib/setup-wizard.mjs'
 import { Quellcache } from './lib/quellcache.mjs'
+import { flatDistKm } from '../client/core/geoMath.js'
 
 const { ajna } = await bootAgent('movebank', {
   tag: 'movebank',
@@ -50,6 +53,14 @@ const POLL_MS      = Math.max(120, envNum('MB_POLL_S', 600)) * 1000
 const DISCOVER_MS  = envNum('MB_DISCOVER_H', 12) * 3600000
 const MAX_ANIMALS  = envInt('MB_MAX_ANIMALS', 150)
 const MAX_STUDIES  = envInt('MB_MAX_STUDIES', 25)
+// SICHTRADIUS. Vorher gab es keinen: Der Agent spiegelte JEDES Tier jeder
+// aktuellen Studie — weltweit. In der Objektliste standen dann Störche in
+// Spanien, und beim Peilen drängten sie sich zwischen die Dinge vor der
+// Nase. Dieselbe Grenze wie bei Flugzeugen und Schiffen: gespiegelt wird,
+// was in Reichweite eines Spielers liegt.
+const RADIUS_KM    = envNum('MB_RADIUS_KM', 50)
+const CENTER_LAT   = envNum('MB_CENTER_LAT', 50.3569)
+const CENTER_LON   = envNum('MB_CENTER_LON', 7.5890)
 const REQ_DELAY_MS = Math.max(1000, envInt('MB_REQ_DELAY_MS', 1100))
 
 // ── Zwischenspeicher NUR für den Entdeckungslauf ────────────────────────
@@ -172,8 +183,19 @@ const animals = new Map()   // key "studyId/individual" → { objectId, name }
 async function sync(log, warn) {
   if (!liveStudies.length) return
   const now = Date.now()
+  // Wo sind Spieler? Ohne aktive Bereiche gilt das konfigurierte Zentrum —
+  // sonst spiegelte der Agent im Leerlauf wieder die ganze Welt.
+  let zentren = []
+  try { zentren = (await ajna.fetchInterestAreas(SOURCE)) || [] }
+  catch (err) { warn('interest-areas: ' + (err?.message || err)) }
+  const punkte = zentren.length
+    ? zentren.map(b => ({ lat: (b.latMin + b.latMax) / 2, lon: (b.lonMin + b.lonMax) / 2 }))
+    : [{ lat: CENTER_LAT, lon: CENTER_LON }]
+  const inReichweite = (lat, lon) =>
+    punkte.some(p => flatDistKm(p.lat, p.lon, lat, lon) <= RADIUS_KM)
+
   const seen = new Set()
-  let created = 0, updated = 0, failed = 0, skipped = 0
+  let created = 0, updated = 0, failed = 0, skipped = 0, zuWeit = 0
 
   for (const st of liveStudies) {
     let j
@@ -185,6 +207,9 @@ async function sync(log, warn) {
       if (!loc || !Number.isFinite(loc.location_lat) || !Number.isFinite(loc.location_long)) continue
       const age = now - loc.timestamp
       if (!(age < MAX_AGE_MS)) continue
+      // Zu weit weg: gar nicht erst anlegen. Ein Tier in Spanien ist für
+      // jemanden in Koblenz kein Objekt „in der Nähe".
+      if (!inReichweite(loc.location_lat, loc.location_long)) { zuWeit++; continue }
       if (animals.size >= MAX_ANIMALS && !animals.has(`${st.id}/${ind.individual_local_identifier}`)) { skipped++; continue }
 
       const key = `${st.id}/${ind.individual_local_identifier || ind.individual_id}`
@@ -234,7 +259,7 @@ async function sync(log, warn) {
     try { await ajna.deleteObject(a.objectId); animals.delete(key); removed++ }
     catch (err) { warn(`delete ${key}: ${err?.message || err}`) }
   }
-  log(`${animals.size} Tiere aus ${liveStudies.length} Studie(n) — ${created} neu, ${updated} aktualisiert${removed ? `, ${removed} entfernt` : ''}${skipped ? `, ${skipped} über Limit` : ''}${failed ? `, ${failed} Fehler` : ''}`)
+  log(`${animals.size} Tiere aus ${liveStudies.length} Studie(n) — ${created} neu, ${updated} aktualisiert${removed ? `, ${removed} entfernt` : ''}${skipped ? `, ${skipped} über Limit` : ''}${zuWeit ? `, ${zuWeit} ausserhalb ${RADIUS_KM} km` : ''}${failed ? `, ${failed} Fehler` : ''}`)
 }
 
 // ─── Start ─────────────────────────────────────────────────────────────────

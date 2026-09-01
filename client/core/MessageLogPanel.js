@@ -11,6 +11,7 @@ import { messageLog, CATS } from './MessageLog.js'
 import { makeDraggable } from './draggable.js'
 import { Toast } from './Toast.js'
 import { t } from './i18n.js'
+import { klickDaneben } from './klickDaneben.js'
 
 const FILTER_KEY = 'ajna.msglog.filter'   // 'player' | 'all'
 // Abstand zum unteren Rand, bis zu dem die Liste noch als „unten" gilt. Etwas
@@ -194,7 +195,7 @@ export class MessageLogPanel {
           </div>
         </form>
       </div>`
-    ov.addEventListener('click', e => { if (e.target === ov) this.close() })
+    klickDaneben(ov, () => this.close())
     ov.querySelector('.mlg-close').addEventListener('click', () => this.close())
     ov.querySelector('.mlg-clear').addEventListener('click', () => {
       if (window.confirm(t('Verlauf wirklich leeren?'))) messageLog.clear()

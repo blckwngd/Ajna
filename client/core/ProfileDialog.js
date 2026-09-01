@@ -15,6 +15,7 @@
 
 
 import { t } from './i18n.js'
+import { klickDaneben } from './klickDaneben.js'
 
 const IMPLICIT_AUDIENCES = new Set(['authenticated', 'anonymous', 'everyone'])
 const ALL_RIGHTS = ['view', 'edit', 'move']
@@ -67,7 +68,7 @@ export class ProfileDialog {
     if (this._backdrop) return
     const bd = document.createElement('div')
     bd.className = 'ajna-prof-backdrop'
-    bd.addEventListener('click', e => { if (e.target === bd) this.close() })
+    klickDaneben(bd, () => this.close())
 
     const dlg = document.createElement('div')
     dlg.className = 'ajna-prof-dialog'

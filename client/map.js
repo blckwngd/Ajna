@@ -2,10 +2,12 @@ import { AjnaManager } from "./core/AjnaManager.js"
 import { EditorUI } from "./core/EditorUI.js"
 import { GPSProvider } from "./core/GPSProvider.js"
 import { t, starteSprache, setzeSprache, sprache, fehlende } from "./core/i18n.js"
+import { starteKompass } from "./core/Kompass.js"
 
 // Sprache laden, bevor irgendetwas gezeichnet wird. Ohne Datei bleibt es
 // Deutsch — die Oberfläche ist nie halb leer, nur unübersetzt.
 const spracheBereit = starteSprache()
+starteKompass()
 window.ajnaSprache = setzeSprache
 window.ajnaSpracheJetzt = sprache
 window.ajnaFehlendeTexte = fehlende

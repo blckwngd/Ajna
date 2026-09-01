@@ -2102,6 +2102,447 @@ console.log('\n── Delegation von Agent-Namen')
 
   const base = readFileSync(new URL('../agents/lib/agent-base.mjs', import.meta.url), 'utf8')
   check('jeder Agent kann sie ueber die Umgebung setzen', /AJNA_DELEGATES/.test(base))
+
+  // Delegation raeumt die zweite Manifest-Zeile NICHT weg — sie aendert nur die
+  // Beurteilung der Objekte. Die Kollisions-Meldung waere danach reiner Laerm:
+  // Wer die Delegation ausgesprochen hat, hat die Frage beantwortet.
+  const af = readFileSync(new URL('../client/core/AgentFilters.js', import.meta.url), 'utf8')
+  check('bei Delegation schweigt die Kollisions-Meldung',
+    /const erlaubt = Array\.isArray\(inhaberVon\?\.delegates\)[\s\S]{0,120}if \(erlaubt\.includes\(m\.owner\)\) continue/.test(af))
+  // Eine Warnung ohne Ausweg laesst den Leser ratlos zurueck.
+  check('und nennt sonst, was zu tun waere', /bei „delegates" des älteren Manifests ein/.test(af))
+}
+
+
+// ── UWB-Anker folgen dem Gelände ────────────────────────────────────────
+// Die Anker rechnen ihre Höhe über toLocalRef(..., 'ground') — richtig, aber
+// die liefert 0, solange kein Relief geladen ist. Wer die Marker vorher setzt,
+// verankert sie auf der ebenen Startfläche, und die liegt überall dort UNTER
+// dem Gelände, wo der Boden höher ist als der Origin.
+console.log('\n── UWB-Anker und Geländehöhe')
+{
+  const ov = readFileSync(new URL('../client/core/UwbAnchorOverlay.js', import.meta.url), 'utf8')
+  check('die Anker setzen auf dem Gelände auf', /toLocalRef\(a\.lat, a\.lon, a\.altitude \|\| 0, ref\)/.test(ov))
+  // Die Signatur kennt nur die Anker — eine geänderte Geländehöhe steht nicht
+  // darin, deshalb braucht es einen Weg an ihr vorbei.
+  check('ein Neuaufbau umgeht die Signatur', /neuAufbauen[\s\S]{0,80}this\._sig = null/.test(ov))
+  // Solange das Overlay aus ist, tut refresh() gar nichts — ein in der Zeit
+  // geladenes Relief geht spurlos an ihm vorbei.
+  check('Einschalten setzt sie neu', /if \(this\._visible\) this\.refresh\(\{ neuAufbauen: true \}\)/.test(ov))
+
+  const main = readFileSync(new URL('../client/main.js', import.meta.url), 'utf8')
+  // Anker stehen NICHT in der Objekt-Liste der Szene, werden vom
+  // syncSceneObjects-Nachzieher also nicht miterfasst.
+  check('nach dem Laden des Reliefs werden sie nachgezogen',
+    /uwbAnchorOverlay\?\.refresh\(\{ neuAufbauen: true \}\)/.test(main))
+
+  const geo = readFileSync(new URL('../client/core/GeoTransformer.js', import.meta.url), 'utf8')
+  check('ohne Relief bleibt es bei der ebenen Fläche', /return Number\.isFinite\(h\) \? h : 0/.test(geo))
+}
+
+
+// ── Minimap: oben ist die Blickrichtung ─────────────────────────────────
+// Eine Karte, deren Oben mit dem Blick mitgeht, muss man beim Gehen nicht mehr
+// im Kopf drehen. Der Preis: Norden ist nicht mehr selbstverstaendlich oben —
+// er braucht eine Anzeige.
+console.log('\n── Minimap dreht mit')
+{
+  const mm = readFileSync(new URL('../client/core/Minimap.js', import.meta.url), 'utf8')
+
+  check('gedreht wird die Karte, nicht der Pfeil',
+    /transform:rotate\(var\(--mm-drehung\)\) scale/.test(mm))
+  check('die Drehung kommt aus der Blickrichtung',
+    /setProperty\('--mm-drehung', nord \? '0deg' : `\$\{\(-heading\)\.toFixed\(1\)\}deg`\)/.test(mm))
+  // Der eigene Pfeil steht fest: In dieser Ansicht IST oben die Blickrichtung.
+  // Zwei Ansichten, EIN Winkel: Bei „Norden oben" steht die Karte und der
+  // Pfeil dreht (das alte Verhalten), sonst umgekehrt. Zwei Rechenwege waeren
+  // zwei Gelegenheiten, auseinanderzulaufen.
+  check('bei „Blickrichtung oben" steht der Pfeil still',
+    /: 'translate\(-50%, -50%\)'/.test(mm))
+  check('bei „Norden oben" dreht er wieder',
+    /nord\s*$/m.test(mm) || /\? `translate\(-50%, -50%\) rotate\(\$\{heading/.test(mm))
+
+  // Ohne Nordanzeige wuesste in einer gedrehten Karte niemand mehr, wo Norden
+  // liegt — der Ring traegt das Schild an den richtigen Rand.
+  check('Norden wandert an den richtigen Rand',
+    /\.ajna-mm-nordring\{[\s\S]{0,140}transform:rotate\(var\(--mm-drehung\)\)/.test(mm))
+  // Der Ring trägt eine NADEL, kein Schild: Ein Knopf, der beim Drehen
+  // mitwandert, ist auf einem Telefon nicht zu treffen — Anzeige und
+  // Bedienung sind deshalb getrennt.
+  check('das wandernde N zeigt nach Norden', /class="ajna-mm-nordmarke">N</.test(mm))
+  // Ein kopfstehendes N liest niemand — der Buchstabe dreht gegen den Ring.
+  check('und bleibt dabei aufrecht',
+    mm.includes('rotate:calc(-1 * var(--mm-drehung))}') && mm.includes('.ajna-mm-nordmarke{'))
+  // Zwei Zeichen fuer dieselbe Aussage sind eines zu viel.
+  check('bei „Norden oben" verschwindet sie', /mm-nadel-aus .ajna-mm-nordmarke{display:none}/.test(mm))
+  check('der Schalter steht dagegen fest',
+    /\.ajna-mm-north\{top:0;left:50%;transform:translateX\(-50%\)/.test(mm))
+  // Unter ~34 px wird Tippen zum Glücksspiel.
+  check('und ist gross genug für einen Finger',
+    /min-width:34px;min-height:34px/.test(mm))
+  // Die Nadel ist nur nötig, solange Norden nicht ohnehin oben ist.
+  check('bei „Norden oben" verschwindet die Nadel', /mm-nadel-aus/.test(mm))
+
+  // Die Gegendrehung sitzt am INNEREN Element: `rotate` wirkt nach `transform`,
+  // und Leaflet positioniert Marker ueber `transform` — aussen angewandt wuerde
+  // der Marker um die Scheibenmitte kreisen statt aufrecht zu stehen.
+  check('Marker und Beschriftungen bleiben aufrecht',
+    /\.ajna-mm-glyph,\s*\r?\n\s*\.ajna-mm-tip > span\{rotate:calc\(-1 \* var\(--mm-drehung\)\)/.test(mm))
+  check('und zwar am inneren Element, nicht am positionierten',
+    !/\.leaflet-marker-icon\{rotate/.test(mm) && !/\.leaflet-tooltip\{rotate/.test(mm))
+
+  // Eine mitgedrehte Quellenangabe steht irgendwann kopf — und eine Nennung,
+  // die man nicht lesen kann, ist keine.
+  check('die Quellenangabe dreht nicht mit', /attributionControl: false/.test(mm))
+  check('sie steht als eigenes Element in der Scheibe', /class="ajna-mm-attr"/.test(mm))
+  check('und nennt die Quelle kurz', /kurz: '© OSM'/.test(mm))
+
+  // ── Umschalter und Andocken ───────────────────────────────────────────
+  // Kein fünfter Eckknopf: Die vier Ecken sind belegt, und alles Weitere auf
+  // der Scheibe kostet Kartenfläche. Das Nordschild zeigt die Ausrichtung
+  // ohnehin an — es anzutippen ist der kürzeste Weg vom Sehen zum Tun.
+  check('das Nordschild ist der Umschalter', /data-role="norden"/.test(mm))
+  check('die Wahl überlebt den Neustart', /KEY_NORDEN = 'ajna\.minimap\.norden'/.test(mm))
+  // Der Knopf zeigt den ZUSTAND, nicht die Aktion — sonst rät man bei jedem
+  // Blick neu, was gerade gilt.
+  check('der Tooltip sagt, was ein Tippen bewirkt',
+    /Norden ist oben — tippen für/.test(mm) && /Blickrichtung ist oben — tippen für/.test(mm))
+
+  // In der Objektliste steht die Karte OBEN und die Liste darunter.
+  check('die Karte kann oben andocken', /setDocked\(on\)/.test(mm))
+  // Eine selbst gewählte Position darf ein Reiterwechsel nicht verwerfen.
+  check('die frei gezogene Position geht dabei nicht verloren',
+    /this\._freiePos = \{ left: p\.style\.left, top: p\.style\.top \}/.test(mm))
+  // Der Platz darunter haengt an der GEMESSENEN Hoehe, nicht an einer zweiten
+  // Kopie der Groessenformel.
+  check('die Höhe meldet die Karte selbst', /setProperty\('--mm-hoehe'/.test(mm))
+  check('und ist 0, wenn sie nicht angedockt ist',
+    /const sichtbar = this\._docked && this\._open/.test(mm))
+
+  const html = readFileSync(new URL('../client/index.html', import.meta.url), 'utf8')
+  check('die Objektliste hält den Platz frei',
+    /\[data-view="nearby"\][\s\S]{0,120}padding-top: var\(--mm-hoehe, 0px\)/.test(html))
+
+  const shell = readFileSync(new URL('../client/core/MobileShell.js', import.meta.url), 'utf8')
+  check('angedockt wird nur im Objekte-Reiter', /setDocked\(tabId === 'nearby'\)/.test(shell))
+
+  // Ohne 3D-Ansicht gibt es keine Kamera-Blickrichtung. Dann zählt der Kurs
+  // über Grund — die einzige Richtung, die ein Gerät ohne Magnetometer kennt.
+  // Er fehlt im Stand und am Schreibtisch; die Karte bleibt dann stehen.
+  const gps = readFileSync(new URL('../client/core/GPSProvider.js', import.meta.url), 'utf8')
+  check('der GPS-Kurs wird durchgereicht',
+    /heading: Number\.isFinite\(coords\.heading\) \? coords\.heading : undefined/.test(gps))
+  check('und erreicht die Minimap',
+    shell.includes('heading: Number.isFinite(kurs) ? kurs : p.heading'))
+  // Ohne brauchbaren Wert die letzte Richtung behalten statt auf Nord zu
+  // springen — sonst zuckt die Karte bei jedem Stillstand.
+  check('ohne Richtung zuckt nichts', /v\.heading\) \? v\.heading : \(this\._last\?\.heading \?\? 0\)/.test(mm))
+}
+
+
+// ── Kompass: eine Quelle für alle Ansichten ─────────────────────────────
+// window.ajnaHeadingRad wurde an ZWEI Stellen gelesen und an keiner gesetzt —
+// ein toter Wert, der stumm null lieferte. Im Objekte-Reiter gab es damit
+// ueberhaupt keine Blickrichtung.
+console.log('\n── Kompass')
+{
+  const k = readFileSync(new URL('../client/core/Kompass.js', import.meta.url), 'utf8')
+  // Vier Buendel, vier Modulinstanzen — ein Kompass je Buendel hiesse: dieselben
+  // Sensor-Ereignisse mehrfach abonnieren und trotzdem verschiedene Werte halten.
+  check('der Kurs liegt an window', /g\.__ajnaKompass/.test(k))
+  check('und wird nur einmal abonniert', /if \(zustand\.laeuft\) return/.test(k))
+  // Auf der Zahl gemittelt liefe der Mittelwert beim Sprung 359 -> 1 einmal
+  // quer ueber die Karte.
+  check('geglättet wird auf dem Einheitskreis',
+    /Math\.sin\(r\) - zustand\.sin/.test(k) && /Math\.atan2\(zustand\.sin, zustand\.cos\)/.test(k))
+  // Ein abgestandener Kurs ist schlimmer als keiner: Er zeigt selbstbewusst
+  // in die falsche Richtung.
+  check('ein alter Wert gilt nicht mehr', /Date\.now\(\) - zustand\.t > FRISCH_MS/.test(k))
+  // Ohne Geste bleibt der Kompass auf iPhones stumm, ohne dass irgendwo ein
+  // Fehler auftaucht.
+  check('die iOS-Erlaubnis wird bei der nächsten Geste nachgeholt',
+    /beiGesteFreischalten/.test(k) && /requestPermission/.test(k))
+  check('der tote window.ajnaHeadingRad wird endlich gesetzt',
+    /window\.ajnaHeadingRad = zustand\.deg/.test(k))
+
+  const shell = readFileSync(new URL('../client/core/MobileShell.js', import.meta.url), 'utf8')
+  check('die Shell startet ihn', /starteKompass\(\)/.test(shell))
+  // Reihenfolge mit Absicht: Kamera (wohin man SCHAUT) vor Kompass vor
+  // Kurs ueber Grund (wohin man GEHT).
+  check('die Kamera hat weiterhin Vorrang',
+    /const cam = window\.ajnaCameraView\?\.\(\)[\s\S]{0,260}kompassKurs\(\)/.test(shell))
+  check('sonst zählt der Kompass, dann der Kurs über Grund',
+    /const kurs = kompassKurs\(\)[\s\S]{0,140}Number\.isFinite\(kurs\) \? kurs : p\.heading/.test(shell))
+
+  // Der Knopf war unsichtbar, weil beim Herauslösen aus der Sammelregel
+  // `position` verlorenging — top/left greifen dann nicht.
+  const mm2 = readFileSync(new URL('../client/core/Minimap.js', import.meta.url), 'utf8')
+  check('der Nordschalter ist absolut positioniert',
+    /\.ajna-mm-north\{position:absolute;z-index:501\}/.test(mm2))
+}
+
+
+// ── Peilen: halten, loslassen, festhalten ───────────────────────────────
+// „Push-to-Interact" nach dem Vorbild von Push-to-Talk — und dem, was der
+// Zauberstab in AR schon kann.
+console.log('\n── Peil-Knopf')
+{
+  const { rangiereNachPeilung } = await import('../client/core/PointingResolver.js')
+  const hier = { lat: 50.4000, lon: 7.5000 }
+  // Ein Meter Nord/Ost in Grad — reicht für die Rangfolge.
+  const nord = (m) => ({ id: 'n' + m, lat: hier.lat + m / 111320, lon: hier.lon })
+  const ost = (m) => ({ id: 'o' + m, lat: hier.lat, lon: hier.lon + m / (111320 * Math.cos(hier.lat * Math.PI / 180)) })
+
+  const nachNorden = rangiereNachPeilung({ origin: hier, kursGrad: 0, objekte: [ost(10), nord(20)] })
+  check('wer angepeilt wird, steht oben', nachNorden[0].o.id === 'n20',
+    nachNorden.map(r => r.o.id).join(' > '))
+  const nachOsten = rangiereNachPeilung({ origin: hier, kursGrad: 90, objekte: [ost(10), nord(20)] })
+  check('dreht man sich, dreht sich die Reihenfolge', nachOsten[0].o.id === 'o10')
+
+  // Bei gleichem Winkel gewinnt das nähere — ein Ding in 5 m füllt mehr
+  // Blickfeld als dasselbe in 40 m.
+  const gleicherWinkel = rangiereNachPeilung({ origin: hier, kursGrad: 0, objekte: [nord(40), nord(5)] })
+  check('bei gleichem Winkel gewinnt das nähere', gleicherWinkel[0].o.id === 'n5')
+  // Und ein fernes muss genauer angepeilt werden, um sich vorzudrängeln.
+  const winkelSchlaegtNaehe = rangiereNachPeilung({ origin: hier, kursGrad: 0, objekte: [nord(60), ost(3)] })
+  check('ein knapp danebenliegendes Nahziel verliert gegen das anvisierte',
+    winkelSchlaegtNaehe[0].o.id === 'n60', winkelSchlaegtNaehe.map(r => r.o.id).join(' > '))
+
+  check('ohne Kurs gibt es keine Rangliste',
+    rangiereNachPeilung({ origin: hier, kursGrad: null, objekte: [nord(5)] }).length === 0)
+
+  // ── Zwei Regime: fern zielt, nah gewinnt ────────────────────────────
+  // Die erste Fassung deckelte die Entfernungsstrafe bei 120 m — ein Objekt in
+  // 1000 km wurde damit behandelt wie eines in 121 m und drängte sich mit
+  // gutem Winkel vor alles, was direkt vor einem stand.
+  const ostWeit = (km) => ({
+    id: 'ow' + km, type: 'poi',
+    lat: hier.lat, lon: hier.lon + (km * 1000) / (111320 * Math.cos(hier.lat * Math.PI / 180)),
+  })
+  const weit = (km, typ) => ({
+    id: 't' + km, type: typ,
+    lat: hier.lat + (km * 1000) / 111320, lon: hier.lon,
+  })
+
+  // Flugzeug am Himmel: Man zeigt hin, und dort ist nichts anderes.
+  const mitFlug = rangiereNachPeilung({
+    origin: hier, kursGrad: 0, objekte: [weit(20, 'aircraft'), ost(4)],
+  })
+  check('ein angepeiltes Flugzeug schlägt ein schräg stehendes Nahziel',
+    mitFlug[0].o.id === 't20', mitFlug.map(r => r.o.id).join(' > '))
+
+  // Aber nur, wenn man wirklich hinzeigt.
+  const nichtHin = rangiereNachPeilung({
+    origin: hier, kursGrad: 90, objekte: [weit(20, 'aircraft'), ost(4)],
+  })
+  check('zeigt man woanders hin, gewinnt das Nahe wieder', nichtHin[0].o.id === 'o4')
+
+  // NÄHE SCHLÄGT RICHTUNG bei allem, was kein Fernziel ist.
+  const nahGewinnt = rangiereNachPeilung({
+    origin: hier, kursGrad: 0, objekte: [weit(0.4, 'poi'), ost(5)],
+  })
+  check('ein Baum in 400 m verliert gegen eine Bank in 5 m — trotz besserem Winkel',
+    nahGewinnt[0].o.id === 'o5', nahGewinnt.map(r => r.o.id).join(' > '))
+
+  // Und jenseits von 30 km ist Schluss, auch für Flugzeuge.
+  check('über 30 km wird nichts mehr angeboten',
+    rangiereNachPeilung({ origin: hier, kursGrad: 0, objekte: [weit(45, 'aircraft')] }).length === 0)
+  check('bei 20 km aber noch',
+    rangiereNachPeilung({ origin: hier, kursGrad: 0, objekte: [weit(20, 'aircraft')] }).length === 1)
+  // Ein Wildtier ist kein Fernziel — der Agent begrenzt es ohnehin am Ursprung.
+  check('ein Tier in 20 km zählt nicht als Fernziel',
+    rangiereNachPeilung({ origin: hier, kursGrad: 0, objekte: [weit(20, 'animal'), ost(5)] })[0].o.id === 'o5')
+
+  const mb = readFileSync(new URL('../agents/movebank-bridge.mjs', import.meta.url), 'utf8')
+  // Vorher spiegelte der Agent JEDES Tier jeder aktuellen Studie — weltweit.
+  check('die Movebank-Brücke hat jetzt einen Sichtradius', /MB_RADIUS_KM/.test(mb))
+  check('und legt Fernes gar nicht erst an', /if \(!inReichweite\(loc\.location_lat, loc\.location_long\)\)/.test(mb))
+  check('sie folgt dabei den Spielern', /fetchInterestAreas\(SOURCE\)/.test(mb))
+
+  // ── Bänder: die Entfernung wählt der Mensch, den Rest der Winkel ──────
+  // Mit Band entscheidet der WINKEL: Die Entfernung ist schon gewählt, sie ein
+  // zweites Mal zu gewichten hiesse, die Wahl zu ueberstimmen.
+  const imBand = rangiereNachPeilung({
+    origin: hier, kursGrad: 0, objekte: [weit(20, 'aircraft'), ostWeit(0.2)],
+    minM: 100, maxM: 30000,
+  })
+  check('im Fern-Band bleibt nur, was hineingehört', imBand.length === 2)
+  check('und der genauer Angepeilte gewinnt — auch wenn er weiter weg ist',
+    imBand.map(r => r.o.id).join(' > '))
+
+  const nurNah = rangiereNachPeilung({
+    origin: hier, kursGrad: 0, objekte: [ost(5), weit(0.2, 'poi'), weit(20, 'aircraft')],
+    minM: 0, maxM: 15,
+  })
+  check('das Nah-Band lässt Fernes gar nicht erst zu',
+    nurNah.length === 1 && nurNah[0].o.id === 'o5')
+
+  // Genau die Stelle, wegen der es die Baender gibt: Ein Flugzeug hinter einer
+  // Laterne, die zufaellig auf derselben Linie steht.
+  const ohneBand = rangiereNachPeilung({
+    origin: hier, kursGrad: 0, objekte: [weit(20, 'aircraft'), nord(10)],
+  })
+  const mitBand = rangiereNachPeilung({
+    origin: hier, kursGrad: 0, objekte: [weit(20, 'aircraft'), nord(10)],
+    minM: 100, maxM: 30000,
+  })
+  check('ohne Band steht die nahe Laterne im Weg', ohneBand[0].o.id === 'n10')
+  check('mit „fern" kommt man am Flugzeug an', mitBand[0].o.id === 't20')
+
+  const nb = readFileSync(new URL('../client/core/NearbyList.js', import.meta.url), 'utf8')
+  check('die Liste kennt den Peil-Modus', /setPeilung\(kursGrad, band = null\)/.test(nb))
+  // Sonst wandert die Auswahl beim naechsten Schritt weg und man greift ins Leere.
+  check('das Festgehaltene bleibt oben', /if \(this\._gesperrt\)[\s\S]{0,220}list\.unshift/.test(nb))
+  check('und laesst sich wieder loesen', /entsperren\(\)/.test(nb))
+
+  // ── Anwesenheiten und der „i"-Knopf ───────────────────────────────────
+  // Anwesenheiten sind MENSCHEN. In einer Liste von Dingen, die man untersuchen
+  // und einsammeln kann, haben sie nichts verloren.
+  check('Anwesenheiten stehen nicht in der Objektliste',
+    /!== PRESENCE_TYPE/.test(nb))
+  // Untersuchen ist die einzige Aktion, die fuer JEDES Objekt sinnvoll ist.
+  check('jede Zeile lässt sich untersuchen',
+    /infoBtn\.addEventListener\('click', \(\) => this\.actions\?\.trigger\?\.\(getRec\(\), 'examine'\)\)/.test(nb))
+
+  // ── Spieler in der Liste, mit Namen ───────────────────────────────────
+  // Anwesenheiten sind Menschen in der Nähe — interessanter als jede Laterne.
+  // Aber nur FREMDE und nur frische: Die eigene stünde als Doppelgänger in der
+  // eigenen Liste, eine veraltete wäre ein Gespenst.
+  check('Anwesenheiten stehen wieder in der Liste, aber nur fremde und frische',
+    /zeigeAnwesenheit\(o, this\._meineId\(\)\)/.test(nb))
+  // `name` ist bei jeder Anwesenheit „Anwesenheit"; der echte Name steht in
+  // state.name, den der SERVER einstempelt — deshalb ist er belastbar.
+  check('gezeigt wird der eingestempelte Name, nicht „Anwesenheit"',
+    /String\(o\.state\?\.name \|\| ''\)\.trim\(\) \|\| t\('Jemand'\)/.test(nb))
+  check('und das Karma als Sterne', /anwesenheitsText\(o\)\.sterne/.test(nb))
+
+  const ps = readFileSync(new URL('../client/core/PresenceService.js', import.meta.url), 'utf8')
+  // Was man mit einem Menschen tun kann, ist ansprechen — über denselben Weg
+  // wie bei NPCs, aber adressiert an sein KONTO.
+  check('eine Anwesenheit lässt sich ansprechen',
+    /actions: \[\{ key: 'talk', label: 'Ansprechen' \}\]/.test(ps))
+
+  // ── Sprachausgabe an der Auswahl ──────────────────────────────────────
+  // Zwei Ereignisse, absichtlich getrennt: was gerade oben steht (fließend)
+  // und was festgehalten wurde (eine Entscheidung).
+  check('beim Peilen wird angesagt, was vorn steht', /this\.onOben\?\.\(/.test(nb))
+  check('und beim Festhalten die Entscheidung', /this\.onAuswahl\?\.\(rec\)/.test(nb))
+  // Sonst spraeche jede Neusortierung denselben Namen noch einmal.
+  check('nur bei echter Änderung', /if \(this\._selectedId !== vorher\)/.test(nb))
+  // Ausserhalb des Peilens spraeche die Liste bei jedem Schritt vor sich hin.
+  check('ausserhalb des Peilens bleibt sie still',
+    /if \(Number\.isFinite\(this\._peilung\)\) \{[\s\S]{0,300}\} else this\._obenGemeldet = null/.test(nb))
+
+  const shell = readFileSync(new URL('../client/core/MobileShell.js', import.meta.url), 'utf8')
+  // Kurzes Antippen hebt auf, Halten peilt — ein Knopf, zwei Gesten.
+  check('kurzes Antippen löst die Auswahl',
+    shell.includes('if (kurzTipp) this._nearby?.entsperren()'))
+  check('Loslassen hält fest', shell.includes('else this._nearby?.sperreOben()'))
+  // Rutscht der Finger vom Knopf, bliebe der Peil-Modus sonst haengen.
+  check('das Wegrutschen zählt als Loslassen', /lostpointercapture', ende/.test(shell))
+  // Eine Faehigkeit vorzutaeuschen, die das Geraet nicht hat, waere schlimmer
+  // als ein grauer Knopf.
+  check('ohne Kompass bleibt der Knopf stumm', /Kein Kompass — Peilen nicht möglich/.test(shell))
+  check('gesprochen wird über denselben Announcer wie in AR',
+    /this\._announcer\?\.target\?\.\(rec\)/.test(shell) && /this\._announcer\?\.selected\?\.\(rec\)/.test(shell))
+
+  const html = readFileSync(new URL('../client/index.html', import.meta.url), 'utf8')
+  // Er wird im Gehen mit dem Daumen bedient, oft ohne hinzusehen.
+  // Sie werden im Gehen mit dem Daumen bedient, oft ohne hinzusehen.
+  check('die Knöpfe sind gross', /\.peil-knopf \{[\s\S]{0,200}min-height: 62px/.test(html))
+  // Drei Entfernungen — ein Flugzeug verschwindet sonst hinter jeder Laterne,
+  // die zufaellig auf derselben Linie steht.
+  check('es sind drei Bänder', (html.match(/data-band="/g) || []).length === 3)
+  // Ueberschneidende Baender haetten dasselbe Problem, nur eine Stufe spaeter.
+  const { PEIL_BAENDER } = await import('../client/core/PointingResolver.js')
+  check('sie überschneiden sich nicht',
+    PEIL_BAENDER.every((b, k) => k === 0 || b.minM === PEIL_BAENDER[k - 1].maxM))
+  check('und decken nah, mittel und fern ab',
+    PEIL_BAENDER.map(b => b.key).join(',') === 'nah,mittel,fern' &&
+    PEIL_BAENDER[0].maxM === 15 && PEIL_BAENDER[1].maxM === 100)
+  check('und Halten scrollt nicht', /\.peil-knopf \{[\s\S]{0,400}touch-action: none/.test(html))
+}
+
+
+// ── Fenster schliessen: nur ein echter Klick DANEBEN ────────────────────
+// Zwoelf Dialoge hatten dieselbe Zeile — und denselben Fehler: Wer im Textfeld
+// markiert und die Maustaste ausserhalb loslaesst, erzeugt einen `click` auf
+// dem gemeinsamen Vorfahren, also auf dem Overlay. Das Fenster schloss sich
+// mitten im Markieren, samt aller Eingaben.
+console.log('\n── Klick daneben')
+{
+  const { klickDaneben } = await import('../client/core/klickDaneben.js')
+
+  const bau = () => {
+    const drin = { }
+    const overlay = {
+      hoerer: {},
+      addEventListener(typ, fn) { this.hoerer[typ] = fn },
+      removeEventListener(typ) { delete this.hoerer[typ] },
+    }
+    let zu = 0
+    const ab = klickDaneben(overlay, () => { zu++ })
+    return { overlay, drin, zaehler: () => zu, ab }
+  }
+
+  // Der gemeldete Fall: Zug beginnt IM Fenster, endet daneben.
+  {
+    const { overlay, drin, zaehler } = bau()
+    overlay.hoerer.pointerdown({ target: drin })
+    overlay.hoerer.click({ target: overlay })
+    check('ein Zug aus dem Fenster heraus schliesst NICHT', zaehler() === 0)
+  }
+  // Der normale Fall: daneben gedrueckt, daneben losgelassen.
+  {
+    const { overlay, zaehler } = bau()
+    overlay.hoerer.pointerdown({ target: overlay })
+    overlay.hoerer.click({ target: overlay })
+    check('ein echter Klick daneben schliesst', zaehler() === 1)
+  }
+  // Umgekehrt: daneben angefangen, im Fenster losgelassen.
+  {
+    const { overlay, drin, zaehler } = bau()
+    overlay.hoerer.pointerdown({ target: overlay })
+    overlay.hoerer.click({ target: drin })
+    check('daneben angefangen, drinnen geendet schliesst nicht', zaehler() === 0)
+  }
+  // Ein Klick ohne vorheriges Druecken (synthetisch) zaehlt nicht.
+  {
+    const { overlay, zaehler } = bau()
+    overlay.hoerer.click({ target: overlay })
+    check('ein Klick ohne Druecken zaehlt nicht', zaehler() === 0)
+  }
+  // Zweimal hintereinander muss wieder gehen — der Merker darf nicht kleben.
+  {
+    const { overlay, drin, zaehler } = bau()
+    overlay.hoerer.pointerdown({ target: drin })
+    overlay.hoerer.click({ target: overlay })
+    overlay.hoerer.pointerdown({ target: overlay })
+    overlay.hoerer.click({ target: overlay })
+    check('danach schliesst ein echter Klick wieder', zaehler() === 1)
+  }
+  {
+    const { overlay, ab } = bau()
+    ab()
+    check('die Abmeldung räumt beide Zuhörer ab',
+      !overlay.hoerer.pointerdown && !overlay.hoerer.click)
+  }
+
+  // Und nirgends darf das alte Muster zurueckkommen.
+  const { readdirSync, statSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const wurzel = new URL('../', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')
+  const alt = []
+  for (const ort of ['client/core', 'client']) {
+    for (const nm of readdirSync(join(wurzel, ort))) {
+      if (!nm.endsWith('.js') || nm.includes('.test.') || nm === 'klickDaneben.js') continue
+      const p = join(wurzel, ort, nm)
+      if (!statSync(p).isFile()) continue
+      const q = readFileSync(p, 'utf8')
+      if (/addEventListener\('click',[^)]{0,60}e\.target === /.test(q)) alt.push(`${ort}/${nm}`)
+    }
+  }
+  check('kein Dialog prüft mehr selbst auf „Klick auf das Overlay"', alt.length === 0, alt.join(' | '))
 }
 
 const failed = results.filter(r => !r.ok)

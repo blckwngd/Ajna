@@ -1921,6 +1921,10 @@ async function init() {
       if (terrain.isLoaded) {
         Promise.resolve(syncSceneObjects(scene, world, geo, ajnaManager.getObjectList()))
           .catch(() => {})
+        // UWB-Anker hängen an derselben Höhenreferenz, stehen aber nicht in der
+        // Objekt-Liste der Szene. Ohne diesen Aufruf blieben sie auf der ebenen
+        // Startfläche — also unter dem Gelände.
+        try { window.uwbAnchorOverlay?.refresh({ neuAufbauen: true }) } catch {}
       }
     }
     // Die Drapierung steckt fest in den Kulissen-Vertices. Sie neu zu zeichnen,

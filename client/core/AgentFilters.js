@@ -91,6 +91,15 @@ export class AgentFilters {
       if (this._gemeldet.has(marke)) continue
       this._gemeldet.add(marke)
       const inhaberVon = inhaber.get(JSON.stringify([m._origin || '', m.source]))
+
+      // Hat der Inhaber dieses Konto DELEGIERT, ist die Frage beantwortet und
+      // die Meldung nur noch Lärm. Zwei Manifest-Zeilen bleiben zwar bestehen
+      // — Delegation räumt nichts weg, sie ändert nur die Beurteilung der
+      // OBJEKTE —, aber wer sie ausgesprochen hat, will darüber nicht bei
+      // jedem Start informiert werden.
+      const erlaubt = Array.isArray(inhaberVon?.delegates) ? inhaberVon.delegates : []
+      if (erlaubt.includes(m.owner)) continue
+
       // Die FOLGE mitsagen: Ohne sie wirkt das wie eine Randnotiz, dabei
       // erklärt sie die roten „angeblich"-Marken an den Objekten des
       // verworfenen Kontos (siehe Provenance.js). Wer beides nicht in
@@ -98,7 +107,8 @@ export class AgentFilters {
       console.warn(`[filters] Zwei Konten beanspruchen den Namen "${m.source}" auf `
         + `${this._serverName(m._origin)}. Es gilt der ältere Eintrag (${inhaberVon?.owner}); `
         + `verworfen wurde der von ${m.owner}. Objekte des verworfenen Kontos `
-        + `erscheinen dadurch als „angeblich ${m.agent_name || m.source}".`)
+        + `erscheinen dadurch als „angeblich ${m.agent_name || m.source}". `
+        + `Gehören beide Konten dir, trage ${m.owner} bei „delegates" des älteren Manifests ein.`)
     }
 
     // 2) Nur die Namensinhaber zu Sources verschmelzen (über Server hinweg).

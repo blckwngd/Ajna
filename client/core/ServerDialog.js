@@ -18,6 +18,7 @@
 
 import { privacy } from './PrivacyPolicy.js'
 import { t } from './i18n.js'
+import { klickDaneben } from './klickDaneben.js'
 import { infoHint, closeInfoHint } from './InfoHint.js'
 
 export class ServerDialog {
@@ -74,7 +75,7 @@ export class ServerDialog {
   _mount() {
     const bd = document.createElement('div')
     bd.className = 'ajna-sd-backdrop'
-    bd.addEventListener('click', ev => { if (ev.target === bd) this.close() })
+    klickDaneben(bd, () => this.close())
 
     const dlg = document.createElement('div')
     dlg.className = 'ajna-sd-dialog'

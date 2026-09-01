@@ -210,7 +210,13 @@ export class PresenceService {
       lon: pos.lon,
       altitude: 0,
       // `realtime` — die Anwesenheit ist genau der Fall, für den es gedacht ist.
-      state: { realtime: true, presence: true },
+      state: {
+        realtime: true, presence: true,
+        // Eine Anwesenheit ist ein MENSCH. Was man mit ihr tun kann, ist
+        // ansprechen — das läuft über denselben Weg wie bei NPCs und landet
+        // beim Konto des Gegenübers (objects.owner), nicht bei einem Agent.
+        actions: [{ key: 'talk', label: 'Ansprechen' }],
+      },
     }
     if (Number.isFinite(kurs)) d.rotation = { x: 0, y: kurs, z: 0 }
     return d

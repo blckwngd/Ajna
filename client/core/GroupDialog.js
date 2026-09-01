@@ -14,6 +14,7 @@
 // geschlossenes Modal-Element ohne Bezug zur umgebenden 2D-UI.
 
 import { t } from './i18n.js'
+import { klickDaneben } from './klickDaneben.js'
 
 export class GroupDialog {
   /**
@@ -258,9 +259,7 @@ export class GroupDialog {
     this._backdrop = backdrop
 
     backdrop.querySelector('.gd-close').addEventListener('click', () => this.close())
-    backdrop.addEventListener('click', e => {
-      if (e.target === backdrop) this.close()
-    })
+    klickDaneben(backdrop, () => this.close())
     backdrop.querySelector('.gd-create-btn').addEventListener('click', () => this._handleCreate())
     backdrop.querySelector('.gd-new-name').addEventListener('keydown', e => {
       if (e.key === 'Enter') this._handleCreate()

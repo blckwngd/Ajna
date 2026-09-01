@@ -3,6 +3,7 @@
 
 import { injectServerBadgeStyles, renderServerBadge } from './ServerBadge.js'
 import { t } from './i18n.js'
+import { klickDaneben } from './klickDaneben.js'
 
 const ALL_RIGHTS = ['view', 'edit', 'move', 'owner']
 const IMPLICIT_AUDIENCES = new Set(['authenticated', 'anonymous', 'everyone'])
@@ -215,9 +216,7 @@ export class PermissionDialog {
     this._obj = obj
 
     backdrop.querySelector('.pd-close').addEventListener('click', () => this.close())
-    backdrop.addEventListener('click', e => {
-      if (e.target === backdrop) this.close()
-    })
+    klickDaneben(backdrop, () => this.close())
 
     // Subject-Type → Subject-Dropdown koppeln
     const typeEl    = backdrop.querySelector('.pd-subject-type')

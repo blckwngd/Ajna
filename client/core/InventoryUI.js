@@ -17,6 +17,7 @@
 import { iconOf } from './Appearance.js'
 import { makeDraggable } from './draggable.js'
 import { t } from './i18n.js'
+import { klickDaneben } from './klickDaneben.js'
 
 export const DRAG_MIME = 'application/x-ajna-inventory-item'
 
@@ -87,7 +88,7 @@ export class InventoryUI {
         <div class="ajna-inv-foot" data-role="foot" hidden></div>
       </div>`
     // Klick auf den dunklen Rand schließt.
-    this.root.addEventListener('click', (e) => { if (e.target === this.root) this.close() })
+    klickDaneben(this.root, () => this.close())
     this.root.querySelector('.ajna-inv-close').addEventListener('click', () => this.close())
     this.container.appendChild(this.root)
     this._itemsEl = this.root.querySelector('[data-role="items"]')

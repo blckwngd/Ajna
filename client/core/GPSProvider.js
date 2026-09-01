@@ -131,6 +131,11 @@ export class GPSProvider {
       altitude: coords.altitude ?? 0,
       accuracy: coords.accuracy,
       altitudeAccuracy: coords.altitudeAccuracy,
+      // Kurs über Grund (0 = Nord). Das Betriebssystem liefert ihn nur, wenn
+      // man sich BEWEGT — im Stand und am Schreibtisch ist er null. Für Geräte
+      // ohne Magnetometer ist er die einzige Blickrichtung, die es gibt; die
+      // Minimap richtet sich danach aus, wenn die Kamera keine liefert.
+      heading: Number.isFinite(coords.heading) ? coords.heading : undefined,
       source: "real"
     })
 

@@ -46,6 +46,49 @@ html, body {
 }
 .shell-view.active { display: block; }
 
+/* Objektliste: Ist die Minimap oben angedockt, beginnt die Liste darunter.
+   Die Höhe meldet die Minimap selbst (--mm-hoehe), damit hier keine zweite
+   Kopie der Größenformel steht. Ohne angedockte Karte ist der Wert 0. */
+.shell-view[data-view="nearby"] {
+  padding-top: var(--mm-hoehe, 0px);
+  /* Unten Platz für die Peil-Leiste, sonst liegt sie auf der letzten Zeile. */
+  padding-bottom: 110px;
+  box-sizing: border-box;
+  transition: padding-top .15s ease;
+}
+/* Groß und unten: Sie werden im Gehen mit dem Daumen bedient, oft ohne
+   hinzusehen. Kleine Knöpfe wären hier der falsche Sparsinn. */
+.peil-leiste {
+  position: absolute; left: 8px; right: 8px; bottom: 14px; z-index: 40;
+  display: flex; gap: 8px;
+}
+.peil-leiste[hidden] { display: none; }
+.peil-knopf {
+  flex: 1 1 0; min-height: 62px; padding: 0 8px;
+  border: 0; border-radius: 31px; cursor: pointer;
+  font: 600 15px system-ui, sans-serif; color: #f2f5f8;
+  background: linear-gradient(180deg, #2f6ea8, #24547e);
+  box-shadow: 0 6px 20px rgba(0,0,0,.45);
+  touch-action: none;                 /* Halten darf nicht scrollen */
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+/* Was gerade festgehalten wird, steht über der Leiste — auf den Knöpfen
+   wäre dafür kein Platz, und ihre Beschriftung soll stehen bleiben. */
+.peil-stand {
+  position: absolute; left: 8px; right: 8px; bottom: 82px; z-index: 40;
+  text-align: center; pointer-events: none;
+  font: 500 13px system-ui, sans-serif; color: #dfe6ee;
+  text-shadow: 0 1px 3px rgba(0,0,0,.8);
+}
+.peil-stand[hidden] { display: none; }
+.peil-knopf.peilt {
+  background: linear-gradient(180deg, #3f9ad6, #2f7bb0);
+  box-shadow: 0 0 0 3px rgba(120,190,255,.35), 0 6px 20px rgba(0,0,0,.45);
+}
+.peil-knopf.gesperrt { background: linear-gradient(180deg, #2f8a5f, #226a49); }
+.peil-knopf:disabled { opacity: .5; cursor: default; }
+
 .shell-tabbar {
   display: flex;
   height: calc(var(--tabbar-height) + var(--safe-bottom));
@@ -196,6 +239,16 @@ html, body {
     <section class="shell-view" data-view="nearby">
       <!-- Nächstgelegene Objekte (NearbyList.js, von MobileShell verdrahtet). -->
       <div class="nearby-root"></div>
+      <!-- Peilen: gedrückt halten sortiert nach Blickrichtung, Loslassen hält
+           das oberste Objekt fest, kurzes Antippen hebt es wieder auf.
+           Drei Entfernungen, weil ein Flugzeug sonst hinter jeder Laterne
+           verschwindet, die zufällig auf derselben Linie steht. -->
+      <div id="peilLeiste" class="peil-leiste" hidden>
+        <button type="button" class="peil-knopf" data-band="nah"></button>
+        <button type="button" class="peil-knopf" data-band="mittel"></button>
+        <button type="button" class="peil-knopf" data-band="fern"></button>
+      </div>
+      <div id="peilStand" class="peil-stand" hidden></div>
     </section>
     <section class="shell-view" data-view="settings">
       <div id="mobileSettings" class="settings-view"></div>

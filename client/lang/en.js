@@ -327,6 +327,20 @@ export const texte = {
   'Pfeile verschieben · Ring dreht · Würfel skalieren. Esc beendet.':
     'Arrows move · ring rotates · cubes scale. Esc finishes.',
 
+  // ── Peilen ──────────────────────────────────────────────────────────
+  'Halten und zeigen': 'Hold and point',
+  'Jemand': 'Someone',
+  'Ansprechen': 'Talk to',
+  'nah': 'near',
+  'mittel': 'medium',
+  'fern': 'far',
+  '{label} < {max} m': '{label} < {max} m',
+
+  'Zeigen … loslassen zum Festhalten': 'Pointing … release to lock',
+  '{name} — kurz tippen zum Lösen': '{name} — tap briefly to release',
+  'Kein Kompass — Peilen nicht möglich': 'No compass — pointing unavailable',
+  'Objekt': 'Object',
+
   // ── Server-Meldungen (Schlüssel = code aus der Antwort) ─────────────
   'fehler.proof_not_found': 'Those images could not be found.',
   'fehler.proof_foreign': 'Those images belong to someone else.',

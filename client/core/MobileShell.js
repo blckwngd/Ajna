@@ -19,6 +19,9 @@ import { InterestArea } from './InterestArea.js'
 import { ProximityReporter } from './ProximityReporter.js'
 import { PresenceService } from './PresenceService.js'
 import { t, SPRACHEN, sprache, setzeSprache } from './i18n.js'
+import { starteKompass, kompassKurs } from './Kompass.js'
+import { PEIL_BAENDER } from './PointingResolver.js'
+import { klickDaneben } from './klickDaneben.js'
 import { infoHint } from './InfoHint.js'
 import { NearbyList } from './NearbyList.js'
 import { ObjectActions } from './ObjectActions.js'
@@ -151,6 +154,7 @@ export class MobileShell {
   _wireAccessories() {
     const hub = getAccessoryHub({ ajna: this.ajna })
     this.wand = hub.wand
+    this._announcer = hub.announcer || null
     this.uwb = hub.uwb
     this.wandAudio = hub.audio
     this.positionSource = hub.positionSource
@@ -187,10 +191,21 @@ export class MobileShell {
     this._minimap = new Minimap({
       container: document.body,
       getView: () => {
+        // Reihenfolge mit Absicht: Die 3D-Kamera weiss, wohin man SCHAUT —
+        // das schlägt jeden Sensor. Danach der Gerätekompass (gilt in jeder
+        // Ansicht), zuletzt der Kurs über Grund, also die Richtung, in die man
+        // GEHT. Erst wenn nichts davon da ist, bleibt die Karte stehen.
         const cam = window.ajnaCameraView?.()
-        if (cam && Number.isFinite(cam.lat)) return cam
+        if (cam && Number.isFinite(cam.lat)) {
+          return Number.isFinite(cam.heading) ? cam : { ...cam, heading: kompassKurs() ?? undefined }
+        }
         const p = _nbPos()
-        return p && Number.isFinite(p.lat) ? { lat: p.lat, lon: p.lon } : null
+        if (!p || !Number.isFinite(p.lat)) return null
+        // Ohne 3D-Ansicht gibt es keine Kamera-Blickrichtung. Dann zählt der
+        // Kurs über Grund — die Richtung, in die man GEHT. Er fehlt im Stand
+        // und auf Geräten ohne GPS; die Karte bleibt dann einfach stehen.
+        const kurs = kompassKurs()
+        return { lat: p.lat, lon: p.lon, heading: Number.isFinite(kurs) ? kurs : p.heading }
       },
       // Objekte als Symbole. Dieselbe Quelle und derselbe Inhaltsfilter wie
       // die Objektliste — was dort ausgeblendet ist, taucht hier nicht auf.
@@ -202,6 +217,10 @@ export class MobileShell {
         ? serverLabelFor(this.ajna, rec?._origin) : null,
     })
     this._minimap.setVisible(MINIMAP_TABS.has(this.activeTab))
+    this._minimap.setDocked(this.activeTab === 'nearby')
+    // Ein Kompass für alle Ansichten. Setzt nebenbei window.ajnaHeadingRad,
+    // das bisher an zwei Stellen GELESEN und an keiner gesetzt wurde.
+    starteKompass()
 
     const _nbRoot = document.querySelector('.shell-view[data-view="nearby"] .nearby-root')
     if (_nbRoot) {
@@ -213,6 +232,12 @@ export class MobileShell {
         // Geteilte AgentFilters-Instanz (map.js legt sie an, main.js übernimmt
         // sie) — nur für die Herkunftsprüfung; fehlt sie, entfällt das Badge.
         filters: window.agentFilters || null,
+        // Sprachausgabe: Beim Peilen laufend ansagen, was anvisiert ist
+        // (unterbrechend — die letzte Ansage gilt), beim Festhalten die
+        // Entscheidung. Derselbe Announcer wie in AR und am Zauberstab,
+        // damit sich die Welt überall gleich anhört.
+        onOben: (rec) => { try { this._announcer?.target?.(rec) } catch {} },
+        onAuswahl: (rec) => { try { this._announcer?.selected?.(rec) } catch {} },
         onShowOnMap: (rec) => {
           this.switchTo('map')
           try { window.map?.setView([rec.lat, rec.lon], 18) } catch {}
@@ -226,6 +251,8 @@ export class MobileShell {
           try { ui.editorUI.fillEditor(rec) } catch (e) { this._flashNotice('Editor: ' + (e?.message || e)) }
         },
       })
+      // Der Peil-Knopf braucht die Liste — deshalb erst hier.
+      this._wirePeilKnopf()
     }
     this.gps = hub.gps   // für den Echt/Dummy-GPS-Schalter in den Einstellungen
     hub.setPositionFallback(() => window.ajnaGeo?.position || null)
@@ -419,6 +446,12 @@ export class MobileShell {
     }
 
     this._minimap?.setVisible(MINIMAP_TABS.has(tabId))
+    // In der Objektliste steht die Karte OBEN und die Liste darunter — sonst
+    // deckt das schwebende HUD genau das zu, was man gerade lesen will.
+    this._minimap?.setDocked(tabId === 'nearby')
+    if (this._peilLeiste) this._peilLeiste.hidden = tabId !== 'nearby'
+    if (this._peilStand && tabId !== 'nearby') this._peilStand.hidden = true
+    this._peilStatus()
     // AR-View: nur wenn immersives WebXR hier unterstützt wird (Headset/Quest-
     // Browser/Android XR), die Babylon-Szene direkt im Tab laden. Sonst Hinweis
     // „in Chrome öffnen". Render-Loop nur aktiv, solange der AR-Tab offen ist.
@@ -615,6 +648,111 @@ export class MobileShell {
       this._toast?.show(`+${karma} Karma`, { title: q.titel || 'Auftrag' })
     }
     return res
+  }
+
+
+  // ── Peilen: drei Entfernungen, halten und loslassen ─────────────────────
+  //
+  // „Push-to-Interact", nach dem Vorbild von Push-to-Talk und dem, was der
+  // Zauberstab in AR schon kann. Der Daumen bleibt auf dem Knopf, das Gerät
+  // zeigt auf etwas — die Liste ordnet sich darunter. Loslassen hält fest,
+  // kurzes Antippen löst wieder.
+  //
+  // Warum HALTEN und nicht ein Schalter: Eine dauerhaft nach Blickrichtung
+  // sortierte Liste wäre unlesbar, weil sich bei jeder Handbewegung alles
+  // umsortiert. Das Halten begrenzt die Unruhe auf den Moment, in dem man sie
+  // WILL.
+  //
+  // Warum DREI Knöpfe: Ein Flugzeug anzupeilen ist aussichtslos, solange
+  // Laternen und Bänke auf derselben Linie liegen — sie stehen zwangsläufig
+  // zwischen einem und dem Himmel. Die Entfernung vorher zu wählen räumt sie
+  // aus dem Weg, statt gegen sie anzuzielen.
+  _wirePeilKnopf() {
+    const leiste = document.getElementById('peilLeiste')
+    if (!leiste) return
+    this._peilLeiste = leiste
+    this._peilStand = document.getElementById('peilStand')
+
+    // Ohne Kompass gibt es keine Peilung — dann bleiben die Knöpfe stumm statt
+    // eine Fähigkeit vorzutäuschen, die das Gerät nicht hat.
+    const kurs = () => {
+      const cam = window.ajnaCameraView?.()
+      if (cam && Number.isFinite(cam.heading)) return cam.heading
+      const k = kompassKurs()
+      return Number.isFinite(k) ? k : null
+    }
+
+    let seit = 0
+    let takt = null
+    let aktiv = null
+    const KURZ_MS = 250
+    const stoppeTakt = () => { if (takt) { clearInterval(takt); takt = null } }
+
+    for (const btn of leiste.querySelectorAll('.peil-knopf')) {
+      const band = PEIL_BAENDER.find(b => b.key === btn.dataset.band)
+      if (!band) continue
+
+      btn.addEventListener('pointerdown', (ev) => {
+        ev.preventDefault()
+        if (kurs() == null) { this._peilStatus(); return }
+        seit = Date.now()
+        aktiv = btn
+        btn.classList.add('peilt')
+        try { btn.setPointerCapture?.(ev.pointerId) } catch {}
+        const zeigen = () => this._nearby?.setPeilung(kurs(), band)
+        zeigen()
+        // 8× je Sekunde: schnell genug, dass es der Hand folgt, langsam genug,
+        // dass die Liste nicht flackert.
+        takt = setInterval(zeigen, 125)
+        this._peilStatus()
+      })
+
+      const ende = () => {
+        if (!seit || aktiv !== btn) return
+        const kurzTipp = Date.now() - seit < KURZ_MS
+        seit = 0; aktiv = null
+        stoppeTakt()
+        btn.classList.remove('peilt')
+        if (kurzTipp) this._nearby?.entsperren()
+        else this._nearby?.sperreOben()
+        this._peilStatus()
+      }
+      btn.addEventListener('pointerup', ende)
+      btn.addEventListener('pointercancel', ende)
+      // Der Finger rutscht vom Knopf: Das ist ein Loslassen, kein Abbruch —
+      // sonst bliebe der Peil-Modus hängen und die Liste zappelte weiter.
+      btn.addEventListener('lostpointercapture', ende)
+    }
+
+    this._unsubs.push(() => stoppeTakt())
+    this._peilStatus()
+  }
+
+  /** Beschriftung der drei Knöpfe und die Zeile darüber. */
+  _peilStatus() {
+    const leiste = this._peilLeiste
+    if (!leiste) return
+    const cam = window.ajnaCameraView?.()
+    const hatKurs = (cam && Number.isFinite(cam.heading)) || Number.isFinite(kompassKurs())
+    const fest = this._nearby?.gesperrtesObjekt?.() || null
+
+    for (const btn of leiste.querySelectorAll('.peil-knopf')) {
+      const band = PEIL_BAENDER.find(b => b.key === btn.dataset.band)
+      btn.disabled = !hatKurs
+      // Die Beschriftung nennt die ENTFERNUNG, nicht die Aktion: Welcher Knopf
+      // gemeint ist, entscheidet man nach dem, was man anpeilen will.
+      btn.textContent = !band ? ''
+        : band.key === 'fern' ? t('fern')
+        : t('{label} < {max} m', { label: t(band.label), max: band.maxM })
+    }
+
+    const stand = this._peilStand
+    if (!stand) return
+    const text = !hatKurs ? t('Kein Kompass — Peilen nicht möglich')
+      : fest ? t('{name} — kurz tippen zum Lösen', { name: fest.name || fest.type || t('Objekt') })
+      : ''
+    stand.textContent = text
+    stand.hidden = !text
   }
 
   /** Editor öffnen — mit echtem Inventar, eigenen Gruppen und Sichtbarkeit. */
@@ -1027,7 +1165,7 @@ export class MobileShell {
       </div>`
     const close = () => { this._deviceModalOpen = null; overlay.remove() }
     overlay.querySelector('.device-modal-close').addEventListener('click', close)
-    overlay.addEventListener('click', e => { if (e.target === overlay) close() })
+    klickDaneben(overlay, close)
     document.body.appendChild(overlay)
     try { wireFn?.(overlay) } catch (e) { console.warn('[mobile] modal wire', e) }
     return overlay

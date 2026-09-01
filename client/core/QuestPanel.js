@@ -23,6 +23,7 @@
 
 import { makeDraggable } from './draggable.js'
 import { t } from './i18n.js'
+import { klickDaneben } from './klickDaneben.js'
 import { karmaLabel } from './karma.js'
 
 const STYLE_ID = 'ajna-quest-style'
@@ -266,7 +267,7 @@ export class QuestPanel {
         <div class="qp-tabs" role="tablist" data-role="tabs"></div>
         <div class="qp-body" data-role="body"></div>
       </div>`
-    ov.addEventListener('click', e => { if (e.target === ov) this.close() })
+    klickDaneben(ov, () => this.close())
     ov.querySelector('.qp-close').addEventListener('click', () => this.close())
     ov.querySelector('.qp-back').addEventListener('click', () => { this._detail = null; this._render() })
     const rl = ov.querySelector('.qp-reload')

@@ -9,6 +9,7 @@
 // wir die Auswahl explizit — auch "leeres Array" = "ausgeblendet".
 
 import { t } from './i18n.js'
+import { klickDaneben } from './klickDaneben.js'
 
 const STYLE_ID = 'ajnaFilterDialogStyles'
 
@@ -48,7 +49,7 @@ export class FilterDialog {
     if (this._backdrop) return
     const bd = document.createElement('div')
     bd.className = 'ajna-filter-backdrop'
-    bd.addEventListener('click', e => { if (e.target === bd) this.close() })
+    klickDaneben(bd, () => this.close())
 
     const dlg = document.createElement('div')
     dlg.className = 'ajna-filter-dialog'

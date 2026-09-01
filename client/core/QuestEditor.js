@@ -32,6 +32,7 @@
 
 import { KARMA_WAHL, KARMA_PRO_STUFE, KARMA_GUTSCHRIFT } from './karma.js'
 import { t } from './i18n.js'
+import { klickDaneben } from './klickDaneben.js'
 
 const STYLE_ID = 'ajna-questedit-style'
 
@@ -279,7 +280,7 @@ export class QuestEditor {
         <div class="qe-aktionen" data-role="aktionen"></div>
       </div>
     </div>`
-    ov.addEventListener('click', e => { if (e.target === ov) this.close() })
+    klickDaneben(ov, () => this.close())
     ov.querySelector('.qe-close').addEventListener('click', () => this.close())
     this.parent.appendChild(ov)
     this._ov = ov

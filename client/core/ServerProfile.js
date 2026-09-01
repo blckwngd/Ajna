@@ -19,7 +19,8 @@
 // setzen). `getKarma` überschreibt das nur, wenn ein Aufrufer es braucht.
 
 import { privacy } from './PrivacyPolicy.js'
-import { publikum } from './PresenceService.js'
+import { publikum } from './PresenceService.js'
+import { klickDaneben } from './klickDaneben.js'
 import { t } from './i18n.js'
 import { infoHint } from './InfoHint.js'
 import { renderKarma } from './karma.js'
@@ -71,7 +72,7 @@ export class ServerProfile {
       <div class="sp-body" data-role="body"></div>
       <div class="sp-status" data-role="status" hidden></div>
     </div>`
-    ov.addEventListener('click', e => { if (e.target === ov) this.close() })
+    klickDaneben(ov, () => this.close())
     ov.querySelector('.sp-close').addEventListener('click', () => this.close())
     this.parent.appendChild(ov)
     this._ov = ov
