@@ -54,10 +54,27 @@ export function createContext(prefix) {
     /** Wegwerf-Nutzer anlegen + einloggen (`name` ist Pflichtfeld der Collection). */
     async user(tag) {
       const email = `${prefix}-${tag}@example.invalid`
-      await req('/api/collections/users/records', {
-        method: 'POST',
-        body: { email, password: PW, passwordConfirm: PW, name: `${prefix}-${tag}` },
-      })
+      // ANLEGEN KANN GEDROSSELT WERDEN. Seit die Instanz anonyme Registrierungen
+      // begrenzt (1788000000_rate_limits.js), beantwortet sie einen Schub mit
+      // 429 — und die Suite legt in einem Lauf Dutzende Konten an.
+      //
+      // Das Ergebnis wurde hier bisher gar nicht angesehen: Ein fehlgeschlagenes
+      // Anlegen fiel erst eine Zeile später als „Login fehlgeschlagen" auf, und
+      // die Meldung zeigte auf die falsche Stelle. Jetzt wird gewartet und
+      // wiederholt — und ein echter Fehler beim Namen genannt.
+      for (let versuch = 0; versuch < 4; versuch++) {
+        const r = await req('/api/collections/users/records', {
+          method: 'POST',
+          body: { email, password: PW, passwordConfirm: PW, name: `${prefix}-${tag}` },
+        })
+        if (r.status === 200) break
+        // Schon vorhanden (Wiederholungslauf) ist in Ordnung.
+        if (r.status === 400 && /not_unique/.test(JSON.stringify(r.data || ''))) break
+        if (r.status !== 429) {
+          throw new Error(`Konto anlegen fehlgeschlagen (${email}): ${JSON.stringify(r.data)}`)
+        }
+        await new Promise(res => setTimeout(res, 1500 * (versuch + 1)))
+      }
       const r = await req('/api/collections/users/auth-with-password', {
         method: 'POST', body: { identity: email, password: PW },
       })

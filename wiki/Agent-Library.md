@@ -149,6 +149,21 @@ await ajna.onAgentCommand('mein-agent', (evt) => {
 
 Leere Liste heisst „jeder darf“ — das ist die Vorgabe, weil Kommandos wie „spawn“ Teil des Spiels sind und die Agents sie ohnehin über Abklingzeiten begrenzen. Der World-Director nutzt dafür `WD_COMMAND_USERS`.
 
+### Anonyme Kommandos (Opt-in)
+
+Ein Aufruf **ohne Anmeldung** wird nicht abgewiesen, sondern auf ein eigenes Topic gelegt: `agent:<source>:public`. Ein Agent bekommt solche Kommandos nur, wenn er es ausdrücklich will:
+
+```js
+await ajna.onAgentCommand('mein-agent', (evt) => {
+  if (evt.anonymous) {           // evt.source ist dann null
+    // Legitimation selbst prüfen — etwa ein Token, das der Agent beim
+    // Erzeugen eines Links signiert hat (HMAC über Objekt-ID + Aktion).
+  }
+}, { public: true })
+```
+
+Wozu: Links in E-Mails (die Freigabe eines Eintrags, eine Bestätigung) haben keinen angemeldeten Absender. Der Server kennt kein Geheimnis und braucht keine anwendungsspezifische Route — er reicht durch, und `commandAllowed()` greift für anonyme Aufrufer nicht (leere Liste liesse sie durch, also im Zweifel ein Token verlangen). Für eine Rückmeldung an den anonymen Aufrufer taugt `sendChat(<zufällige Kennung>, …)`: Der Aufrufer hört auf `chat:<kennung>`, ein Konto muss dahinter nicht stehen.
+
 ## Konfigurationsdateien — `lib/env.mjs`
 
 | Funktion | Beschreibung |

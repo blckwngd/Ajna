@@ -544,11 +544,18 @@ export class AjnaManager {
     return () => { for (const off of offs) { try { off() } catch {} } }
   }
 
-  /** Für Agents: eigene Kommandos abonnieren (Default-Server). */
-  async onAgentCommand(source, callback, serverId = null) {
-    const c = serverId ? this.clients.get(serverId) : this.defaultClient
-    if (!c) throw new Error(`AjnaManager: unbekannter Server "${serverId}"`)
-    return c.onAgentCommand(source, callback)
+  /**
+   * Für Agents: eigene Kommandos abonnieren (Default-Server).
+   *
+   * Drittes Argument entweder die Server-ID (wie bisher) oder Optionen
+   * `{ serverId?, public? }` — `public: true` nimmt auch ANONYME Aufrufer an,
+   * siehe AjnaClient.onAgentCommand.
+   */
+  async onAgentCommand(source, callback, serverIdOrOpts = null) {
+    const opts = (serverIdOrOpts && typeof serverIdOrOpts === 'object') ? serverIdOrOpts : { serverId: serverIdOrOpts }
+    const c = opts.serverId ? this.clients.get(opts.serverId) : this.defaultClient
+    if (!c) throw new Error(`AjnaManager: unbekannter Server "${opts.serverId}"`)
+    return c.onAgentCommand(source, callback, { public: !!opts.public })
   }
 
   // ===================================================================

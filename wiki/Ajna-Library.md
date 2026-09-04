@@ -196,8 +196,8 @@ Objektlose Nachrichten an einen laufenden Agent.
 
 | Methode | Beschreibung |
 |---|---|
-| `await sendAgentCommand(source, command, payload?, serverId?)` | → `{ ok, delivered }`; `delivered = 0` heißt: Agent läuft nicht |
-| `await onAgentCommand(source, cb, serverId?)` | Rückruf `{ command, payload, source, ts }` |
+| `await sendAgentCommand(source, command, payload?, serverId?)` | → `{ ok, delivered }`; `delivered = 0` heißt: Agent läuft nicht. Geht auch ohne Anmeldung — dann landet das Kommando auf `agent:<source>:public` |
+| `await onAgentCommand(source, cb, serverId? \| { serverId?, public? })` | Rückruf `{ command, payload, source, anonymous, ts }`; `public: true` nimmt auch anonyme Aufrufer an (`source` ist dann null) — siehe [Agent-Library](Agent-Library.md#anonyme-kommandos-opt-in) |
 
 ```js
 await ajna.sendAgentCommand('world-director', 'spawn', { archetype: 'dragon' })

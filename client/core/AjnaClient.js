@@ -709,15 +709,25 @@ export class AjnaClient {
 
   /**
    * Für Agents: eigene Kommandos abonnieren.
-   * @param {(evt: {command:string, payload:any, source:string, ts:string}) => void} callback
+   * @param {(evt: {command:string, payload:any, source:string|null, anonymous?:boolean, ts:string}) => void} callback
+   * @param {{public?: boolean}} [opts]
+   *   `public: true` abonniert ZUSÄTZLICH das Topic für ANONYME Aufrufer
+   *   (`agent:<source>:public`). Der Server nimmt Kommandos ohne Anmeldung an,
+   *   legt sie aber nur dort ab — ein Agent, der es nicht abonniert, bekommt
+   *   nichts davon. Wer es abonniert, prüft die Legitimation selbst (etwa ein
+   *   signiertes Token im payload); `evt.source` ist dann null.
+   * @returns {Promise<() => void>} unsubscribe (für beide Topics)
    */
-  async onAgentCommand(source, callback) {
-    return this.pb.realtime.subscribe(`agent:${source}`, msg => {
+  async onAgentCommand(source, callback, { public: oeffentlich = false } = {}) {
+    const abo = (topic) => this.pb.realtime.subscribe(topic, msg => {
       let data
       try { data = typeof msg === 'string' ? JSON.parse(msg) : msg }
       catch { data = { command: '?', raw: msg } }
       callback(data)
     })
+    const offs = [await abo(`agent:${source}`)]
+    if (oeffentlich) offs.push(await abo(`agent:${source}:public`))
+    return () => { for (const off of offs) { try { off() } catch {} } }
   }
 
   // ===================================================================

@@ -2215,8 +2215,16 @@ routerAdd("POST", "/api/chat/send", (e) => {
 routerAdd("POST", "/api/agents/{source}/command", (e) => {
   try {
     const info = e.requestInfo()
-    const user = info.auth
-    if (!user) return e.json(401, { error: "auth required" })
+    // Ohne Anmeldung ist der Aufruf ERLAUBT — landet aber auf einem eigenen
+    // Topic (`agent:<source>:public`). Ein Agent bekommt anonyme Kommandos
+    // nur, wenn er dieses Topic ausdrücklich abonniert
+    // (onAgentCommand(…, { public: true })); alle anderen Agents merken
+    // davon nichts. Wozu: Links in E-Mails (etwa die Freigabe eines
+    // Eintrags) haben keinen angemeldeten Absender. Ob so ein Aufruf legitim
+    // ist, prüft der Agent selbst — z. B. an einem Token, das er beim
+    // Erzeugen des Links signiert hat. Der Server kennt dafür kein Geheimnis
+    // und braucht keine anwendungsspezifische Route.
+    const user = info.auth || null
 
     const source = e.request.pathValue("source")
     if (!source || !/^[A-Za-z0-9_-]{1,64}$/.test(source)) {
@@ -2229,13 +2237,24 @@ routerAdd("POST", "/api/agents/{source}/command", (e) => {
       return e.json(400, { error: "field 'command' (string) is required" })
     }
 
-    const topic = "agent:" + source
+    // NUTZLAST BEGRENZEN. `command` war gedeckelt, `payload` nicht — ein
+    // anonymer Aufrufer konnte hunderte Kilobyte durch den Broker an jeden
+    // Abonnenten schicken (gemessen: 200 KB gingen durch). Die Grenze ist
+    // grosszügig für alles, was ein Kommando braucht (Token, IDs, ein paar
+    // Felder), und schliesst die Verstärkung aus.
+    const nutzlast = body.payload == null ? "" : JSON.stringify(body.payload)
+    if (nutzlast.length > 8192) {
+      return e.json(400, { error: "payload too large (max 8 KB)", code: "payload_too_large" })
+    }
+
+    const topic = "agent:" + source + (user ? "" : ":public")
     const message = new SubscriptionMessage({
       name: topic,
       data: JSON.stringify({
         command: command,
         payload: body.payload || null,
-        source: user.id,
+        source: user ? user.id : null,   // null = anonymer Aufrufer
+        anonymous: !user,
         ts: new Date().toISOString()
       })
     })

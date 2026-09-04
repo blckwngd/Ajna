@@ -109,6 +109,90 @@ ein Fehler.
   sind die Aussage eines Menschen darüber, was der Server *nicht* erfahren soll.
   Sie auf dem Server zu speichern hieße, den Schutz beim Geschützten abzugeben.
 
+## Hooks und Migrationen brauchen einen Neustart
+
+**PocketBase lädt `pb_hooks/` NICHT nach.** Unter Windows greift der Watcher
+nicht, und auch sonst ist darauf kein Verlass. Dasselbe gilt für neue
+Migrationen — sie laufen beim Start.
+
+Nach jeder Änderung an `pocketbase/pb_hooks/` oder `pocketbase/pb_migrations/`:
+
+```bash
+pm2 restart pocketbase      # bzw. den Stack neu starten
+```
+
+Das Tückische ist das Symptom: Der Code ist richtig, die Änderung wirkt nicht,
+und man sucht den Fehler im Code. Wer eine Hook-Änderung testet, ohne neu zu
+starten, misst den alten Stand.
+
+Zum Ausprobieren ohne den laufenden Betrieb anzufassen, siehe „Gegen eine Kopie
+prüfen" weiter unten.
+
+## Ratenbegrenzung
+
+Seit `1788000000_rate_limits.js` aktiv — **nur für anonymen Verkehr**.
+
+| Regel | Publikum | Grenze |
+|---|---|---|
+| `users:create` | anonym | 100 / Stunde |
+| `/api/agents/` | anonym | 30 / Minute |
+| `/api/` | anonym | 120 / 10 s |
+
+**Anmeldeversuche sind nicht gedrosselt.** PocketBase liefert dafür 2 Versuche
+in 3 s; hier passte keine Zahl: `npm run stack` meldet mehrere Agents
+gleichzeitig von derselben Adresse an, die Testsuite loggt sich dutzendfach in
+Folge ein. Das ist eine offene Aufgabe, keine Lösung — wer sie angeht, braucht
+einen Weg, Agent-Schübe von Durchprobieren zu unterscheiden.
+
+Die Grenze für `users:create` war zuerst auf 10/Stunde gesetzt, mit der falschen
+Annahme, Gäste einer Veranstaltung kämen aus verschiedenen Netzen. Auf einem Hof
+ist das Gegenteil der Fall: gemeinsames WLAN, dieselbe Funkzelle, CGNAT — eine
+Adresse steht für viele Menschen. Wer die Zahl senkt, sollte den Testlauf im
+Blick behalten: Die Quest-Suite legt je Durchgang rund vierzig Konten an.
+
+**Angemeldeter Verkehr bleibt ungebremst**, und das ist eine Entscheidung:
+Agents schreiben im Sekundentakt — der World-Director allein bewegt Dutzende
+Objekte pro Minute. Die von PocketBase mitgelieferte Vorgabe (300 Anfragen in
+10 s für ALLE) hätte ihn gedrosselt und die Welt einfrieren lassen. Missbrauch
+mit Konto ist zudem zurechenbar; anonymer nicht.
+
+Wer die Grenzen ändert: Verwaltungsoberfläche → Settings → Rate limits. Die
+Migration setzt sie nur einmal.
+
+## Gegen eine Kopie prüfen
+
+Hook- und Migrations-Änderungen lassen sich ausprobieren, ohne die laufende
+Instanz anzufassen — eigene Kopie, eigener Port:
+
+```bash
+cp pocketbase/pb_data/data.db* /tmp/probe/data/
+pocketbase.exe superuser upsert probe@example.invalid <pw> --dir=/tmp/probe/data   --migrationsDir=$(pwd)/pocketbase/pb_migrations
+pocketbase.exe serve --http=127.0.0.1:8099 --dir=/tmp/probe/data   --hooksDir=$(pwd)/pocketbase/pb_hooks --migrationsDir=$(pwd)/pocketbase/pb_migrations
+```
+
+Danach `AJNA_TEST_PB=http://127.0.0.1:8099 npm run test:quests`. Die laufende
+Instanz auf 8090 bleibt unberührt.
+
+**Falle: `--migrationsDir` NICHT auf das Repo zeigen lassen, wenn du auf der
+Kopie das Schema änderst.** PocketBase schreibt Schema-Änderungen automatisch
+als neue Migration in dieses Verzeichnis — auch die, die du nur ausprobieren
+wolltest. Genau so ist einmal ein `1788525136_updated_users.js` mit
+`email.required = false` im Repo gelandet; beim nächsten Stack-Start wäre die
+E-Mail-Pflicht für alle Konten gefallen. Zum reinen Testen ist das Repo-
+Verzeichnis richtig (die Migrationen sollen ja laufen); sobald du in der
+Verwaltung oder über `/api/collections` etwas umstellst, kopiere es vorher:
+
+```bash
+cp -r pocketbase/pb_migrations /tmp/probe/migrations
+# ... serve mit --migrationsDir=/tmp/probe/migrations
+```
+
+Danach `git status` prüfen — eine ungewollte `*_updated_*.js` fällt dort auf.
+
+**Eine leere Datenbank lässt sich damit nicht aufbauen:** Die Migrationskette
+setzt bestehende Collections voraus (`1773779228_updated_objects.js` scheitert
+mit `sql: no rows in result set`). Für eine Neuinstallation ist das zu klären.
+
 ## Aufräumen
 
 ### Logs
