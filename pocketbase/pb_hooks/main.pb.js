@@ -801,7 +801,7 @@ routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
 routerAdd("POST", "/api/objects/{id}/quest/accept", (e) => {
   try {
     const { resolveEffective } = require(`${__hooks}/permissions.js`)
-    const { parseState, callDataOf, istAbgelaufen, markiereAbgelaufen } = require(`${__hooks}/quests.js`)
+    const { parseState, callDataOf, istAbgelaufen, markiereAbgelaufen, annahmeOrtPruefen } = require(`${__hooks}/quests.js`)
     const { karmaReicht } = require(`${__hooks}/karma.js`)
     const callId = e.request.pathValue("id")
     const info = e.requestInfo()
@@ -838,6 +838,24 @@ routerAdd("POST", "/api/objects/{id}/quest/accept", (e) => {
       return e.json(409, { error: "call already claimed by someone else" })
     }
 
+    // Den EIGENEN Auftrag zu erledigen ist der Sonderfall, nicht der Normalfall.
+    //
+    // Erlaubt ist er in zwei Lagen: als PROBELAUF (dann fliesst nichts und
+    // niemand sonst sieht ihn) oder mit Superuser-Recht. Sonst 403 — hier
+    // beim Annehmen, damit niemand erst hinlaeuft und beim Melden scheitert.
+    const eigenerAuftrag = String(call.get("owner") || "") === user.id
+    if (eigenerAuftrag && c.probelauf !== true) {
+      const { istSuperuser } = require(`${__hooks}/superuser.js`)
+      const { transitiveGroupsOf } = require(`${__hooks}/permissions.js`)
+      const su = istSuperuser($app, user.id, transitiveGroupsOf)
+      if (!su.ok) {
+        return e.json(403, {
+          error: "you cannot take on your own call — publish it as a trial run to test it",
+          code: "own_call_not_allowed",
+        })
+      }
+    }
+
     // Karma-Bedingung: `state.call.karma` ist die geforderte STUFE (0–5).
     // Geprüft wird gegen den serverseitig geführten Punktestand — der Client
     // kann ihn nicht setzen (siehe Hook „karma_points" oben).
@@ -850,6 +868,27 @@ routerAdd("POST", "/api/objects/{id}/quest/accept", (e) => {
           karma: k.stufe, karmaRequired: k.noetig
         })
       }
+    }
+
+    // „Nur vor Ort annehmen" — ZULETZT geprüft, weil es die einzige Bedingung
+    // ist, die sich durch Hingehen erfüllen lässt. Karma und Frist zuerst zu
+    // melden erspart einen Weg, der ohnehin nichts gebracht hätte.
+    //
+    // Der Standort kommt je nach Freigabe-Stufe als Koordinate oder nur als
+    // „ich bin im Umkreis"; beides beantwortet die Frage, nur das eine ohne
+    // einen Ort preiszugeben. Fehlt beides, wird nicht geraten — der Client
+    // bekommt gesagt, was ihm fehlt.
+    const ort = annahmeOrtPruefen(call, c, info.body || {})
+    if (!ort.ok) {
+      const fehltPosition = ort.grund === "keine-position"
+      return e.json(403, {
+        error: fehltPosition
+          ? "this call can only be accepted on site, but no position was provided"
+          : "too far away to accept this call",
+        code: fehltPosition ? "accept_needs_position" : "accept_too_far",
+        maxDistanceM: ort.grenzeM,
+        distanceM: ort.entfernungM === null ? null : Math.round(ort.entfernungM),
+      })
     }
 
     c.status = "claimed"
@@ -910,6 +949,20 @@ routerAdd("POST", "/api/objects/{id}/quest/complete", (e) => {
         try { $app.save(call) } catch (err) {}
       }
       return e.json(409, { error: "call expired", status: "expired", deadline: c.deadline })
+    }
+
+    // DIE EIGENTLICHE GRENZE. Beim Annehmen steht dieselbe Regel, aber nur als
+    // freundliche fruehe Absage — wer die Route direkt aufruft, kaeme daran
+    // vorbei. Hier nicht.
+    if (String(call.get("owner") || "") === user.id && c.probelauf !== true) {
+      const { istSuperuser } = require(`${__hooks}/superuser.js`)
+      const { transitiveGroupsOf } = require(`${__hooks}/permissions.js`)
+      if (!istSuperuser($app, user.id, transitiveGroupsOf).ok) {
+        return e.json(403, {
+          error: "you cannot complete your own call — publish it as a trial run to test it",
+          code: "own_call_not_allowed",
+        })
+      }
     }
 
     if (c.claimedBy && c.claimedBy !== user.id) {
@@ -1154,6 +1207,16 @@ routerAdd("GET", "/api/quests/near", (e) => {
     const jetzt = Date.now()
     const raus = []
 
+    // EINMAL fuer die ganze Anfrage, nicht je Auftrag: Die Superuser-Pruefung
+    // liest eine Einstellung und loest Gruppen auf. In einer Schleife ueber
+    // hunderte Auftraege waere das die teuerste Zeile der Route.
+    let superuser = false
+    try {
+      const { istSuperuser } = require(`${__hooks}/superuser.js`)
+      const { transitiveGroupsOf } = require(`${__hooks}/permissions.js`)
+      superuser = istSuperuser($app, user.id, transitiveGroupsOf).ok
+    } catch (err) { /* im Zweifel kein Sonderrecht */ }
+
     // Gruppen EINMAL auflösen, nicht je Auftrag: die Auflösung läuft transitiv
     // über Untergruppen und ist der teuerste Teil der Rechteprüfung.
     let meineGruppen = null
@@ -1215,6 +1278,12 @@ routerAdd("GET", "/api/quests/near", (e) => {
       if (!meins) {
         const eff = resolveEffective(user, call)
         if ((eff.rights || []).indexOf("view") === -1) continue
+        // Ein Probelauf gehört seinem Autor allein. Er ist zum Ausprobieren da,
+        // nicht zum Mitspielen — und weil er nichts auszahlt, wäre er für
+        // andere ohnehin nur eine Enttäuschung. Geprüft wird NACH den Rechten:
+        // Wer den Auftrag gar nicht sehen darf, soll auch nicht erfahren, dass
+        // es ihn gibt.
+        if (callDataOf(parseState(call)).probelauf === true) continue
       }
 
       const cLat = Number(call.get("lat")), cLon = Number(call.get("lon"))
@@ -1313,6 +1382,13 @@ routerAdd("GET", "/api/quests/near", (e) => {
         votesNeeded: verify === "crowd" ? noetigeStimmen(c) : null,
         votes: stimmen,
         nachweis: Array.isArray(c.nachweis) ? c.nachweis : [],
+        // Probelauf: nur fuer den Autor sichtbar, zahlt nichts aus.
+        probelauf: c.probelauf === true,
+        // 0 = überall annehmbar. Der Client entscheidet damit, ob er den Knopf
+        // anbietet, und was er beim Annehmen über den Standort mitschickt.
+        annahmeRadiusM: Number(c.annahmeRadiusM) || 0,
+        // 0 = der Auftrag sagt nichts; dann gilt beim Melden VOR_ORT_RADIUS_M.
+        vorOrtRadiusM: Number(c.vorOrtRadiusM) || 0,
         rewards: (c.rewardItems || []).length,
         rewardParts: belohnungText(c.rewardItems || []),
         repeatable: c.repeatable === true,
@@ -1328,7 +1404,20 @@ routerAdd("GET", "/api/quests/near", (e) => {
         pendingByName: c.pendingBy ? kontoName(c.pendingBy) : null,
         submittedAt: c.submittedAt || null,
         submissionProof: darfNachweisSehen ? (c.submissionProof || null) : null,
-        canAccept: !meins && frei && meineStufe >= noetigesKarma && !istAbgelaufen(c),
+        // ZWEI VERSCHIEDENE FRAGEN, und sie auseinanderzuhalten ist der Punkt:
+        //
+        //   canAccept — kann ich ihn GERADE JETZT annehmen? Wird falsch, sobald
+        //               ihn jemand hat.
+        //   canPlay   — darf ich diesen Auftrag ueberhaupt selbst spielen?
+        //               Bleibt wahr, auch nachdem ich ihn angenommen habe.
+        //
+        // Der Client hatte anfangs nur `canAccept` und leitete daraus beides ab.
+        // Folge: Kaum angenommen, verschwanden ALLE Knoepfe — auch „Erledigt
+        // melden". Der eigene Probelauf liess sich annehmen und danach nicht
+        // mehr abschliessen.
+        canPlay: !meins || c.probelauf === true || superuser,
+        canAccept: (!meins || c.probelauf === true || superuser)
+          && frei && meineStufe >= noetigesKarma && !istAbgelaufen(c),
         canVerify: darfPruefen,
       })
     }

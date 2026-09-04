@@ -50,6 +50,9 @@ export const texte = {
   'Neuer Auftrag': 'New quest',
   'Auftrag hier erzeugen': 'Create quest here',
   'Schließen': 'Close',
+  'Speichern': 'Save',
+  'Veröffentlichen': 'Publish',
+  'Zurückziehen': 'Withdraw',
 
   // ── Aufträge: Melden und Abnahme ────────────────────────────────────
   'Was hast du getan?': 'What did you do?',
@@ -347,6 +350,189 @@ export const texte = {
   'fehler.proof_other_call': 'Those images belong to a different quest.',
   'fehler.proof_empty': 'No image was attached.',
   'fehler.reward_reduced': 'Someone is working on this quest — the reward may be raised, not reduced.',
+
+  // ── Auftragsfenster ────────────────────────────────────────────────────
+  'Aufträge': 'Calls',
+  'Auftrag': 'Call',
+  'Aktualisieren': 'Refresh',
+  'Zurück': 'Back',
+  'Auf Karte': 'Show on map',
+  'Neuer Auftrag': 'New call',
+  'von': 'from',
+  'unbekannt': 'unknown',
+  'eingereicht von': 'submitted by',
+  'Ort': 'Place',
+  'entfernt': 'away',
+  'Belohnung': 'Reward',
+  'ohne Belohnung': 'no reward',
+  '+{n}/Tag solange offen': '+{n}/day while open',
+  'Bestätigung': 'Confirmation',
+  'Voraussetzung': 'Requirement',
+  'Eingereicht': 'Submitted',
+  'Dein Karma reicht für diesen Auftrag noch nicht.': 'Your karma is not yet enough for this call.',
+  'Keine Aufträge in der Nähe abrufbar.': 'No nearby calls available.',
+  'abgelaufen': 'expired',
+  'min': 'min',
+  'h': 'h',
+  'T': 'd',
+
+  // ── Auftrags-Editor ────────────────────────────────────────────────────
+  'Probelauf': 'Trial run',
+  'Nur du siehst ihn, und du darfst ihn selbst erledigen. Es wird nichts ausgezahlt — weder Belohnung noch Karma.':
+    'Only you can see it, and you may complete it yourself. Nothing is paid out — neither reward nor karma.',
+  'Beschreibung': 'Description',
+  'Titel': 'Title',
+  'Wo annehmbar': 'Where acceptable',
+  'Der Bearbeiter muss zum Annehmen dort sein. Unter 500 m verlangt das von ihm die Standort-Freigabe „Nähe".':
+    'To accept, the worker must be there. Below 500 m this requires their location sharing to be set to “Nearby”.',
+  'Frist und Belohnung': 'Deadline and reward',
+  'Frist': 'Deadline',
+  'Belohnung — was der Bearbeiter bekommt': 'Reward — what the worker gets',
+  'Steigt je Tag, solange niemand übernimmt': 'Increases per day while nobody takes it on',
+  'Wird beim Veröffentlichen aus deinem Inventar treuhänderisch gebunden. Bindung und Auszahlung macht der Server.':
+    'Held in escrow from your inventory when published. The server handles both the hold and the payout.',
+  'Wiederholbar': 'Repeatable',
+  'Mehrere Spieler können den Auftrag nacheinander erledigen.': 'Several players can complete the call one after another.',
+  'Vorrat — wie viel insgesamt hinterlegt wird': 'Stock — how much is set aside in total',
+  'Aufgabe': 'Task',
+  'Zu erledigen': 'To be done',
+  'Wie nah beim Melden': 'How close when reporting',
+  'Unter 500 m verlangt das vom Bearbeiter die Standort-Freigabe „Genau" — eine auf 100 m gerundete Angabe kann so eine Frage nicht beantworten.':
+    'Below 500 m this requires the worker’s location sharing to be set to “Exact” — a position rounded to 100 m cannot answer such a question.',
+  'Wer bestätigt den Abschluss': 'Who confirms completion',
+  'Nötige Bestätigungen': 'Confirmations needed',
+  'Gruppe, die abnimmt': 'Group that signs off',
+  'Geforderte Gegenstände': 'Required items',
+  'Gattung und Anzahl — der Server sucht sie beim Abschluss im Inventar des Bearbeiters. Leer heißt: nichts abgeben.':
+    'Kind and quantity — on completion the server looks for them in the worker’s inventory. Empty means: nothing to hand over.',
+  'Entfernen': 'Remove',
+  'Forderung': 'Requirement',
+  'Nötiges Karma des Bearbeiters': 'Karma the worker needs',
+  'Sichtbarkeit': 'Visibility',
+  'Wer sieht den Auftrag': 'Who sees the call',
+  'Welche Gruppe': 'Which group',
+  'Ab wann steht der Auftrag auch in der Regionsliste': 'When the call also appears in the regional list',
+  'Vergibt eine Figur den Auftrag, ist er zunächst nur im Gespräch mit ihr zu haben. Nimmt ihn dort niemand an, erscheint er nach der eingestellten Wartezeit zusätzlich in der Regionsliste, dort mit dem Zustand „angeboten“. „Sofort“ heißt: gleich in beiden. „Nie“ heißt: nur im Gespräch, dauerhaft.':
+    'If a character hands out the call, at first it is only available by talking to them. If nobody takes it there, it additionally appears in the regional list after the set waiting time, marked “offered”. “Immediately” means: in both at once. “Never” means: only in conversation, permanently.',
+  'nichts im Inventar auf diesem Server': 'nothing in your inventory on this server',
+  'keine Gruppe vorhanden': 'no group available',
+  '— wählen —': '— choose —',
+
+  // ── Auswahllisten ──────────────────────────────────────────────────────
+  'privat — nur ich': 'private — only me',
+  'meine Gruppe': 'my group',
+  'öffentlich in der Region': 'public in the region',
+  'überall': 'anywhere',
+  'direkt am Ort (50 m)': 'right at the spot (50 m)',
+  'in Sichtweite (250 m)': 'within sight (250 m)',
+  'in der Gegend (1 km)': 'in the area (1 km)',
+  'am Ort (150 m)': 'at the spot (150 m)',
+  'in der Gegend (500 m)': 'in the area (500 m)',
+  'keine Frist': 'no deadline',
+  '6 Stunden': '6 hours',
+  '1 Tag': '1 day',
+  '3 Tage': '3 days',
+  '7 Tage': '7 days',
+  '14 Tage': '14 days',
+  'sofort': 'immediately',
+  'erst nach 6 Stunden': 'after 6 hours',
+  'erst nach 1 Tag': 'after 1 day',
+  'erst nach 3 Tagen': 'after 3 days',
+  'nie — nur bei der Figur': 'never — only from the character',
+
+  // ── „Nur vor Ort" ──────────────────────────────────────────────────────
+  'Nur vor Ort annehmbar — du bist nah genug.': 'Can only be accepted on site — you are close enough.',
+  'Nur vor Ort annehmbar — näher als {weite} heran.': 'Can only be accepted on site — get closer than {weite}.',
+  'Nur vor Ort annehmbar.': 'Can only be accepted on site.',
+  'Dein Standort ist gerade unbekannt — der Auftrag lässt sich nur vor Ort annehmen.':
+    'Your location is currently unknown — this call can only be accepted on site.',
+  'Dieser Auftrag hat keine Position.': 'This call has no position.',
+
+  // ── Rückmeldung zum Auftragsstand ──────────────────────────────────────
+  'Auftrag „{titel}" ist abgeschlossen.': 'Call “{titel}” is complete.',
+  'Auftrag „{titel}" wartet auf Abnahme.': 'Call “{titel}” is awaiting review.',
+  'Auftrag „{titel}" wurde zurückgewiesen.': 'Call “{titel}” was rejected.',
+  'Auftrag „{titel}" ist abgelaufen.': 'Call “{titel}” has expired.',
+  'Auftrag „{titel}" abgeschlossen.': 'Call “{titel}” completed.',
+  'Auftrag „{titel}" gemeldet — wartet auf Abnahme.': 'Call “{titel}” reported — awaiting review.',
+  'Auftrag „{titel}" angenommen.': 'Call “{titel}” accepted.',
+  'Abschluss bestätigt: „{titel}".': 'Completion confirmed: “{titel}”.',
+  'Abschluss zurückgewiesen: „{titel}".': 'Completion rejected: “{titel}”.',
+
+  // ── Server-Meldungen in der Liste ──────────────────────────────────────
+  '{server}: nicht angemeldet — Aufträge von dort fehlen.': '{server}: not signed in — calls from there are missing.',
+  'Für {server} ist kein Standort freigegeben — Aufträge in der Nähe bleiben ausgeblendet. Zu ändern unter Einstellungen › Standort.':
+    'No location is shared with {server} — nearby calls stay hidden. Change this under Settings › Location.',
+
+  // ── Kontextmenü ────────────────────────────────────────────────────────
+  'Bearbeiten': 'Edit',
+  '✥ Verschieben/Drehen': '✥ Move/rotate',
+  'Berechtigungen': 'Permissions',
+  '🎒 Einsammeln': '🎒 Pick up',
+  'Löschen': 'Delete',
+  'Interaktionen': 'Interactions',
+  'Untersuchen': 'Examine',
+  'Suchen …': 'Search …',
+  'Aktionen durchsuchen': 'Search actions',
+  'Nichts gefunden.': 'Nothing found.',
+  '🔍 Untersuchen': '🔍 Examine',
+  '✏️ Bearbeiten': '✏️ Edit',
+  '📍 Platzieren': '📍 Place',
+  '🗑 Löschen': '🗑 Delete',
+  '⚙️ Einstellungen': '⚙️ Settings',
+  '💡 Licht-Effekt': '💡 Light effect',
+  '🧭 Kalibrieren': '🧭 Calibrate',
+
+  // ── Reiter und Ansichten ───────────────────────────────────────────────
+  'Karte': 'Map',
+  'AR': 'AR',
+  'Objekte': 'Objects',
+  'Einstellungen': 'Settings',
+  'Satellit': 'Satellite',
+  'Nur die Oberfläche — die Ansicht lädt dabei neu. Auftragstexte und Namen bleiben, wie ihre Verfasser sie geschrieben haben.':
+    'The interface only — the view reloads. Call texts and names stay as their authors wrote them.',
+
+  // ── Debug-Ebenen und Objektarten ───────────────────────────────────────
+  'Bodengitter': 'Ground grid',
+  'Koordinatenachsen': 'Coordinate axes',
+  'Gebäudeumrisse': 'Building outlines',
+  'Straßenzüge': 'Streets',
+  'Gewässer': 'Water',
+  'Geländerelief': 'Terrain relief',
+  'Allgemein': 'General',
+  'NPC': 'NPC',
+  'Gegner': 'Enemy',
+  'Tier': 'Animal',
+  'Drache': 'Dragon',
+  'Gegenstand': 'Item',
+  'Diamant': 'Diamond',
+  'Hinweis': 'Note',
+  'Monster': 'Monster',
+
+  // ── Nachrichten-Kategorien ─────────────────────────────────────────────
+  'Dialog': 'Dialogue',
+  'Aktion': 'Action',
+  'System': 'System',
+  'UWB': 'UWB',
+  'Debug': 'Debug',
+
+  // ── WLAN ───────────────────────────────────────────────────────────────
+  'WEP': 'WEP',
+  'WPA': 'WPA',
+  'WPA2': 'WPA2',
+  'WPA3': 'WPA3',
+  'Sonstige': 'Other',
+  'Alle WLANs': 'All Wi-Fi networks',
+
+  // ── Sprachen ───────────────────────────────────────────────────────────
+  'Deutsch': 'German',
+  'English': 'English',
+  'egal — auch ohne Karma': 'any — no karma needed',
+  'ab Karma 1': 'karma 1 and up',
+  'ab Karma 2': 'karma 2 and up',
+  'ab Karma 3': 'karma 3 and up',
+  'ab Karma 4': 'karma 4 and up',
+  'ab Karma 5': 'karma 5 and up',
 }
 
 export default texte

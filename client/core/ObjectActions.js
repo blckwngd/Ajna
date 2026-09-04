@@ -45,7 +45,7 @@ const TALK_ACTIONS = new Set(['talk', 'sprechen'])
 const labelFor = (a) => a?.label || ACTION_LABELS[String(a?.key || '').toLowerCase()] || a?.key || '?'
 
 export class ObjectActions {
-  constructor({ ajna, editorUI, contextMenu, permissionDialog, onInteract, onInteractError, getPosition, onGizmo, onTalk }) {
+  constructor({ ajna, editorUI, contextMenu, permissionDialog, onInteract, onInteractError, getPosition, onGizmo, onTalk, onQuestAccepted }) {
     this.ajna = ajna
     this.editorUI = editorUI
     this.contextMenu = contextMenu
@@ -53,7 +53,12 @@ export class ObjectActions {
     // „Verschieben/Drehen": heftet das Editor-Gizmo an das Objekt (AR-View).
     this.onGizmo = onGizmo || null
     // „Sprechen“ öffnet ein Gespräch statt ein Interaktions-Ereignis zu senden.
-    this.onTalk = onTalk || null
+    this.onTalk = onTalk
+    // Nach dem Annehmen soll die Auftragsliste nachziehen — ohne das bliebe
+    // der Auftrag dort auf „offen" stehen, bis jemand neu lädt.
+    this.onQuestAccepted = onQuestAccepted || null
+    // „Erledigt melden" aus dem Kontextmenü — öffnet das Auftragsfenster.
+    this.onQuestSubmit = null
     // EXAKTE Position des Spielers (bleibt auf dem Gerät). Nur Aktionen aus
     // POSITION_ACTIONS bekommen daraus überhaupt etwas mit — und auch dann nur
     // so genau, wie die Stufe für DIESEN Server es erlaubt.
@@ -187,16 +192,65 @@ export class ObjectActions {
     const c = record.state?.call || {}
     const status = c.status || 'open'
     const claimedByMe = !!me && c.claimedBy === me.id
+    const meins = !!me && String(record.owner || '') === me.id
     const out = actions.filter(a => {
       const k = String(a?.key || '').toLowerCase()
       if (k === 'accept' || k === 'annehmen') return status === 'open'
       if (k === 'complete' || k === 'erledigt' || k === 'erledigen') return status === 'claimed' && claimedByMe
       return true
     })
+    // ANNEHMEN SELBST ANBIETEN, nicht nur durchlassen.
+    //
+    // Bisher wurde eine vorhandene Liste nur GEFILTERT. Ein Auftrag, den ein
+    // Mensch in der App schreibt, hat aber gar keine `state.actions` — im
+    // Kontextmenü der Karte stand deshalb nur „Untersuchen", und ein Auftrag
+    // liess sich dort grundsätzlich nicht annehmen. Aufgefallen ist es erst,
+    // als ein Probelauf ausprobiert werden sollte: Im Auftragsfenster stand
+    // der Knopf, auf der Karte nicht.
+    //
+    // Die Regel ist dieselbe wie im Auftragsfenster: den EIGENEN Auftrag nur
+    // als Probelauf. Das Superuser-Recht kennt der Client hier nicht — wer es
+    // hat, nimmt über das Auftragsfenster an, das den Serverbescheid mitbringt.
+    const offen = status === 'open' && !c.claimedBy
+    const darfAnnehmen = offen && (!meins || c.probelauf === true)
+    if (darfAnnehmen && !out.some(a => /^(accept|annehmen)$/i.test(String(a?.key || '')))) {
+      out.unshift({ key: 'accept', label: 'Annehmen' })
+    }
+    // Wer ihn hält, soll ihn auch von hier aus melden können. Der Klick führt
+    // ins Auftragsfenster: Dort steht das Melde-Formular (Fotos, Notiz), und
+    // das ein zweites Mal zu bauen hiesse, es zweimal pflegen zu müssen.
+    if (claimedByMe && !out.some(a => /^(submit|complete|erledigt)/i.test(String(a?.key || '')))) {
+      out.unshift({ key: 'submit', label: 'Erledigt melden' })
+    }
     if (!out.some(a => /^(examine|lesen|read)$/i.test(String(a?.key || '')))) {
       out.unshift({ key: 'examine', label: 'Untersuchen' })
     }
     return out
+  }
+
+  /**
+   * Auftrag annehmen — über die Auftrags-Route, nicht als Interaktions-Ereignis.
+   *
+   * Das ist der Grund, warum ein „Annehmen" im Kartenmenü auch dann nichts
+   * bewirkt hätte, wenn es dagestanden wäre: `_triggerAction` verschickt sonst
+   * ein generisches `interact`, das kein Agent entgegennimmt. Ein Auftrag wird
+   * aber vom SERVER vergeben, nicht von einer Figur.
+   */
+  async _acceptCall(record) {
+    const c = record.state?.call || {}
+    const r = Number(c.annahmeRadiusM) || 0
+    const ort = r > 0
+      ? { ich: this.getPosition?.() || null, ziel: { lat: record.lat, lon: record.lon }, radiusM: r }
+      : null
+    try {
+      await this.ajna.acceptQuest(record.id, ort)
+      this.onQuestAccepted?.(record)
+    } catch (err) {
+      const text = err?.response?.error || err?.message || String(err)
+      try { this.onInteractError?.(record, 'accept', text) }
+      catch (e) { console.warn('[quest] Rückmeldung:', e) }
+      if (!this.onInteractError) alert(text)
+    }
   }
 
   // Ruft die serverseitige Route auf, die nach Permission-Check ein
@@ -232,6 +286,15 @@ export class ObjectActions {
       // Fehler bleiben still: nicht jede ansprechbare Figur hat einen Agent.
       this.ajna.interact(record.id, actionKey)
         .catch(err => console.debug('[talk] interact:', err?.message || err))
+      return
+    }
+    // Ein Auftrag wird über seine eigene Route angenommen (siehe _acceptCall).
+    if (record?.type === 'call' && /^(accept|annehmen)$/i.test(String(actionKey))) {
+      return this._acceptCall(record)
+    }
+    // Melden braucht das Formular — also dorthin, wo es steht.
+    if (record?.type === 'call' && /^(submit|complete|erledigt)/i.test(String(actionKey))) {
+      this.onQuestSubmit?.(record)
       return
     }
     try {

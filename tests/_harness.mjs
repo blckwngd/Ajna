@@ -67,6 +67,33 @@ export function createContext(prefix) {
       return u
     },
 
+    /**
+     * Eine Instanz-Einstellung setzen — braucht Superuser-Rechte.
+     *
+     * `settings` ist bewusst nur fuer die Verwaltung schreibbar. Ohne
+     * Zugangsdaten (AJNA_TEST_SU / AJNA_TEST_SU_PW) meldet das hier `false`,
+     * und der aufrufende Fall ueberspringt sich selbst — lieber eine ehrliche
+     * Luecke als ein Test, der so tut als haette er geprueft.
+     */
+    async setzeEinstellung(key, value) {
+      const mail = process.env.AJNA_TEST_SU, pw = process.env.AJNA_TEST_SU_PW
+      if (!mail || !pw) return false
+      const a = await req('/api/collections/_superusers/auth-with-password', {
+        method: 'POST', body: { identity: mail, password: pw },
+      })
+      if (!a.data?.token) return false
+      const tok = a.data.token
+      const vorhanden = await req(
+        `/api/collections/settings/records?filter=${encodeURIComponent(`key="${key}"`)}`, { token: tok })
+      const treffer = vorhanden.data?.items?.[0]
+      const r = treffer
+        ? await req(`/api/collections/settings/records/${treffer.id}`,
+            { method: 'PATCH', token: tok, body: { value } })
+        : await req('/api/collections/settings/records',
+            { method: 'POST', token: tok, body: { key, value, note: 'Testlauf' } })
+      return r.status === 200
+    },
+
     async object(token, data) {
       const r = await req('/api/collections/objects/records', { method: 'POST', token, body: data })
       if (!r.data?.id) throw new Error(`Objekt anlegen fehlgeschlagen: ${JSON.stringify(r.data)}`)
@@ -128,7 +155,7 @@ export function createContext(prefix) {
 
     quest: {
       publish:  (token, id, body) => req(`/api/objects/${id}/quest/publish`,  { method: 'POST', token, body }),
-      accept:   (token, id) => req(`/api/objects/${id}/quest/accept`,   { method: 'POST', token, body: {} }),
+      accept:   (token, id, body = {}) => req(`/api/objects/${id}/quest/accept`,   { method: 'POST', token, body }),
       complete: (token, id, body = {}) => req(`/api/objects/${id}/quest/complete`, { method: 'POST', token, body }),
       cancel:   (token, id) => req(`/api/objects/${id}/quest/cancel`,   { method: 'POST', token, body: {} }),
       approve:  (token, id, body = {}) => req(`/api/objects/${id}/quest/approve`, { method: 'POST', token, body }),

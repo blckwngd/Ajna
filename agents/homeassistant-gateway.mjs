@@ -305,6 +305,11 @@ controller = await ensureController([])
 subscribeController(controller)
 adoptExisting()
 
+// Wird ein Geraeteobjekt geloescht, gehoert es zurueck in den Katalog — sonst
+// waere es bis zum naechsten Neustart des Agenten nicht wieder anzulegen.
+// Umgekehrt faellt es heraus, sobald es jemand anlegt.
+ajna.onObjectsChanged?.(() => { try { katalogPruefen() } catch {} })
+
 console.log(`[ha-gateway] bereit. Warte auf HA-State-Topics unter ${BASE}/… (Strg+C zum Beenden)`)
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -333,8 +338,29 @@ function onMqtt(topic, payloadBuf) {
   if (kind === 'state') updateObjectsFor(entityId)
 }
 
+/** Objekt dieser Instanz zu einer Entitaet — oder null. */
+function objektFuer(entityId) {
+  for (const o of ajna.getObjects()) {
+    if (o?.state?.ha_entity === entityId && o?.state?.ha_instance === HA_INSTANCE) return o
+  }
+  return null
+}
+
+/**
+ * Was der Controller zum Anlegen anbietet: NUR was noch nicht in der Welt steht.
+ *
+ * Die Liste war der vollstaendige Entitaeten-Katalog — auch alles, was laengst
+ * ein Objekt hat. In einem echten Haushalt sind das schnell mehrere Dutzend
+ * Eintraege, von denen die meisten nichts mehr bewirken sollten (sie legten das
+ * Geraet ein zweites Mal an). Auf dem Telefon passte das Menue nicht mehr aufs
+ * Display.
+ *
+ * Jetzt schrumpft der Katalog mit jedem angelegten Geraet: Er beantwortet die
+ * Frage „was fehlt noch", nicht „was gibt es".
+ */
 function usableList() {
   return [...registry.entries()]
+    .filter(([entity_id]) => !objektFuer(entity_id))
     .map(([entity_id, e]) => ({ entity_id, domain: e.domain, friendly: e.friendly || entity_id }))
     .sort((a, b) => a.friendly.localeCompare(b.friendly, 'de'))
 }
@@ -342,6 +368,24 @@ function usableList() {
 function scheduleControllerRefresh() {
   if (refreshTimer) return
   refreshTimer = setTimeout(() => { refreshTimer = null; refreshController().catch(() => {}) }, 1500)
+}
+
+/**
+ * Katalog nachziehen, wenn sich die Objektwelt geaendert hat.
+ *
+ * SCHLEIFENSCHUTZ: `refreshController` schreibt selbst ein Objekt, und jedes
+ * Schreiben meldet eine Aenderung. Ein blosser Haken „bei Aenderung neu
+ * schreiben" liefe fuer immer im Kreis — die 1,5-s-Bremse machte daraus keinen
+ * Ausweg, nur eine langsamere Schleife. Verglichen wird deshalb der INHALT:
+ * Nur wenn sich die Menge der noch offenen Geraete wirklich unterscheidet,
+ * wird geschrieben.
+ */
+let katalogStand = null
+function katalogPruefen() {
+  const sig = usableList().map(e => e.entity_id).join(',')
+  if (sig === katalogStand) return
+  katalogStand = sig
+  scheduleControllerRefresh()
 }
 
 // HA-Zustand → alle Ajna-Objekte dieser Entität aktualisieren.
@@ -392,7 +436,7 @@ async function ensureController(list) {
       name: `${CONTROLLER_NAME} (${HA_INSTANCE})`,
       type: 'item',
       lat: HA_LAT, lon: HA_LON, altitude: 0,
-      description: 'Smart-Home-Controller (MQTT). Kontextmenü öffnen und eine Entität hinzufügen.',
+      description: 'Smart-Home-Controller (MQTT). Kontextmenü öffnen und ein Gerät in die Welt holen.',
       appearance: { emoji: '🏠' },
       state: { ha_controller: true, ha_bridge: true, ha_instance: HA_INSTANCE, actions, realtime: true },
     })
@@ -404,10 +448,13 @@ async function ensureController(list) {
 
 async function refreshController() {
   const list = usableList()
+  katalogStand = list.map(e => e.entity_id).join(',')
   const cur = ajna.getObjectById(controller.id)
   if (!cur) return
   await ajna.updateObject(controller.id, {
-    description: `Smart-Home-Controller (MQTT) — ${list.length} Entitäten.`,
+    description: list.length
+      ? `Smart-Home-Controller (MQTT) — ${list.length} Gerät(e) noch nicht in der Welt.`
+      : 'Smart-Home-Controller (MQTT) — alle Geräte sind angelegt.',
     state: { ...(cur.state || {}), actions: controllerActions(list) },
   })
 }
@@ -435,6 +482,17 @@ async function createEntityObject(entityId) {
   const domain = domainOf(entityId)
   const def = DOMAINS[domain]
   if (!def) return null
+  // Der Katalog blendet Angelegtes aus — aber er ist eine Momentaufnahme im
+  // Objekt-Datensatz. Ein Client mit aelterem Stand, zwei Leute gleichzeitig,
+  // oder ein Tippen waehrend des Abgleichs: Ohne diese Pruefung entstuende ein
+  // zweites Objekt fuer dasselbe Geraet, und beide wuerden fortan parallel
+  // geschaltet.
+  const schon = objektFuer(entityId)
+  if (schon) {
+    console.log(`[ha-gateway] "${entityId}" steht bereits in der Welt (${schon.id}) — nichts angelegt`)
+    scheduleControllerRefresh()
+    return schon
+  }
   const e = registry.get(entityId)
   const name = e?.friendly || entityId
   const off = spreadOffset(createdCount++)
@@ -455,6 +513,10 @@ async function createEntityObject(entityId) {
   subscribeEntity(rec.id, entityId, domain)
   await grantAdmin(rec.id)
   console.log(`[ha-gateway] Objekt angelegt: "${name}" (${entityId}) → ${rec.id}`)
+  // Sofort aus dem Katalog nehmen. Ohne das bliebe der Eintrag stehen, bis
+  // HomeAssistant das naechste Mal etwas meldet — und genau dann tippt jemand
+  // ein zweites Mal darauf.
+  scheduleControllerRefresh()
   return rec
 }
 

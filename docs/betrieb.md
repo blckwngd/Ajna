@@ -2,11 +2,11 @@
 
 Was ein Betreiber zur Laufzeit einstellt, und was von selbst aufgeräumt wird.
 
-## Einstellungen zur Laufzeit (`settings`)
+## Einstellungen zur Laufzeit
 
 Agents laufen als eigene Prozesse. Eine geänderte Env-Variable hieß bisher:
-jeden einzelnen neu starten. Die Collection `settings` nimmt dieselben Werte
-auf, und ein Realtime-Abo verteilt Änderungen sofort.
+jeden einzelnen neu starten. Ein Datensatz plus Realtime-Abo verteilt eine
+Änderung sofort.
 
 **Die Regel: `.env` liefert die Vorgabe, die Datenbank übersteuert sie.**
 
@@ -14,29 +14,95 @@ Eine frische Installation läuft damit aus der `.env` allein — es muss nichts
 angelegt werden, bevor irgendetwas startet. Im Betrieb dreht man an der
 Datenbank. Umgekehrt bräuchte jede Neuinstallation erst Datensätze.
 
-| Feld | |
-|---|---|
-| `key` | Punkt-getrennt, `<bereich>.<sache>` — hält die Liste sortiert |
-| `value` | JSON: Zahl, Text, Wahrheitswert oder Struktur |
-| `note` | Wozu das gut ist. Für den Menschen, der es in einem halben Jahr wiederfindet |
+### Zwei Schubladen
 
-Lesen dürfen alle angemeldeten Konten (Agents sind gewöhnliche Konten),
-schreiben nur die Verwaltung.
+| | `settings` | `agent_settings` |
+|---|---|---|
+| gehört | der **Instanz** | **einem Agenten-Konto** |
+| lesen | jedes angemeldete Konto | nur der Besitzer |
+| schreiben | nur die Verwaltung | nur der Besitzer |
+| eindeutig | je Schlüssel | je Konto **und** Schlüssel |
+| Beispiel | `proof.maxAgeDays` | `wd.count.enemy` |
+
+Ein Agent ist **kein Teil der Instanz**, an der er hängt. Er meldet sich dort an
+wie ein Spieler, kann an mehreren Servern hängen, und an einem Server können
+mehrere Agents desselben Typs arbeiten. Seine Regler sind deshalb seine eigene
+Sache. Lägen sie in der globalen Liste, wäre zweierlei kaputt:
+
+- Zwei World-Directors am selben Server teilten sich denselben Datensatz
+  `wd.count.enemy` und überschrieben sich gegenseitig.
+- Jeder Spieler könnte mitlesen, wie die Welt eingestellt ist.
+
+`settings` bleibt für das, was wirklich dem Server gehört — Aufbewahrungsfristen,
+Schonzeiten beim Aufräumen. Im Zweifel ist `agent_settings` richtig.
+
+Die Trennung braucht keinen Hook: Alle fünf Regeln der Collection lauten
+`owner = @request.auth.id`. Dieselbe Regel, die schon die Manifest-Delegation
+absichert. Die Verwaltung sieht trotzdem alles — Superuser umgehen Regeln
+grundsätzlich; geschützt sind die Agents voreinander und vor den Spielern.
+
+### Benutzung
 
 ```js
 import { Konfig } from './lib/konfig.mjs'
 
-const konf = await Konfig.starte(ajna, { praefix: 'wd' })
+const konf = await Konfig.eigene(ajna, { praefix: 'wd' })
+await konf.saee([
+  { name: 'count.enemy', envName: 'WD_COUNT_ENEMY', vorgabe: 1,
+    note: 'Soll-Bestand Gegner je Zentrum' },
+])
 konf.ganz('count.enemy', 'WD_COUNT_ENEMY', 1)   // Datenbank → Env → Vorgabe
 konf.beiAenderung(() => neuBerechnen())
 ```
 
+`Konfig.instanz(...)` liest stattdessen aus `settings`; dorthin schreibt ein
+Agent nicht.
+
+### Ein leerer Eintrag ist kein Wert
+
+`saee()` legt die Regler beim Start als **leere** Datensätze an — mit Erklärung
+und Vorgabe in der Notiz. Leer heißt: es gilt die `.env`.
+
+Stünde dort der Env-Wert, würde er die `.env` ab dem ersten Start übersteuern;
+eine spätere Änderung an der `.env` bliebe wirkungslos, ohne dass jemand sähe
+warum. Ein leerer Datensatz ist ein **Formularfeld, kein Wert**: Er zeigt, woran
+man drehen kann, und ändert nichts, solange niemand dreht.
+
+Vorhandene Einträge werden nie angefasst — sonst überschriebe jeder Neustart,
+was ein Mensch eingetragen hat. Kennt ein Server die Collection nicht (ältere
+Installation), legt der Agent gar nichts an und läuft aus der `.env` weiter.
+
+### Was nur so aussieht wie ein Regler
+
+Angeboten wird nur, was **wirklich ohne Neustart wirkt**. Ein Knopf ohne Draht
+ist schlimmer als kein Knopf: Man sucht den Fehler dann überall, nur nicht in
+der Einstellung.
+
+Beim World-Director bleiben deshalb bewusst in der `.env`:
+
+| | warum |
+|---|---|
+| `WD_AUTONOMY` | entscheidet beim Start, ob die Bewegungsschleife überhaupt anläuft |
+| `WD_ATTACK_RANGE_M` | steht als `max_distance` **im Objekt-Datensatz** — ein neuer Wert erreicht vorhandene Gegner nicht |
+| `WD_WAY_RADIUS_M` | der Wegegraph liegt mit TTL im Zwischenspeicher; die Änderung griffe irgendwann von selbst |
+| `WD_FOLLOW_AREAS` | Grundsatzentscheidung beim Start, keine Stellschraube |
+
+Takte (`WD_TICK_MS`, `WD_RECONCILE_S`, `WD_HEARTBEAT_S`) **sind** einstellbar:
+`setInterval` friert seinen Abstand zwar beim Anlegen ein, aber der Director
+behält den Griff und legt bei einer Änderung neu an.
+
+Geschwindigkeiten und Areal-Radien gelten für die **nächste geplante Route** —
+wer läuft, läuft seinen Weg zu Ende. Ein Sprung mitten im Schritt sähe aus wie
+ein Fehler.
+
 ### Was hier nicht hineingehört
 
-- **Geheimnisse.** API-Schlüssel, Passwörter, Tokens. Die Collection ist für
-  jedes angemeldete Konto lesbar, und Datensätze landen in jeder Sicherung.
-  `Konfig` weigert sich, Env-Namen mit `pass`, `secret`, `token` oder `key`
-  aus der Datenbank zu übersteuern — der Wert kommt dort immer aus der Env.
+- **Geheimnisse.** API-Schlüssel, Passwörter, Tokens. Datensätze landen in jeder
+  Sicherung, und eine Regel kann man falsch setzen. `Konfig` fragt die Datenbank
+  für Namen mit `pass`, `secret`, `token` oder `key` **gar nicht erst** — geprüft
+  wird der Env-Name *und* der Schlüssel, und die Prüfung steht vor dem Blick in
+  die Datenbank. (Sie stand ursprünglich dahinter und war damit wirkungslos,
+  sobald der Datensatz existierte — also genau dann, wenn sie gezählt hätte.)
 - **Was vor PocketBase gebraucht wird.** Die Adresse von PocketBase selbst,
   TLS-Pfade, die Anmeldedaten der Agents. Henne und Ei.
 - **Gerätelokale Entscheidungen.** Standort-Freigabe und „wer sieht mich hier"

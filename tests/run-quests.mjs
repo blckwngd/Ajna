@@ -30,5 +30,8 @@ import * as aufgebenListe from './quests/aufgeben-liste.mjs'
 import * as umlaute from './quests/umlaute.mjs'
 import * as karmaBonus from './quests/karma-bonus.mjs'
 import * as anwesenheit from './quests/anwesenheit.mjs'
+import * as vorOrt from './quests/vor-ort.mjs'
+import * as meldeNaehe from './quests/melde-naehe.mjs'
+import * as probelauf from './quests/probelauf.mjs'
 
-await runSuites('Quests', 'qtest', [basic, requires, repeat, self, orphan, save, revive, fristKarma, schwarm, nachweisListe, pruefgruppe, gruppenrechte, aufgebenListe, umlaute, karmaBonus, anwesenheit])
+await runSuites('Quests', 'qtest', [basic, requires, repeat, self, orphan, save, revive, fristKarma, schwarm, nachweisListe, pruefgruppe, gruppenrechte, aufgebenListe, umlaute, karmaBonus, anwesenheit, vorOrt, meldeNaehe, probelauf])

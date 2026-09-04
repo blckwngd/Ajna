@@ -20,14 +20,19 @@ const clamp = (v, min, max) => Math.max(min, Math.min(max, v))
  *        handle = Anfasser (z. B. Kopfzeile eines Panels). Ohne Angabe ist das
  *        Element selbst der Anfasser — bei einem Panel mit eigenem Inhalt (Karte,
  *        Liste) würde sonst jeder Griff hinein das Fenster verschieben.
+ *        aktiv = solange das `false` liefert, wird weder gezogen noch eine
+ *        gemerkte Position angewandt. Für Fenster, die zeitweise fest sitzen
+ *        (angedockte Minimap): Ohne das schriebe ein Fenstergrößenwechsel die
+ *        alte Freiposition zurück und schöbe das angedockte Fenster weg.
  * @returns {() => void} cleanup (entfernt alle Listener)
  */
-export function makeDraggable(el, { key, onClick, handle = null } = {}) {
+export function makeDraggable(el, { key, onClick, handle = null, aktiv = null } = {}) {
   if (!el) return () => {}
   const grip = handle || el
   grip.style.touchAction = 'none'   // Browser-Scroll/Gesten beim Ziehen unterdrücken
 
   const applySaved = () => {
+    if (aktiv && !aktiv()) return
     let p = null
     try { p = JSON.parse(localStorage.getItem(key) || 'null') } catch {}
     if (!p || !Number.isFinite(p.left) || !Number.isFinite(p.top)) return
@@ -81,6 +86,7 @@ export function makeDraggable(el, { key, onClick, handle = null } = {}) {
     }
   }
   const onDown = (e) => {
+    if (aktiv && !aktiv()) return
     if (e.button != null && e.button !== 0) return   // nur primär/Touch
     if (dragging) return   // zweiter Finger darf den laufenden Zug nicht kapern
     dragging = true; moved = false

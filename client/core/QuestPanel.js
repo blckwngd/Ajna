@@ -40,9 +40,17 @@ export const QUEST_STATES = {
   angenommen: { label: 'Angenommen',   tab: 'aktiv',      farbe: '#2c5d8f' },
   eingereicht:{ label: 'Wird geprüft', tab: 'aktiv',      farbe: '#6b5ba8' },
   pruefung:   { label: 'Zu prüfen',    tab: 'pruefen',    farbe: '#a8562b' },
-  erledigt:   { label: 'Erledigt',     tab: 'aktiv',      farbe: '#5a6068' },
-  abgelaufen: { label: 'Abgelaufen',   tab: 'aktiv',      farbe: '#8a3b3b' },
+  // ABGESCHLOSSEN IST NICHT AKTIV. „Aktiv" ist die Liste dessen, woran man
+  // gerade arbeitet — ein erledigter Auftrag stand dort und verstopfte sie,
+  // ohne dass man etwas mit ihm tun konnte. Er bleibt unter „Meine" auffindbar,
+  // wenn er einem gehört; dass er fertig ist, sagt eine Meldung im Verlauf
+  // (siehe MobileShell._questStandMelden).
+  erledigt:   { label: 'Erledigt',     tab: 'meine',      farbe: '#5a6068' },
+  abgelaufen: { label: 'Abgelaufen',   tab: 'meine',      farbe: '#8a3b3b' },
   entwurf:    { label: 'Entwurf',      tab: 'meine',      farbe: '#5a6068' },
+  // Ein noch nicht ausgeschriebener Auftrag, den sein Autor selbst durchspielen
+  // darf. Bleibt unter „Meine" — dort sucht ihn, wer ihn geschrieben hat.
+  probe:      { label: 'Probelauf',    tab: 'meine',      farbe: '#6b5ba8' },
 }
 
 const TABS = [
@@ -51,6 +59,36 @@ const TABS = [
   { key: 'pruefen',    label: 'Prüfen' },
   { key: 'meine',      label: 'Meine' },
 ]
+
+/**
+ * „Nur vor Ort annehmen" — was in der Detailansicht dazu steht.
+ *
+ * `null`, wenn es hier nichts zu sagen gibt: Der Auftrag trägt keine Auflage,
+ * oder Annehmen steht gerade gar nicht zur Wahl (eigener Auftrag, schon
+ * angenommen, abgelaufen). Ein Hinweis auf eine Bedingung, die niemanden
+ * betrifft, ist nur Text.
+ *
+ * Geprüft hat das der Auftrags-Dienst; hier wird nur formuliert.
+ */
+export function annehmbarkeit(q, aktionen = []) {
+  const a = q?.annahme
+  if (!a?.noetig) return null
+  if (!aktionen.some(x => x.key === 'accept')) return null
+  const weite = a.radiusM >= 1000
+    ? `${(a.radiusM / 1000).toFixed(a.radiusM % 1000 ? 1 : 0)} km`
+    : `${a.radiusM} m`
+  if (a.ok) {
+    return { ok: true, hinweis: t('Nur vor Ort annehmbar — du bist nah genug.') }
+  }
+  // Der Grund entscheidet, was zu tun ist: hingehen, die Freigabe ändern, oder
+  // auf ein Positionssignal warten. Ein gemeinsamer Text für alle drei würde
+  // zwei Dritteln der Fälle die falsche Anweisung geben.
+  if (a.grund === 'zu-weit') {
+    return { ok: false, hinweis: t('Nur vor Ort annehmbar — näher als {weite} heran.')
+      .replace('{weite}', weite) }
+  }
+  return { ok: false, hinweis: a.text || t('Nur vor Ort annehmbar.') }
+}
 
 /** Aktionen je Zustand — was der Spieler hier tun kann. */
 export const QUEST_ACTIONS = {
@@ -66,6 +104,9 @@ export const QUEST_ACTIONS = {
   // Entwürfe sind immer eigene Aufträge — dort greift „Bearbeiten" statt
   // dieser Liste (siehe _renderDetail).
   entwurf:     [],
+  // Der Probelauf ist zum Ausprobieren da — also steht das Annehmen dort, ohne
+  // Umweg über das Veröffentlichen. „Bearbeiten" kommt in _renderDetail dazu.
+  probe:       [{ key: 'accept', label: 'Annehmen', primaer: true }],
 }
 
 // ── Formatierung ─────────────────────────────────────────────────────────
@@ -84,10 +125,12 @@ export function fmtDistanz(m) {
 export function fmtFrist(bisMs, jetzt = Date.now()) {
   if (!Number.isFinite(bisMs)) return ''
   const s = Math.round((bisMs - jetzt) / 1000)
-  if (s <= 0) return 'abgelaufen'
-  if (s < 3600) return `${Math.max(1, Math.round(s / 60))} min`
-  if (s < 86400) return `${Math.round(s / 3600)} h`
-  return `${Math.round(s / 86400)} T`
+  // Auch die Einheiten laufen durch t(): Auf Englisch heisst der Tag „d",
+  // und eine Zeile „3 T" neben „Deadline" ist genau die Mischung, die stört.
+  if (s <= 0) return t('abgelaufen')
+  if (s < 3600) return `${Math.max(1, Math.round(s / 60))} ${t('min')}`
+  if (s < 86400) return `${Math.round(s / 3600)} ${t('h')}`
+  return `${Math.round(s / 86400)} ${t('T')}`
 }
 
 /**
@@ -104,11 +147,13 @@ export function fmtBelohnung(q) {
     ? teile.map(x => `${Number(x.anzahl) || 0}× ${x.was}`).join(', ')
     : (() => {
         const n = Number(q?.belohnung?.anzahl) || 0
-        const was = q?.belohnung?.was || 'Belohnung'
-        return n ? `${n}× ${was}` : 'ohne Belohnung'
+        const was = q?.belohnung?.was || t('Belohnung')
+        return n ? `${n}× ${was}` : t('ohne Belohnung')
       })()
   const plus = Number(q?.belohnung?.steigt)
-  return plus > 0 ? `${basis} · +${plus}/Tag solange offen` : basis
+  return plus > 0
+    ? `${basis} · ${t('+{n}/Tag solange offen').replace('{n}', plus)}`
+    : basis
 }
 
 const esc = (s) => String(s ?? '')
@@ -148,6 +193,7 @@ export class QuestPanel {
     this._open = false
     this._laedt = false
     this._fehler = null
+    this._hinweis = null
     this._gefuellt = false   // hat je eine Antwort vorgelegen?
     this._injectStyles()
     this._buildLauncher()
@@ -182,6 +228,19 @@ export class QuestPanel {
     if (this._open) this._render()
   }
 
+  /**
+   * Etwas fehlt in der Liste, aber nichts ist kaputt.
+   *
+   * Getrennt von `setFehler`, weil beides Verschiedenes bedeutet: Ein Fehler
+   * heisst „versuch es nochmal", ein Hinweis heisst „so hast du es
+   * eingestellt". Beides gleich rot anzuzeigen machte aus einer bewussten
+   * Entscheidung eine Störung, der jemand hinterherjagt.
+   */
+  setHinweis(text) {
+    this._hinweis = text ? String(text) : null
+    if (this._open) this._render()
+  }
+
   /** Nachladen anstoßen, falls ein Lader angeschlossen ist. */
   async reload() {
     if (!this.onReload || this._laedt) return
@@ -202,11 +261,20 @@ export class QuestPanel {
    * und der Zähler am Auslöser bliebe stumm, obwohl etwas auf ihn wartet.
    */
   questsIn(tab) {
+    // EIGENE AUFTRÄGE STANDEN NUR UNTER „MEINE" — nie unter „Aktiv".
+    //
+    // Das war richtig, solange niemand seinen eigenen Auftrag spielen konnte.
+    // Seit es den Probelauf gibt, verschwand ein selbst angenommener Auftrag
+    // aus dem Reiter, in dem man ihn sucht: „Aktiv" ist die Liste dessen,
+    // woran man ARBEITET. Deshalb entscheidet jetzt nicht mehr der Besitz,
+    // sondern ob ich ihn gerade halte.
+    const arbeiteDran = (q) => q.meine === true && q.bearbeiteIch === true
     const passt = tab === 'meine'
-      ? (q) => q.meine === true
+      ? (q) => q.meine === true && !arbeiteDran(q)
       : tab === 'pruefen'
         ? (q) => q.status === 'pruefung'
-        : (q) => q.meine !== true && (QUEST_STATES[q.status]?.tab || 'aktiv') === tab
+        : (q) => (q.meine !== true || arbeiteDran(q))
+          && (QUEST_STATES[q.status]?.tab || 'aktiv') === tab
     return this._quests.filter(passt)
       .sort((a, b) => (a.distanzM ?? Infinity) - (b.distanzM ?? Infinity))
   }
@@ -251,18 +319,35 @@ export class QuestPanel {
 
   toggle() { this._open ? this.close() : this.open() }
 
+  /**
+   * Einen bestimmten Auftrag aufschlagen — für den Weg von der Karte hierher.
+   *
+   * Öffnet das Fenster, falls es zu ist, und zeigt die Detailansicht. Steht der
+   * Auftrag noch nicht in der Liste (gerade erst angelegt), wird nachgeladen
+   * und danach aufgeschlagen; sonst landete man auf einer leeren Ansicht.
+   */
+  async zeigeAuftrag(id) {
+    if (!id) return
+    if (!this._open) this.open()
+    if (!this._quests.some(q => q.id === id) && this.onReload) {
+      try { await this.onReload() } catch { /* dann eben die Liste */ }
+    }
+    this._detail = id
+    this._render()
+  }
+
   open() {
     if (this._open || this._hidden) return
     this._open = true
     const ov = document.createElement('div')
     ov.className = 'ajna-quest-overlay'
     ov.innerHTML = `
-      <div class="ajna-quest" role="dialog" aria-modal="true" aria-label="Aufträge">
+      <div class="ajna-quest" role="dialog" aria-modal="true" aria-label="${esc(t('Aufträge'))}">
         <header>
-          <button class="qp-back" type="button" aria-label="Zurück" hidden>‹</button>
-          <h3 data-role="titel">Aufträge</h3>
-          <button class="qp-reload" type="button" aria-label="Aktualisieren" title="Aktualisieren">⟳</button>
-          <button class="qp-close" type="button" aria-label="Schließen">×</button>
+          <button class="qp-back" type="button" aria-label="${esc(t('Zurück'))}" hidden>‹</button>
+          <h3 data-role="titel">${esc(t('Aufträge'))}</h3>
+          <button class="qp-reload" type="button" aria-label="${esc(t('Aktualisieren'))}" title="${esc(t('Aktualisieren'))}">⟳</button>
+          <button class="qp-close" type="button" aria-label="${esc(t('Schließen'))}">×</button>
         </header>
         <div class="qp-tabs" role="tablist" data-role="tabs"></div>
         <div class="qp-body" data-role="body"></div>
@@ -312,7 +397,7 @@ export class QuestPanel {
     if (!this._bodyEl) return
     const detail = this._detail ? this._quests.find(q => q.id === this._detail) : null
     this._backEl.hidden = !detail
-    this._titelEl.textContent = detail ? 'Auftrag' : 'Aufträge'
+    this._titelEl.textContent = detail ? t('Auftrag') : t('Aufträge')
     this._tabsEl.hidden = !!detail
     if (detail) { this._renderDetail(detail); return }
 
@@ -326,10 +411,14 @@ export class QuestPanel {
 
     const liste = this.questsIn(this._tab)
     const neuKnopf = (this._tab === 'meine' && this.onEdit)
-      ? `<button type="button" class="qp-btn primaer qp-neu" data-a="neu">+ Neuer Auftrag</button>` : ''
-    const banner = this._fehler
+      ? `<button type="button" class="qp-btn primaer qp-neu" data-a="neu">+ ${esc(t('Neuer Auftrag'))}</button>` : ''
+    const banner = (this._fehler
       ? `<div class="qp-fehler">${esc(this._fehler)}</div>`
-      : (this._laedt ? `<div class="qp-laedt">Aufträge werden geladen …</div>` : '')
+      : (this._laedt ? `<div class="qp-laedt">${esc(t('Aufträge werden geladen …'))}</div>` : ''))
+      // Der Hinweis steht AUCH bei gefüllter Liste: Mit mehreren Servern fehlen
+      // sonst still die Aufträge eines einzelnen, und die Liste sieht
+      // vollständig aus.
+      + (this._hinweis ? `<div class="qp-hinweis">${esc(this._hinweis)}</div>` : '')
     this._bodyEl.innerHTML = banner + neuKnopf
       + (liste.length
         ? liste.map(q => this._zeileHtml(q)).join('')
@@ -344,6 +433,9 @@ export class QuestPanel {
     // über Daten, die es noch gar nicht gibt.
     if (this._laedt) return t('Aufträge werden geladen …')
     if (this._fehler) return t('Die Liste konnte nicht geladen werden.')
+    // „Hier gibt es nichts zu tun" wäre eine Falschaussage, wenn wir gar nicht
+    // gefragt haben.
+    if (this._hinweis && this._tab === 'verfuegbar') return t('Keine Aufträge in der Nähe abrufbar.')
     if (!this._gefuellt && this.onReload) return t('Noch nichts geladen.')
     if (this._tab === 'verfuegbar') return t('Hier gibt es gerade nichts zu tun.')
     if (this._tab === 'aktiv') return t('Du hast keinen Auftrag angenommen.')
@@ -373,32 +465,59 @@ export class QuestPanel {
     const st = QUEST_STATES[q.status] || QUEST_STATES.offen
     const frist = fmtFrist(q.frist)
     // Beim eigenen Auftrag bearbeitet man ihn, statt ihn anzunehmen.
-    const aktionen = q.meine
-      ? (this.onEdit ? [{ key: 'edit', label: 'Bearbeiten', primaer: true }] : [])
-      : (QUEST_ACTIONS[q.status] || [])
+    // Beim EIGENEN Auftrag kommt „Bearbeiten" dazu — es ersetzt die anderen
+    // Knoepfe aber nicht mehr.
+    //
+    // Der Server erlaubt das Durchspielen des eigenen Auftrags ausdruecklich
+    // (tests/quests/self.mjs): annehmen, melden, abnehmen. Nur die Oberflaeche
+    // hat es verborgen, und damit war der Weg fuer den haeufigsten Fall
+    // versperrt — wer eine Aufgabe schreibt, will sie zuerst selbst ausprobieren.
+    // Zu holen ist dabei nichts: Gegenstaende wandern von mir zu mir, und Karma
+    // gibt es fuer den eigenen Auftrag nicht (pb_hooks/karma.js).
+    // Beim eigenen Auftrag stehen die Spielknoepfe nur, wenn der Server sie
+    // auch zulaesst: als Probelauf oder mit Superuser-Recht. Sonst liefe
+    // „Annehmen" in ein 403 — ein Knopf, der nichts tut, ist schlimmer als
+    // keiner.
+    // `darfSpielen`, NICHT `darfAnnehmen`: Letzteres wird falsch, sobald der
+    // Auftrag vergeben ist — auch an mich selbst. Damit verschwanden nach dem
+    // Annehmen alle Knoepfe, „Erledigt melden" eingeschlossen.
+    const spielbar = !q.meine || q.darfSpielen !== false
+    const aktionen = [
+      ...(q.meine && this.onEdit ? [{ key: 'edit', label: 'Bearbeiten', primaer: !q.status || q.status === 'entwurf' }] : []),
+      ...(spielbar ? (QUEST_ACTIONS[q.status] || []) : []),
+    ]
     const anf = (q.anforderungen || []).map(a => `<li>${esc(a)}</li>`).join('')
+    // „Nur vor Ort annehmen": Der Hinweis steht auch dann da, wenn es GEHT —
+    // sonst erführe man von der Auflage erst, wenn sie einen aussperrt, und
+    // hielte den ausgegrauten Knopf für einen Fehler.
+    const vorOrt = annehmbarkeit(q, aktionen)
     this._bodyEl.innerHTML = `
       <div class="qp-detail">
         <div class="qp-row-kopf">
           <span class="qp-titel gross">${esc(q.titel)}</span>
           <span class="qp-status" style="background:${st.farbe}">${esc(t(st.label))}</span>
         </div>
-        <div class="qp-von">von ${esc(q.quelle || 'unbekannt')}${q.einreicher ? ` · eingereicht von ${esc(q.einreicher)}` : ''}</div>
+        <div class="qp-von">${esc(t('von'))} ${esc(q.quelle || t('unbekannt'))}${q.einreicher ? ` · ${esc(t('eingereicht von'))} ${esc(q.einreicher)}` : ''}</div>
         <p class="qp-text">${esc(q.text || q.kurz || '')}</p>
         <dl class="qp-fakten">
-          <dt>Ort</dt><dd>${esc(q.ort || '—')}${q.distanzM != null ? ` · ${esc(fmtDistanz(q.distanzM))} entfernt` : ''}</dd>
-          <dt>Belohnung</dt><dd>${esc(fmtBelohnung(q))}</dd>
-          ${frist ? `<dt>Frist</dt><dd${frist === 'abgelaufen' ? ' class="qp-warn"' : ''}>${esc(frist)}</dd>` : ''}
-          <dt>Abnahme</dt><dd>${esc(q.pruefung || '—')}</dd>
-          ${Number(q.karma) > 0 ? `<dt>Voraussetzung</dt><dd>${esc(karmaLabel(q.karma, { alsBedingung: true }))}</dd>` : ''}
+          <dt>${esc(t('Ort'))}</dt><dd>${esc(q.ort || '—')}${q.distanzM != null ? ` · ${esc(fmtDistanz(q.distanzM))} ${esc(t('entfernt'))}` : ''}</dd>
+          <dt>${esc(t('Belohnung'))}</dt><dd>${esc(fmtBelohnung(q))}</dd>
+          ${frist ? `<dt>${esc(t('Frist'))}</dt><dd${frist === 'abgelaufen' ? ' class="qp-warn"' : ''}>${esc(frist)}</dd>` : ''}
+          <dt>${esc(t('Bestätigung'))}</dt><dd>${esc(q.pruefung || '—')}</dd>
+          ${Number(q.karma) > 0 ? `<dt>${esc(t('Voraussetzung'))}</dt><dd>${esc(karmaLabel(q.karma, { alsBedingung: true }))}</dd>` : ''}
         </dl>
-        ${anf ? `<div class="qp-anf"><span>Nachweis</span><ul>${anf}</ul></div>` : ''}
+        ${anf ? `<div class="qp-anf"><span>${esc(t('Zu erledigen'))}</span><ul>${anf}</ul></div>` : ''}
         ${this._nachweisHtml(q)}
-        ${q.karmaOk === false ? `<div class="qp-hinweis">Dein Karma reicht für diesen Auftrag noch nicht.</div>` : ''}
+        ${q.karmaOk === false ? `<div class="qp-hinweis">${esc(t('Dein Karma reicht für diesen Auftrag noch nicht.'))}</div>` : ''}
+        ${vorOrt ? `<div class="qp-hinweis${vorOrt.ok ? '' : ' qp-warn'}">${esc(vorOrt.hinweis)}</div>` : ''}
         <div class="qp-fehler" data-role="aktionsfehler" hidden></div>
         <div class="qp-aktionen">
-          ${this.onShowOnMap ? `<button type="button" class="qp-btn" data-a="map">Auf Karte</button>` : ''}
-          ${aktionen.map(a => `<button type="button" class="qp-btn${a.primaer ? ' primaer' : ''}" data-a="${esc(a.key)}">${esc(t(a.label))}</button>`).join('')}
+          ${this.onShowOnMap ? `<button type="button" class="qp-btn" data-a="map">${esc(t('Auf Karte'))}</button>` : ''}
+          ${aktionen.map(a => {
+            const sperre = a.key === 'accept' && vorOrt && !vorOrt.ok
+            return `<button type="button" class="qp-btn${a.primaer ? ' primaer' : ''}"`
+              + ` data-a="${esc(a.key)}"${sperre ? ' disabled' : ''}>${esc(t(a.label))}</button>`
+          }).join('')}
         </div>
       </div>`
     this._bodyEl.querySelectorAll('.qp-btn').forEach(b =>
@@ -417,7 +536,7 @@ export class QuestPanel {
       teile.push(`<div>Gemeldet bei ${Number(p.at.lat).toFixed(5)}, ${Number(p.at.lon).toFixed(5)}</div>`)
     }
     if (!teile.length) return ''
-    return `<div class="qp-anf qp-eingereicht"><span>Eingereicht</span>${teile.join('')}</div>`
+    return `<div class="qp-anf qp-eingereicht"><span>${esc(t('Eingereicht'))}</span>${teile.join('')}</div>`
   }
 
   /**
@@ -437,6 +556,8 @@ export class QuestPanel {
         <label class="qp-feld">${esc(t('Was hast du getan?'))}
           <textarea data-role="notiz" rows="3" placeholder="${esc(t('Kurz beschreiben, was erledigt ist.'))}"></textarea>
         </label>
+        ${q.melden?.noetig && !q.melden.ok
+          ? `<div class="qp-hinweis qp-warn">${esc(q.melden.text)}</div>` : ''}
         ${(q.roh?.nachweis || []).includes('foto') ? `
         <label class="qp-feld">${esc(t('Bilder (bis zu drei)'))}
           <input type="file" data-role="bilder" accept="image/*" capture="environment" multiple>

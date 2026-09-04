@@ -168,3 +168,4 @@ vite.config.ts.timestamp-*
 
 # Serverseitiger Geo-Cache (Overpass-Antworten, siehe server/geo.js)
 .cache/
+tests/bilder/

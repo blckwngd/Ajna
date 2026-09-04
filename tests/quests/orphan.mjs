@@ -6,6 +6,16 @@
 
 export const name = 'Treuhand: verwaiste Bindungen heilen selbst'
 
+// SELBST DURCHGESPIELT, DESHALB ALS PROBELAUF: Seit 2026-09-02 ist der eigene
+// Auftrag gesperrt (siehe quests/probelauf.mjs) — ausser als Probelauf oder mit
+// Superuser-Recht. Der Gegenstand dieser Suite bleibt davon unberuehrt: Ein
+// Probelauf aendert nur Karma und Sichtbarkeit, der Tausch laeuft normal.
+const probelauf = async (t, A, id) => {
+  const st = (await t.read(A.token, id)).state
+  st.call = { ...(st.call || {}), probelauf: true }
+  await t.patch(A.token, id, { state: st })
+}
+
 export async function run(t) {
   const A = await t.user('solo')
 
@@ -18,6 +28,7 @@ export async function run(t) {
   let r = await t.quest.publish(A.token, call.id, {
     rewardItems: [c1.id, c2.id], repeatable: true, rewardPerRun: 1,
   })
+  await probelauf(t, A, call.id)
   t.check('publish-Echo liefert repeatable/rewardPerRun zurück',
     r.data?.call?.repeatable === true && r.data?.call?.rewardPerRun === 1,
     'repeatable=' + JSON.stringify(r.data?.call?.repeatable))
@@ -37,6 +48,7 @@ export async function run(t) {
   const call2 = await t.call(A.token, 'Rep2')
   // Vorrat 3, 2 pro Durchlauf → nach Durchlauf 1 bleibt 1 Item übrig, Auftrag done.
   await t.quest.publish(A.token, call2.id, { rewardItems: d.map(x => x.id), repeatable: true, rewardPerRun: 2 })
+  await probelauf(t, A, call2.id)
   await t.quest.accept(A.token, call2.id)
   r = await t.quest.complete(A.token, call2.id)
   t.check('Vorrat 3 / 2 pro Durchlauf → nach 1 Durchlauf done', r.status === 200 && r.data?.status === 'done',
@@ -50,7 +62,9 @@ export async function run(t) {
   const e2 = await t.item(A.token, 'E2'); await t.carry(A.token, e2.id)
   const call3 = await t.call(A.token, 'Rep3')
   await t.quest.publish(A.token, call3.id, { rewardItems: [e1.id] })
+  await probelauf(t, A, call3.id)
   await t.quest.publish(A.token, call3.id, { rewardItems: [e2.id] })
+  await probelauf(t, A, call3.id)
   r = await t.place(A.token, e1.id)
   t.check('Neu veröffentlicht ohne altes Item → altes ist frei', r.status === 200,
     'HTTP ' + r.status + ' ' + (r.data?.error || ''))

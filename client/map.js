@@ -838,6 +838,9 @@ async function init() {
     // Ohne Shell (eigenständige Seite) passiert nichts — die Figur antwortet
     // trotzdem, das Panel übernimmt das Gespräch dann beim ersten Satz.
     onTalk: (record) => window.ajnaTalkTo?.(record),
+    // Angenommen wird über die Auftrags-Route; danach die Liste nachziehen,
+    // sonst stünde der Auftrag dort weiter auf „offen".
+    onQuestAccepted: () => window.ajnaQuestsReload?.(),
     // Für Aktionen wie „Rufen": exakte Position, die ObjectActions je nach
     // Privatsphäre-Stufe vergröbert oder gar nicht mitschickt.
     getPosition: () => _hub?.positionSource?.getWorldPosition?.() || window.ajnaGeo?.position || null,
@@ -848,6 +851,9 @@ async function init() {
     onInteractError: (record, key, message) =>
       toast.show(message || t('Aktion nicht möglich'), { title: record?.name || 'Aktion' })
   })
+  // Melden fuehrt ins Auftragsfenster — dort steht das Formular.
+  objectActions.onQuestSubmit = (rec) => window.ajnaQuestOeffnen?.(rec?.id)
+
   // EditorUI nachträglich exponieren (ajnaUI entsteht vor init) — die Shell
   // (Objekte-Tab „Bearbeiten") öffnet darüber den Karten-Editor.
   window.ajnaUI.editorUI = editorUI

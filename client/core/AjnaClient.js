@@ -390,10 +390,20 @@ export class AjnaClient {
     })
   }
 
-  /** Auftrag annehmen (jeder mit view-Recht; hält ihn für dich reserviert). */
-  async acceptQuest(callId) {
+  /**
+   * Auftrag annehmen (jeder mit view-Recht; hält ihn für dich reserviert).
+   *
+   * `ort` trägt den Standort bei, falls der Auftrag „nur vor Ort" verlangt —
+   * entweder als Koordinate (`at`) oder nur als „ich bin im Umkreis" (`nah`).
+   * WAS davon rausgeht, entscheidet der Manager anhand der Freigabe-Stufe;
+   * hier wird nur weitergereicht.
+   *
+   * @param {string} callId
+   * @param {{at?: {lat, lon}, nah?: boolean}|null} [ort]
+   */
+  async acceptQuest(callId, ort = null) {
     const raw = this._toRaw(callId)
-    return this.pb.send(`/api/objects/${raw}/quest/accept`, { method: 'POST', body: {} })
+    return this.pb.send(`/api/objects/${raw}/quest/accept`, { method: 'POST', body: ort || {} })
   }
 
   /**
@@ -476,7 +486,16 @@ export class AjnaClient {
     if (Number.isFinite(lat) && Number.isFinite(lon)) { p.set('lat', String(lat)); p.set('lon', String(lon)) }
     if (radius) p.set('radius', String(radius))
     if (mine) p.set('mine', '1')
-    const res = await this.pb.send(`/api/quests/near?${p.toString()}`, { method: 'GET' })
+    // Eigener requestKey je Variante. QuestService.laden() feuert Region- und
+    // mine-Abfrage parallel über Promise.all; beide gehen an denselben Pfad.
+    // Ohne eigenen Schlüssel leitet das SDK für beide denselben ab und storniert
+    // die erste — Symptom: "The request was autocancelled" und eine leere Liste.
+    // Nicht requestKey:null, damit die nützliche Seite erhalten bleibt: eine
+    // neue Regionsabfrage soll eine noch laufende, veraltete weiterhin ablösen.
+    const res = await this.pb.send(`/api/quests/near?${p.toString()}`, {
+      method: 'GET',
+      requestKey: mine ? 'quests-near-mine' : 'quests-near-region',
+    })
     const liste = Array.isArray(res?.quests) ? res.quests : []
     // Dieselben zusammengesetzten IDs wie bei Objekten — ein Auftrag IST ein
     // Objekt, und jede Aktion darauf muss wieder beim richtigen Server landen.

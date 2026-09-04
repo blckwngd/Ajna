@@ -515,7 +515,13 @@ qPanel._quests = [
 
 const ids = (tab) => qPanel.questsIn(tab).map(x => x.id).join('')
 check('offen und angeboten stehen unter „Verfügbar"', ids('verfuegbar') === 'ba')
-check('angenommen, eingereicht und abgelaufen unter „Aktiv"', ids('aktiv') === 'dce')
+// „Aktiv" ist die Liste dessen, woran man ARBEITET. Ein erledigter oder
+// abgelaufener Auftrag stand dort und verstopfte sie, ohne dass sich mit ihm
+// etwas tun liesse — er ist jetzt unter „Meine" (eigene) bzw. gar nicht mehr
+// gelistet, und dass er fertig ist, sagt eine Meldung im Verlauf.
+check('angenommen und eingereicht unter „Aktiv"', ids('aktiv') === 'dc')
+check('erledigt und abgelaufen stehen NICHT mehr unter „Aktiv"',
+  !ids('aktiv').includes('e'))
 check('zu pruefende unter „Prüfen"', ids('pruefen') === 'gf')
 check('naechstgelegene zuerst', qPanel.questsIn('verfuegbar')[0].id === 'b')
 check('Zaehler am Auslöser = was auf mich wartet', qPanel.offeneP === 2)
@@ -1054,11 +1060,57 @@ console.log('\n── Konfiguration')
   check('Geheimnisse bleiben der Env vorbehalten', /VERBOTEN = \/\(pass\|secret\|token\|key/.test(k))
   // Ein Agent, der ohne DB-Einstellungen nicht startet, waere ein Rueckschritt.
   check('ohne Datenbank laeuft es weiter', /es gilt die \.env/.test(k))
-  check('Aenderungen wirken ohne Neustart', /collection\('settings'\)\.subscribe/.test(k))
+  check('Aenderungen wirken ohne Neustart', /collection\(this\.collection\)\.subscribe/.test(k))
+  // Die Sperre stand urspruenglich HINTER dem Blick in die Datenbank und war
+  // damit wirkungslos, sobald der Datensatz existierte — also genau dann, wenn
+  // sie gezaehlt haette. Sie muss vor dem Lesen stehen.
+  const rohBody = k.slice(k.indexOf('roh(name, envName'))
+  check('die Geheimnis-Sperre steht VOR der Datenbank',
+    rohBody.indexOf('VERBOTEN.test') < rohBody.indexOf('this._werte.has(voll)'))
+  check('und greift auch beim Schluessel, nicht nur beim Env-Namen',
+    /VERBOTEN\.test\(voll\)/.test(rohBody))
 
   const mig = readFileSync(new URL('../pocketbase/pb_migrations/1787500000_settings.js', import.meta.url), 'utf8')
   check('schreiben darf nur die Verwaltung', /createRule: null/.test(mig))
   check('lesen duerfen angemeldete Konten', /listRule: '@request\.auth\.id != ""'/.test(mig))
+}
+
+// ── Ein Agent gehoert nicht der Instanz ─────────────────────────────────
+//
+// Ein Agent haengt sich an einen Server wie ein Spieler. Seine Regler sind
+// deshalb SEINE Sache: Zwei World-Directors am selben Server duerfen sich nicht
+// gegenseitig ueberschreiben, und kein Spieler soll mitlesen, wie die Welt
+// eingestellt ist.
+console.log('\n── Eigene Einstellungen der Agents')
+{
+  const k = readFileSync(new URL('../agents/lib/konfig.mjs', import.meta.url), 'utf8')
+  const mig = readFileSync(new URL('../pocketbase/pb_migrations/1787900000_agent_settings.js', import.meta.url), 'utf8')
+
+  check('es gibt zwei getrennte Schubladen',
+    /static async eigene/.test(k) && /static async instanz/.test(k) &&
+    /agent_settings' : 'settings'/.test(k))
+  // Fuenfmal dieselbe Regel — und wirklich alle fuenf: Faende eine davon nicht
+  // statt, waere die Luecke genau dort, wo niemand hinsieht.
+  check('alle Rechte haengen am Eigentuemer',
+    ['listRule', 'viewRule', 'createRule', 'updateRule', 'deleteRule']
+      .every(r => new RegExp(`${r}:\\s*'owner = @request\\.auth\\.id'`).test(mig)))
+  check('der Schluessel ist nur JE KONTO eindeutig',
+    /UNIQUE INDEX.*agent_settings.*\(`owner`,`key`\)/.test(mig))
+  check('das Konto loeschen raeumt seine Regler mit weg', /cascadeDelete: true/.test(mig))
+  check('gelesen wird zusaetzlich mit Eigentuemer-Filter', /filter = `owner = "\$\{ich\}"`/.test(k))
+  check('fremde Realtime-Meldungen werden verworfen', /r\.owner !== ich\) return/.test(k))
+
+  // Ein Formularfeld, kein Wert: Stuende der Env-Wert drin, uebersteuerte er
+  // die .env ab dem ersten Start — und eine spaetere .env-Aenderung bliebe
+  // wirkungslos, ohne dass jemand saehe warum.
+  check('angelegt wird leer, nicht mit dem Env-Wert', /value: null,/.test(k))
+  check('die Vorgabe steht stattdessen in der Notiz', /Vorgabe: \$\{r\.vorgabe\}/.test(k))
+  check('vorhandene Eintraege bleiben unangetastet', /if \(this\._werte\.has\(voll\)\) continue/.test(k))
+  // Ein Agent redet auch mit Servern, die die Collection nicht kennen.
+  check('ein alter Server wird nicht mit Anlege-Versuchen beworfen',
+    /if \(!this\._da\)/.test(k))
+  check('in die Instanz-Einstellungen schreibt ein Agent nicht',
+    /if \(!this\.eigen\) \{ this\.log\('saee\(\) nur im eigenen Bereich/.test(k))
 }
 
 // ── Auftrag anlegen: ein Fenster statt zwei ──────────────────────────────
@@ -1749,8 +1801,9 @@ console.log('\n── Kampf: Halt, Beute, Sichtbarkeit')
 
   check('ein Treffer bricht die Route ab', /r\.tot[\s\S]{0,400}halteAn\(c, \{ bis: Date\.now\(\) \+ KAMPF_HALT_MS/.test(wd))
   check('und dauert laenger als ein Gespraech',
-    /WD_KAMPF_HALT_S \|\| '(\d+)'/.test(wd) &&
-    Number(wd.match(/WD_KAMPF_HALT_S \|\| '(\d+)'/)[1]) > Number(wd.match(/WD_ATTEND_S \|\| '(\d+)'/)[1]))
+    /'kampf\.halt_s':\s*\['WD_KAMPF_HALT_S',\s*(\d+)/.test(wd) &&
+    Number(wd.match(/'kampf\.halt_s':\s*\['WD_KAMPF_HALT_S',\s*(\d+)/)[1])
+      > Number(wd.match(/WD_ATTEND_S \|\| '(\d+)'/)[1]))
   // Ohne Halt-Plan laeuft die Figur beim Betrachter weiter — die
   // Vorausrechnung kennt nur Kurs und Tempo, kein Ziel.
   check('der Stillstand wird auch geschrieben', /motion: planFuer\(c\)\.haltAn\(/.test(wd))
@@ -2210,9 +2263,12 @@ console.log('\n── Minimap dreht mit')
 
   // In der Objektliste steht die Karte OBEN und die Liste darunter.
   check('die Karte kann oben andocken', /setDocked\(on\)/.test(mm))
-  // Eine selbst gewählte Position darf ein Reiterwechsel nicht verwerfen.
+  // Eine selbst gewählte Position darf ein Reiterwechsel nicht verwerfen —
+  // und zwar VOLLSTÄNDIG. Gemerkt wurden anfangs nur `left`/`top`; das
+  // zurückgelassene `right:auto` liess die Karte in der 3D-Ansicht ganz
+  // verschwinden (siehe „Minimap: andocken und loesen").
   check('die frei gezogene Position geht dabei nicht verloren',
-    /this\._freiePos = \{ left: p\.style\.left, top: p\.style\.top \}/.test(mm))
+    /this\._freiePos = \{[\s\S]{0,160}left: p\.style\.left[\s\S]{0,160}right: p\.style\.right/.test(mm))
   // Der Platz darunter haengt an der GEMESSENEN Hoehe, nicht an einer zweiten
   // Kopie der Groessenformel.
   check('die Höhe meldet die Karte selbst', /setProperty\('--mm-hoehe'/.test(mm))
@@ -2543,6 +2599,737 @@ console.log('\n── Klick daneben')
     }
   }
   check('kein Dialog prüft mehr selbst auf „Klick auf das Overlay"', alt.length === 0, alt.join(' | '))
+}
+
+// ── „Auftrag nur vor Ort annehmen" ───────────────────────────────────────
+//
+// Zwei Dinge werden hier scharf gehalten, und beide gehen leise kaputt:
+//
+//   1. WAS DAS GERAET VERLAESST. Beim Annehmen geht ein Standort mit. Bei
+//      Stufe „Naehe" darf das KEINE Koordinate sein, sondern nur die Aussage
+//      „ich bin im Umkreis". Rutschte da eine Koordinate durch, waere es ein
+//      stilles Leck — im Fenster sieht man davon nichts.
+//
+//   2. DASS BEIDE SEITEN DIESELBE REGEL RECHNEN. `pb_hooks` laeuft in goja und
+//      kann das ES-Modul nicht laden, die Regel steht also zweimal. Laufen die
+//      Konstanten auseinander, bietet der Client einen Knopf an, den die Route
+//      ablehnt — der Nutzer sieht einen Fehler, wo er alles richtig gemacht hat.
+console.log('\n── Auftrag nur vor Ort annehmen')
+{
+  const { AjnaManager } = await import('../client/core/AjnaManager.js')
+  const { annehmbarkeit } = await import('../client/core/QuestPanel.js')
+  const qm = await import('../client/core/questMapping.js')
+
+  const ZIEL = { lat: 50.356900, lon: 7.589000 }
+  // ~60 m noerdlich.
+  const NAH = { lat: 50.357440, lon: 7.589000 }
+  // ~1,1 km noerdlich.
+  const FERN = { lat: 50.366900, lon: 7.589000 }
+
+  const mgr = Object.create(AjnaManager.prototype)
+  const ortFuer = (stufe, ich, radiusM = 250) => {
+    privacy.setLevel('srvQ', stufe)
+    return mgr._annahmeOrt('srvQ', { ich, ziel: ZIEL, radiusM })
+  }
+
+  // ── Was rausgeht, haengt an der Stufe ──────────────────────────────────
+  const genau = ortFuer('exact', NAH)
+  check('Stufe „Genau" schickt die exakte Koordinate',
+    genau?.at?.lat === NAH.lat && genau?.at?.lon === NAH.lon)
+
+  const gegend = ortFuer('area', NAH)
+  const verschoben = Math.hypot(
+    (gegend.at.lat - NAH.lat) * 111320,
+    (gegend.at.lon - NAH.lon) * 111320 * Math.cos(NAH.lat * Math.PI / 180))
+  check('Stufe „Gegend" schickt eine gerundete Koordinate',
+    gegend.at.lat !== NAH.lat || gegend.at.lon !== NAH.lon, `${verschoben.toFixed(0)} m verschoben`)
+
+  // Der Kern: bei „Naehe" gibt es gar keinen Ort zu senden.
+  const naehe = ortFuer('proximity', NAH)
+  check('Stufe „Nähe" schickt KEINE Koordinate, nur die Antwort',
+    naehe?.nah === true && naehe.at === undefined, JSON.stringify(naehe))
+  const naeheFern = ortFuer('proximity', FERN)
+  check('und sagt bei zu grosser Entfernung ehrlich nein',
+    naeheFern?.nah === false && naeheFern.at === undefined)
+
+  check('Stufe „Verborgen" schickt nichts', ortFuer('off', NAH) === null)
+  check('ohne eigene Position geht nichts raus', ortFuer('exact', null) === null)
+  // Ohne Auflage wird gar nicht erst ein Standort zusammengestellt.
+  check('ohne Annahme-Radius geht nichts raus', ortFuer('exact', NAH, 0) === null)
+
+  // ── Der Server rechnet dieselbe Regel ──────────────────────────────────
+  const hook = readFileSync(new URL('../pocketbase/pb_hooks/quests.js', import.meta.url), 'utf8')
+  const esm = readFileSync(new URL('../client/core/aktionsReichweite.js', import.meta.url), 'utf8')
+  const zahl = (txt, name) => Number((txt.match(new RegExp(name + '\\s*=\\s*(\\d+)')) || [])[1])
+  check('die Feinheits-Schwelle steht auf beiden Seiten gleich',
+    zahl(hook, 'FEIN_AB_M') === zahl(esm, 'FEIN_AB_M') && zahl(hook, 'FEIN_AB_M') === 500,
+    `hook ${zahl(hook, 'FEIN_AB_M')} / client ${zahl(esm, 'FEIN_AB_M')}`)
+  check('und die Kulanz für die Rundung ebenso',
+    zahl(hook, 'AREA_KULANZ_M') === 150 && /kulanz\s*=\s*noetigeStufe\(aktion\) === 'area' \? 150/.test(esm),
+    `hook ${zahl(hook, 'AREA_KULANZ_M')}`)
+
+  // ── Was im Auftrag landet ──────────────────────────────────────────────
+  const mitAuflage = qm.callZustandAus({ titel: 'x', annahmeRadiusM: 250 })
+  check('der Radius wandert in den Auftrag', mitAuflage.annahmeRadiusM === 250)
+  // Ein Auftrag ohne Auflage darf auch kein leeres Feld tragen — sonst stünde
+  // im Datensatz eine Bedingung, die keine ist.
+  const ohne = qm.callZustandAus({ titel: 'x', annahmeRadiusM: 0 }, { vorher: { annahmeRadiusM: 250 } })
+  check('auf „überall" gestellt verschwindet das Feld ganz',
+    !('annahmeRadiusM' in ohne))
+  check('und kommt aus der Serverantwort wieder an',
+    qm.zuAnsicht({ id: 'c1', name: 'x', annahmeRadiusM: 250 }, 'u1').annahmeRadiusM === 250)
+
+  // ── Was im Fenster steht ───────────────────────────────────────────────
+  const ANNEHMEN = [{ key: 'accept', label: 'Annehmen' }]
+  check('ohne Auflage steht kein Hinweis da',
+    annehmbarkeit({ annahme: { noetig: false } }, ANNEHMEN) === null)
+  // Ein Hinweis auf eine Bedingung, die hier niemanden betrifft, ist nur Text.
+  check('bei einem Auftrag, den man gar nicht annehmen kann, ebenfalls nicht',
+    annehmbarkeit({ annahme: { noetig: true, ok: false, grund: 'zu-weit', radiusM: 250 } }, []) === null)
+  check('erfüllte Auflage wird trotzdem genannt',
+    annehmbarkeit({ annahme: { noetig: true, ok: true, radiusM: 250 } }, ANNEHMEN)?.ok === true)
+
+  const zuWeit = annehmbarkeit({ annahme: { noetig: true, ok: false, grund: 'zu-weit', radiusM: 250 } }, ANNEHMEN)
+  check('zu weit weg sagt, wie nah man muss', zuWeit.ok === false && /250 m/.test(zuWeit.hinweis), zuWeit.hinweis)
+  const weitKm = annehmbarkeit({ annahme: { noetig: true, ok: false, grund: 'zu-weit', radiusM: 1000 } }, ANNEHMEN)
+  check('grosse Entfernungen in Kilometern', /1 km/.test(weitKm.hinweis), weitKm.hinweis)
+  // Die drei Gruende verlangen VERSCHIEDENES: hingehen, Freigabe aendern,
+  // auf ein Signal warten. Ein gemeinsamer Text schickte zwei Drittel falsch.
+  const stufe = annehmbarkeit(
+    { annahme: { noetig: true, ok: false, grund: 'stufe', radiusM: 250, text: 'Freigabe zu niedrig' } }, ANNEHMEN)
+  check('eine zu niedrige Freigabe sagt etwas anderes als „zu weit"',
+    stufe.hinweis === 'Freigabe zu niedrig')
+}
+
+// ── Regionsliste: die Stufe gilt auch fuer die FRAGE ─────────────────────
+//
+// Die Auftragsliste ist eine Frage mit einem Ort darin („was gibt es HIER").
+// Sie ging unveraendert an jeden verbundenen Server — ein Server auf
+// „Verborgen" bekam die exakte Position also beim ersten Blick in die Liste,
+// waehrend die Stufe daneben stand und fuer alles ausser diesen Aufruf galt.
+//
+// Sicherheitsrelevant und unsichtbar: Im Fenster sieht man einer Liste nicht
+// an, was fuer sie gesendet wurde.
+console.log('\n── Regionsliste: Position je Server')
+{
+  const { AjnaManager } = await import('../client/core/AjnaManager.js')
+  const POS = { lat: 50.446789, lon: 7.597123 }
+
+  const gefragt = []
+  const client = (id) => ({
+    id, label: id.toUpperCase(),
+    async questsNear(opts) { gefragt.push({ id, opts }); return { quests: [{ id: `${id}:q` }], karma: 0 } },
+  })
+  const mgr = Object.create(AjnaManager.prototype)
+  mgr.clients = new Map([['a', client('a')], ['b', client('b')], ['c', client('c')]])
+  privacy.setLevel('a', 'exact')
+  privacy.setLevel('b', 'area')
+  privacy.setLevel('c', 'off')
+
+  gefragt.length = 0
+  const res = await mgr.questsNear({ ...POS, radius: 3000 })
+  const fuer = (id) => gefragt.find(g => g.id === id)?.opts
+
+  check('„Genau" bekommt die exakte Position',
+    fuer('a').lat === POS.lat && fuer('a').lon === POS.lon)
+  check('„Gegend" bekommt eine gerundete',
+    fuer('b') && (fuer('b').lat !== POS.lat || fuer('b').lon !== POS.lon))
+  // Der Kern: Es geht nicht darum, dass die Antwort leer ist — die FRAGE darf
+  // gar nicht gestellt werden.
+  check('„Verborgen" wird überhaupt nicht gefragt', !fuer('c'))
+  check('und taucht als „verborgen" auf, nicht als Fehler',
+    res.verborgen.length === 1 && res.verborgen[0].server === 'c' && res.fehler.length === 0)
+  check('der Hinweis trägt den Namen des Servers, nicht die Kennung',
+    res.verborgen[0].label === 'C')
+  check('die Aufträge der anderen kommen weiterhin an', res.quests.length === 2)
+
+  // Die eigenen Ausschreibungen sind keine Aussage darüber, wo man ist.
+  gefragt.length = 0
+  const meins = await mgr.questsNear({ mine: true, radius: 3000 })
+  check('„Meine Aufträge" fragt auch verborgene Server', gefragt.length === 3)
+  check('und meldet dabei nichts als verborgen', meins.verborgen.length === 0)
+
+  // Ohne eigene Position gibt es nichts zu filtern — und nichts zu verbergen.
+  gefragt.length = 0
+  const ohne = await mgr.questsNear({ radius: 3000 })
+  check('ohne bekannte Position wird jeder gefragt, ohne Ort',
+    gefragt.length === 3 && gefragt.every(g => g.opts.lat === undefined))
+  check('und niemand gilt als verborgen', ohne.verborgen.length === 0)
+
+  // ── Der Nachweis beim Melden trug dieselbe Wunde ──────────────────────
+  const nachweis = { note: 'fertig', proofId: 'p1', at: { lat: POS.lat, lon: POS.lon } }
+  const genau = mgr._nachweisOrt('a', nachweis)
+  check('Nachweis bei „Genau": exakt, und als exakt gekennzeichnet',
+    genau.at.lat === POS.lat && genau.at.precise === true)
+  const grob = mgr._nachweisOrt('b', nachweis)
+  check('bei „Gegend": gerundet, und ehrlich als ungenau gekennzeichnet',
+    grob.at.lat !== POS.lat && grob.at.precise === false)
+  const keiner = mgr._nachweisOrt('c', nachweis)
+  check('bei „Verborgen" fällt die Ortsangabe weg', keiner.at === undefined)
+  // Die restlichen Belege gehen trotzdem raus — sonst nähme die Standort-Wahl
+  // dem Bearbeiter auch seine Fotos.
+  check('Notiz und Bildbeleg bleiben erhalten',
+    keiner.note === 'fertig' && keiner.proofId === 'p1')
+}
+
+// ── Melde-Nähe: der Regler und die Vorwarnung ────────────────────────────
+console.log('\n── Nachweis „vor Ort": Radius und Vorwarnung')
+{
+  const qs = await import('../client/core/QuestService.js')
+  const qm = await import('../client/core/questMapping.js')
+  const hook = readFileSync(new URL('../pocketbase/pb_hooks/quests.js', import.meta.url), 'utf8')
+
+  // Steht die Vorgabe auf beiden Seiten gleich? Sonst warnt das Fenster vor
+  // einer anderen Grenze als der, an der der Server prueft.
+  const serverVorgabe = Number((hook.match(/VOR_ORT_RADIUS_M\s*=\s*(\d+)/) || [])[1])
+  check('die Melde-Vorgabe stimmt mit dem Server überein',
+    serverVorgabe === qs.VOR_ORT_VORGABE_M && serverVorgabe === 150,
+    `Server ${serverVorgabe} / Client ${qs.VOR_ORT_VORGABE_M}`)
+
+  // Der Radius gehört nur in den Auftrag, wenn der Nachweis ihn verlangt.
+  const mit = qm.callZustandAus({ titel: 'x', nachweis: ['vorOrt'], vorOrtRadiusM: 50 })
+  check('mit „vor Ort" wandert die Nähe in den Auftrag', mit.vorOrtRadiusM === 50)
+  const ohne = qm.callZustandAus({ titel: 'x', nachweis: ['foto'], vorOrtRadiusM: 50 },
+    { vorher: { vorOrtRadiusM: 50 } })
+  check('ohne „vor Ort" verschwindet sie wieder', !('vorOrtRadiusM' in ohne))
+
+  const dienst = Object.create(qs.QuestService.prototype)
+  dienst.ajna = { defaultClient: { id: 'srvM' } }
+  const frage = (stufe, radiusM, nachweis = ['vorOrt']) => {
+    privacy.setLevel('srvM', stufe)
+    return dienst.meldePruefung({ id: 'srvM:q1', roh: { nachweis, vorOrtRadiusM: radiusM } })
+  }
+  check('ohne „vor Ort" gibt es nichts vorzuwarnen', frage('off', 50, ['foto']).noetig === false)
+  // 50 m mit einer auf 100 m gerundeten Angabe zu bejahen hiesse raten.
+  check('50 m bei Stufe „Gegend" wird vorher angesagt', frage('area', 50).ok === false)
+  check('mit einem Text, der sagt was zu tun ist', /Nähe|Genau/.test(frage('area', 50).text))
+  check('bei „Genau" geht es', frage('exact', 50).ok === true)
+  check('500 m gehen auch mit „Gegend"', frage('area', 500).ok === true)
+  check('ohne eigene Angabe gilt die Vorgabe',
+    frage('exact', 0).radiusM === qs.VOR_ORT_VORGABE_M)
+}
+
+// ── Minimap: andocken und wieder loesen ──────────────────────────────────
+//
+// GEMELDET: „In der 3D-Ansicht ist die Minimap nicht mehr sichtbar."
+//
+// Der Ablauf: In der Objektliste dockt die Karte oben an. `makeDraggable` hatte
+// vorher, beim Anwenden einer gemerkten Position, `right`/`bottom` INLINE auf
+// `auto` gesetzt — dort steht die Position ja in `left`/`top`. Gemerkt wurden
+// beim Andocken aber nur diese beiden. Zurueck in der 3D-Ansicht kamen sie leer
+// wieder, waehrend `right:auto` und `bottom:auto` stehen blieben und die Regel
+// aus dem Stylesheet (`right:16px`) ueberstimmten.
+//
+// Ergebnis: ein `position:fixed`-Element ohne einen einzigen Anker. Es rutschte
+// an seinen statischen Platz unter das Fenster — weg, ohne Fehlermeldung.
+//
+// Die Pruefung faehrt genau diese Reihe: frei → angedockt → frei.
+console.log('\n── Minimap: andocken und loesen')
+{
+  const { Minimap } = await import('../client/core/Minimap.js')
+
+  const machPanel = () => ({
+    style: { left: '', top: '', right: '', bottom: '' },
+    classList: {
+      _s: new Set(),
+      add(c) { this._s.add(c) }, remove(c) { this._s.delete(c) }, contains(c) { return this._s.has(c) },
+    },
+    offsetHeight: 180,
+  })
+  const machMm = () => {
+    const mm = Object.create(Minimap.prototype)
+    mm._panel = machPanel()
+    mm._docked = false
+    mm._freiePos = null
+    mm._open = true
+    return mm
+  }
+  const ohneAnker = (p) =>
+    !p.style.left && !p.style.top && (p.style.right === 'auto' || p.style.bottom === 'auto')
+
+  // ── Der gemeldete Fall: eine gemerkte Freiposition war angewandt ───────
+  {
+    const mm = machMm()
+    // So sieht das Panel aus, nachdem makeDraggable eine gemerkte Position
+    // angewandt hat: Anker auf left/top umgestellt.
+    Object.assign(mm._panel.style, { left: '40px', top: '120px', right: 'auto', bottom: 'auto' })
+    mm.setDocked(true)
+    check('angedockt räumt alle vier Kanten weg',
+      !mm._panel.style.left && !mm._panel.style.top
+      && !mm._panel.style.right && !mm._panel.style.bottom)
+    check('und schaltet die Klasse', mm._panel.classList.contains('mm-oben'))
+
+    mm.setDocked(false)
+    check('beim Lösen kommt die Freiposition VOLLSTÄNDIG zurück',
+      mm._panel.style.left === '40px' && mm._panel.style.top === '120px'
+      && mm._panel.style.right === 'auto' && mm._panel.style.bottom === 'auto')
+    check('und die Klasse ist weg', !mm._panel.classList.contains('mm-oben'))
+    check('das Fenster hat wieder einen Anker', !ohneAnker(mm._panel))
+  }
+
+  // ── Der Normalfall: nie verschoben, also gilt das Stylesheet ──────────
+  {
+    const mm = machMm()
+    mm.setDocked(true)
+    mm.setDocked(false)
+    check('ohne je verschobene Karte bleiben alle vier Kanten leer',
+      !mm._panel.style.left && !mm._panel.style.top
+      && !mm._panel.style.right && !mm._panel.style.bottom)
+    // Genau hier steckte der Fehler: `right` blieb auf `auto` und das
+    // Stylesheet kam nicht mehr zum Zug.
+    check('damit greift wieder right/bottom aus dem Stylesheet', !ohneAnker(mm._panel))
+  }
+
+  // ── Zweimal dasselbe verlangen darf nichts kaputtmachen ───────────────
+  {
+    const mm = machMm()
+    Object.assign(mm._panel.style, { left: '40px', top: '120px', right: 'auto', bottom: 'auto' })
+    mm.setDocked(true)
+    mm.setDocked(true)   // die gemerkte Position darf jetzt nicht mit Leer überschrieben werden
+    mm.setDocked(false)
+    check('doppeltes Andocken verliert die Freiposition nicht',
+      mm._panel.style.left === '40px' && mm._panel.style.top === '120px')
+  }
+
+  // ── Angedockt wird nicht gezogen ──────────────────────────────────────
+  //
+  // Sonst schriebe der naechste Fenstergroessenwechsel die alte Freiposition
+  // zurueck und schoebe die oben angedockte Karte zur Seite.
+  {
+    const quelle = readFileSync(new URL('../client/core/Minimap.js', import.meta.url), 'utf8')
+    check('das Ziehen ist angedockt abgeschaltet',
+      /makeDraggable\(panel, \{ key: KEY_POS, aktiv: \(\) => !this\._docked \}\)/.test(quelle))
+    const drag = readFileSync(new URL('../client/core/draggable.js', import.meta.url), 'utf8')
+    check('und der Schalter bremst beides — Ziehen und Wiederherstellen',
+      /const applySaved = \(\) => \{\s*\n\s*if \(aktiv && !aktiv\(\)\) return/.test(drag)
+      && /const onDown = \(e\) => \{\s*\n\s*if \(aktiv && !aktiv\(\)\) return/.test(drag))
+  }
+}
+
+// ── Kontextmenü: lange Listen ────────────────────────────────────────────
+//
+// GEMELDET: „Das SmartHome-Objekt hat mehr Optionen, als auf dem Smartphone
+// darstellbar sind."
+//
+// Der HomeAssistant-Controller traegt eine Aktion PRO GERAET. Das Menue hatte
+// keine Hoehenbegrenzung: Bei vierzig Zeilen wurde es hoeher als das Telefon,
+// die Einpassung rechnete eine negative Obergrenze aus (`innerHeight - hoehe`),
+// und das Menue landete OBERHALB des Bildschirmrands. Scrollen ging nicht —
+// `position:fixed` ohne `overflow`.
+//
+// Geprueft wird die Rechnung, nicht das Aussehen: Sie ist der Teil, der still
+// falsch sein kann.
+console.log('\n── Kontextmenü: lange Listen')
+{
+  const quelle = readFileSync(new URL('../client/core/ContextMenu.js', import.meta.url), 'utf8')
+
+  check('das Menü bekommt eine Höhenbegrenzung', /el\.style\.maxHeight/.test(quelle))
+  check('und der Inhalt scrollt darin', /\.ctx-body\s*\{[\s\S]{0,120}overflow-y:\s*auto/.test(quelle))
+  // Ohne das scrollt beim Anschlag die Seite dahinter weiter — auf dem Telefon
+  // fuehlt sich das wie ein Fehler an.
+  check('ohne die Seite dahinter mitzuziehen', /overscroll-behavior:\s*contain/.test(quelle))
+  // Der Kopf sagt, WELCHES Objekt man bedient. Scrollt er weg, bedient man
+  // irgendwann blind.
+  check('der Kopf bleibt beim Scrollen stehen',
+    /const body = document\.createElement\('div'\)/.test(quelle)
+    && /header[\s\S]{0,200}el\.appendChild\(header\)/.test(quelle))
+
+  // Die eigentliche Falle: erst deckeln, dann messen.
+  const iDeckel = quelle.indexOf('el.style.maxHeight')
+  const iMessen = quelle.indexOf('const rect = el.getBoundingClientRect()')
+  check('gedeckelt wird VOR dem Messen', iDeckel > 0 && iMessen > 0 && iDeckel < iMessen,
+    `Deckel ${iDeckel}, Messung ${iMessen}`)
+  // Selbst mit Deckel darf die Obergrenze nie unter den Rand fallen.
+  check('die Obergrenze kann nicht negativ werden',
+    /Math\.max\(RAND, maxY\)/.test(quelle) && /Math\.max\(RAND, maxX\)/.test(quelle))
+
+  // Nachrechnen mit den Zahlen eines kleinen Telefons: 640 px hoch, 56 px
+  // Tableiste, Menü mit 40 Zeilen.
+  const RAND = 8, bottomInset = 56, innerHeight = 640
+  const platz = innerHeight - bottomInset - 2 * RAND
+  check('auf einem 640-px-Telefon bleiben 568 px für das Menü', platz === 568, `${platz} px`)
+  // Frueher: hoehe = 40 Zeilen à 22 px = 880 → maxY = 640-56-880-8 = -304.
+  const alteHoehe = 880
+  check('vorher landete das Menü bei -304 px, also ausserhalb',
+    innerHeight - bottomInset - alteHoehe - RAND === -304)
+  // Jetzt kann es nicht hoeher als `platz` werden.
+  const top = Math.min(Math.max(500, RAND), Math.max(RAND, innerHeight - bottomInset - platz - RAND))
+  check('jetzt bleibt es im Bild', top >= RAND && top + platz <= innerHeight - bottomInset)
+
+  // ── Suchfeld ────────────────────────────────────────────────────────────
+  check('ab einer gewissen Länge kommt ein Suchfeld', /const FILTER_AB = 12/.test(quelle))
+  check('bei kurzen Listen NICHT', /if \(zeilen\.length >= FILTER_AB\)/.test(quelle))
+  // Eine Ueberschrift ueber einer leeren Gruppe waere eine falsche Auskunft.
+  check('beim Filtern verschwinden Trennlinien und Überschriften',
+    /for \(const d of deko\(\)\) d\.hidden = !!q/.test(quelle))
+  check('und „nichts gefunden" wird gesagt, statt leer zu bleiben',
+    /leer\.hidden = treffer > 0/.test(quelle))
+  // Auf dem Telefon deckt die Tastatur genau das zu, was man lesen will.
+  check('auf Touch-Geräten wird nicht von selbst fokussiert',
+    /if \(!\('ontouchstart' in window\)\) setTimeout\(\(\) => input\.focus\(\)/.test(quelle))
+  check('Tasten im Suchfeld bedienen nicht die Szene',
+    /input\.addEventListener\('keydown'[\s\S]{0,80}stopPropagation/.test(quelle))
+}
+
+
+// ── HomeAssistant-Controller: der Katalog ────────────────────────────────
+//
+// GEMELDET: „Das SmartHome-Objekt hat mehr Optionen, als auf dem Smartphone
+// darstellbar sind."
+//
+// Die Liste am Controller ist KEIN Duplikat der Geraete-Objekte, sondern der
+// Katalog zum ANLEGEN: Ein Tippen holt das Geraet in die Welt. Sie zeigte
+// jedoch den vollstaendigen Entitaeten-Katalog — auch alles, was laengst ein
+// Objekt hatte. Diese Eintraege legten das Geraet ein ZWEITES Mal an; beide
+// Objekte wurden danach parallel geschaltet.
+console.log('\n── HomeAssistant: Katalog am Controller')
+{
+  const ha = readFileSync(new URL('../agents/homeassistant-gateway.mjs', import.meta.url), 'utf8')
+
+  check('der Katalog zeigt nur, was noch nicht in der Welt steht',
+    /\.filter\(\(\[entity_id\]\) => !objektFuer\(entity_id\)\)/.test(ha))
+  // Der Katalog ist eine Momentaufnahme im Objekt-Datensatz. Zwei Leute
+  // gleichzeitig, ein Client mit aelterem Stand — die Route muss selbst pruefen.
+  check('und das Anlegen prüft es NOCH EINMAL',
+    /const schon = objektFuer\(entityId\)[\s\S]{0,220}return schon/.test(ha))
+  check('ein zweites Antippen legt also nichts doppelt an',
+    /steht bereits in der Welt/.test(ha))
+  check('nach dem Anlegen verschwindet der Eintrag sofort',
+    /console\.log\(`\[ha-gateway\] Objekt angelegt[\s\S]{0,260}scheduleControllerRefresh\(\)/.test(ha))
+  // Wird ein Geraet geloescht, muss es zurueck in den Katalog — sonst waere es
+  // bis zum Neustart des Agenten nicht wieder anzulegen.
+  check('ein gelöschtes Gerät kommt zurück in den Katalog',
+    /ajna\.onObjectsChanged\?\.\(\(\) => \{ try \{ katalogPruefen\(\)/.test(ha))
+  // Der Controller schreibt beim Nachziehen SELBST ein Objekt. Ein blosser
+  // Haken „bei Aenderung neu schreiben" liefe fuer immer im Kreis.
+  check('ohne sich dabei in eine Schleife zu schreiben',
+    /if \(sig === katalogStand\) return/.test(ha))
+  check('der Stand wird auch beim Schreiben mitgeführt',
+    /katalogStand = list\.map\(e => e\.entity_id\)\.join\(','\)/.test(ha))
+}
+
+// ── Auftrags-Formular: Wortwahl und Reihenfolge ──────────────────────────
+//
+// GEMELDET: „In selbst erstellten Quests haben wir deutsch und englisch
+// gemischt. Ausserdem sind die Bedeutungen von Abnahme / Verfahren / Nachweis
+// nicht intuitiv ersichtlich."
+//
+// Der Sprachmix kam NICHT von fehlenden Katalog-Eintraegen, sondern von fest
+// verdrahtetem Deutsch im Formular-Geruest: Die Auswahllisten liefen durch
+// `t()` und wurden englisch, die Ueberschriften daneben blieben deutsch. Beides
+// nebeneinander sieht aus wie eine halbe Uebersetzung — und war es auch.
+//
+// `scripts/texte-pruefen.mjs` sieht diese Stellen nicht: Es sucht Zeichenketten
+// im Code, nicht Text zwischen Tags in Template-Literalen. Deshalb hier.
+console.log('\n── Auftrags-Formular: Wortwahl')
+{
+  const qe = readFileSync(new URL('../client/core/QuestEditor.js', import.meta.url), 'utf8')
+  const qp = readFileSync(new URL('../client/core/QuestPanel.js', import.meta.url), 'utf8')
+  const { texte: EN } = await import('../client/lang/en.js')
+  const qeMod = await import('../client/core/QuestEditor.js')
+
+  // ── Jeder angezeigte Text hat eine englische Fassung ─────────────────
+  const fehlend = []
+  for (const [datei, quelle] of [['QuestEditor', qe], ['QuestPanel', qp]]) {
+    for (const m of quelle.matchAll(/\bt\(\s*'((?:\\.|[^'])*?)'/g)) {
+      const k = m[1].replace(/\\'/g, "'")
+      if (!(k in EN)) fehlend.push(`${datei}: ${k}`)
+    }
+  }
+  check('jeder Text im Auftrags-Formular ist übersetzt', fehlend.length === 0,
+    fehlend.slice(0, 3).join(' | '))
+
+  // ── Und keiner steht daneben fest verdrahtet ────────────────────────
+  //
+  // Genau diese Mischung war der Fehler: Auswahl englisch, Ueberschrift
+  // deutsch. Gesucht wird Text direkt hinter einem Tag, der nicht mit `${`
+  // beginnt.
+  const roh = []
+  for (const [datei, quelle] of [['QuestEditor', qe], ['QuestPanel', qp]]) {
+    const re = /<(?:label|dt|div class="q[ep]-(?:abschnitt|feldname|fussnote|hinweis|von)"|span class="qe-haken-(?:titel|hinweis)")>([^$<\n][^<\n]*)/g
+    for (const m of quelle.matchAll(re)) {
+      const txt = m[1].trim()
+      // Emoji-Zeilen und reine Satzzeichen zaehlen nicht als Text.
+      if (txt && /[A-Za-zÄÖÜäöü]{3}/.test(txt)) roh.push(`${datei}: ${txt.slice(0, 40)}`)
+    }
+  }
+  check('kein fest verdrahteter Text mehr daneben', roh.length === 0, roh.slice(0, 3).join(' | '))
+
+  // ── Die neue Gliederung ──────────────────────────────────────────────
+  //
+  // „Abnahme / Verfahren / Nachweis" waren drei Amtswoerter, deren Unterschied
+  // man raten musste. Jetzt trennen die Wörter die beiden Fragen, um die es
+  // geht: WAS bringt der Bearbeiter mit, und WER sagt Ja dazu.
+  check('der Überpunkt heisst „Aufgabe"', /qe-abschnitt">\$\{esc\(t\('Aufgabe'\)\)\}/.test(qe))
+  // „Text" beschrieb das Eingabefeld, nicht den Inhalt.
+  check('der erste Abschnitt heisst „Beschreibung"',
+    /qe-abschnitt">\$\{esc\(t\('Beschreibung'\)\)\}/.test(qe))
+  check('„Abnahme" und „Verfahren" kommen in der Oberfläche nicht mehr vor',
+    !/qe-abschnitt">Abnahme|<label>Verfahren/.test(qe))
+  check('„Nachweis" heisst jetzt „Zu erledigen"',
+    /qe-feldname">\$\{esc\(t\('Zu erledigen'\)\)\}/.test(qe) && !/qe-feldname">Nachweis/.test(qe))
+  check('und „Verfahren" heisst „Wer bestätigt den Abschluss"',
+    /t\('Wer bestätigt den Abschluss'\)/.test(qe))
+
+  // Erst tut man etwas, dann nickt es jemand ab. Die alte Reihenfolge fragte
+  // zuerst nach dem Pruefweg und danach, was ueberhaupt zu pruefen ist.
+  const iAufgabe = qe.indexOf("t('Aufgabe')")
+  const iErledigung = qe.indexOf("t('Zu erledigen')")
+  const iBestaetigung = qe.indexOf("t('Wer bestätigt den Abschluss')")
+  check('„Zu erledigen" steht VOR der Bestätigung',
+    iAufgabe > 0 && iAufgabe < iErledigung && iErledigung < iBestaetigung,
+    `Aufgabe ${iAufgabe}, Erledigung ${iErledigung}, Bestätigung ${iBestaetigung}`)
+
+  // Die Leseansicht muss dieselbe Sprache sprechen wie das Formular — sonst
+  // schreibt man „Erledigung" und liest hinterher „Nachweis".
+  check('die Leseansicht benutzt dieselben Wörter',
+    /t\('Zu erledigen'\)/.test(qp) && /t\('Bestätigung'\)/.test(qp) && !/<dt>Abnahme<\/dt>/.test(qp))
+
+  // Die Bezeichner im Code bleiben, was sie sind: Sie stecken in Datensaetzen
+  // und in der Server-Route. Umbenennen hiesse eine Migration fuer ein Wort.
+  // ── Den eigenen Auftrag selbst durchspielen ─────────────────────────
+  //
+  // Der Server erlaubt das ausdruecklich (tests/quests/self.mjs) — nur die
+  // Oberflaeche hatte es verborgen: Bei einem eigenen Auftrag ERSETZTE
+  // „Bearbeiten" alle anderen Knoepfe. Damit war der haeufigste Weg versperrt:
+  // eine Aufgabe schreiben und sie zuerst selbst ausprobieren.
+  check('beim eigenen Auftrag ersetzt „Bearbeiten" die anderen Knöpfe nicht mehr',
+    /const aktionen = \[[\s\S]{0,60}\.\.\.\(q\.meine && this\.onEdit/.test(qp)
+    && /spielbar \? \(QUEST_ACTIONS\[q\.status\] \|\| \[\]\) : \[\]/.test(qp))
+  // Aber nur, wenn der Server sie auch zulaesst: als Probelauf oder mit
+  // Superuser-Recht. Ein Knopf, der in ein 403 laeuft, ist schlimmer als keiner.
+  // `darfSpielen`, NICHT `darfAnnehmen`: Letzteres wird falsch, sobald der
+  // Auftrag vergeben ist — auch an mich selbst. Damit verschwanden nach dem
+  // Annehmen alle Knöpfe, „Erledigt melden" eingeschlossen.
+  check('und nur, wenn der Server das Spielen auch zulässt',
+    /const spielbar = !q\.meine \|\| q\.darfSpielen !== false/.test(qp))
+  check('das ist eine andere Frage als „gerade annehmbar"',
+    /darfAnnehmen: rec\.canAccept !== false/.test(
+      readFileSync(new URL('../client/core/questMapping.js', import.meta.url), 'utf8'))
+    && /darfSpielen: rec\.canPlay !== false/.test(
+      readFileSync(new URL('../client/core/questMapping.js', import.meta.url), 'utf8')))
+  // Woran ich ARBEITE, gehoert unter „Aktiv" — auch der eigene Probelauf.
+  check('ein selbst angenommener Auftrag steht unter „Aktiv", nicht unter „Meine"',
+    /const arbeiteDran = \(q\) => q\.meine === true && q\.bearbeiteIch === true/.test(qp)
+    && /tab === 'meine'[\s\S]{0,80}!arbeiteDran\(q\)/.test(qp))
+
+  {
+    const qm2 = await import('../client/core/questMapping.js')
+    const ICH = 'u_ich'
+    const eigen = (extra) => qm2.ansichtsStatus(
+      { id: 'c1', owner: ICH, published: true, ...extra }, ICH)
+    // Ohne diese Zeile blieb ein selbst durchgespielter Auftrag fuer immer auf
+    // „wird geprueft" stehen, ohne dass irgendwo ein Knopf war: Der Server
+    // setzt `canVerify` fuer eigene Einreichungen nicht, die Route
+    // `quest/approve` laesst den Aussteller aber zu.
+    check('mein eigener eingereichter Auftrag wartet auf MICH',
+      eigen({ status: 'pending', claimedBy: ICH }) === 'pruefung')
+    // Fuer einen fremden Bearbeiter aendert sich nichts.
+    check('wer für jemand anderen eingereicht hat, wartet weiter ab',
+      qm2.ansichtsStatus({ id: 'c1', owner: 'u_wer', status: 'pending', claimedBy: ICH }, ICH)
+        === 'eingereicht')
+  }
+
+  // Der Schutz liegt nicht im Verstecken des Knopfes, sondern beim Karma —
+  // an EINER Stelle, weil es drei Aufrufer gibt.
+  {
+    const karma = readFileSync(new URL('../pocketbase/pb_hooks/karma.js', import.meta.url), 'utf8')
+    check('für den eigenen Auftrag gibt es kein Karma',
+      /function karmaFuerAbschluss[\s\S]{0,900}call\.get\("owner"\)[^\r\n]*=== String\(userId\)[\s\S]{0,200}return null/.test(karma))
+  }
+
+  // ── Nichts geht auf dem Weg Datensatz → Formular verloren ────────────
+  //
+  // GEMELDET: Nach „Bearbeiten" fehlte der Haken bei „Probelauf". Ursache war
+  // eine HANDLISTE in MobileShell._questAus(): Sie zaehlte fuenf Felder auf,
+  // und jedes neue fiel still durch. Beim Speichern schrieb der Editor die
+  // Leere zurueck — ein Auftrag verlor auf diesem Weg seine Auflagen, ohne
+  // dass jemand etwas angefasst haette. Dieselbe Falle wie beim alten
+  // Objekt-Editor, nur in Leserichtung.
+  {
+    const shell = readFileSync(new URL('../client/core/MobileShell.js', import.meta.url), 'utf8')
+    check('der Bearbeiten-Weg reicht den ganzen Auftrag durch',
+      /roh: \{[\s\S]{0,80}\.\.\.c,/.test(shell))
+    const qm3 = await import('../client/core/questMapping.js')
+    const f = qm3.zuFormular({ id: 'c1', titel: 'x',
+      roh: { verify: 'items', nachweis: [], probelauf: true, annahmeRadiusM: 250, vorOrtRadiusM: 50 } })
+    check('Probelauf überlebt Datensatz → Formular', f.probelauf === true)
+    check('die Annahme-Nähe ebenso', f.annahmeRadiusM === 250, String(f.annahmeRadiusM))
+    check('und die Melde-Nähe', f.vorOrtRadiusM === 50, String(f.vorOrtRadiusM))
+  }
+
+  // ── Ein Probelauf ist ohne Veroeffentlichen spielbar ────────────────
+  //
+  // GEMELDET: „Ich kann die Quest nach wie vor nicht annehmen, auch wenn der
+  // Trial-Haken gesetzt bleibt."
+  //
+  // Ursache: Ein gespeicherter, nicht veroeffentlichter Auftrag ist ein
+  // ENTWURF, und Entwuerfe haben grundsaetzlich keine Knoepfe. Fuer einen
+  // Probelauf ist das die falsche Huerde: Veroeffentlichen bindet die Belohnung
+  // treuhaenderisch und macht den Auftrag fuer andere sichtbar — beides trifft
+  // auf einen Probelauf nicht zu.
+  {
+    const qm4 = await import('../client/core/questMapping.js')
+    const qpMod = await import('../client/core/QuestPanel.js')
+    const stand = (extra) => qm4.ansichtsStatus({ id: 'c1', owner: 'u1', status: 'open', ...extra }, 'u1')
+
+    check('ein gewöhnlicher Entwurf bleibt ein Entwurf',
+      stand({ published: false }) === 'entwurf')
+    check('ein Probelauf-Entwurf ist spielbar',
+      stand({ published: false, probelauf: true }) === 'probe')
+    check('und bietet das Annehmen an',
+      (qpMod.QUEST_ACTIONS.probe || []).some(a => a.key === 'accept'))
+    // Er bleibt unter „Meine" — dort sucht ihn, wer ihn geschrieben hat.
+    check('er bleibt unter „Meine"', qpMod.QUEST_STATES.probe?.tab === 'meine')
+    // Veroeffentlicht laeuft er den normalen Weg, ohne Sonderfall.
+    check('veröffentlicht gilt wieder der normale Weg',
+      stand({ published: true, probelauf: true }) === 'offen')
+    // Und der Zustand hat eine Beschriftung, sonst stuende die Zeile leer da.
+    check('der Zustand ist beschriftet', !!qpMod.QUEST_STATES.probe?.label)
+  }
+
+  // ── Auftrag annehmen: auch im Kartenmenue ───────────────────────────
+  //
+  // GEMELDET: „Ich kann die Quest nach wie vor nicht annehmen." Im
+  // AUFTRAGSFENSTER stand der Knopf laengst — `ajnaQuestDiag()` bestaetigte
+  // `darfAnnehmen: true`. Angeklickt wurde aber das KONTEXTMENUE DER KARTE,
+  // und das ist ein anderer Weg:
+  //
+  //   • `_callActions` FILTERTE nur eine vorhandene Aktionsliste. Ein Auftrag,
+  //     den ein Mensch in der App schreibt, hat gar keine `state.actions` —
+  //     also stand dort nur „Untersuchen".
+  //   • Und `_triggerAction` haette „accept" als generisches `interact`
+  //     verschickt. Ein Auftrag wird aber vom SERVER vergeben, nicht von einer
+  //     Figur; der Knopf haette auch dann nichts bewirkt.
+  {
+    const oa = readFileSync(new URL('../client/core/ObjectActions.js', import.meta.url), 'utf8')
+    check('das Kartenmenü bietet „Annehmen" von sich aus an',
+      /out\.unshift\(\{ key: 'accept', label: 'Annehmen' \}\)/.test(oa))
+    // Dieselbe Regel wie im Auftragsfenster: den eigenen nur als Probelauf.
+    check('den eigenen Auftrag nur als Probelauf',
+      /const darfAnnehmen = offen && \(!meins \|\| c\.probelauf === true\)/.test(oa))
+    // Ein vergebener Auftrag ist nicht mehr zu haben.
+    check('und nur solange ihn niemand hat',
+      /const offen = status === 'open' && !c\.claimedBy/.test(oa))
+    check('angenommen wird über die Auftrags-Route, nicht als Interaktion',
+      /record\?\.type === 'call' && \/\^\(accept\|annehmen\)\$\/i[\s\S]{0,60}_acceptCall\(record\)/.test(oa))
+    check('die Annahme-Nähe geht dabei mit', /radiusM: r \}/.test(oa))
+    // Danach muss die Auftragsliste nachziehen — Karte und Liste liegen in
+    // verschiedenen Buendeln und teilen keinen Zustand.
+    const shell2 = readFileSync(new URL('../client/core/MobileShell.js', import.meta.url), 'utf8')
+    check('danach zieht die Auftragsliste nach',
+      /window\.ajnaQuestsReload = /.test(shell2)
+      && /onQuestAccepted: \(\) => window\.ajnaQuestsReload/.test(
+        readFileSync(new URL('../client/map.js', import.meta.url), 'utf8')))
+  }
+
+  // ── Rueckmeldung: was der Spieler erfaehrt ──────────────────────────
+  //
+  // GEMELDET: „Der Abschluss einer Quest wird nirgends gemeldet. Auch wenn
+  // mein Questabschluss verifiziert wurde erhalte ich kein Feedback."
+  //
+  // Ein Auftrag wird nicht in dem Moment fertig, in dem man ihn meldet — bei
+  // „Stichprobe" entscheidet der Aussteller SPAETER, beim Schwarm mehrere
+  // Leute. Bis dahin passierte sichtbar nichts: gemeldet und nie erfahren,
+  // wie es ausging.
+  {
+    const shell3 = readFileSync(new URL('../client/core/MobileShell.js', import.meta.url), 'utf8')
+    check('spätere Zustandswechsel werden gemeldet', /_questStandMelden\(neu\)/.test(shell3))
+    check('und beim Laden ausgewertet', /this\._questStandMelden\(quests\)/.test(shell3))
+    // Ein Wechsel bei einem fremden Auftrag, den ich weder halte noch
+    // ausgeschrieben habe, ist kein Ereignis fuer mich.
+    check('nur, was mich betrifft', /if \(!q\.meine && !q\.bearbeiteIch\) continue/.test(shell3))
+    // Zurueck aus der Pruefung heisst abgelehnt — die Nachricht, die am
+    // ehesten untergeht und am meisten zaehlt.
+    check('auch eine Zurückweisung wird gesagt', /wurde zurückgewiesen/.test(shell3))
+    check('gemeldet wird in den Verlauf UND als Einblendung',
+      /messageLog\.push\(text, 'interact'\)/.test(shell3) && /this\._toast\?\.show\(text/.test(shell3))
+    // „Auf Karte" zeigte nur einen Toast mit dem Freitext-Ortsfeld.
+    check('„Auf Karte" springt zur Karte statt einen Toast zu zeigen',
+      /window\.map\?\.setView\?\.\(\[lat, lon\]/.test(shell3)
+      && /this\.switchTo\('map'\)/.test(shell3))
+  }
+
+  // ── Realtime und Melden aus dem Kartenmenue ─────────────────────────
+  {
+    const shell4 = readFileSync(new URL('../client/core/MobileShell.js', import.meta.url), 'utf8')
+    const oa2 = readFileSync(new URL('../client/core/ObjectActions.js', import.meta.url), 'utf8')
+    // Ein Auftrag IST ein Objekt, und Objekte laufen laengst ueber Realtime.
+    // Ein eigenes Abo waere derselbe Strom ein zweites Mal.
+    check('Aufträge folgen dem vorhandenen Objekt-Strom, ohne zweites Abo',
+      /this\.ajna\.onObjectEvent\?\.\(/.test(shell4)
+      && /rec\?\.type !== 'call'/.test(shell4))
+    // Fremde Auftraege aendern sich dauernd — der World-Director schreibt im
+    // Sekundentakt.
+    check('und nur, wenn sie mich betreffen',
+      /String\(rec\.owner \|\| ''\) !== ich && String\(c\.claimedBy \|\| ''\) !== ich/.test(shell4))
+    // Ein Abschluss bewegt mehrere Datensaetze auf einmal.
+    check('gebremst, damit ein Abschluss nicht dreimal nachlädt',
+      /timer = setTimeout\(\(\) => \{ timer = null; this\._questsLaden/.test(shell4))
+    check('„Erledigt melden" steht auch im Kartenmenü',
+      /out\.unshift\(\{ key: 'submit', label: 'Erledigt melden' \}\)/.test(oa2))
+    // Das Melde-Formular (Fotos, Notiz) steht im Auftragsfenster — es ein
+    // zweites Mal zu bauen hiesse, es zweimal zu pflegen.
+    check('und führt dorthin, wo das Formular steht',
+      /this\.onQuestSubmit\?\.\(record\)/.test(oa2)
+      && /window\.ajnaQuestOeffnen = \(id\) =>/.test(shell4))
+  }
+
+  // ── Abgebrochene Anfragen sind keine Fehler ─────────────────────────
+  //
+  // GEMELDET: „The request was autocancelled" als roter Kasten in der Liste.
+  //
+  // Das SDK storniert eine laufende Anfrage, sobald dieselbe erneut gestellt
+  // wird — gewollt, die neuere Antwort zaehlt. Sichtbar wurde es erst, als die
+  // Liste auch auf Realtime-Ereignisse nachlaedt: Zwei Laeufe ueberlappten,
+  // und der erste brach ab.
+  {
+    const mgr2 = readFileSync(new URL('../client/core/AjnaManager.js', import.meta.url), 'utf8')
+    const shell5 = readFileSync(new URL('../client/core/MobileShell.js', import.meta.url), 'utf8')
+    check('ein Abbruch landet nicht im Fehlerbanner',
+      /if \(err\?\.isAbort \|\| \/autocancelled\/i\.test\(err\?\.message \|\| ''\)\) return \[\]/.test(mgr2))
+    // Besser noch: gar nicht erst zweimal gleichzeitig laden.
+    check('und zwei Ladevorgänge überlappen erst gar nicht',
+      /if \(this\._questsLaedt\) \{ this\._questsNochmal = true; return \}/.test(shell5))
+    check('ein verpasster Anlauf wird nachgeholt',
+      /if \(this\._questsNochmal\)/.test(shell5))
+    // Die Reiterleiste steht fest in index.html und blieb als einzige Flaeche
+    // dauerhaft deutsch.
+    check('die Reiterleiste wird nachbeschriftet',
+      /b\.setAttribute\('aria-label', t\(def\.label\)\)/.test(shell5))
+  }
+
+  // ── Jede Auswahlliste ist übersetzt ─────────────────────────────────
+  //
+  // Die Listen laufen durch t(), aber ein fehlender Katalog-Eintrag faellt
+  // dabei nicht auf: t() gibt dann den deutschen Satz zurueck. Auf Englisch
+  // stand deshalb Deutsch in den Klapplisten, waehrend die Beschriftungen
+  // daneben uebersetzt waren.
+  {
+    const km2 = await import('../client/core/karma.js')
+    const listen = {
+      ABNAHME: qeMod.ABNAHME, NACHWEIS: qeMod.NACHWEIS, SICHTBARKEIT: qeMod.SICHTBARKEIT,
+      ANNAHME_ORT: qeMod.ANNAHME_ORT, VOR_ORT_NAEHE: qeMod.VOR_ORT_NAEHE,
+      ANBIETEN: qeMod.ANBIETEN, KARMA_WAHL: km2.KARMA_WAHL,
+    }
+    const fehlend = []
+    for (const [name, liste] of Object.entries(listen)) {
+      for (const e of liste || []) {
+        for (const feld of ['label', 'hinweis']) {
+          const s = e?.[feld]
+          if (s && !(s in EN)) fehlend.push(`${name}: ${s}`)
+        }
+      }
+    }
+    // FRISTEN ist absichtlich nicht exportiert — aus der Quelle lesen.
+    const fr = qe.slice(qe.indexOf('const FRISTEN = ['), qe.indexOf(']', qe.indexOf('const FRISTEN = [')))
+    for (const m of fr.matchAll(/label: '([^']+)'/g)) if (!(m[1] in EN)) fehlend.push('FRISTEN: ' + m[1])
+    check('jede Auswahlliste des Editors ist übersetzt', fehlend.length === 0,
+      fehlend.slice(0, 3).join(' | '))
+  }
+
+  check('die Datenfelder heissen unverändert weiter',
+    /export const ABNAHME = \[/.test(qe) && /export const NACHWEIS = \[/.test(qe))
 }
 
 const failed = results.filter(r => !r.ok)

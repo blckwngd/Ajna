@@ -66,6 +66,7 @@ import { simpleSetup } from './lib/setup-wizard.mjs'
 import { Bewegungsplan, bewegungsUpdate } from './lib/bewegung.mjs'
 import { yawFuerKurs } from '../client/core/yaw.js'
 import { Kampf, hpVon, beuteObjekt } from './lib/kampf.mjs'
+import { Konfig } from './lib/konfig.mjs'
 import { npcParley } from './lib/dialogs.mjs'
 import { dialogNameFor, dialogVarsFor, talkSessionId } from '../client/core/Parley.js'
 
@@ -77,23 +78,93 @@ const { ajna } = await bootAgent('director', {
   setup: simpleSetup('director', { required: ['AJNA_USER', 'AJNA_PASS'], optional: ['AJNA_URL'] }),
 })
 
-const CENTER_LAT  = parseFloat(process.env.WD_CENTER_LAT || '50.3569')
-const CENTER_LON  = parseFloat(process.env.WD_CENTER_LON || '7.5890')
-const RADIUS_M    = parseFloat(process.env.WD_RADIUS_M   || '150')
-const HEARTBEAT_MS = parseFloat(process.env.WD_HEARTBEAT_S || '60') * 1000
+// ─────────────────────────────────────────────────────────────────────────
+//  Eigene Einstellungen
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Der Director gehoert nicht dem Server, an dem er haengt. Er meldet sich dort
+// an wie ein Spieler, kann an mehreren Servern haengen, und an einem Server
+// koennen mehrere Directors arbeiten. Seine Regler sind deshalb SEINE Sache und
+// liegen in `agent_settings`, nach Konto getrennt — nicht in den globalen
+// `settings` des Servers.
+//
+// Ein leerer Eintrag heisst: es gilt die `.env`. Welche Regler es gibt, steht
+// gesammelt am Ende der Datei unter „Was sich im Betrieb drehen laesst".
+const konf = await Konfig.eigene(ajna, {
+  praefix: 'wd',
+  log: (m) => console.log(`[director] Konfig: ${m}`),
+})
+
+// Ein Intervall, dessen TAKT sich zur Laufzeit aendern darf.
+//
+// `setInterval` friert seinen Abstand beim Anlegen ein. Ein Regler fuer den
+// Takt waere also ein Knopf ohne Draht: Der Wert in der Datenbank aendert sich,
+// die Schleife laeuft weiter wie zuvor. Deshalb behalten wir den Griff und
+// legen bei einer Aenderung neu an.
+const TAKTE = []
+function taktgeber(fn, msFn) {
+  let ms = msFn()
+  let h = setInterval(fn, ms)
+  TAKTE.push({
+    neuTakten() {
+      const n = msFn()
+      if (!Number.isFinite(n) || n <= 0 || n === ms) return null
+      clearInterval(h)
+      ms = n
+      h = setInterval(fn, ms)
+      return ms
+    },
+  })
+}
+
+// Die Vorgaben stehen EINMAL hier: Env-Name, Wert ohne alles, Erklaerung.
+//
+// Sonst stuenden sie zweimal im Code — beim Start und beim Nachladen — und
+// liefen frueher oder spaeter auseinander. Ein Regler wuerde dann beim ersten
+// Drehen einen anderen Wert nachziehen als den, mit dem der Prozess lief.
+// Aus derselben Tabelle entstehen unten auch die Eintraege in der Verwaltung.
+const R = {
+  'center.lat':      ['WD_CENTER_LAT',   50.3569, 'Fallback-Zentrum der Welt, solange kein Spieler online ist (Breitengrad)'],
+  'center.lon':      ['WD_CENTER_LON',    7.5890, 'Fallback-Zentrum der Welt (Laengengrad)'],
+  'radius_m':        ['WD_RADIUS_M',         150, 'Streuung beim Spawn um ein Zentrum, in Metern'],
+  'heartbeat_s':     ['WD_HEARTBEAT_S',       60, 'Abstand des Lebenszeichens, in Sekunden'],
+  'takt_ms':         ['WD_TICK_MS',          500, 'Takt der Bewegungsschleife, in Millisekunden. Kleiner = fluessiger und teurer'],
+  'pause_s':         ['WD_PAUSE_S',           10, 'Pause einer Figur zwischen zwei Routen, in Sekunden'],
+  'npc_speed':       ['WD_NPC_SPEED',        1.4, 'Gehgeschwindigkeit Figuren in m/s. Ein Modell-Profil geht vor'],
+  'enemy_speed':     ['WD_ENEMY_SPEED',      1.8, 'Gehgeschwindigkeit Gegner in m/s. Ein Modell-Profil geht vor'],
+  'fly_speed':       ['WD_FLY_SPEED',          7, 'Fluggeschwindigkeit in m/s'],
+  'fly_area_m':      ['WD_FLY_AREA_M',       150, 'Radius des Flug-Areals um den Spawn, in Metern'],
+  'roam_speed':      ['WD_ROAM_SPEED',       1.0, 'Streifgeschwindigkeit der Tiere in m/s'],
+  'roam_area_m':     ['WD_ROAM_AREA_M',       80, 'Radius des Streif-Areals, in Metern'],
+  'kampf.halt_s':    ['WD_KAMPF_HALT_S',      30, 'Wie lange ein angegriffener Gegner seine Route ruhen laesst, in Sekunden'],
+  'ruf.reichweite_m':['WD_CALL_RANGE_M',    1500, 'Weiter entfernte Rufe ignoriert der Drache, in Metern'],
+  'reconcile_s':     ['WD_RECONCILE_S',       45, 'Abstand des Weltabgleichs (Spawn/Despawn), in Sekunden'],
+}
+/** Wert eines Reglers: Datenbank, sonst Env, sonst Vorgabe. */
+const w = (k) => konf.zahl(k, R[k][0], R[k][1])
+
+// `let` statt `const`: Diese Werte duerfen sich im Betrieb aendern
+// (konfigUebernehmen am Dateiende). Die Lesestellen bleiben unveraendert.
+let CENTER_LAT  = w('center.lat')
+let CENTER_LON  = w('center.lon')
+let RADIUS_M    = w('radius_m')
+let HEARTBEAT_MS = w('heartbeat_s') * 1000
 
 // Autonomie (P2): NPCs/Gegner laufen auf dem Straßennetz.
 const AUTONOMY      = (process.env.WD_AUTONOMY || 'on').toLowerCase() !== 'off'
-const TICK_MS       = parseFloat(process.env.WD_TICK_MS       || '500')
-const PAUSE_MS      = parseFloat(process.env.WD_PAUSE_S       || '10') * 1000
+let TICK_MS         = w('takt_ms')
+let PAUSE_MS        = w('pause_s') * 1000
+// Env-Sache: Der Wegegraph wird pro Zelle mit TTL zwischengespeichert. Ein
+// geaenderter Radius wuerde erst beim naechsten Ablauf greifen — ein Regler,
+// der scheinbar nichts tut, ist schlechter als gar keiner.
 const WAY_RADIUS_M  = parseFloat(process.env.WD_WAY_RADIUS_M  || '200')
-const NPC_SPEED     = parseFloat(process.env.WD_NPC_SPEED     || '1.4')   // m/s (~5 km/h)
-const ENEMY_SPEED   = parseFloat(process.env.WD_ENEMY_SPEED   || '1.8')   // m/s (Patrouille)
+let NPC_SPEED       = w('npc_speed')     // m/s (~5 km/h)
+let ENEMY_SPEED     = w('enemy_speed')   // m/s (Patrouille)
 const PLAN_RETRY_MS = 15000
 // Geteilter Wegegraph-Cache: EINE Overpass-Abfrage pro Areal/TTL für alle
 // Figuren (statt pro Figur/Replan) — drückt die Overpass-Last drastisch.
 const GRAPH_TTL_MS   = parseFloat(process.env.WD_GRAPH_TTL_S || '3600') * 1000
-const GRAPH_RADIUS_M = Math.min(2000, RADIUS_M + WAY_RADIUS_M)
+let GRAPH_RADIUS_M = Math.min(2000, RADIUS_M + WAY_RADIUS_M)   // folgt RADIUS_M
 // Welche Archetypen laufen auf Straßen? (npc/enemy). Fliegende Wesen (dragon +
 // Vogel-Modelle) bekommen stattdessen freien Flug (siehe makeFlyer/advanceFlyer).
 const STREET_ARCHETYPES = new Set(['npc', 'enemy'])
@@ -211,14 +282,14 @@ async function schreibeBewegung(c, { lat, lon, altitude, v, trk, vrate = 0, rota
 }
 
 // ── Freiflug (Drachen/Vögel): sanftes Umherfliegen in einem Areal ──────────
-const FLY_AREA_M    = parseFloat(process.env.WD_FLY_AREA_M    || '150')  // Radius Flug-Areal um Spawn (m)
-const FLY_SPEED     = parseFloat(process.env.WD_FLY_SPEED     || '7')    // m/s
+let FLY_AREA_M      = w('fly_area_m')   // Radius Flug-Areal um Spawn (m)
+let FLY_SPEED       = w('fly_speed')    // m/s
 const FLY_TURN_RATE = parseFloat(process.env.WD_FLY_TURN_RATE || '0.7')  // rad/s max. Drehrate → weiche Kurven
 const FLY_WANDER    = parseFloat(process.env.WD_FLY_WANDER    || '0.6')  // rad/s Wander-Amplitude
 // Boden-Tiere (Fox/Horse …) streifen frei umher (kein Overpass nötig) — langsamer
 // und in kleinerem Areal als Flieger.
-const ROAM_SPEED    = parseFloat(process.env.WD_ROAM_SPEED    || '1.0')  // m/s
-const ROAM_AREA_M   = parseFloat(process.env.WD_ROAM_AREA_M   || '80')   // Radius Streif-Areal
+let ROAM_SPEED      = w('roam_speed')   // m/s
+let ROAM_AREA_M     = w('roam_area_m')  // Radius Streif-Areal
 // Streif-/Rast-Rhythmus (nur Boden-Tiere mit Idle-Animation): abwechselnd
 // umherstreifen und stehen bleiben → ruhigere Szene. Zufällige Dauern (s).
 // Reaktion auf Interaktionen: spricht ein Spieler eine Figur an, hält sie inne,
@@ -230,7 +301,7 @@ const ATTEND_MS = parseFloat(process.env.WD_ATTEND_S || '6') * 1000
 // Wer angegriffen wird, laeuft nicht weiter seine Runde. Deutlich laenger als
 // ATTEND_MS: Ein Kampf ist kein kurzes Innehalten, und eine Figur, die dem
 // Angreifer nach zwei Sekunden davonspaziert, wirkt kaputt.
-const KAMPF_HALT_MS = parseFloat(process.env.WD_KAMPF_HALT_S || '30') * 1000
+let KAMPF_HALT_MS = w('kampf.halt_s') * 1000
 // „Getroffen" ist eine GESTE, kein Zustand. Bliebe sie stehen, liefe der
 // Getroffene beim Betrachter seine Geh-Animation auf der Stelle weiter — der
 // Client kehrt nach der Geste nicht von selbst zu „steht" zurück.
@@ -254,7 +325,7 @@ const CALL_BUILDING_CACHE_R = parseFloat(process.env.WD_CALL_BUILDING_CACHE_R ||
 const CALL_SPOT_TIMEOUT_MS = parseFloat(process.env.WD_CALL_SPOT_TIMEOUT_S || '6') * 1000
 const CALL_APPROACH_SPEED = parseFloat(process.env.WD_CALL_SPEED    || '14')   // m/s Anflug (zügiger als Streifen)
 const CALL_DESCENT_SPEED  = parseFloat(process.env.WD_CALL_DESCENT  || '4')    // m/s Sinken/Steigen
-const CALL_MAX_RANGE_M  = parseFloat(process.env.WD_CALL_RANGE_M    || '1500') // weiter weg → Ruf ignorieren
+let CALL_MAX_RANGE_M   = w('ruf.reichweite_m')   // weiter weg → Ruf ignorieren
 const CALL_BUILDING_R   = parseFloat(process.env.WD_CALL_BUILDING_R || '60')   // m Umkreis für die Gebäudeabfrage
 
 const ROAM_MOVE_MIN = parseFloat(process.env.WD_ROAM_MOVE_MIN || '8')
@@ -280,7 +351,7 @@ const FLY_BANK_MAX   = parseFloat(process.env.WD_FLY_BANK_MAX   || '0.5')  // ~3
 // hält an jedem Zentrum den Soll-Bestand; weit entfernte Figuren werden
 // abgeräumt. Ohne aktive Area fällt er auf WD_CENTER_LAT/LON zurück.
 const FOLLOW_AREAS  = (process.env.WD_FOLLOW_AREAS || 'on').toLowerCase() !== 'off'
-const RECONCILE_MS  = parseFloat(process.env.WD_RECONCILE_S || '45') * 1000
+let RECONCILE_MS    = w('reconcile_s') * 1000
 // Quelle-Filter: nur Spieler, die den World-Director eingeblendet haben. Leer
 // (WD_SOURCE="") = alle Areas berücksichtigen.
 const WD_SOURCE     = process.env.WD_SOURCE ?? 'world-director'
@@ -449,10 +520,12 @@ const MODEL_POOL = {
 const FLYING_MODELS = new Set(Object.keys(MODEL_PROFILES).filter(m => MODEL_PROFILES[m].flying))
 const IDLE_MODELS   = new Set(Object.keys(MODEL_PROFILES).filter(m => MODEL_PROFILES[m].idle))
 
+// Wird bei jedem Abgleich neu gefragt — ein geaenderter Soll-Bestand wirkt
+// deshalb beim naechsten Durchlauf, ohne dass hier etwas nachgezogen werden muss.
 function targetCount(archetype) {
-  const env = process.env[`WD_COUNT_${archetype.toUpperCase()}`]
-  const n = env !== undefined ? parseInt(env, 10) : ARCHETYPES[archetype].count
-  return Number.isFinite(n) && n >= 0 ? n : ARCHETYPES[archetype].count
+  const vorgabe = ARCHETYPES[archetype].count
+  const n = konf.ganz(`count.${archetype}`, `WD_COUNT_${archetype.toUpperCase()}`, vorgabe)
+  return Number.isFinite(n) && n >= 0 ? n : vorgabe
 }
 
 // Baut den Spawn-Datensatz für einen Archetyp um ein Zentrum (Interest-Area
@@ -1586,7 +1659,7 @@ syncControllers()
 
 if (AUTONOMY) {
   console.log(`[director] Autonomie aktiv für ${controllers.length} Figur(en) (Tick ${TICK_MS} ms, Pause ${(PAUSE_MS / 1000) | 0} s)`)
-  setInterval(tick, TICK_MS)
+  taktgeber(tick, () => TICK_MS)
   // Gefallene verblassen lassen (Liegezeit aus agents/lib/kampf.mjs).
   setInterval(() => { raeumeGefallene().catch(() => {}) }, 2000)
 } else {
@@ -1706,7 +1779,7 @@ if (FOLLOW_AREAS && AUTONOMY) {
     + `, Sprung-Wächter alle ${(AREA_WATCH_MS / 1000) | 0} s ab ${AREA_JUMP_M} m`
     + `; Fallback-Zentrum ${CENTER_LAT.toFixed(4)}, ${CENTER_LON.toFixed(4)})`)
   reconcile()
-  setInterval(() => { reconcile() }, RECONCILE_MS)
+  taktgeber(() => { reconcile() }, () => RECONCILE_MS)
   setInterval(async () => {
     if (reconcileBusy || !_letzteZentren) return
     try {
@@ -1948,7 +2021,79 @@ if (parley) {
 }
 
 // ─── Heartbeat hält den Prozess am Leben (+ späterer Online-Status-Anker) ─
-setInterval(() => { publishManifest() }, HEARTBEAT_MS)
+taktgeber(() => { publishManifest() }, () => HEARTBEAT_MS)
+// ─────────────────────────────────────────────────────────────────────────
+//  Was sich im Betrieb drehen laesst
+// ─────────────────────────────────────────────────────────────────────────
+//
+// NUR WAS HIER STEHT, WIRKT OHNE NEUSTART. Das ist die eigentliche Regel
+// dieses Blocks, und sie ist wichtiger als die Liste selbst: Ein Regler, den
+// man drehen kann und der nichts tut, ist schlimmer als keiner — man sucht den
+// Fehler dann ueberall, nur nicht in der Einstellung.
+//
+// Was bewusst NICHT hier steht, und warum:
+//
+//   WD_AUTONOMY        entscheidet beim Start, ob die Bewegungsschleife
+//                      ueberhaupt anlaeuft. Live umzuschalten hiesse, Figuren
+//                      mitten im Schritt die Steuerung wegzunehmen.
+//   WD_ATTACK_RANGE_M  steht als `max_distance` IM Objekt-Datensatz. Ein neuer
+//                      Wert wuerde die vorhandenen Gegner nicht erreichen —
+//                      halb wirksam ist schlechter als gar nicht.
+//   WD_WAY_RADIUS_M    der Wegegraph liegt mit TTL im Zwischenspeicher; eine
+//                      Aenderung griffe erst irgendwann von selbst.
+//   WD_FOLLOW_AREAS    dasselbe wie AUTONOMY: eine Grundsatzentscheidung beim
+//                      Start, keine Stellschraube.
+//
+// Die Eintraege werden beim Start LEER angelegt. Leer heisst: es gilt die
+// `.env`. Wer in der Verwaltung etwas eintraegt, uebersteuert sie — sofort.
+await konf.saee([
+  // Soll-Bestand je Archetyp. Die Vorgaben stehen in ARCHETYPES.
+  ...Object.keys(ARCHETYPES).map(a => ({
+    name: `count.${a}`,
+    envName: `WD_COUNT_${a.toUpperCase()}`,
+    vorgabe: ARCHETYPES[a].count,
+    note: `Soll-Bestand ${a} je Zentrum`,
+  })),
+  ...Object.keys(R).map(k => ({ name: k, envName: R[k][0], vorgabe: R[k][1], note: R[k][2] })),
+])
+
+/**
+ * Eine Aenderung aus der Datenbank uebernehmen.
+ *
+ * Gerufen bei JEDEM geaenderten Schluessel, nicht nur beim passenden — alles
+ * neu zu lesen ist billiger als Buch darueber zu fuehren, was zu welchem
+ * Schluessel gehoert, und kann nicht aus dem Tritt geraten.
+ *
+ * WAS SOFORT WIRKT und was erst gleich: Zahlen, die bei jeder Benutzung frisch
+ * gelesen werden (Soll-Bestand, Zentrum, Radius, Kampf-Ruhezeit, Ruf-Reichweite)
+ * gelten ab dem naechsten Durchlauf. Geschwindigkeiten und Areal-Radien haengen
+ * an der Figur und gelten fuer die NAECHSTE geplante Route — wer laeuft, laeuft
+ * seinen Weg zu Ende. Das ist gewollt: Ein Sprung mitten im Schritt saehe aus
+ * wie ein Fehler.
+ */
+function konfigUebernehmen() {
+  CENTER_LAT   = w('center.lat')
+  CENTER_LON   = w('center.lon')
+  RADIUS_M     = w('radius_m')
+  GRAPH_RADIUS_M = Math.min(2000, RADIUS_M + WAY_RADIUS_M)
+  HEARTBEAT_MS = w('heartbeat_s') * 1000
+  TICK_MS      = w('takt_ms')
+  PAUSE_MS     = w('pause_s') * 1000
+  NPC_SPEED    = w('npc_speed')
+  ENEMY_SPEED  = w('enemy_speed')
+  FLY_SPEED    = w('fly_speed')
+  FLY_AREA_M   = w('fly_area_m')
+  ROAM_SPEED   = w('roam_speed')
+  ROAM_AREA_M  = w('roam_area_m')
+  KAMPF_HALT_MS = w('kampf.halt_s') * 1000
+  CALL_MAX_RANGE_M = w('ruf.reichweite_m')
+  RECONCILE_MS = w('reconcile_s') * 1000
+  // Takte laufen sonst mit dem alten Abstand weiter.
+  const neu = TAKTE.map(t => t.neuTakten()).filter(Boolean)
+  if (neu.length) console.log(`[director] ${neu.length} Takt(e) neu gestellt`)
+}
+konf.beiAenderung(konfigUebernehmen)
+
 console.log('[director] bereit. (Strg+C zum Beenden)')
 
 // SIGINT übernimmt bootAgent.

@@ -7,6 +7,16 @@
 
 export const name = 'Wiederbeleben: Veröffentlichen setzt den Lebenszyklus zurück'
 
+// SELBST DURCHGESPIELT, DESHALB ALS PROBELAUF: Seit 2026-09-02 ist der eigene
+// Auftrag gesperrt (siehe quests/probelauf.mjs) — ausser als Probelauf oder mit
+// Superuser-Recht. Der Gegenstand dieser Suite bleibt davon unberuehrt: Ein
+// Probelauf aendert nur Karma und Sichtbarkeit, der Tausch laeuft normal.
+const probelauf = async (t, A, id) => {
+  const st = (await t.read(A.token, id)).state
+  st.call = { ...(st.call || {}), probelauf: true }
+  await t.patch(A.token, id, { state: st })
+}
+
 export async function run(t) {
   const A = await t.user('solo')
 
@@ -15,6 +25,7 @@ export async function run(t) {
   const call = await t.call(A.token, 'Testauftrag')
 
   await t.quest.publish(A.token, call.id, { rewardItems: [r1.id] })
+  await probelauf(t, A, call.id)
   await t.quest.accept(A.token, call.id)
   let r = await t.quest.complete(A.token, call.id)
   t.check('Auftrag ist erledigt (Ausgangslage)', r.data?.status === 'done', 'status=' + r.data?.status)
@@ -30,6 +41,7 @@ export async function run(t) {
   r = await t.quest.publish(A.token, call.id, {
     rewardItems: [r2.id, r3.id], repeatable: true, rewardPerRun: 1,
   })
+  await probelauf(t, A, call.id)
   t.check('Erneutes Veröffentlichen setzt auf „offen" zurück',
     r.status === 200 && r.data?.call?.status === 'open',
     'status=' + r.data?.call?.status + ' ' + (r.data?.error || ''))

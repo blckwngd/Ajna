@@ -98,8 +98,41 @@ function karmaAendern(app, userId, delta, grund) {
   }
 }
 
-/** Gutschrift für einen ausgezahlten Auftrag. */
+/**
+ * Gutschrift für einen ausgezahlten Auftrag.
+ *
+ * WER SEINEN EIGENEN AUFTRAG ERLEDIGT, BEKOMMT NICHTS.
+ *
+ * Der Server lässt das Durchspielen des eigenen Auftrags ausdrücklich zu
+ * (tests/quests/self.mjs) — mit der Begründung, es sei ein Nullsummenspiel:
+ * Belohnung und geforderte Gegenstände wandern von mir zu mir. Für die
+ * GEGENSTÄNDE stimmt das. Für Karma nicht: Das entsteht neu, und es ist keine
+ * Kosmetik — `karmaReicht` sperrt Aufträge damit, und andere Spieler lesen es
+ * als Sterne. Wer sich selbst Aufträge schreibt und abschließt, hätte sich
+ * beliebig hochzählen können.
+ *
+ * Die Prüfung steht HIER und nicht an den Routen: Es gibt drei Aufrufer
+ * (complete, approve, confirm), und ein vierter würde sie sonst irgendwann
+ * vergessen.
+ */
 function karmaFuerAbschluss(app, userId, callId, verify) {
+  try {
+    const call = app.findRecordById("objects", callId)
+    if (istProbelauf(app, call)) {
+      console.log("[karma] " + callId + " ist ein Probelauf — keine Gutschrift")
+      return null
+    }
+    if (String(call.get("owner") || "") === String(userId)) {
+      console.log("[karma] " + userId + " erledigt den eigenen Auftrag " + callId + " — keine Gutschrift")
+      return null
+    }
+  } catch (err) {
+    // Der Auftrag lag den Aufrufern gerade noch vor; hier zu scheitern ist der
+    // Ausnahmefall. Dann lieber gutschreiben als einem ehrlichen Spieler
+    // seinen Lohn wegen eines Lesefehlers streichen.
+    console.log("[karma] Aussteller-Prüfung fehlgeschlagen für " + callId + ": "
+      + (err && err.message ? err.message : err))
+  }
   // `verify` sagt, WER entschieden hat. Fehlt die Angabe, gilt der sparsame
   // Fall — ein Aufrufer, der den Weg nicht kennt, soll keinen Bonus auslösen.
   const geprueft = menschlicheAbnahme(verify)
@@ -114,8 +147,32 @@ function menschlicheAbnahme(verify) {
   return v === "issuer" || v === "agent" || v === "group" || v === "crowd"
 }
 
+/**
+ * Ist dieser Auftrag ein Probelauf?
+ *
+ * Ein Probelauf ist zum Ausprobieren da: Er ist nur für seinen Autor sichtbar,
+ * und es fließt NICHTS — bei keinem Beteiligten. Sonst wäre er die bequemste
+ * Karma-Quelle von allen: Man schreibt sich einen Auftrag, spielt ihn durch
+ * und niemand könnte es sehen.
+ */
+function istProbelauf(app, call) {
+  try {
+    const { jsonObject } = require(`${__hooks}/utf8.js`)
+    const st = jsonObject(call.get("state"), {})
+    return !!(st && st.call && st.call.probelauf === true)
+  } catch (err) {
+    return false
+  }
+}
+
 /** Gutschrift fürs Abnehmen für andere. */
 function karmaFuerPruefer(app, userId, callId) {
+  try {
+    if (istProbelauf(app, app.findRecordById("objects", callId))) {
+      console.log("[karma] " + callId + " ist ein Probelauf — keine Prüfer-Gutschrift")
+      return null
+    }
+  } catch (err) { /* siehe oben: im Ausnahmefall lieber gutschreiben */ }
   return karmaAendern(app, userId, PUNKTE_PRUEFER, "Abnahme für Auftrag " + callId)
 }
 
@@ -132,6 +189,6 @@ function karmaReicht(app, userId, noetigeStufe) {
 module.exports = {
   KARMA_PRO_STUFE, KARMA_MAX_STUFE,
   PUNKTE_ABSCHLUSS, PUNKTE_ABNAHME_BONUS, PUNKTE_PRUEFER,
-  karmaStufe, karmaPunkte, karmaAendern, karmaReicht,
+  karmaStufe, karmaPunkte, karmaAendern, karmaReicht, istProbelauf,
   karmaFuerAbschluss, karmaFuerPruefer, menschlicheAbnahme,
 }

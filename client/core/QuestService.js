@@ -21,9 +21,26 @@ import {
   inventarAus, waehleBelohnung, benoetigterVorrat,
 } from './questMapping.js'
 import { t } from './i18n.js'
+import { privacy } from './PrivacyPolicy.js'
+import { aktionErlaubt, abstandM } from './aktionsReichweite.js'
+
+/** Position des Auftrags — sie steckt im Rohsatz der Serverantwort. */
+function zielOrtVon(q) {
+  const lat = Number(q?.roh?.lat), lon = Number(q?.roh?.lon)
+  return (Number.isFinite(lat) && Number.isFinite(lon)) ? { lat, lon } : null
+}
 
 /** Wie weit die Regionsliste reicht (Meter). */
 export const RADIUS_M = 3000
+
+/**
+ * Melde-Naehe, wenn der Auftrag keine nennt.
+ *
+ * Spiegelt VOR_ORT_RADIUS_M aus pb_hooks/quests.js — die Zahl muss auf beiden
+ * Seiten dieselbe sein, sonst warnt das Fenster vor einer anderen Grenze als
+ * der, an der der Server prueft. Ein Test haelt sie zusammen.
+ */
+export const VOR_ORT_VORGABE_M = 150
 
 /**
  * Aussehen eines neu angelegten Auftrags.
@@ -71,10 +88,84 @@ export class QuestService {
     for (const q of region.quests) nachId.set(q.id, q)
 
     return {
-      quests: listeZuAnsicht([...nachId.values()], this.meineId),
+      quests: listeZuAnsicht([...nachId.values()], this.meineId)
+        .map(q => ({ ...q, annahme: this.annahmePruefung(q), melden: this.meldePruefung(q) })),
       karma: { ...meine.karma, ...region.karma },
       fehler: [...region.fehler, ...meine.fehler],
+      // Server, die keinen Standort bekommen haben und deshalb nicht nach
+      // Umgebung gefragt wurden. Kein Fehler — eine Entscheidung.
+      verborgen: region.verborgen || [],
     }
+  }
+
+  /**
+   * „Nur vor Ort annehmen": Geht das hier und jetzt — und wenn nicht, warum?
+   *
+   * Gerechnet wird MIT DER EIGENEN Position gegen die Position des Auftrags,
+   * nicht mit der Entfernung aus der Serverantwort. Die stammt aus dem, was wir
+   * bei der Abfrage mitgeschickt haben; sie hier zurückzulesen hieße, unsere
+   * eigene Angabe für eine Messung zu halten.
+   *
+   * Der Server prüft danach noch einmal. Das hier ist die Auskunft VOR dem
+   * Antippen — ein Knopf, der erst beim Drücken sagt, dass er nicht geht, ist
+   * eine Sackgasse.
+   *
+   * @returns {{noetig: boolean, ok: boolean, grund: string, radiusM: number,
+   *            entfernungM: number|null, text: string}}
+   */
+  annahmePruefung(q) {
+    const r = Number(q?.annahmeRadiusM) || 0
+    const aus = { noetig: r > 0, ok: true, grund: 'frei', radiusM: r, entfernungM: null, text: '' }
+    if (!r) return aus
+
+    const stufe = this.stufeFuer(q?.id)
+    const ich = this._position()
+    const ziel = zielOrtVon(q)
+    const d = (ich && ziel) ? abstandM(ziel.lat, ziel.lon, ich.lat, ich.lon) : NaN
+    aus.entfernungM = Number.isFinite(d) ? d : null
+
+    const erlaubt = aktionErlaubt({ max_distance: r }, stufe, Number.isFinite(d) ? d : null)
+    aus.ok = erlaubt.ok
+    aus.grund = erlaubt.grund
+    aus.text = erlaubt.text
+
+    // Eigene Position unbekannt: Ohne sie lässt sich nichts sagen, und die
+    // Stufe ist nicht schuld. Das gehört auseinandergehalten — sonst schickt
+    // die Meldung jemanden in die Einstellungen, der nur kein GPS hat.
+    if (aus.ok && !ich) {
+      aus.ok = false
+      aus.grund = 'kein-ort'
+      aus.text = t('Dein Standort ist gerade unbekannt — der Auftrag lässt sich nur vor Ort annehmen.')
+    }
+    return aus
+  }
+
+  /**
+   * Nachweis „vorOrt": Reicht die Freigabe-Stufe fuer die geforderte Naehe?
+   *
+   * Dieselbe Rechnung wie beim Annehmen, aber ein anderer Moment — und die
+   * Auskunft muss VOR dem Absenden kommen. Wer erst Fotos macht, eine Notiz
+   * tippt und dann eine Ablehnung bekommt, hat die Arbeit umsonst gemacht.
+   *
+   * Die Entfernung wird hier NICHT geprueft: Beim Melden steht man am Ort oder
+   * eben nicht, und das entscheidet der Server an der frischen Angabe. Geprueft
+   * wird nur, ob die Stufe die Frage ueberhaupt beantworten kann.
+   *
+   * @returns {{noetig: boolean, ok: boolean, radiusM: number, text: string}}
+   */
+  meldePruefung(q) {
+    const noetig = Array.isArray(q?.roh?.nachweis) && q.roh.nachweis.includes('vorOrt')
+    const r = Number(q?.roh?.vorOrtRadiusM) || VOR_ORT_VORGABE_M
+    if (!noetig) return { noetig: false, ok: true, radiusM: 0, text: '' }
+    const erlaubt = aktionErlaubt({ max_distance: r }, this.stufeFuer(q?.id), null)
+    return { noetig: true, ok: erlaubt.ok, radiusM: r, text: erlaubt.text }
+  }
+
+  /** Freigabe-Stufe des Servers, auf dem dieser Auftrag liegt. */
+  stufeFuer(compositeId) {
+    const s = String(compositeId || '')
+    const i = s.indexOf(':')
+    return privacy.levelFor(i < 0 ? this.ajna?.defaultClient?.id : s.slice(0, i))
   }
 
   _position() {
@@ -103,7 +194,16 @@ export class QuestService {
     const id = q?.id
     if (!id) throw new Error(t('Auftrag ohne Kennung'))
 
-    if (aktion === 'accept') return this.ajna.acceptQuest(id)
+    if (aktion === 'accept') {
+      // Der Standort geht EXAKT an den Manager — er entscheidet nach der Stufe
+      // dieses Servers, was davon rausgeht (Koordinate, bloßes „ich bin da",
+      // oder nichts). Hier zu filtern hieße, die Entscheidung zu verdoppeln.
+      const r = Number(q?.annahmeRadiusM) || 0
+      if (!r) return this.ajna.acceptQuest(id)
+      return this.ajna.acceptQuest(id, {
+        ich: this._position(), ziel: zielOrtVon(q), radiusM: r,
+      })
+    }
 
     if (aktion === 'submit') return this.ajna.completeQuest(id, opts.proof || null)
 

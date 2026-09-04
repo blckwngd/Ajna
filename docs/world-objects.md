@@ -180,7 +180,81 @@ und wird von beiden Seiten benutzt — der Client entscheidet damit, ob er den
 Menüpunkt anbietet, der Agent prüft damit, was bei ihm ankommt. Zwei
 Implementierungen würden auseinanderlaufen.
 
-> Derselbe Mechanismus trägt später „Auftrag nur vor Ort annehmen".
+### Auftrag nur vor Ort annehmen
+
+Derselbe Mechanismus, zweiter Nutzer. Ein Auftrag trägt
+`state.call.annahmeRadiusM` (0 oder fehlend = überall annehmbar, bestehende
+Aufträge ändern sich also nicht). Im Auftrags-Editor steht das als „Wo
+annehmbar": überall / 50 m / 250 m / 1 km.
+
+**Wogegen das hilft:** Ohne Auflage kann jemand vom Sofa aus alle Aufträge der
+Stadt für sich reservieren und liegen lassen. Dagegen genügt eine Schranke, die
+man nur mit Absicht umgeht.
+
+**Was es nicht ist: ein Nachweis.** Die Position kommt vom Gerät des
+Bearbeiters, er kann sie also erfinden — dieselbe Grenze, die schon über
+`POST /api/proximity` steht. Belastbare Anwesenheit braucht einen zweiten Faktor
+(UWB-Anker, NFC-Marke, signierter Sensor-Report). Das gilt genauso für den
+`vorOrt`-Nachweis beim Melden.
+
+Was beim Annehmen mitgeht, entscheidet die Stufe — im `AjnaManager`, dem einen
+Ort, an dem Positionen freigegeben werden:
+
+| Stufe | geht raus |
+|---|---|
+| Genau | exakte Koordinate |
+| Gegend | auf 100 m gerundete Koordinate (Server rechnet 150 m Kulanz dazu) |
+| Nähe | **keine Koordinate** — nur `nah: true/false` |
+| Verborgen | nichts; der Knopf bleibt gesperrt, mit Begründung |
+
+Die Stufe „Nähe" ist hier kein Notbehelf, sondern die genaueste Antwort: Der
+Client rechnet den Umkreis selbst und meldet nur das Ergebnis. Das ist genauso
+belastbar wie eine gesendete Koordinate — beide kommen von ihm —, kostet aber
+keinen Ort.
+
+Der Server prüft **zuletzt**, nach Frist und Karma: Wer das Karma nicht hat,
+soll nicht erst hinlaufen. Abgelehnt wird mit `accept_needs_position` oder
+`accept_too_far` samt `maxDistanceM`/`distanceM` — Codes, keine übersetzten
+Sätze.
+
+> Die Regel steht zweimal: `client/core/aktionsReichweite.js` und
+> `pocketbase/pb_hooks/quests.js`. `pb_hooks` läuft in goja und kann kein
+> ES-Modul laden. Ein Test in `tests/run-ui.mjs` hält die Konstanten zusammen —
+> sonst böte der Client einen Knopf an, den die Route ablehnt.
+
+### Melden nur vor Ort
+
+`state.call.vorOrtRadiusM` steuert den Nachweis `vorOrt` beim **Melden** —
+50 / 150 / 500 m, Vorgabe 150 m. Nicht zu verwechseln mit `annahmeRadiusM`: Das
+eine begrenzt, wer den Auftrag übernimmt, das andere, was als erledigt gemeldet
+werden darf. Ein Auftrag kann weiträumig annehmbar und trotzdem nur am Ort
+meldbar sein.
+
+Die Meldung trägt `precise` — ob die Stufe „Genau" galt. Daran hängt ein
+**Nachlass für eine Rundung, die wir selbst verlangt haben**: Bei „Gegend"
+meldet der Client auf 100 m gerundet, also gelten oberhalb von 500 m dieselben
+150 m Kulanz wie beim Annehmen. Wer „genau" behauptet, bekommt sie nicht, und
+unterhalb der Schwelle gibt es sie gar nicht — eine 50-m-Frage mit 100-m-Rundung
+zu bejahen hieße raten. Der Prüfer sieht `precise` am Nachweis und weiß damit,
+wie belastbar die Angabe ist.
+
+## Die Stufe gilt auch für die FRAGE
+
+Nicht nur für das, was man meldet. Die Regionsliste (`quests/near`) ist eine
+Frage mit einem Ort darin — „was gibt es HIER". Sie ging unverändert an jeden
+verbundenen Server, ein Server auf „Verborgen" bekam die exakte Position also
+beim ersten Blick in die Auftragsliste.
+
+**Wer keinen Ort bekommt, bekommt auch keine Frage gestellt.** Seine Aufträge
+fehlen dann in der Liste; das Fenster sagt das, als **Hinweis, nicht als
+Fehler** — ein Fehler heißt „versuch es nochmal", hier hat jemand etwas
+entschieden. `mine=1` läuft weiter: Die eigenen Ausschreibungen sind keine
+Aussage darüber, wo man ist.
+
+Freigegeben wird an genau drei Stellen, alle im `AjnaManager`: `questsNear`
+(Regionsliste), `_annahmeOrt` (Annehmen), `_nachweisOrt` (Melden). Eine zweite
+Stelle, die Positionen durchreicht, wäre eine zweite, die es falsch machen kann.
+
 
 ---
 

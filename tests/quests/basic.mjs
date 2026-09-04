@@ -32,10 +32,16 @@ export async function run(t) {
   r = await t.quest.publish(B.token, foreignCall.id, { rewardItems: [reward.id], verify: 'items' })
   t.check('Fremdes Item kann nicht hinterlegt werden', r.status === 409, 'HTTP ' + r.status)
 
-  // Der Aussteller DARF seinen Auftrag abschließen (s. Suite „self") — hier
-  // scheitert es an der fehlenden Gegenleistung: das Fell liegt beim Spieler.
+  // Frueher stand hier „der Aussteller scheitert an der fehlenden
+  // Gegenleistung" (das Fell liegt beim Spieler). Seit 2026-09-02 scheitert er
+  // eine Stufe frueher: Den eigenen Auftrag erledigt man gar nicht erst,
+  // ausser als Probelauf oder mit Superuser-Recht (s. Suite „probelauf").
+  //
+  // Die fehlende Gegenleistung wird weiter geprueft — in „requires", wo sie
+  // hingehoert. Hier den Bearbeiter zu nehmen ginge nicht: Der TRAEGT das Fell.
   r = await t.quest.complete(A.token, call.id)
-  t.check('Abschluss ohne gefordertes Item wird abgelehnt', r.status === 409, 'HTTP ' + r.status)
+  t.check('der Aussteller schliesst seinen eigenen Auftrag nicht ab', r.status === 403,
+    'HTTP ' + r.status + ' ' + (r.data?.code || ''))
 
   // --- Der eigentliche Tausch ----------------------------------------------
   r = await t.quest.accept(B.token, call.id)

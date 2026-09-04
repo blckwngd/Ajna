@@ -202,6 +202,11 @@ export class Minimap {
     this._zoom = clamp(Number(read(KEY_ZOOM, zoom)) || zoom, ZOOM_MIN, ZOOM_MAX)
     this._base = BASEMAPS[read(KEY_THEME, 'light')] ? read(KEY_THEME, 'light') : 'light'
     this._open = false
+    // Ausdrücklich gesetzt: `setDocked` vergleicht dagegen, und ein
+    // undefinierter Startwert ließe den ersten Aufruf anders laufen als jeden
+    // weiteren.
+    this._docked = false
+    this._freiePos = null
     this._map = null
     this._tiles = null
     this._mapPending = null
@@ -252,16 +257,35 @@ export class Minimap {
     const p = this._panel
     if (!p) return
     if (an) {
-      this._freiePos = { left: p.style.left, top: p.style.top }
+      // ALLE VIER Kanten merken, nicht nur zwei.
+      //
+      // Der Fehler, den das behebt: `makeDraggable` setzt beim Anwenden einer
+      // gemerkten Position `right`/`bottom` auf `auto` — dort steht die
+      // Position dann in `left`/`top`. Gemerkt wurden aber nur diese beiden.
+      // Beim Abdocken kamen sie leer zurück, während `right:auto` und
+      // `bottom:auto` INLINE stehen blieben und die Regel aus dem Stylesheet
+      // (`right:16px`) überstimmten. Ergebnis: ein `position:fixed`-Element
+      // ohne einen einzigen Anker — es rutschte an seinen statischen Platz
+      // unter das Fenster und war in der 3D-Ansicht schlicht weg.
+      this._freiePos = {
+        left: p.style.left, top: p.style.top,
+        right: p.style.right, bottom: p.style.bottom,
+      }
       p.style.left = ''
       p.style.top = ''
+      p.style.right = ''
+      p.style.bottom = ''
       p.classList.add('mm-oben')
     } else {
       p.classList.remove('mm-oben')
-      if (this._freiePos) {
-        p.style.left = this._freiePos.left
-        p.style.top = this._freiePos.top
-      }
+      // Ohne gemerkte Position bleibt alles leer — dann greift wieder das
+      // Stylesheet. Genau das ist der Normalfall für jeden, der die Karte nie
+      // verschoben hat.
+      const f = this._freiePos || { left: '', top: '', right: '', bottom: '' }
+      p.style.left = f.left
+      p.style.top = f.top
+      p.style.right = f.right
+      p.style.bottom = f.bottom
     }
     this._meldeHoehe()
   }
@@ -398,7 +422,10 @@ export class Minimap {
     for (const chip of panel.querySelectorAll('.ajna-mm-chip')) {
       chip.addEventListener('pointerdown', e => e.stopPropagation())
     }
-    this._dragCleanup = makeDraggable(panel, { key: KEY_POS })
+    // Angedockt sitzt das Fenster fest: Dann darf weder gezogen noch die
+    // gemerkte Freiposition angewandt werden — sonst schöbe der nächste
+    // Fenstergrößenwechsel die oben angedockte Karte wieder zur Seite.
+    this._dragCleanup = makeDraggable(panel, { key: KEY_POS, aktiv: () => !this._docked })
 
     // Leaflet muss von jeder Größenänderung erfahren — auch von der, die beim
     // Tab-Wechsel entsteht: in der Shell ist die AR-View `display:none`, die

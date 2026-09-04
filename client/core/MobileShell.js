@@ -113,7 +113,25 @@ export class MobileShell {
     this._questPanel = new QuestPanel({
       parent: document.body,
       onShowOnMap: (q) => {
-        this._toast?.show(q.ort || t('Ort unbekannt'), { title: q.titel || 'Auftrag' })
+        // Zeigte bisher nur einen Toast mit dem FREITEXT-Ortsfeld — stand dort
+        // nichts, kam „Ort unbekannt", und zur Karte ging es nie. Der Auftrag
+        // hat aber Koordinaten; die Freitextzeile ist eine Beschreibung für
+        // Menschen, kein Ort für die Karte.
+        const lat = Number(q.roh?.lat), lon = Number(q.roh?.lon)
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+          this._toast?.show(t('Dieser Auftrag hat keine Position.'),
+            { title: q.titel || t('Auftrag') })
+          return
+        }
+        this._questPanel?.close?.()
+        this.switchTo('map')
+        // Nach dem Reiterwechsel: Leaflet muss erst wieder Maße haben.
+        requestAnimationFrame(() => {
+          try {
+            const z = Math.max(Number(window.map?.getZoom?.()) || 0, 17)
+            window.map?.setView?.([lat, lon], z)
+          } catch (err) { console.debug('[quests] Karte:', err?.message || err) }
+        })
       },
       onEdit: (q) => this._questBearbeiten(q),
       onReload: () => this._questsLaden(),
@@ -221,6 +239,13 @@ export class MobileShell {
     // Ein Kompass für alle Ansichten. Setzt nebenbei window.ajnaHeadingRad,
     // das bisher an zwei Stellen GELESEN und an keiner gesetzt wurde.
     starteKompass()
+    this._wireQuestDiag()
+    // Die Karte liegt in einem anderen Bündel und kennt die Auftragsliste nicht.
+    // Nimmt jemand dort einen Auftrag an, soll sie trotzdem nachziehen.
+    window.ajnaQuestsReload = () => { this._questsLaden().catch(() => {}) }
+    this._wireQuestRealtime()
+    // Von der Karte ins Auftragsfenster — dort steht das Melde-Formular.
+    window.ajnaQuestOeffnen = (id) => { this._questPanel?.zeigeAuftrag?.(id) }
 
     const _nbRoot = document.querySelector('.shell-view[data-view="nearby"] .nearby-root')
     if (_nbRoot) {
@@ -418,6 +443,16 @@ export class MobileShell {
   // ───────────────────────────────────────────────────────────────────
 
   _wireTabs() {
+    // Die Reiterleiste steht fest in index.html — sie ist beim ersten Bild da,
+    // bevor irgendein Modul läuft. Beschriftet wird sie deshalb hier nach, sobald
+    // der Katalog steht; sonst bliebe sie als einzige Fläche dauerhaft deutsch.
+    for (const def of TAB_DEFS) {
+      const b = document.querySelector(`.shell-tabbar button[data-tab="${def.id}"]`)
+      if (!b) continue
+      const text = b.querySelector('span:not(.tab-icon)')
+      if (text) text.textContent = t(def.label)
+      b.setAttribute('aria-label', t(def.label))
+    }
     const tabs = document.querySelectorAll('.shell-tabbar button[data-tab]')
     const views = document.querySelectorAll('.shell-view[data-view]')
     tabs.forEach(btn => {
@@ -613,25 +648,163 @@ export class MobileShell {
 
   // ── Aufträge ───────────────────────────────────────────────────────────
 
+  /**
+   * `ajnaQuestDiag()` in der Browser-Konsole — warum steht dieser Knopf (nicht) da?
+   *
+   * Die Auftragsliste trifft ihre Entscheidungen an vier Stellen: Der Server
+   * sagt, ob Annehmen in Frage kommt (`canAccept`), die Übersetzung macht daraus
+   * einen Zustand, der Zustand bestimmt die Knöpfe, und die Annahme-Nähe kann
+   * einen davon wieder sperren. Fehlt am Ende ein Knopf, ist von aussen nicht
+   * zu sehen, welche der vier es war.
+   *
+   * Gibt genau das aus — je Auftrag eine Zeile.
+   */
+  _wireQuestDiag() {
+    window.ajnaQuestDiag = () => {
+      const zeilen = (this._questPanel?._quests || []).map(q => ({
+        Name: q.titel,
+        Zustand: q.status,
+        meiner: q.meine === true,
+        Probelauf: q.probelauf === true,
+        veroeffentlicht: q.roh?.published !== false,
+        darfAnnehmen: q.darfAnnehmen,
+        darfSpielen: q.darfSpielen,
+        bearbeiteIch: q.bearbeiteIch === true,
+        Naehe: q.annahme?.noetig ? `${q.annahme.radiusM} m — ${q.annahme.ok ? 'ok' : q.annahme.grund}` : '—',
+        Knoepfe: (q.meine && q.darfSpielen === false ? '(nur Bearbeiten)' : ''),
+      }))
+      if (console.table) console.table(zeilen); else console.log(zeilen)
+      console.log('Bundle vom:', document.querySelector('script[src*="mobile.bundle"]')?.src || '?')
+      return zeilen
+    }
+  }
+
+  /**
+   * Aufträge in Echtzeit — ohne ein einziges neues Abo.
+   *
+   * Die Objekte laufen ohnehin schon über PocketBase-Realtime durch den
+   * Manager; ein Auftrag IST ein Objekt (`type: "call"`). Ein eigenes Abo wäre
+   * derselbe Strom ein zweites Mal — mehr Verbindungen, mehr Zustand, dieselben
+   * Daten. Deshalb nur ein Filter auf dem, was schon fliesst.
+   *
+   * GEBREMST: Ein Abschluss bewegt mehrere Datensätze (Auftrag, Belohnung,
+   * geforderte Gegenstände) und löst dann ebenso viele Ereignisse aus. Ohne
+   * Bremse liefe die Liste dreimal hintereinander.
+   */
+  _wireQuestRealtime() {
+    let timer = null
+    const nachziehen = () => {
+      if (timer) return
+      timer = setTimeout(() => { timer = null; this._questsLaden().catch(() => {}) }, 800)
+    }
+    this._questAbo = this.ajna.onObjectEvent?.((rec) => {
+      if (rec?.type !== 'call') return
+      // Nur was mich angeht. Fremde Aufträge ändern sich dauernd — der
+      // World-Director allein schreibt im Sekundentakt.
+      const ich = this.ajna.currentUser?.()?.id
+      const c = rec.state?.call || {}
+      if (!ich || (String(rec.owner || '') !== ich && String(c.claimedBy || '') !== ich)) return
+      nachziehen()
+    }) || null
+  }
+
   /** Liste holen und in den Panel geben. Fehler stehen dort, nicht in der Konsole. */
   async _questsLaden() {
     if (!this._questPanel) return
+    // EINER NACH DEM ANDEREN. Seit die Liste auch auf Realtime-Ereignisse
+    // nachlädt, können zwei Läufe überlappen — und weil beide dieselbe Route
+    // mit demselben Anfrage-Schlüssel benutzen, storniert das SDK den ersten.
+    // Der brach dann mit „autocancelled" ab und landete als Fehlerbanner in
+    // der Liste. Ein zweiter Anlauf wird gemerkt statt gestartet.
+    if (this._questsLaedt) { this._questsNochmal = true; return }
+    this._questsLaedt = true
     try {
-      const { quests, fehler } = await this._quests.laden()
+      const { quests, fehler, verborgen } = await this._quests.laden()
+      this._questStandMelden(quests)
       this._questPanel.setQuests(quests)
       // Ein Server, der nicht antwortet, darf die anderen nicht mitnehmen —
       // aber verschweigen lässt sich sein Ausfall auch nicht: seine Aufträge
       // fehlen dann in der Liste.
       if (fehler.length) {
-        this._questPanel.setFehler(
-          fehler.map(f => `${f.server}: ${f.error}`).join(' · '))
+        // Je Server EINE Zeile: Region und eigene Aufträge scheitern beide,
+        // und zweimal dasselbe zu lesen macht es nicht klarer.
+        const proServer = new Map()
+        for (const f of fehler) if (!proServer.has(f.server)) proServer.set(f.server, f)
+        this._questPanel.setFehler([...proServer.values()].map(f => {
+          const name = f.label || f.server
+          if (f.status === 401 || f.status === 403) {
+            return t('{server}: nicht angemeldet — Aufträge von dort fehlen.')
+              .replace('{server}', name)
+          }
+          return `${name}: ${f.error}`
+        }).join(' · '))
       }
+      // Kein Standort freigegeben, also nicht nach der Umgebung gefragt. Das
+      // ist kein Ausfall, sondern eine Einstellung — und muss trotzdem
+      // dastehen, sonst sieht eine unvollständige Liste vollständig aus.
+      this._questPanel.setHinweis(verborgen?.length
+        ? t('Für {server} ist kein Standort freigegeben — Aufträge in der Nähe bleiben ausgeblendet. Zu ändern unter Einstellungen › Standort.')
+            .replace('{server}', verborgen.map(v => v.label).join(', '))
+        : null)
     } catch (err) {
       this._questPanel.setFehler(err?.message || String(err))
+    } finally {
+      this._questsLaedt = false
+      if (this._questsNochmal) {
+        this._questsNochmal = false
+        this._questsLaden().catch(() => {})
+      }
     }
   }
 
   /** Knopf aus der Detailansicht. Wirft weiter — der Panel zeigt die Ablehnung. */
+  /**
+   * Was sich seit dem letzten Laden getan hat — und dem Spieler etwas sagt.
+   *
+   * Ein Auftrag wird nicht in dem Moment fertig, in dem man ihn meldet: Beim
+   * Abnahmeweg „Stichprobe" entscheidet der Aussteller später, beim Schwarm
+   * mehrere Leute. Bis dahin passiert für den Bearbeiter sichtbar NICHTS —
+   * er hat gemeldet und erfährt nie, wie es ausging. Genau diese Übergänge
+   * werden hier gemeldet.
+   *
+   * Verglichen wird gegen den vorigen Stand, nicht gegen eine Merkliste: Was
+   * einmal gemeldet wurde, ist damit auch über einen Neustart hinweg nicht
+   * doppelt zu sehen — der vorige Stand ist dann leer, und es wird nichts
+   * gemeldet.
+   */
+  _questStandMelden(neu) {
+    const vorher = this._questStand || null
+    const jetzt = new Map((neu || []).map(q => [q.id, q.status]))
+    if (vorher) {
+      for (const q of neu || []) {
+        const alt = vorher.get(q.id)
+        if (!alt || alt === q.status) continue
+        // Nur was MICH betrifft: Für fremde Aufträge, die ich weder halte noch
+        // ausgeschrieben habe, ist ein Zustandswechsel kein Ereignis.
+        if (!q.meine && !q.bearbeiteIch) continue
+        const titel = q.titel || t('Auftrag')
+        if (q.status === 'erledigt') {
+          this._meldung(t('Auftrag „{titel}" ist abgeschlossen.').replace('{titel}', titel), titel)
+        } else if (q.status === 'eingereicht') {
+          this._meldung(t('Auftrag „{titel}" wartet auf Abnahme.').replace('{titel}', titel), titel)
+        } else if (alt === 'eingereicht' && (q.status === 'angenommen' || q.status === 'offen')) {
+          // Zurück aus der Prüfung heisst: abgelehnt. Das ist die Nachricht,
+          // die am ehesten untergeht, und die am meisten zählt.
+          this._meldung(t('Auftrag „{titel}" wurde zurückgewiesen.').replace('{titel}', titel), titel)
+        } else if (q.status === 'abgelaufen') {
+          this._meldung(t('Auftrag „{titel}" ist abgelaufen.').replace('{titel}', titel), titel)
+        }
+      }
+    }
+    this._questStand = jetzt
+  }
+
+  /** Einmal sagen — im Verlauf UND als kurze Einblendung. */
+  _meldung(text, titel) {
+    try { messageLog.push(text, 'interact') } catch {}
+    try { this._toast?.show(text, { title: titel || t('Auftrag'), log: false }) } catch {}
+  }
+
   async _questAktion(q, aktion, extra) {
     const proof = aktion === 'submit'
       ? this._quests.nachweisBauen({ note: extra?.note || '' })
@@ -643,9 +816,23 @@ export class MobileShell {
     // Der Server antwortet bei fehlendem Nachweis mit einer Liste der Lücken —
     // die gehört in die Meldung, nicht nur der nackte Fehlertext.
     await this._questsLaden()
+    // Was gerade geschehen ist, gehört gesagt — der Zustandsvergleich beim
+    // Laden meldet nur, was SPÄTER passiert (Abnahme durch andere).
+    const titel = q.titel || t('Auftrag')
+    if (aktion === 'submit') {
+      this._meldung(res?.status === 'done'
+        ? t('Auftrag „{titel}" abgeschlossen.').replace('{titel}', titel)
+        : t('Auftrag „{titel}" gemeldet — wartet auf Abnahme.').replace('{titel}', titel), titel)
+    } else if (aktion === 'accept') {
+      this._meldung(t('Auftrag „{titel}" angenommen.').replace('{titel}', titel), titel)
+    } else if (aktion === 'confirm') {
+      this._meldung(t('Abschluss bestätigt: „{titel}".').replace('{titel}', titel), titel)
+    } else if (aktion === 'reject') {
+      this._meldung(t('Abschluss zurückgewiesen: „{titel}".').replace('{titel}', titel), titel)
+    }
     const karma = Number(res?.karma)
     if (Number.isFinite(karma) && karma > 0) {
-      this._toast?.show(`+${karma} Karma`, { title: q.titel || 'Auftrag' })
+      this._toast?.show(`+${karma} Karma`, { title: titel })
     }
     return res
   }
@@ -804,7 +991,18 @@ export class MobileShell {
       frist: Number.isFinite(frist) ? frist : null,
       belohnung: { anzahl: (c.rewardItems || []).length, was: '', steigt: Number(c.steigt) || 0 },
       karma: Number(c.karma) || 0,
+      // ALLES aus dem Auftrag durchreichen, dann das Nötige geradeziehen.
+      //
+      // Vorher stand hier eine Handliste von fünf Feldern. Jedes NEUE Feld
+      // fiel damit still durch: „Probelauf", „Wo annehmbar" und „Wie nah beim
+      // Melden" kamen im Editor leer an — und beim Speichern schrieb der die
+      // Leere zurück. Ein Auftrag verlor auf diesem Weg seine Auflagen, ohne
+      // dass jemand etwas angefasst hätte.
+      //
+      // Dieselbe Falle wie beim alten Objekt-Editor (siehe Kopf von
+      // QuestEditor.js) — nur in Leserichtung.
       roh: {
+        ...c,
         verify: c.verify || 'items',
         pruefgruppe: c.pruefgruppe || '',
         votesNeeded: Number(c.schwarmZahl) || 3,

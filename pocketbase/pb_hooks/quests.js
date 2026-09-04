@@ -142,10 +142,10 @@ function validateSpecs(specs) {
 function resolveSwap(app, call, callData, completerId, extraRequireIds) {
   const issuer = call.get("owner")
   if (!completerId) return { ok: false, code: 409, error: "no completer assigned to this call" }
-  // Der Aussteller DARF seinen eigenen Auftrag abschließen — praktisch zum
-  // Durchspielen/Testen und harmlos: Belohnung und geforderte Items wandern
-  // dann von ihm zu ihm (No-Op), die Treuhand wird gelöst. Es lässt sich damit
-  // nichts gewinnen, was ihm nicht ohnehin gehört.
+  // WER DARF DEN EIGENEN AUFTRAG ABSCHLIESSEN, entscheidet die Route
+  // (quest/complete), nicht diese Funktion: nur als Probelauf oder mit
+  // Superuser-Recht. Frueher stand hier „darf jeder, ist ja ein Nullsummenspiel"
+  // — das galt fuer GEGENSTAENDE, nicht fuer Karma. Siehe pb_hooks/karma.js.
 
   const required = []
   const used = {}   // verhindert, dass dasselbe Item zwei Forderungen erfüllt
@@ -199,7 +199,23 @@ function resolveSwap(app, call, callData, completerId, extraRequireIds) {
   }
 
   const rewardIds = idList(callData.rewardItems)
-  if (!rewardIds.length) return { ok: false, code: 409, error: "call has no escrowed reward" }
+  if (!rewardIds.length) {
+    // EIN PROBELAUF BRAUCHT KEINE TREUHAND. Er zahlt nichts aus, also gibt es
+    // auch nichts zu hinterlegen — und ihn erst veroeffentlichen zu lassen
+    // (das ist der Schritt, der bindet) waere die falsche Huerde: Er soll ja
+    // gerade NICHT sichtbar werden.
+    //
+    // Die Bedingungspruefung darueber ist bereits gelaufen. Das ist Absicht:
+    // Wer probelaeuft, will wissen, ob seine Forderungen greifen. Nur die
+    // Auszahlung faellt weg, nicht die Pruefung.
+    if (callData.probelauf === true) {
+      return {
+        ok: true, issuer: issuer, rewards: [], required: required,
+        remainingRewards: [], repeatable: callData.repeatable === true, perRun: 0, steigt: 0,
+      }
+    }
+    return { ok: false, code: 409, error: "call has no escrowed reward" }
+  }
 
   // Wiederholbare Aufträge zahlen pro Durchlauf nur einen Teil des Vorrats aus.
   // Damit begrenzt der Treuhand-Vorrat die Wiederholungen von selbst — es kann
@@ -504,7 +520,15 @@ function pruefeNachweis(callRec, c, proof) {
     } else {
       const grenze = Number(c.vorOrtRadiusM) > 0 ? Number(c.vorOrtRadiusM) : VOR_ORT_RADIUS_M
       const d = abstandM(Number(callRec.get("lat")), Number(callRec.get("lon")), lat, lon)
-      if (!isFinite(d) || d > grenze) {
+      // Kulanz für eine Rundung, die WIR verlangt haben: Bei der Stufe „Gegend"
+      // meldet der Client auf 100 m gerundet (`precise: false`). Ohne Nachlass
+      // läge dann jeder systematisch daneben — und zwar gerade an der Grenze,
+      // wo es darauf ankommt. Eine exakte Angabe bekommt keinen Nachlass, und
+      // unterhalb der Feinheits-Schwelle gibt es auch keinen: Eine 50-m-Frage
+      // mit 100-m-Rundung zu bejahen hiesse raten.
+      const grob = p.at.precise !== true
+      const kulanz = (grob && grenze >= FEIN_AB_M) ? AREA_KULANZ_M : 0
+      if (!isFinite(d) || d > grenze + kulanz) {
         fehlend.push("vorOrt: " + Math.round(d) + " m entfernt, erlaubt sind " + grenze + " m")
       } else {
         // `precise` sagt, ob die Stufe „Genau" galt — eine vergröberte Angabe
@@ -526,8 +550,66 @@ function pruefeNachweis(callRec, c, proof) {
   }
 }
 
+// ── „Auftrag nur vor Ort annehmen" ────────────────────────────────────────
+//
+// `state.call.annahmeRadiusM` (0 oder fehlend = keine Einschränkung). Bestehende
+// Aufträge ändern ihr Verhalten damit nicht.
+//
+// WAS DAS IST UND WAS NICHT: eine Plausibilitätsschranke, kein Nachweis. Die
+// einzige Positionsquelle ist der Client, also kann er auch behaupten, da zu
+// sein — dieselbe Grenze, die schon über POST /api/proximity steht. Belastbar
+// wird Anwesenheit erst mit einem zweiten Faktor (UWB-Anker, signierter
+// Sensor-Report). Der Zweck hier ist ein anderer und trägt: Er verhindert, dass
+// jemand vom Sofa aus alle Aufträge der Stadt für sich reserviert und liegen
+// lässt. Dagegen genügt eine Schranke, die man nur mit Absicht umgeht.
+//
+// ZWEI FASSUNGEN DERSELBEN REGEL, unvermeidbar: `pb_hooks` läuft in goja und
+// kann `client/core/aktionsReichweite.js` (ES-Modul) nicht laden. Die Konstanten
+// werden deshalb von einem Test zusammengehalten (tests/run-ui.mjs) — sonst
+// liefen Client-Anzeige und Server-Prüfung auseinander, und der Knopf wäre da,
+// wo die Route ablehnt.
+
+/** Unterhalb dieser Reichweite reicht eine auf 100 m gerundete Position nicht. */
+const FEIN_AB_M = 500
+/** Rundungs-Kulanz der Stufe „Gegend" — sonst läge jeder systematisch daneben. */
+const AREA_KULANZ_M = 150
+
+/**
+ * Darf dieser Melder den Auftrag von seinem Standort aus annehmen?
+ *
+ * @param {object} callRec  Auftrags-Record (lat/lon)
+ * @param {object} c        callData
+ * @param {object} meldung  { at?: {lat, lon}, nah?: boolean }
+ * @returns {{ok: boolean, grund: string, grenzeM: number, entfernungM: number|null}}
+ */
+function annahmeOrtPruefen(callRec, c, meldung) {
+  const grenze = Number(c && c.annahmeRadiusM) > 0 ? Number(c.annahmeRadiusM) : 0
+  if (!grenze) return { ok: true, grund: "ohne-grenze", grenzeM: 0, entfernungM: null }
+
+  const m = (meldung && typeof meldung === "object") ? meldung : {}
+
+  // Stufe „Nähe": Der Client hat gar keine Koordinaten zu senden. Er rechnet
+  // den Umkreis selbst aus und meldet nur das Ergebnis — genauso belastbar wie
+  // eine gesendete Koordinate (beide kommen von ihm), aber ohne einen Ort
+  // preiszugeben. Dieselbe Linie wie ProximityReporter.
+  if (m.nah === true) return { ok: true, grund: "naehe-gemeldet", grenzeM: grenze, entfernungM: null }
+  if (m.nah === false) return { ok: false, grund: "zu-weit", grenzeM: grenze, entfernungM: null }
+
+  const lat = Number(m.at && m.at.lat), lon = Number(m.at && m.at.lon)
+  if (!isFinite(lat) || !isFinite(lon)) {
+    return { ok: false, grund: "keine-position", grenzeM: grenze, entfernungM: null }
+  }
+  const d = abstandM(Number(callRec.get("lat")), Number(callRec.get("lon")), lat, lon)
+  if (!isFinite(d)) return { ok: false, grund: "keine-position", grenzeM: grenze, entfernungM: null }
+
+  const kulanz = grenze < FEIN_AB_M ? 0 : AREA_KULANZ_M
+  if (d > grenze + kulanz) return { ok: false, grund: "zu-weit", grenzeM: grenze, entfernungM: d }
+  return { ok: true, grund: "in-reichweite", grenzeM: grenze, entfernungM: d }
+}
+
 module.exports = {
   VOR_ORT_RADIUS_M, abstandM, pruefeNachweis,
+  FEIN_AB_M, AREA_KULANZ_M, annahmeOrtPruefen,
   istAusstellerAbnahme, brauchtAbnahme, darfAbnehmen,
   parseState, escrowCallOf, activeEscrowOf, callDataOf, idList,
   specMatches, describeSpec, validateSpecs,

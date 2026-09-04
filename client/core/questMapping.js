@@ -107,11 +107,27 @@ export function ansichtsStatus(rec, meineId) {
   if (s === 'cancelled') return 'abgelaufen'
   if (s === 'pending') {
     if (rec?.canVerify) return 'pruefung'
-    return bearbeiter === ich || meins ? 'eingereicht' : 'pruefung'
+    // Der Aussteller entscheidet ueber die Einreichung — auch dann, wenn er
+    // selbst eingereicht hat. Der Server setzt `canVerify` in diesem Fall
+    // nicht (er blendet eigene Einreichungen aus der Pruefliste aus), die
+    // Route `quest/approve` laesst den Aussteller aber ausdruecklich zu.
+    // Ohne diese Zeile blieb ein selbst durchgespielter Auftrag fuer immer
+    // auf „wird geprueft" stehen, ohne dass irgendwo ein Knopf war.
+    if (meins) return 'pruefung'
+    return bearbeiter === ich ? 'eingereicht' : 'pruefung'
   }
   if (s === 'claimed') return 'angenommen'
   // „open": Entwurf ist ein eigener Auftrag, den noch niemand ausgeschrieben hat.
-  if (meins && rec?.published === false) return 'entwurf'
+  //
+  // EIN PROBELAUF IST DAVON AUSGENOMMEN. Veröffentlichen heisst: die Belohnung
+  // treuhänderisch binden und den Auftrag für andere sichtbar machen. Ein
+  // Probelauf zahlt nichts aus und soll niemand anders sehen — beides trifft
+  // also nicht zu. Ihn erst zu veröffentlichen, um ihn ausprobieren zu dürfen,
+  // wäre eine Hürde ohne Zweck; und ausgerechnet der Knopf „Veröffentlichen"
+  // ist das Letzte, was man für etwas drückt, das nur einen selbst angeht.
+  if (meins && rec?.published === false) {
+    return rec?.probelauf === true ? 'probe' : 'entwurf'
+  }
   return rec?.angeboten === true ? 'angeboten' : 'offen'
 }
 
@@ -188,6 +204,19 @@ export function zuAnsicht(rec, meineId) {
     belohnung: belohnungAus(rec),
     pruefung: pruefungText(rec),
     anforderungen: anforderungenAus(rec.nachweis, Number(rec.requires) || 0),
+    // 0 = überall annehmbar. Ob der Knopf angeboten wird, entscheidet der
+    // Auftrags-Dienst — er kennt die Freigabe-Stufe und die eigene Position.
+    annahmeRadiusM: Number(rec.annahmeRadiusM) || 0,
+    probelauf: rec.probelauf === true,
+    // Zwei Fragen, zwei Felder: `darfAnnehmen` gilt fuer DIESEN Moment,
+    // `darfSpielen` fuer den ganzen Auftrag. Beides weiss nur der Server — er
+    // kennt Probelauf und Superuser-Recht.
+    darfAnnehmen: rec.canAccept !== false,
+    darfSpielen: rec.canPlay !== false,
+    // Halte ich ihn gerade selbst? Entscheidet, unter welchem Reiter er steht:
+    // woran ich ARBEITE, gehört unter „Aktiv" — auch mein eigener Probelauf.
+    bearbeiteIch: !!ich && String(rec?.claimedBy || '') === ich,
+    vorOrtRadiusM: Number(rec.vorOrtRadiusM) || 0,
     karma: Number(rec.karmaRequired) || 0,
     karmaOk: rec.karmaOk !== false,
     meine: meins,
@@ -243,6 +272,13 @@ export function zuFormular(v, { jetzt = Date.now(), sichtbarkeit = 'region', sic
     schwarmZahl: Number(roh.votesNeeded) || 3,
     nachweis: Array.isArray(roh.nachweis) ? [...roh.nachweis] : [],
     karma: Number(v?.karma) || 0,
+    // Jeweils erst der Anzeige-Auftrag, dann der Rohsatz: Der eine kommt aus
+    // der Regionsliste, der andere aus dem Datensatz (Bearbeiten-Dialog).
+    // Beide Wege muessen dasselbe Formular fuellen.
+    annahmeRadiusM: Number(v?.annahmeRadiusM ?? roh.annahmeRadiusM) || 0,
+    probelauf: v?.probelauf === true || roh.probelauf === true,
+    // 0 = der Auftrag sagt nichts; im Formular steht dann die Server-Vorgabe.
+    vorOrtRadiusM: Number(v?.vorOrtRadiusM ?? roh.vorOrtRadiusM) || 150,
     // Sichtbarkeit steht nicht im Auftrag, sondern in seinen Rechten — sie
     // kommt von aussen, weil dafür die ACEs gelesen werden müssen.
     sichtbarkeit,
@@ -313,6 +349,20 @@ export function callZustandAus(formular, { jetzt = Date.now(), vorher = null } =
   c.karma = Number(f.karma) || 0
   c.nachweis = Array.isArray(f.nachweis) ? [...f.nachweis] : []
   c.steigt = Number(f.belohnung?.steigt) || 0
+
+  // „Nur vor Ort annehmen". 0 heißt überall — dann fällt das Feld ganz weg,
+  // damit ein Auftrag ohne diese Auflage auch keine trägt.
+  // Probelauf: nur fuer den Autor sichtbar, zahlt bei niemandem etwas aus.
+  if (f.probelauf) c.probelauf = true; else delete c.probelauf
+
+  const annahme = Number(f.annahmeRadiusM) || 0
+  if (annahme > 0) c.annahmeRadiusM = annahme; else delete c.annahmeRadiusM
+
+  // Melde-Nähe nur, wenn der Nachweis sie überhaupt verlangt — sonst stünde
+  // eine Zahl im Auftrag, die nie jemand liest.
+  const vorOrt = Number(f.vorOrtRadiusM) || 0
+  if (c.nachweis.includes('vorOrt') && vorOrt > 0) c.vorOrtRadiusM = vorOrt
+  else delete c.vorOrtRadiusM
 
   const frist = fristAus(f.fristMs, jetzt)
   if (frist) c.deadline = frist; else delete c.deadline

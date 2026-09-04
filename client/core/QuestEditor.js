@@ -11,11 +11,24 @@
 // (Kurztext, Ort, Frist, Nachweis, Karma, Prüfgruppe). Jetzt gibt es dort nur
 // noch den Knopf hierher.
 //
-// VOKABULAR (vorher uneinheitlich benutzt):
-//   Bearbeiter — wer den Auftrag übernimmt und ausführt
-//   Abnahme    — die Prüfung des gemeldeten Abschlusses
-//   Prüfer     — wer diese Abnahme vornimmt
-// „Abnehmer" kommt bewusst nicht mehr vor: das Wort wurde für beides benutzt.
+// VOKABULAR IN DER OBERFLÄCHE (2026-09-02 geschärft):
+//   Aufgabe      — der Abschnitt, in dem steht, was zu tun und wer zufrieden
+//                  zu stellen ist
+//   Erledigung   — was der Bearbeiter beim Melden BEILEGEN muss (Fotos, vor
+//                  Ort sein, Gegenstand dabeihaben)
+//   Bestätigung  — WER den gemeldeten Abschluss abnimmt („Wer bestätigt
+//                  den Abschluss" — als Frage, wie die Nachbarfelder)
+//   Bearbeiter   — wer den Auftrag übernimmt und ausführt
+//
+// Vorher hieß das „Abnahme" / „Verfahren" / „Nachweis". Drei Amtswörter, deren
+// Unterschied man raten musste: „Nachweis" und „Abnahme" klingen beide nach
+// Prüfung, „Verfahren" nach gar nichts. Jetzt trennen die Wörter die beiden
+// Fragen, um die es wirklich geht — WAS bringt der Bearbeiter mit, und WER
+// sagt Ja dazu.
+//
+// Die Code-Bezeichner heißen weiter ABNAHME/NACHWEIS und `state.call.nachweis`:
+// Sie stecken in Datensätzen und in der Server-Route. Umbenennen hieße eine
+// Migration für einen Wortwechsel — der Preis steht in keinem Verhältnis.
 //
 // Warum ein eigenes Fenster und nicht mehr Felder im Editor: Ein Auftrag ist ein
 // Vorgang mit Lebenslauf, kein Objekt mit ein paar Feldern mehr. Was man ändern
@@ -36,7 +49,10 @@ import { klickDaneben } from './klickDaneben.js'
 
 const STYLE_ID = 'ajna-questedit-style'
 
-/** Abnahmeverfahren — wie wird geprüft, dass die Aufgabe erledigt ist? */
+/**
+ * Wer den gemeldeten Abschluss bestätigt. In der Oberfläche: „Bestätigung des
+ * Abschlusses" (der Bezeichner bleibt ABNAHME, siehe Vokabular oben).
+ */
 export const ABNAHME = [
   { key: 'uebergabe',  label: 'Übergabe an die Figur',     hinweis: 'Der Server prüft die geforderten Gegenstände.' },
   { key: 'stichprobe', label: 'Stichprobe (Auftraggeber)',  hinweis: 'Du siehst dir einen Teil der Einreichungen an.' },
@@ -45,8 +61,13 @@ export const ABNAHME = [
 ]
 
 /**
- * Was der Bearbeiter beim Melden beilegen muss. Jede Zeile erklärt sich selbst —
- * „Vor Ort bestätigen" allein ließ offen, WER dort bestätigt.
+ * Was der Bearbeiter beim Melden BEILEGEN muss. In der Oberfläche steht das
+ * unter „Erledigung" — und zwar VOR der Bestätigung: Erst tut man etwas, dann
+ * nickt es jemand ab. Die alte Reihenfolge fragte zuerst nach dem Prüfweg und
+ * danach, was überhaupt zu prüfen ist.
+ *
+ * Jede Zeile erklärt sich selbst — „Vor Ort bestätigen" allein ließ offen, WER
+ * dort bestätigt.
  */
 export const NACHWEIS = [
   { key: 'foto', label: 'Foto-Beweis',
@@ -75,6 +96,41 @@ export const SICHTBARKEIT = [
 
 /** Karma-Bedingung: 0 = keine. Siehe core/karma.js. */
 export { KARMA_WAHL, KARMA_PRO_STUFE } from './karma.js'
+
+/**
+ * „Nur vor Ort annehmen" — wie nah der Bearbeiter beim Annehmen sein muss.
+ *
+ * Gedacht gegen das Horten: Ohne Auflage kann jemand vom Sofa aus alle Aufträge
+ * der Stadt für sich reservieren und liegen lassen. Ein Beweis ist es nicht —
+ * die Position kommt vom Gerät des Bearbeiters (siehe docs/world-objects.md).
+ *
+ * Die Schwellen sind nicht beliebig: Unter 500 m kann eine auf 100 m gerundete
+ * Position die Frage nicht mehr beantworten. Ab da braucht der Bearbeiter die
+ * Standort-Freigabe „Nähe" — deshalb steht das an den engen Stufen dran.
+ */
+export const ANNAHME_ORT = [
+  { m: 0,    label: 'überall' },
+  { m: 50,   label: 'direkt am Ort (50 m)' },
+  { m: 250,  label: 'in Sichtweite (250 m)' },
+  { m: 1000, label: 'in der Gegend (1 km)' },
+]
+
+/**
+ * Wie nah der Bearbeiter beim MELDEN sein muss (Nachweis „vorOrt“).
+ *
+ * Nicht dasselbe wie ANNAHME_ORT: Das eine begrenzt, wer den Auftrag überhaupt
+ * an sich nimmt, das andere, was als erledigt gemeldet werden darf. Ein Auftrag
+ * kann weiträumig annehmbar sein und trotzdem nur am Ort meldbar.
+ *
+ * 150 m ist die Vorgabe des Servers (VOR_ORT_RADIUS_M) — sie steht hier
+ * ausdrücklich in der Liste, damit im Formular derselbe Wert steht, der
+ * nachher gilt.
+ */
+export const VOR_ORT_NAEHE = [
+  { m: 50,  label: 'direkt am Ort (50 m)' },
+  { m: 150, label: 'am Ort (150 m)' },
+  { m: 500, label: 'in der Gegend (500 m)' },
+]
 
 const FRISTEN = [
   { ms: 0,                 label: 'keine Frist' },
@@ -139,6 +195,7 @@ export const LEER_AUFTRAG = () => ({
   belohnung: { anzahl: 1, was: '', steigt: 0 },
   abnahme: 'stichprobe', schwarmZahl: 3, pruefgruppe: '',
   nachweis: [], karma: 0, sichtbarkeit: 'region', sichtbarGruppe: '',
+  annahmeRadiusM: 0, vorOrtRadiusM: 150, probelauf: false,
   anbietenNachH: 0,
   wiederholbar: false, vorrat: 1, forderungen: [],
   server: null,
@@ -314,8 +371,14 @@ export class QuestEditor {
     this._body.innerHTML = `
       ${sp.hinweis ? `<div class="qe-hinweis">${esc(t(sp.hinweis))}</div>` : ''}
 
-      <div class="qe-abschnitt">Text</div>
-      <label>Titel
+      <label class="qe-haken-zeile">
+        <input type="checkbox" data-f="probelauf"${q.probelauf ? ' checked' : ''}${aus('text')}>
+        <span><span class="qe-haken-titel">${esc(t('Probelauf'))}</span>
+        <span class="qe-haken-hinweis">${esc(t('Nur du siehst ihn, und du darfst ihn selbst erledigen. Es wird nichts ausgezahlt — weder Belohnung noch Karma.'))}</span></span>
+      </label>
+
+      <div class="qe-abschnitt">${esc(t('Beschreibung'))}</div>
+      <label>${esc(t('Titel'))}
         <input type="text" data-f="titel" maxlength="80" value="${esc(q.titel)}"
                placeholder="${esc(t('Müll sammeln am Rheinufer'))}"${aus('text')}>
       </label>
@@ -330,15 +393,21 @@ export class QuestEditor {
         <input type="text" data-f="ort" maxlength="80" value="${esc(q.ort)}"
                placeholder="${esc(t('Rheinufer, Höhe Bootshaus'))}"${aus('text')}>
       </label>
+      <label>${esc(t('Wo annehmbar'))}
+        <select data-f="annahmeRadiusM"${aus('karma')}>
+          ${ANNAHME_ORT.map(v => `<option value="${v.m}"${v.m === Number(q.annahmeRadiusM || 0) ? ' selected' : ''}>${esc(t(v.label))}</option>`).join('')}
+        </select>
+      </label>
+      ${Number(q.annahmeRadiusM || 0) > 0 ? `<div class="qe-fussnote">${esc(t('Der Bearbeiter muss zum Annehmen dort sein. Unter 500 m verlangt das von ihm die Standort-Freigabe „Nähe".'))}</div>` : ''}
 
-      <div class="qe-abschnitt">Frist und Belohnung</div>
-      <label>Frist
+      <div class="qe-abschnitt">${esc(t('Frist und Belohnung'))}</div>
+      <label>${esc(t('Frist'))}
         <select data-f="fristMs">
           ${FRISTEN.map(f => `<option value="${f.ms}"${Number(q.fristMs) === f.ms ? ' selected' : ''}>${esc(t(f.label))}</option>`).join('')}
         </select>
       </label>
       <div class="qe-zeile">
-        <label>Belohnung — was der Bearbeiter bekommt
+        <label>${esc(t('Belohnung — was der Bearbeiter bekommt'))}
           <span class="qe-paar">
             <input type="number" data-f="belohnung.anzahl" min="0" max="99" value="${esc(q.belohnung.anzahl)}"${aus('belohnung')}>
             <select data-f="belohnung.was"${aus('belohnung')}>
@@ -346,36 +415,24 @@ export class QuestEditor {
             </select>
           </span>
         </label>
-        <label>Steigt je Tag, solange niemand übernimmt
+        <label>${esc(t('Steigt je Tag, solange niemand übernimmt'))}
           <input type="number" data-f="belohnung.steigt" min="0" max="9" value="${esc(q.belohnung.steigt || 0)}"${aus('belohnung')}>
         </label>
       </div>
-      <div class="qe-fussnote">Wird beim Veröffentlichen aus deinem Inventar treuhänderisch
-        gebunden. Bindung und Auszahlung macht der Server.</div>
+      <div class="qe-fussnote">${esc(t('Wird beim Veröffentlichen aus deinem Inventar treuhänderisch gebunden. Bindung und Auszahlung macht der Server.'))}</div>
       <label class="qe-haken-zeile">
         <input type="checkbox" data-f="wiederholbar"${q.wiederholbar ? ' checked' : ''}${aus('belohnung')}>
-        <span><span class="qe-haken-titel">Wiederholbar</span>
-        <span class="qe-haken-hinweis">Mehrere Spieler können den Auftrag nacheinander erledigen.</span></span>
+        <span><span class="qe-haken-titel">${esc(t('Wiederholbar'))}</span>
+        <span class="qe-haken-hinweis">${esc(t('Mehrere Spieler können den Auftrag nacheinander erledigen.'))}</span></span>
       </label>
-      ${q.wiederholbar ? `<label>Vorrat — wie viel insgesamt hinterlegt wird
+      ${q.wiederholbar ? `<label>${esc(t('Vorrat — wie viel insgesamt hinterlegt wird'))}
         <input type="number" data-f="vorrat" min="1" max="99" value="${esc(vorratVon(q))}"${aus('belohnung')}>
       </label>
       <div class="qe-fussnote">${esc(this._vorratSatz(q))}</div>` : ''}
 
-      <div class="qe-abschnitt">Abnahme</div>
-      <label>Verfahren
-        <select data-f="abnahme"${aus('abnahme')}>
-          ${ABNAHME.map(a => `<option value="${a.key}"${a.key === q.abnahme ? ' selected' : ''}>${esc(t(a.label))}</option>`).join('')}
-        </select>
-      </label>
-      <div class="qe-fussnote">${esc(t(ABNAHME.find(a => a.key === q.abnahme)?.hinweis || ''))}</div>
-      ${q.abnahme === 'schwarm' ? `<label>Nötige Bestätigungen
-        <input type="number" data-f="schwarmZahl" min="1" max="9" value="${esc(q.schwarmZahl)}"${aus('abnahme')}>
-      </label>` : ''}
-      ${q.abnahme === 'pruefgruppe' ? `<label>Gruppe, die abnimmt
-        ${this._gruppenWahl('pruefgruppe', q.pruefgruppe, aus('abnahme'))}
-      </label>` : ''}
-      <div class="qe-feldname">Nachweis</div>
+      <div class="qe-abschnitt">${esc(t('Aufgabe'))}</div>
+
+      <div class="qe-feldname">${esc(t('Zu erledigen'))}</div>
       <div class="qe-haken">
         ${NACHWEIS.map(n => {
           const an = q.nachweis.includes(n.key)
@@ -387,21 +444,40 @@ export class QuestEditor {
           </span></label>`
         }).join('')}
       </div>
+      ${q.nachweis.includes('vorOrt') ? `
+      <label>${esc(t('Wie nah beim Melden'))}
+        <select data-f="vorOrtRadiusM"${aus('nachweis')}>
+          ${VOR_ORT_NAEHE.map(v => `<option value="${v.m}"${v.m === Number(q.vorOrtRadiusM || 0) ? ' selected' : ''}>${esc(t(v.label))}</option>`).join('')}
+        </select>
+      </label>
+      <div class="qe-fussnote">${esc(t('Unter 500 m verlangt das vom Bearbeiter die Standort-Freigabe „Genau" — eine auf 100 m gerundete Angabe kann so eine Frage nicht beantworten.'))}</div>` : ''}
+      <label>${esc(t('Wer bestätigt den Abschluss'))}
+        <select data-f="abnahme"${aus('abnahme')}>
+          ${ABNAHME.map(a => `<option value="${a.key}"${a.key === q.abnahme ? ' selected' : ''}>${esc(t(a.label))}</option>`).join('')}
+        </select>
+      </label>
+      <div class="qe-fussnote">${esc(t(ABNAHME.find(a => a.key === q.abnahme)?.hinweis || ''))}</div>
+      ${q.abnahme === 'schwarm' ? `<label>${esc(t('Nötige Bestätigungen'))}
+        <input type="number" data-f="schwarmZahl" min="1" max="9" value="${esc(q.schwarmZahl)}"${aus('abnahme')}>
+      </label>` : ''}
+      ${q.abnahme === 'pruefgruppe' ? `<label>${esc(t('Gruppe, die abnimmt'))}
+        ${this._gruppenWahl('pruefgruppe', q.pruefgruppe, aus('abnahme'))}
+      </label>` : ''}
+
       ${q.nachweis.includes('gegenstand') || q.abnahme === 'uebergabe' ? `
-      <div class="qe-feldname">Geforderte Gegenstände</div>
-      <div class="qe-fussnote">Gattung und Anzahl — der Server sucht sie beim Abschluss im
-        Inventar des Bearbeiters. Leer heisst: nichts abgeben.</div>
+      <div class="qe-feldname">${esc(t('Geforderte Gegenstände'))}</div>
+      <div class="qe-fussnote">${esc(t('Gattung und Anzahl — der Server sucht sie beim Abschluss im Inventar des Bearbeiters. Leer heißt: nichts abgeben.'))}</div>
       <div class="qe-forderungen">
         ${(q.forderungen || []).map((f, i) => `<span class="qe-forderung">
           <input type="number" data-forderung="${i}" data-teil="anzahl" min="1" max="99" value="${esc(f.anzahl)}"${aus('abnahme')}>
           <input type="text" data-forderung="${i}" data-teil="name" value="${esc(f.name)}"
                  placeholder="Wolfsfell" maxlength="60"${aus('abnahme')}>
-          <button type="button" class="qe-weg" data-forderung-weg="${i}" aria-label="Entfernen"${aus('abnahme')}>×</button>
+          <button type="button" class="qe-weg" data-forderung-weg="${i}" aria-label="${esc(t('Entfernen'))}"${aus('abnahme')}>×</button>
         </span>`).join('')}
       </div>
-      <button type="button" class="qe-btn qe-klein" data-a="forderung-neu"${aus('abnahme')}>+ Forderung</button>
+      <button type="button" class="qe-btn qe-klein" data-a="forderung-neu"${aus('abnahme')}>+ ${esc(t('Forderung'))}</button>
       ` : ''}
-      <label>Nötiges Karma des Bearbeiters
+      <label>${esc(t('Nötiges Karma des Bearbeiters'))}
         <select data-f="karma"${aus('karma')}>
           ${KARMA_WAHL.map(v => `<option value="${v.stufe}"${v.stufe === Number(q.karma || 0) ? ' selected' : ''}>${esc(t(v.label))}</option>`).join('')}
         </select>
@@ -409,24 +485,21 @@ export class QuestEditor {
       <div class="qe-fussnote">${KARMA_PRO_STUFE} Punkte je Stufe, Stufe 0 bis 5.
         ${KARMA_GUTSCHRIFT.map(g => `${esc(g.grund)}: +${g.punkte}`).join('. ')}.</div>
 
-      <div class="qe-abschnitt">Sichtbarkeit</div>
-      <label>Wer sieht den Auftrag
+      <div class="qe-abschnitt">${esc(t('Sichtbarkeit'))}</div>
+      <label>${esc(t('Wer sieht den Auftrag'))}
         <select data-f="sichtbarkeit"${aus('sichtbarkeit')}>
           ${SICHTBARKEIT.map(v => `<option value="${v.key}"${v.key === q.sichtbarkeit ? ' selected' : ''}>${esc(t(v.label))}</option>`).join('')}
         </select>
       </label>
-      ${q.sichtbarkeit === 'gruppe' ? `<label>Welche Gruppe
+      ${q.sichtbarkeit === 'gruppe' ? `<label>${esc(t('Welche Gruppe'))}
         ${this._gruppenWahl('sichtbarGruppe', q.sichtbarGruppe, aus('sichtbarkeit'))}
       </label>` : ''}
-      <label>Ab wann steht der Auftrag auch in der Regionsliste
+      <label>${esc(t('Ab wann steht der Auftrag auch in der Regionsliste'))}
         <select data-f="anbietenNachH"${aus('sichtbarkeit')}>
           ${ANBIETEN.map(a => `<option value="${a.h}"${Number(q.anbietenNachH || 0) === a.h ? ' selected' : ''}>${esc(t(a.label))}</option>`).join('')}
         </select>
       </label>
-      <div class="qe-fussnote">Vergibt eine Figur den Auftrag, ist er zunächst nur im Gespräch
-        mit ihr zu haben. Nimmt ihn dort niemand an, erscheint er nach der eingestellten
-        Wartezeit zusätzlich in der Regionsliste, dort mit dem Zustand „angeboten".
-        „Sofort" heißt: gleich in beiden. „Nie" heißt: nur im Gespräch, dauerhaft.</div>`
+      <div class="qe-fussnote">${esc(t('Vergibt eine Figur den Auftrag, ist er zunächst nur im Gespräch mit ihr zu haben. Nimmt ihn dort niemand an, erscheint er nach der eingestellten Wartezeit zusätzlich in der Regionsliste, dort mit dem Zustand „angeboten“. „Sofort“ heißt: gleich in beiden. „Nie“ heißt: nur im Gespräch, dauerhaft.'))}</div>`
 
     this._body.querySelectorAll('[data-f]').forEach(el => {
       el.addEventListener('input', () => this._lese())
@@ -517,7 +590,7 @@ export class QuestEditor {
    */
   _inventarWahl(q) {
     if (!this.inventar.length) {
-      return `<option value="">nichts im Inventar auf diesem Server</option>`
+      return `<option value="">${esc(t('nichts im Inventar auf diesem Server'))}</option>`
     }
     return this.inventar
       .map(i => `<option value="${esc(i.was)}"${i.was === q.belohnung.was ? ' selected' : ''}>`
@@ -545,12 +618,12 @@ export class QuestEditor {
    */
   _gruppenWahl(feld, wert, gesperrt) {
     if (!this.gruppen.length) {
-      return `<select data-f="${feld}" disabled><option>keine Gruppe vorhanden</option></select>`
+      return `<select data-f="${feld}" disabled><option>${esc(t('keine Gruppe vorhanden'))}</option></select>`
     }
     const opts = this.gruppen
       .map(g => `<option value="${esc(g.id)}"${String(g.id) === String(wert || '') ? ' selected' : ''}>${esc(g.name)}</option>`)
       .join('')
-    return `<select data-f="${feld}"${gesperrt}><option value="">— wählen —</option>${opts}</select>`
+    return `<select data-f="${feld}"${gesperrt}><option value="">${esc(t('— wählen —'))}</option>${opts}</select>`
   }
 
   _renderAktionen(sp) {
@@ -563,7 +636,9 @@ export class QuestEditor {
     if (q.status === 'offen' || q.status === 'angeboten') knoepfe.push({ k: 'withdraw', l: 'Zurückziehen' })
     knoepfe.push({ k: 'cancel', l: 'Schließen' })
     this._aktionenEl.innerHTML = knoepfe
-      .map(b => `<button type="button" class="qe-btn${b.p ? ' primaer' : ''}" data-a="${b.k}">${esc(b.l)}</button>`)
+      // Beschriftung erst hier durch t(): die Labels oben sind die
+      // Übersetzungsschlüssel, genau wie im Rest der Datei.
+      .map(b => `<button type="button" class="qe-btn${b.p ? ' primaer' : ''}" data-a="${b.k}">${esc(t(b.l))}</button>`)
       .join('')
     this._aktionenEl.querySelectorAll('.qe-btn').forEach(b =>
       b.addEventListener('click', () => this._aktion(b.dataset.a)))
@@ -579,7 +654,8 @@ export class QuestEditor {
       const pfad = el.dataset.f
       let wert = el.value
       if (el.type === 'checkbox') wert = el.checked
-      else if (el.type === 'number' || pfad === 'fristMs' || pfad === 'anbietenNachH') wert = Number(wert) || 0
+      else if (el.type === 'number' || pfad === 'fristMs' || pfad === 'anbietenNachH'
+               || pfad === 'annahmeRadiusM' || pfad === 'vorOrtRadiusM') wert = Number(wert) || 0
       if (pfad.includes('.')) {
         const [a, b] = pfad.split('.')
         q[a] = { ...(q[a] || {}) }

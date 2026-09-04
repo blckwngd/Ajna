@@ -1,7 +1,8 @@
 import PocketBase from 'pocketbase'
 import { AjnaClient } from './AjnaClient.js'
 import { ServerRegistry } from './ServerRegistry.js'
-import { privacy } from './PrivacyPolicy.js'
+import { privacy, fuzzPoint } from './PrivacyPolicy.js'
+import { abstandM } from './aktionsReichweite.js'
 
 const FALLBACK_SERVER_ID = 'default'
 
@@ -574,14 +575,82 @@ export class AjnaManager {
     return this._clientFor(compositeId).publishQuest(compositeId, opts)
   }
 
-  /** Auftrag annehmen (reserviert ihn für dich). */
-  async acceptQuest(compositeId) {
-    return this._clientFor(compositeId).acceptQuest(compositeId)
+  /**
+   * Auftrag annehmen (reserviert ihn für dich).
+   *
+   * @param {string} compositeId
+   * @param {{ich?: {lat, lon}, ziel?: {lat, lon}, radiusM?: number}} [ort]
+   *        Nur nötig, wenn der Auftrag „nur vor Ort" verlangt. Übergeben wird
+   *        die EXAKTE Position — was davon den Server erreicht, entscheidet
+   *        die Stufe unten.
+   */
+  async acceptQuest(compositeId, ort = null) {
+    const client = this._clientFor(compositeId)
+    return client.acceptQuest(compositeId, this._annahmeOrt(client.id, ort))
+  }
+
+  /**
+   * Was beim Annehmen über den Standort mitgeht — nach der Stufe DIESES Servers.
+   *
+   * Die Entscheidung liegt hier und nicht im Auftrags-Dienst, weil sie hierhin
+   * gehört: Der Manager ist der eine Ort, an dem die Stufe angewandt wird
+   * (wie bei `reportProximity` und den Interessensbereichen). Eine zweite
+   * Stelle, die Positionen freigibt, wäre eine zweite Stelle, die es falsch
+   * machen kann.
+   *
+   * @returns {{at?: {lat, lon}, nah?: boolean}|null} `null` = es geht nichts raus
+   */
+  _annahmeOrt(serverId, ort) {
+    const r = Number(ort?.radiusM) || 0
+    const ich = ort?.ich
+    if (!r || !Number.isFinite(ich?.lat) || !Number.isFinite(ich?.lon)) return null
+
+    const stufe = privacy.levelFor(serverId)
+    if (stufe === 'exact') return { at: { lat: ich.lat, lon: ich.lon } }
+    if (stufe === 'area') {
+      const p = fuzzPoint(ich.lat, ich.lon)
+      return { at: { lat: p.lat, lon: p.lon } }
+    }
+    if (stufe === 'proximity') {
+      // Keine Koordinate. Der Client rechnet den Umkreis selbst aus und meldet
+      // nur das Ergebnis — dieselbe Linie wie ProximityReporter, und für diese
+      // Frage die vollständige Antwort.
+      const z = ort?.ziel
+      if (!Number.isFinite(z?.lat) || !Number.isFinite(z?.lon)) return null
+      const d = abstandM(z.lat, z.lon, ich.lat, ich.lon)
+      if (!Number.isFinite(d)) return null
+      return { nah: d <= r }
+    }
+    return null   // „Verborgen" — der Server erfährt gar nichts
+  }
+
+  /**
+   * Die Position im Nachweis nach der Stufe DIESES Servers zusenden.
+   *
+   * Derselbe Grund wie bei `_annahmeOrt`: Ein Nachweis mit Ortsangabe ist eine
+   * Aussage darüber, wo jemand war. Sie ging bisher roh raus, egal was der
+   * Nutzer für diesen Server eingestellt hatte.
+   *
+   * `precise` reicht die Wahrheit über die eigene Angabe mit: Der Server
+   * schreibt es an den Nachweis, damit der Prüfer eine gerundete Angabe nicht
+   * für eine exakte hält. Ohne dieses Feld wäre der Nachlass für die Rundung
+   * ein stiller Rabatt für jeden.
+   */
+  _nachweisOrt(serverId, proof) {
+    if (!proof || typeof proof !== 'object') return proof
+    if (!proof.at) return proof
+    const p = privacy.positionFor(serverId, proof.at)
+    const { at, ...rest } = proof
+    // Kein Ort freigegeben: Die Angabe fällt weg. Verlangt der Auftrag sie,
+    // sagt der Server das — mit derselben Liste wie bei jedem anderen fehlenden
+    // Nachweis.
+    return p ? { ...rest, at: { lat: p.lat, lon: p.lon, precise: p.precise } } : rest
   }
 
   /** Auftrag abschließen: atomarer Tausch geforderte Items ↔ Belohnung. */
   async completeQuest(compositeId, proof = null) {
-    return this._clientFor(compositeId).completeQuest(compositeId, proof)
+    const client = this._clientFor(compositeId)
+    return client.completeQuest(compositeId, this._nachweisOrt(client.id, proof))
   }
 
   /** Schwarm-Abnahme: eine Einreichung bestätigen oder zurückweisen. */
@@ -600,20 +669,62 @@ export class AjnaManager {
    *
    * @returns {Promise<{quests: object[], karma: Object<string, number>, fehler: object[]}>}
    */
+  /**
+   * Aufträge in der Umgebung — je Server nach dessen Freigabe-Stufe.
+   *
+   * DIE STELLE, AN DER DIE STUFE HÄNGEN MUSS: Die Regionsliste ist eine Frage
+   * mit einem Ort darin („was gibt es HIER"). Sie unverändert an jeden Server
+   * zu schicken hiess, dass ein Server auf „Verborgen" die exakte Position
+   * beim ersten Blick in die Auftragsliste bekam — die Stufe stand daneben und
+   * galt für alles ausser genau diesen Aufruf.
+   *
+   * Wer keinen Ort bekommt, bekommt auch keine Frage gestellt. Seine Aufträge
+   * fehlen dann in der Liste; das ist die gewollte Folge und wird als
+   * `verborgen` gemeldet, NICHT als Fehler. Ein Fehler heisst „etwas ist
+   * schiefgegangen" — hier hat jemand etwas entschieden.
+   *
+   * `mine: true` läuft immer: Die eigenen Ausschreibungen sind keine Aussage
+   * darüber, wo man gerade ist.
+   */
   async questsNear(opts = {}) {
     const karma = {}
     const fehler = []
+    const verborgen = []
+    const mitOrt = !opts.mine && Number.isFinite(opts.lat) && Number.isFinite(opts.lon)
+
     const teile = await Promise.all([...this.clients.values()].map(async (client) => {
+      let frage = opts
+      if (mitOrt) {
+        const p = privacy.positionFor(client.id, { lat: opts.lat, lon: opts.lon })
+        if (!p) {
+          verborgen.push({ server: client.id, label: client.label || client.id })
+          return []
+        }
+        frage = { ...opts, lat: p.lat, lon: p.lon }
+      }
       try {
-        const res = await client.questsNear(opts)
+        const res = await client.questsNear(frage)
         karma[client.id] = res.karma
         return res.quests
       } catch (err) {
-        fehler.push({ server: client.id, error: err?.message || String(err) })
+        // ABGEBROCHENE ANFRAGEN SIND KEINE FEHLER. Das SDK storniert eine
+        // laufende Anfrage, sobald dieselbe erneut gestellt wird — das ist
+        // gewollt (die neuere Antwort zählt). Sie dem Nutzer als Störung zu
+        // zeigen, macht aus einer Optimierung eine Fehlermeldung.
+        if (err?.isAbort || /autocancelled/i.test(err?.message || '')) return []
+        // Namen UND Ursache mitgeben. Eine rohe Server-Kennung samt „Something
+        // went wrong" sagt niemandem etwas — 401 heisst schlicht: dort
+        // abgemeldet, und dann hilft Anmelden, nicht Neuladen.
+        fehler.push({
+          server: client.id,
+          label: client.label || client.url || client.id,
+          status: err?.status || err?.response?.status || 0,
+          error: err?.message || String(err),
+        })
         return []
       }
     }))
-    return { quests: teile.flat(), karma, fehler }
+    return { quests: teile.flat(), karma, fehler, verborgen }
   }
 
   /** Angenommenen Auftrag zurückgeben (nur Bearbeiter) — bleibt ausgeschrieben. */
