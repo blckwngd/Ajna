@@ -159,6 +159,27 @@ mit Konto ist zudem zurechenbar; anonymer nicht.
 Wer die Grenzen ändert: Verwaltungsoberfläche → Settings → Rate limits. Die
 Migration setzt sie nur einmal.
 
+## Gastkonten
+
+Seit `1788100000_users_guest.js`: Konten, die ohne angemeldeten Aufrufer
+entstehen, tragen `guest = true`, bis ihre Adresse bestätigt ist. Was das heißt
+und wie eine Anwendung damit umgeht: [gastkonten.md](gastkonten.md).
+
+| Schlüssel | Vorgabe | Wirkung |
+|---|---|---|
+| `signup.guests` | `true` | Konten ohne angemeldeten Aufrufer erlaubt |
+| `signup.require_email` | `true` | Gast ohne Adresse wird abgewiesen (403 `guest_email_required`) |
+| `signup.guest_ttl_days` | `30` | Gäste ohne Objekt und ohne `verified` räumt `guest_cleanup` täglich um 03:41 auf; `0` = nie |
+
+Die Migration macht `users.email` **optional** — zumachen tut der Hook in
+`main.pb.js` (Adresspflicht für alle Konten mit `guest = false`). Beides
+gehört zusammen ausgeliefert; eine Instanz, die die Migration ohne den Hook
+fährt, nimmt Konten ohne Adresse an.
+
+Für die Konten-Mail (Passwortvergabe) braucht die Instanz SMTP und `meta.appURL`
+(Verwaltung → Settings → Mail bzw. Application). Ohne SMTP antwortet
+`request-password-reset` trotzdem 204 — der Fehler steht nur im Server-Log.
+
 ## Gegen eine Kopie prüfen
 
 Hook- und Migrations-Änderungen lassen sich ausprobieren, ohne die laufende

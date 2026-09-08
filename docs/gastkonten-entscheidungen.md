@@ -417,13 +417,18 @@ Betreiber entscheidet über den Commit. Bis dahin ist der Stand nach einem
 braucht die laufende Instanz einen Neustart, weil PocketBase `pb_hooks` nicht
 neu einliest (siehe `docs/betrieb.md`).
 
-**Phase B ist entschieden, aber nicht gebaut.** Was fehlt: `users.guest`-Feld
-samt Migration, die Umstellung `email.required = false` **zusammen mit** dem
-Hook, der die Adresse für `guest = false` erzwingt (einzeln ausgeliefert wäre
-die Migration ein Loch, siehe F2), die Einstellungen aus F4, der
-`guest_cleanup`-Cron und SMTP samt Vorlagen.
+**Phase B ist gebaut (8. September, Branch `feat/gastkonten`, von der
+HeimatRadar-Seite auf Zuruf des Betreibers):** Migration
+`1788100000_users_guest.js` (`users.guest`, `email.required = false`),
+`pb_hooks/gastkonten.js` + Hooks in `main.pb.js` (Gast setzen, Adresspflicht
+für `guest = false`, Einstellungen `signup.*`, Handle `gast-<6>`, Passwort-
+und Verifizierungsbestätigung → `guest = false`), `guest_cleanup`-Cron,
+Suite `tests/privacy/gastkonten.mjs` (13 Prüfungen, grün gegen eine Kopie),
+Doku `docs/gastkonten.md` + Abschnitt in `docs/betrieb.md`. **Nicht im Repo,
+weil Betrieb:** SMTP, `meta.appURL`, deutsche Mail-Vorlagen — in der
+Verwaltung einstellen, bevor die Passwort-Mail etwas bewirkt.
 
-**Was Phase B auslöst:** der Betreiber, nicht eine der beiden Sitzungen.
+**Was Phase B ausgelöst hat:** der Betreiber.
 
 **Offen geblieben und bewusst nicht hier gelöst:** Anmeldeversuche sind
 ungedrosselt (s. o.), und Realtime-Topics haben kein Rechtemodell (Abschnitt 1).
@@ -465,7 +470,9 @@ Für Phase B, wie in Abschnitt 6 erbeten:
 - `100/Stunde` für anonymes Kontoanlegen ist für einen Anmeldetag tragbar,
   bestätigt von der Anwendungsseite.
 
-**Noch nicht gebaut:** F1–F4 sind entschieden, aber der Code dafür (Feld, Hooks,
-Cron) steht aus — das ist Phase B und braucht eine eigene Runde. Sie beginnt
-erst, wenn der Betreiber sie startet; die HeimatRadar-Seite wartet darauf und
-hat von sich aus keine offenen Forderungen mehr an Ajna.
+**Gebaut (8. September):** F1–F4 samt Migration, Hooks, Cron, Tests und Doku —
+siehe Übergabe oben und [gastkonten.md](gastkonten.md). Antwortform der
+Ablehnungen, wie gemessen: `403`, `data.signup.code` =
+`guest_signup_disabled` | `guest_email_required`; fehlende Adresse bei einem
+Nicht-Gast: `400`, `data.email.code = validation_required`. Offen bleibt
+Phase C (Kurator-Agent, F6/F7).

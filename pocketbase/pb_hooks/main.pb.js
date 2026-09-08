@@ -235,6 +235,112 @@ onRecordUpdateRequest((e) => {
 }, "users")
 
 
+// ---------------------------------------------------------------------
+// GASTKONTEN — users.guest (Migration 1788100000, Helfer: gastkonten.js).
+//
+// Ein Gastkonto ist ein Konto, dessen Besitzer:in kein Passwort kennt: Eine
+// Anwendung legt es OHNE angemeldeten Aufrufer an, damit jemand sofort ein
+// Weltobjekt eintragen kann. Es wird zum echten Konto, sobald `verified` auf
+// true geht — der Moment, in dem der Mensch bewiesen hat, dass ihm die Adresse
+// gehört (Passwortvergabe per Konten-Mail oder klassische Verifizierung).
+//
+// DER SERVER SETZT DAS FELD, NICHT DER CLIENT — dieselbe Falle wie bei
+// agent_seal: Sonst nennte sich jedes Konto per updateCurrentUser({guest:false})
+// selbst „echt". Nur Superuser dürfen es setzen.
+//
+// E-MAIL: Die Migration macht `users.email` optional — collection-weit,
+// PocketBase kennt keine Pflicht je Zustand. Zumachen muss dieser Hook: Ein
+// Konto mit guest = false braucht eine Adresse (sonst gäbe es weder
+// Passwort-Zurücksetzen noch Verifizierung). Ein Gast ohne Adresse ist
+// erlaubt, wenn die Instanz es zulässt (signup.require_email = false) — er
+// lebt dann nur auf dem Gerät, auf dem er angemeldet ist.
+//
+// ABLEHNUNGEN: 403 mit stabilem Code in `data.signup.code`
+// (guest_signup_disabled, guest_email_required). Fehlt name oder username
+// beim anonymen Anlegen, erzeugt der Server einen Handle `gast-<6 Zeichen>`.
+// ---------------------------------------------------------------------
+onRecordCreateRequest((e) => {
+  const g = require(`${__hooks}/gastkonten.js`)
+  const anonym = !e.auth && !e.hasSuperuserAuth()
+
+  if (anonym) {
+    if (g.einstellung($app, "signup.guests", true) === false) {
+      throw g.abweisen("guest_signup_disabled", "Diese Instanz nimmt keine Gastkonten an.")
+    }
+    if (!e.record.get("email") && g.einstellung($app, "signup.require_email", true) !== false) {
+      throw g.abweisen("guest_email_required", "Ein Gastkonto braucht auf dieser Instanz eine E-Mail-Adresse.")
+    }
+    e.record.set("guest", true)
+    e.record.set("verified", false)
+    if (!e.record.get("name")) e.record.set("name", g.handle($app))
+    if (!e.record.get("username")) e.record.set("username", g.alsUsername(e.record.get("name")) || g.handle($app))
+  } else if (!e.hasSuperuserAuth()) {
+    // Angemeldet angelegt (ein Konto legt eines für jemand anderen an): kein
+    // Gast — und damit gilt die Adresspflicht unten.
+    e.record.set("guest", false)
+  }
+
+  if (!e.record.get("guest") && !e.record.get("email")) throw g.adressePflicht()
+  e.next()
+}, "users")
+
+onRecordUpdateRequest((e) => {
+  const g = require(`${__hooks}/gastkonten.js`)
+  if (!e.hasSuperuserAuth()) {
+    let alt = false
+    try { alt = !!$app.findRecordById("users", e.record.id).get("guest") } catch (err) {}
+    e.record.set("guest", alt)
+  }
+  // Bewiesene Adresse → kein Gast mehr. `verified` kann nur die Verwaltung
+  // (oder PocketBase selbst) setzen; hier fällt das Feld mit.
+  if (e.record.get("verified") === true) e.record.set("guest", false)
+  if (!e.record.get("guest") && !e.record.get("email")) throw g.adressePflicht()
+  e.next()
+}, "users")
+
+// Passwortvergabe per Konten-Mail bestätigt: Wer die Mail bekommen hat, hat
+// die Adresse — verifiziert, kein Gast mehr. Das ist ein eigener Endpunkt,
+// nicht der Update-Hook oben; deshalb hier noch einmal. Dasselbe für die
+// klassische Verifizierung.
+onRecordConfirmPasswordResetRequest((e) => {
+  e.record.set("verified", true)
+  e.record.set("guest", false)
+  e.next()
+}, "users")
+
+onRecordConfirmVerificationRequest((e) => {
+  e.record.set("guest", false)
+  e.next()
+}, "users")
+
+// Aufräumen: Gäste, die nach `signup.guest_ttl_days` Tagen weder etwas
+// eingetragen noch ihre Adresse bestätigt haben. NUR ohne ein einziges
+// Objekt — wer etwas eingetragen hat, verliert es nicht, bloß weil er die
+// Mail nicht bestätigt hat; das wäre Datenverlust durch Frist.
+cronAdd("guest_cleanup", "41 3 * * *", () => {
+  const g = require(`${__hooks}/gastkonten.js`)
+  const tage = Number(g.einstellung($app, "signup.guest_ttl_days", 30))
+  if (!isFinite(tage) || tage <= 0) return   // 0 = nie aufräumen
+  const grenze = new Date(Date.now() - tage * 86400000).toISOString().replace("T", " ").slice(0, 19) + "Z"
+  let weg = 0, behalten = 0
+  try {
+    const gaeste = $app.findRecordsByFilter("users",
+      "guest = true && verified = false && created < {:t}", "created", 500, 0, { t: grenze })
+    for (let i = 0; i < gaeste.length; i++) {
+      let besitzt = []
+      try { besitzt = $app.findRecordsByFilter("objects", "owner = {:o}", "", 1, 0, { o: gaeste[i].id }) }
+      catch (err) { besitzt = [] }
+      if (besitzt && besitzt.length) { behalten++; continue }
+      try { $app.delete(gaeste[i]); weg++ } catch (err) { /* schon weg */ }
+    }
+  } catch (err) {
+    console.log("[guest_cleanup] " + (err && err.message ? err.message : err))
+    return
+  }
+  if (weg) console.log(`[guest_cleanup] ${weg} Gastkonto/-konten ohne Objekt und ohne Bestätigung entfernt (${behalten} mit Objekten behalten)`)
+})
+
+
 onRecordCreateRequest(stampeManifestIdentitaet, "agent_manifests")
 onRecordUpdateRequest(stampeManifestIdentitaet, "agent_manifests")
 
