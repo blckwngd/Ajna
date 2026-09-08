@@ -19,7 +19,7 @@ Datenbank. Umgekehrt bräuchte jede Neuinstallation erst Datensätze.
 | | `settings` | `agent_settings` |
 |---|---|---|
 | gehört | der **Instanz** | **einem Agenten-Konto** |
-| lesen | jedes angemeldete Konto | nur der Besitzer |
+| lesen | jedes angemeldete Konto; mit `public` jeder, auch ohne Login | nur der Besitzer |
 | schreiben | nur die Verwaltung | nur der Besitzer |
 | eindeutig | je Schlüssel | je Konto **und** Schlüssel |
 | Beispiel | `proof.maxAgeDays` | `wd.count.enemy` |
@@ -40,6 +40,26 @@ Die Trennung braucht keinen Hook: Alle fünf Regeln der Collection lauten
 `owner = @request.auth.id`. Dieselbe Regel, die schon die Manifest-Delegation
 absichert. Die Verwaltung sieht trotzdem alles — Superuser umgehen Regeln
 grundsätzlich; geschützt sind die Agents voreinander und vor den Spielern.
+
+### Öffentlich, noch vor dem Login
+
+Manches muss ein Client wissen, bevor irgendjemand angemeldet ist: ob die
+Instanz Gastkonten annimmt, ob eine E-Mail-Adresse Pflicht ist
+(`signup.guests`, `signup.require_email`). Dafür trägt jeder `settings`-
+Datensatz einen Schalter **`public`**. Was markiert ist, zeigt die View
+**`public_settings`** (Spalten `key`, `value`, `updated`) — lesbar für alle,
+ohne Konto. Alles Unmarkierte bleibt wie bisher den Angemeldeten vorbehalten;
+schreiben lässt sich über die View nichts.
+
+`public` heißt: Schlüssel und Wert darf jeder sehen. Nichts markieren, was nur
+die Verwaltung angeht — und Geheimnisse gehören in keine der beiden Schubladen.
+
+Im Client: `await client.publicSettings()` liefert `{ key: value }`,
+`await client.signupPolicy()` daraus `{ guests, requireEmail }` mit Ajnas
+Vorgaben für fehlende Datensätze. Seit `1788200000_settings_public.js`; die
+beiden `signup.*`-Schlüssel legt die Migration markiert an. So hält keine
+Anwendung eine eigene Kopie der Instanz-Regel vor — die Regel steht an einer
+Stelle, der Client liest sie.
 
 ### Benutzung
 

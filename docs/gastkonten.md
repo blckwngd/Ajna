@@ -72,6 +72,12 @@ die Vorgabe.
 | `signup.require_email` | `true` | Gast ohne Adresse wird abgewiesen |
 | `signup.guest_ttl_days` | `30` | Gäste ohne Objekt und ohne `verified` werden aufgeräumt; `0` = nie |
 
+Die ersten beiden sind **öffentlich** (`public = true`, View `public_settings`,
+siehe [betrieb.md](betrieb.md)): Ein Anmeldeformular liest sie vor dem Login
+mit `client.signupPolicy()` → `{ guests, requireEmail }` und richtet seine
+Felder danach aus, statt eine eigene Kopie der Regel zu pflegen. Fehlt ein
+Datensatz, gilt die Vorgabe — im Hook wie im Client.
+
 Ablehnungen antworten **403** mit einem stabilen Code, den der Client übersetzt
 (siehe [mehrsprachigkeit.md](mehrsprachigkeit.md)):
 

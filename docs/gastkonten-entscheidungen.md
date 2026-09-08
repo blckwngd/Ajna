@@ -208,6 +208,20 @@ bloß weil er die Mail nicht bestätigt hat; das wäre Datenverlust durch Frist.
 
 Dateien: `main.pb.js` (Hook + Cron), `docs/betrieb.md` (Tabelle).
 
+**Nachtrag (8. September, abends) — eine Stelle statt zwei.** HeimatRadar hatte
+die Regel doppelt: `allowAnonymousEntries` / `require_email` in seiner
+config.js fürs Formular, `signup.*` hier für den Server, dazwischen ein
+Abgleich, der Abweichungen meldete. Die Frage des Betreibers, ob das nicht an
+eine Stelle gehöre, hat die Doppelung als wertlos entlarvt: HeimatRadars
+Schalter sind serverseitig nicht durchsetzbar (ein Gast kann per API alles,
+was ein Konto kann), und „HeimatRadar strenger als Ajna" ist Kosmetik. Die
+Regel gehört auf die Instanz, der Client liest sie. Dafür: `settings.public`
+(Wahrheitswert) und View `public_settings` (offen lesbar) — allgemein für
+alles, was ein Client vor dem Login wissen muss, nicht nur `signup.*`.
+Dateien: `1788200000_settings_public.js`, `client.publicSettings()` /
+`client.signupPolicy()` (AjnaClient + AjnaManager),
+`tests/privacy/public-settings.mjs`, `docs/betrieb.md`.
+
 ## F5 · Admin-Verifikation des Eintrags
 
 **App-Sache. Bleibt beim Agent.** Der Empfehlung gefolgt.

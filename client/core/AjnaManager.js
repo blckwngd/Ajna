@@ -909,6 +909,20 @@ export class AjnaManager {
   async listOutgoingInvitations() { return this.defaultClient.listOutgoingInvitations() }
 
   // ===================================================================
+  //  Öffentliche Einstellungen — Default-Client (oder ein bestimmter Server)
+  // ===================================================================
+
+  async publicSettings({ serverId } = {}) {
+    const c = serverId ? this.clients.get(serverId) : this.defaultClient
+    return c ? c.publicSettings() : {}
+  }
+
+  async signupPolicy({ serverId } = {}) {
+    const c = serverId ? this.clients.get(serverId) : this.defaultClient
+    return c ? c.signupPolicy() : { guests: true, requireEmail: true }
+  }
+
+  // ===================================================================
   //  Users / Defaults — Default-Client
   // ===================================================================
 

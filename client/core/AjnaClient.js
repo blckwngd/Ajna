@@ -944,6 +944,46 @@ export class AjnaClient {
   }
 
   // ===================================================================
+  //  Öffentliche Einstellungen — lesbar VOR dem Login
+  // ===================================================================
+  // Manches muss ein Client wissen, bevor irgendjemand angemeldet ist: Nimmt
+  // die Instanz Gastkonten an? Ist eine E-Mail-Adresse Pflicht? Die Regel
+  // liegt in `settings` (nur für Angemeldete); markiert die Verwaltung einen
+  // Datensatz mit `public = true`, zeigt ihn die View `public_settings` für
+  // alle. So hält keine Anwendung eine eigene Kopie der Instanz-Regel vor.
+
+  /**
+   * Öffentliche Einstellungen der Instanz als `{ key: value }`. Anonym.
+   * Nicht veröffentlichte Schlüssel fehlen — der Aufrufer legt seine Vorgabe
+   * daneben: `settings['signup.guests'] ?? true`.
+   * @returns {Promise<Record<string, any>>}
+   */
+  async publicSettings() {
+    const list = await this.pb.collection('public_settings').getFullList({ sort: '+key' })
+    const aus = {}
+    for (const r of list) aus[r.key] = r.value
+    return aus
+  }
+
+  /**
+   * Anmelderegel der Instanz für Formulare ohne Login (docs/gastkonten.md).
+   * Fehlende Datensätze → Ajnas Vorgaben (beides true). Ein als Text
+   * gespeicherter Wert („false") zählt wie im Server-Hook als JSON.
+   * @returns {Promise<{guests: boolean, requireEmail: boolean}>}
+   */
+  async signupPolicy() {
+    const s = await this.publicSettings()
+    const bool = (v, vorgabe) => {
+      if (typeof v === 'boolean') return v
+      if (typeof v === 'string') {
+        try { const p = JSON.parse(v); if (typeof p === 'boolean') return p } catch { /* kein JSON */ }
+      }
+      return vorgabe
+    }
+    return { guests: bool(s['signup.guests'], true), requireEmail: bool(s['signup.require_email'], true) }
+  }
+
+  // ===================================================================
   //  Users
   // ===================================================================
 
