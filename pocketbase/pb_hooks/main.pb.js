@@ -24,7 +24,12 @@
 // ---------------------------------------------------------------------
 onRecordCreateRequest((e) => {
   const user = e.auth
-  if (user) {
+  // Superuser sind keine users-Datensätze: Ihre ID als owner wäre eine
+  // ungültige Relation, und der Datensatz scheiterte still (gemessen: leere
+  // 200-Antwort, weil ein späterer Hook den Fehler schluckte). Die Verwaltung
+  // gibt den owner ausdrücklich mit (Migration, Demo-Daten) oder lässt ihn leer.
+  const istSuper = !!(user && user.collection && user.collection().name === "_superusers")
+  if (user && !istSuper) {
     e.record.set("owner", user.id)
   }
   e.next()
@@ -108,8 +113,12 @@ onRecordUpdateRequest(pruefeQuellenanspruch, "objects")
 // sie aus, statt ein Gespenst stehen zu lassen.
 // ---------------------------------------------------------------------
 function stampeAnwesenheit(e) {
+  // Nicht-Spieler: nichts zu stempeln. Das e.next() steht AUSSERHALB des try —
+  // sonst fängt das catch unten jeden Fehler der weiteren Kette (etwa eine
+  // fehlgeschlagene Validierung beim Speichern), loggt ihn und antwortet dem
+  // Aufrufer mit einem leeren 200, als wäre alles gut. Genau das ist passiert.
+  if (e.record.get("type") !== "player") { e.next(); return }
   try {
-    if (e.record.get("type") !== "player") { e.next(); return }
     const { parseState } = require(`${__hooks}/quests.js`)
     const { karmaStufe, karmaPunkte } = require(`${__hooks}/karma.js`)
 
