@@ -2380,3 +2380,21 @@ routerAdd("POST", "/api/agents/{source}/command", (e) => {
     return e.json(500, { error: "" + (err && err.message ? err.message : err) })
   }
 })
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Zugang zum Web-Client — GET /api/client-access
+// ═══════════════════════════════════════════════════════════════════════════
+// Ziel von Caddys `forward_auth` (Caddyfile, Snippet ajna_zugang): Vor jeder
+// Auslieferung des statischen Clients fragt Caddy hier, ob der Aufrufer darf.
+// Regel = settings `client.access` (everyone | authenticated | superusers |
+// group:<Name>), Identität = Cookie `ajna_zugang` mit einem PocketBase-Token,
+// gesetzt von /zugang.html. Alles Weitere: pb_hooks/clientzugang.js.
+routerAdd("GET", "/api/client-access", (e) => {
+  try {
+    const z = require(`${__hooks}/clientzugang.js`)
+    return z.route(e)
+  } catch (err) {
+    console.log("[client-access] error: " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err) })
+  }
+})

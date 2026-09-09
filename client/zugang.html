@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ajna · Zugang</title>
+<!--
+  zugang.html — Anmeldeseite für den Web-Client, wenn die Instanz ihn nicht
+  für alle freigibt (settings client.access, siehe pb_hooks/clientzugang.js).
+
+  Caddy schickt Seitenaufrufe hierher, sobald /api/client-access sie ablehnt.
+  Die Seite meldet ein Konto an (Superuser oder gewöhnliches Konto, je nach
+  Regel), legt das Token als Cookie `ajna_zugang` ab und springt zurück zur
+  gewünschten Seite (?weiter=). Bewusst OHNE Bundle und ohne SDK: Sie muss
+  erreichbar sein, bevor irgendetwas anderes ausgeliefert wird, und darf
+  nichts laden, was selbst hinter der Sperre liegt.
+
+  ?abmelden — Cookie löschen.
+-->
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f4f4f5; color: #18181b; }
+  @media (prefers-color-scheme: dark) { body { background: #18181b; color: #f4f4f5; } }
+  main { width: min(92vw, 22rem); padding: 1.5rem; border-radius: 12px; background: #fff; box-shadow: 0 8px 30px rgba(0,0,0,.12); }
+  @media (prefers-color-scheme: dark) { main { background: #27272a; } }
+  h1 { font-size: 1.25rem; margin: 0 0 .25rem; }
+  p { margin: .5rem 0 1rem; line-height: 1.4; opacity: .85; }
+  label { display: block; font-size: .875rem; margin: .75rem 0 .25rem; }
+  input { width: 100%; box-sizing: border-box; padding: .6rem .7rem; font: inherit; border: 1px solid #a1a1aa; border-radius: 8px; background: transparent; color: inherit; }
+  button { margin-top: 1rem; width: 100%; padding: .7rem; font: inherit; font-weight: 600; border: 0; border-radius: 8px; background: #2563eb; color: #fff; cursor: pointer; }
+  button[disabled] { opacity: .6; cursor: wait; }
+  .fehler { margin-top: .75rem; color: #b91c1c; font-size: .9rem; }
+  .klein { font-size: .8rem; opacity: .7; margin-top: 1rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Ajna · Zugang</h1>
+  <p id="hinweis">Diese Instanz gibt den Web-Client nicht für alle frei. Bitte anmelden.</p>
+  <form id="form">
+    <label for="konto">E-Mail-Adresse</label>
+    <input id="konto" type="email" autocomplete="username" required>
+    <label for="passwort">Passwort</label>
+    <input id="passwort" type="password" autocomplete="current-password" required>
+    <button id="knopf" type="submit">Anmelden</button>
+    <div id="fehler" class="fehler" hidden></div>
+  </form>
+  <div class="klein" id="abmelden" hidden><a href="?abmelden">Abmelden</a></div>
+</main>
+<script>
+(async () => {
+  const COOKIE = 'ajna_zugang'
+  const q = new URLSearchParams(location.search)
+  const weiter = (q.get('weiter') || '/').replace(/^(?!\/)|^\/\/+/, '/')   // nur eigene Pfade
+  const sicher = location.protocol === 'https:' ? '; Secure' : ''
+  const setzeCookie = (token) => { document.cookie = `${COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=604800; SameSite=Lax${sicher}` }
+  const loescheCookie = () => { document.cookie = `${COOKIE}=; Path=/; Max-Age=0; SameSite=Lax${sicher}` }
+
+  if (q.has('abmelden')) { loescheCookie(); history.replaceState(null, '', location.pathname) }
+
+  const hinweis = document.getElementById('hinweis')
+  const fehler = document.getElementById('fehler')
+  const knopf = document.getElementById('knopf')
+
+  // Regel erfragen: Sie bestimmt, welche Konten überhaupt in Frage kommen.
+  let regel = 'everyone', schonDrin = false
+  try {
+    const info = await (await fetch('/api/client-access?info=1', { cache: 'no-store' })).json()
+    regel = info.policy || 'everyone'
+    schonDrin = !!info.ok
+    if (info.account) document.getElementById('abmelden').hidden = false
+  } catch (e) { /* ohne Auskunft: Formular zeigen */ }
+  if (schonDrin && !q.has('abmelden')) { location.replace(weiter); return }
+
+  hinweis.textContent = {
+    everyone: 'Diese Instanz gibt den Web-Client für alle frei.',
+    authenticated: 'Bitte mit einem Ajna-Konto anmelden.',
+    superusers: 'Der Web-Client dieser Instanz ist der Verwaltung vorbehalten. Bitte als Superuser anmelden.',
+  }[regel] || `Zugang für Mitglieder der Gruppe „${regel.slice(6)}“. Bitte anmelden.`
+
+  const anmelden = async (collection, identity, password) => {
+    const r = await fetch(`/api/collections/${collection}/auth-with-password`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ identity, password }),
+    })
+    return r.ok ? (await r.json()).token : null
+  }
+
+  document.getElementById('form').addEventListener('submit', async (ev) => {
+    ev.preventDefault()
+    fehler.hidden = true; knopf.disabled = true
+    const identity = document.getElementById('konto').value.trim()
+    const password = document.getElementById('passwort').value
+    // Superuser zuerst, wenn nur sie dürfen — sonst zuerst das gewöhnliche Konto.
+    const reihe = regel === 'superusers' ? ['_superusers'] : ['users', '_superusers']
+    let token = null
+    for (const c of reihe) { token = await anmelden(c, identity, password); if (token) break }
+    if (!token) { fehler.textContent = 'Anmeldung fehlgeschlagen.'; fehler.hidden = false; knopf.disabled = false; return }
+    setzeCookie(token)
+    const pruefung = await (await fetch('/api/client-access?info=1', { cache: 'no-store' })).json().catch(() => ({}))
+    if (!pruefung.ok) {
+      loescheCookie()
+      fehler.textContent = 'Angemeldet, aber dieses Konto darf den Web-Client hier nicht öffnen.'
+      fehler.hidden = false; knopf.disabled = false
+      return
+    }
+    location.replace(weiter)
+  })
+})()
+</script>
+</body>
+</html>

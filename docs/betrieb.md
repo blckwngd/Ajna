@@ -200,6 +200,36 @@ Für die Konten-Mail (Passwortvergabe) braucht die Instanz SMTP und `meta.appURL
 (Verwaltung → Settings → Mail bzw. Application). Ohne SMTP antwortet
 `request-password-reset` trotzdem 204 — der Fehler steht nur im Server-Log.
 
+## Zugang zum Web-Client
+
+Eine Instanz kann Ajna als Unterbau einer anderen Anwendung fahren (erste:
+HeimatRadar). Deren Nutzer:innen sehen die eigene Oberfläche; der volle
+Ajna-Client (Karte, AR, Editor) bleibt der Verwaltung vorbehalten. Andere
+Szenarien wollen ihn für alle Konten oder für eine Gruppe. Dafür die
+Einstellung `client.access` (settings, nicht öffentlich):
+
+| Wert | Wer darf den Client öffnen |
+|---|---|
+| `everyone` | alle — Vorgabe, wie bisher |
+| `authenticated` | jedes angemeldete Konto, Gäste eingeschlossen |
+| `superusers` | nur PocketBase-Superuser (die Verwaltung) |
+| `group:<Name>` | Mitglieder der Gruppe `<Name>` (transitiv) |
+
+Superuser dürfen bei jeder Einstellung hinein. Ein unbekannter Wert wirkt wie
+`everyone` und steht im Log — ein Tippfehler sperrt niemanden aus.
+
+**Mechanik.** Der Client sind statische Dateien, die Caddy ausliefert. Caddy
+fragt vor jeder Auslieferung (und vor `/ajnaapi/*`) bei PocketBase nach:
+`forward_auth` → `GET /api/client-access` (`pb_hooks/clientzugang.js`). 204
+heißt ausliefern; ein 302 zur Anmeldeseite `/zugang.html` (bei Seitenaufrufen)
+oder ein 401 mit `code: client_access_denied` wird dem Browser durchgereicht.
+Die Identität kommt aus dem Cookie `ajna_zugang`, das `/zugang.html` nach
+einer Anmeldung setzt — ein gewöhnliches PocketBase-Token, das der Server wie
+jedes andere prüft. `/api/*` und `/_/*` bleiben ungesperrt: Die API schützt
+ihre Regeln selbst, die Verwaltung ihr Login. Ohne Caddy (nur PocketBase)
+greift die Sperre nicht — sie sitzt bewusst dort, wo die Dateien ausgeliefert
+werden. Abmelden: `/zugang.html?abmelden`.
+
 ## Gegen eine Kopie prüfen
 
 Hook- und Migrations-Änderungen lassen sich ausprobieren, ohne die laufende

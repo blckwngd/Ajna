@@ -18,5 +18,6 @@ import * as proximity from './privacy/proximity.mjs'
 import * as agentCommand from './privacy/agent-command.mjs'
 import * as gastkonten from './privacy/gastkonten.mjs'
 import * as publicSettings from './privacy/public-settings.mjs'
+import * as clientzugang from './privacy/clientzugang.mjs'
 
-await runSuites('Privatsphäre', 'ptest', [proximity, agentCommand, gastkonten, publicSettings])
+await runSuites('Privatsphäre', 'ptest', [proximity, agentCommand, gastkonten, publicSettings, clientzugang])

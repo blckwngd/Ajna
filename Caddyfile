@@ -43,13 +43,31 @@
     # automatisch Caddys interne CA, also keine externen Roundtrips.
 }
 
+# Zugang zum Web-Client — wer darf ihn öffnen?
+#
+# Vor jeder Auslieferung von Client-Dateien (und /ajnaapi/*) fragt Caddy bei
+# PocketBase nach: GET /api/client-access (pb_hooks/clientzugang.js). 204 =
+# ausliefern; ein 302 zur Anmeldeseite /zugang.html oder ein 401 wird dem
+# Browser durchgereicht. Die Regel steht in der Instanz-Einstellung
+# `client.access` (everyone | authenticated | superusers | group:<Name>),
+# Vorgabe everyone — dann kostet die Frage einen Loopback-Aufruf und ändert
+# nichts. /api/* und /_/* bleiben ungesperrt: Die API schützt ihre Regeln
+# selbst, die Verwaltung ihr Login.
+(ajna_zugang) {
+    forward_auth 127.0.0.1:8090 {
+        uri /api/client-access
+        copy_headers X-Ajna-Konto
+    }
+}
+
 # Wiederverwendbarer Snippet — gleiche Proxy-Logik für beide Sites.
 #
 # Pfad-Aufteilung:
-#   /_/*       → PocketBase Admin-UI
-#   /api/*     → PocketBase REST + Hooks + Realtime/SSE
-#   /ajnaapi/* → Ajna-Express-Backend (server/index.js, Port 3000)
-#   alles andere → statischer Client (HTML + Webpack-Bundles)
+#   /_/*         → PocketBase Admin-UI
+#   /api/*       → PocketBase REST + Hooks + Realtime/SSE
+#   /ajnaapi/*   → Ajna-Express-Backend (server/index.js, Port 3000), hinter ajna_zugang
+#   /zugang.html → Anmeldeseite für den Client (immer erreichbar)
+#   alles andere → statischer Client (HTML + Webpack-Bundles), hinter ajna_zugang
 #
 # `/ajnaapi/*` ist die Konvention für Server-Logik, die nicht als PB-Hook
 # umsetzbar ist. Wenn `npm run start:dev` (Express) gerade nicht läuft,
@@ -91,9 +109,16 @@
     # Ajna-Express-Backend für eigene Server-Routen (separater Namespace,
     # damit kein Konflikt mit /api/* von PocketBase).
     handle /ajnaapi/* {
+        import ajna_zugang
         reverse_proxy 127.0.0.1:3000 {
             header_up X-Original-URL {scheme}://{host}{uri}
         }
+    }
+
+    # Anmeldeseite für den Client — VOR der Sperre, sonst käme niemand hinein.
+    handle /zugang.html {
+        root * {args[0]}
+        file_server
     }
 
     # Statischer Client (HTML, /dist/*.bundle.js, Modelle).
@@ -102,6 +127,7 @@
     # Credentials → Wildcard genügt. Expose-Headers für Range/206 (der
     # Babylon-GLTF-Loader liest die GLB häufig per Range-Request).
     handle {
+        import ajna_zugang
         header {
             Access-Control-Allow-Origin "*"
             Access-Control-Allow-Methods "GET, HEAD, OPTIONS"
