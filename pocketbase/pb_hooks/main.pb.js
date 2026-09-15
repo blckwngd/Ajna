@@ -2277,6 +2277,18 @@ routerAdd("POST", "/api/proximity", (e) => {
 // nichts — für Gespräche vor Ort richtig, für Direktnachrichten später zu wenig.
 // Dann kommt eine Ablage dazu, ohne dass sich der Client-Aufruf ändert.
 //
+// `ephemeral: true` — DIE BITTE, NICHTS AUFZUHEBEN. Der Absender kennzeichnet
+// damit Inhalte, die der Empfänger anzeigen, aber nicht speichern soll: von
+// einem Agenten im Auftrag des Spielers abgerufene Auskünfte, die niemand liegen
+// lassen will. Ajnas eigener Client hält sich daran (MessageLog schreibt solche
+// Zeilen nicht nach localStorage).
+//
+// EHRLICH DAZU: Das ist eine KENNZEICHNUNG, keine Durchsetzung. Der Server kann
+// keinen Client zwingen, etwas zu vergessen — wie `Cache-Control: no-store` ist
+// es eine Zusage zwischen Beteiligten, die sich daran halten wollen. Der Schutz
+// entsteht dadurch, dass diese Bahn ohnehin nichts ablegt und an genau EIN Konto
+// geht; das Kennzeichen schliesst die letzte Lücke beim Empfänger.
+//
 // OFFEN und bewusst nicht jetzt gelöst: Missbrauchsschutz (jeder Angemeldete
 // darf jedem schreiben) und die Frage, ob Umstehende mithören können sollen.
 // ---------------------------------------------------------------------
@@ -2308,6 +2320,10 @@ routerAdd("POST", "/api/chat/send", (e) => {
         object: typeof body.object === "string" ? body.object : null,
         text: text,
         meta: body.meta || null,     // z. B. Auswahlantworten
+        // Immer gesetzt, nie undefined: Ein Empfänger soll `ephemeral === true`
+        // prüfen können, ohne zwischen "nicht flüchtig" und "altes Feld fehlt"
+        // raten zu müssen.
+        ephemeral: body.ephemeral === true,
         ts: new Date().toISOString()
       })
     })

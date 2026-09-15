@@ -1695,6 +1695,69 @@ console.log('\n── Toast als Weg ins Gespräch')
     /onClick: \(\) => this\.open\(\)/.test(panel))
 }
 
+// ── Flüchtige Daten: anzeigen, aber niemals speichern ───────────────────
+// Grundbaustein für datenschutzkonforme Agents: Eine Auskunft, die ein Agent im
+// Auftrag des Spielers abruft (Adressdaten, Registerauszüge), soll sichtbar
+// sein und danach spurlos verschwinden. Bis hierher schob der Verlauf JEDE
+// Chat-Nachricht nach localStorage — die Kennzeichnung wäre wirkungslos
+// gewesen, ohne dass irgendetwas fehlschlägt.
+console.log('\n── Flüchtige Daten')
+{
+  const echtesLS = globalThis.localStorage
+  const platte = {}
+  globalThis.localStorage = {
+    getItem: (k) => (k in platte ? platte[k] : null),
+    setItem: (k, v) => { platte[k] = String(v) },
+    removeItem: (k) => { delete platte[k] },
+  }
+
+  const { messageLog } = await import('../client/core/MessageLog.js')
+  messageLog.clear()
+  messageLog.push('bleibt erhalten', 'dialog')
+  messageLog.push('nur für jetzt', 'dialog', { ephemeral: true })
+
+  const sichtbar = messageLog.entries().map(e => e.text)
+  check('beide Zeilen sind sichtbar', sichtbar.length === 2, sichtbar.join(' | '))
+  check('in zeitlicher Reihenfolge', sichtbar[0] === 'bleibt erhalten')
+
+  const gespeichert = JSON.parse(platte['ajna.msglog'] || '[]').map(e => e.text)
+  check('nur die dauerhafte Zeile liegt auf der Platte',
+    gespeichert.length === 1 && gespeichert[0] === 'bleibt erhalten', gespeichert.join(' | '))
+  check('die flüchtige ist NIRGENDS gespeichert',
+    !JSON.stringify(platte).includes('nur für jetzt'))
+
+  // Getrennte Felder statt eines Merkers: Sonst verdrängten viele flüchtige
+  // Zeilen beim Rollen (MAX) den gespeicherten Verlauf — unbemerkt.
+  for (let i = 0; i < 400; i++) messageLog.push(`abfrage ${i}`, 'dialog', { ephemeral: true })
+  const nachFlut = JSON.parse(platte['ajna.msglog'] || '[]').map(e => e.text)
+  check('eine Flut flüchtiger Zeilen zehrt den Verlauf NICHT auf',
+    nachFlut.includes('bleibt erhalten'), `${nachFlut.length} Einträge`)
+
+  messageLog.clearEphemeral()
+  check('clearEphemeral() räumt nur die flüchtigen weg',
+    messageLog.entries().length === 1 && messageLog.entries()[0].text === 'bleibt erhalten')
+
+  messageLog.clear()
+  if (echtesLS === undefined) delete globalThis.localStorage
+  else globalThis.localStorage = echtesLS
+
+  // Die Kette muss durchgehend sein — an jeder Stelle, an der das Kennzeichen
+  // verloren ginge, wäre es wirkungslos.
+  const hook = readFileSync(new URL('../pocketbase/pb_hooks/main.pb.js', import.meta.url), 'utf8')
+  check('der Server sendet das Kennzeichen mit', /ephemeral: body\.ephemeral === true/.test(hook))
+  check('und immer als echtes true/false', !/ephemeral: body\.ephemeral,/.test(hook))
+
+  const cl = readFileSync(new URL('../client/core/AjnaClient.js', import.meta.url), 'utf8')
+  check('AjnaClient.sendChat reicht es durch', /ephemeral: ephemeral === true/.test(cl))
+
+  const mg = readFileSync(new URL('../client/core/AjnaManager.js', import.meta.url), 'utf8')
+  check('AjnaManager reicht es weiter', /client\.sendChat\(to, \{ text, object, meta, ephemeral \}\)/.test(mg))
+
+  const pan = readFileSync(new URL('../client/core/MessageLogPanel.js', import.meta.url), 'utf8')
+  check('das Gesprächsfenster wertet es aus',
+    /\{ ephemeral: m\.ephemeral === true \}/.test(pan))
+}
+
 // ── Aktions-Reichweite (max_distance) und Privatsphaere ──────────────────
 // Eine Aktion kann `max_distance` tragen. Naehe laesst sich aber nur pruefen,
 // wenn der Standort ueberhaupt freigegeben ist — daraus folgt die noetige

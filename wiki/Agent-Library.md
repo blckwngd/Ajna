@@ -356,6 +356,28 @@ setInterval(() => parley.sweep(15 * 60_000), 60_000)   // alte Gespräche verges
 Zuordnung, Sitzungsschlüssel und Objektvariablen kommen aus der
 [Ajna-Library](Ajna-Library.md#dialoge) — dieselbe Datei nutzt auch der Client.
 
+### Auskünfte, die nirgends liegen bleiben sollen
+
+Ruft ein Agent im Auftrag eines Spielers etwas ab — eine Adresse, einen
+Registerauszug, eine Auskunft aus einer öffentlichen Quelle — gehört das
+Ergebnis nicht in ein Weltobjekt und nicht in den gespeicherten Verlauf:
+
+```js
+await ajna.sendChat(msg.from, { text: auskunft, object: werkzeug.id, ephemeral: true })
+```
+
+Der Inhalt erscheint im Gespräch des **einen** Empfängers und ist nach einem
+Neuladen fort. Drei Dinge liegen dabei beim Agenten selbst:
+
+* **Nie ins Objekt schreiben.** Ein Objekt darf die Funktion auslösen (und damit
+  steuern, wer sie erreicht), es darf das Ergebnis nicht tragen.
+* **Protokolliere die Tatsache, nicht die Werte** — sonst schafft der Nachweis
+  der Sparsamkeit die Ablage, die vermieden werden sollte.
+* **Kein Platten-Cache für Personenbezogenes.** Ein Zwischenspeicher
+  Adresse→Person *ist* eine Profildatenbank.
+
+Ausführlich: [`docs/fluechtige-daten.md`](../docs/fluechtige-daten.md).
+
 ---
 
 ## Vollständiges Gerüst

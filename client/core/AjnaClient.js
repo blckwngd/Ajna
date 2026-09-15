@@ -669,11 +669,17 @@ export class AjnaClient {
    *
    * Ephemer: kein Datenbankschreibvorgang, wer offline ist bekommt nichts.
    *
+   * `ephemeral: true` bittet den Empfänger, den Inhalt ANZUZEIGEN, aber NICHT
+   * ZU SPEICHERN — für Auskünfte, die ein Agent im Auftrag des Spielers abruft
+   * und die niemand liegen lassen soll. Ajnas Client hält sich daran: solche
+   * Zeilen landen nicht im gespeicherten Verlauf. Es ist eine Kennzeichnung,
+   * keine Durchsetzung (siehe `docs/fluechtige-daten.md`).
+   *
    * @param {string} to      Konto-ID des Empfängers (roh oder composite)
-   * @param {{text: string, object?: string, meta?: any}} msg
+   * @param {{text: string, object?: string, meta?: any, ephemeral?: boolean}} msg
    * @returns {Promise<{ok:boolean, delivered:number}>} delivered=0 → niemand verbunden
    */
-  async sendChat(to, { text, object = null, meta = null } = {}) {
+  async sendChat(to, { text, object = null, meta = null, ephemeral = false } = {}) {
     return this.pb.send('/api/chat/send', {
       method: 'POST',
       body: {
@@ -681,6 +687,7 @@ export class AjnaClient {
         text,
         object: object ? this._toRaw(object) : null,
         meta,
+        ephemeral: ephemeral === true,
       },
     })
   }
@@ -688,7 +695,11 @@ export class AjnaClient {
   /**
    * Eingehende Nachrichten an das eigene Konto abonnieren.
    *
-   * @param {(msg: {from:string, to:string, object:string|null, text:string, meta:any, ts:string}) => void} callback
+   * `msg.ephemeral === true` heißt: anzeigen, aber nicht speichern. Wer den
+   * Rückruf selbst auswertet, ist dafür verantwortlich — der Verlaufsspeicher
+   * hält sich bereits daran.
+   *
+   * @param {(msg: {from:string, to:string, object:string|null, text:string, meta:any, ephemeral:boolean, ts:string}) => void} callback
    * @returns {Promise<() => void>} unsubscribe
    */
   async onChat(callback) {

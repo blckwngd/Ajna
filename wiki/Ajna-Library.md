@@ -212,8 +212,8 @@ Ablage. Wer nicht verbunden ist, bekommt nichts.
 
 | Methode | Beschreibung |
 |---|---|
-| `await sendChat(to, { text, object?, meta?, serverId? })` | → `{ ok, delivered }`; `delivered = 0` heißt: Empfänger nicht verbunden |
-| `await onChat(cb)` | Rückruf `{ from, to, object, text, meta, ts, _origin }`; über alle angemeldeten Server |
+| `await sendChat(to, { text, object?, meta?, ephemeral?, serverId? })` | → `{ ok, delivered }`; `delivered = 0` heißt: Empfänger nicht verbunden |
+| `await onChat(cb)` | Rückruf `{ from, to, object, text, meta, ephemeral, ts, _origin }`; über alle angemeldeten Server |
 
 `to` ist eine **Konto-ID**, nicht die eines Objekts. Wer eine Figur anspricht,
 schreibt deren Besitzer (`record.owner`) und legt die Figur als `object` bei —
@@ -231,6 +231,26 @@ await ajna.onChat((m) => {
   console.log(`${m.from} über ${m.object || '—'}: ${m.text}`)
 })
 ```
+
+### Flüchtige Inhalte
+
+`ephemeral: true` bittet den Empfänger, den Inhalt **anzuzeigen, aber nicht zu
+speichern** — für Auskünfte, die ein Agent im Auftrag des Spielers abruft und
+die niemand liegen lassen soll.
+
+```js
+await ajna.sendChat(msg.from, { text: 'Hauptstraße 127 — …', ephemeral: true })
+```
+
+Ajnas Verlaufsspeicher hält sich daran: Solche Zeilen erscheinen im Gespräch,
+landen aber nie in `localStorage` und sind nach einem Neuladen fort. Das Feld ist
+im Rückruf **immer** gesetzt (`true`/`false`, nie `undefined`), damit niemand
+zwischen „nicht flüchtig" und „älterer Server" raten muss.
+
+Es ist eine **Kennzeichnung, keine Durchsetzung** — ein fremder Client kann sie
+ignorieren. Der harte Teil des Schutzes liegt darin, dass diese Bahn ohnehin
+nichts ablegt und an genau ein Konto geht. Ausführlich:
+[`docs/fluechtige-daten.md`](../docs/fluechtige-daten.md).
 
 ---
 

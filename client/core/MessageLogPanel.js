@@ -83,7 +83,11 @@ export class MessageLogPanel {
                   { open: false })
     }
 
-    messageLog.push(`${name}: ${m.text}`, 'dialog')
+    // `ephemeral` reicht bis hierher durch: Die Zeile erscheint im Gespräch,
+    // wird aber nie gespeichert und ist nach einem Neuladen fort. Ohne diese
+    // Weitergabe landete JEDE Agent-Antwort in localStorage — genau das, was
+    // eine Auskunft im Auftrag des Spielers nicht tun darf.
+    messageLog.push(`${name}: ${m.text}`, 'dialog', { ephemeral: m.ephemeral === true })
     // `log: false` — die Zeile steht schon als Gespräch im Verlauf.
     // Antippen öffnet das Gespräch — der Toast ist der Weg hinein, nicht nur
     // eine Meldung. Das Fenster drängt sich dafür nicht mehr selbst auf.

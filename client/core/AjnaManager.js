@@ -519,14 +519,17 @@ export class AjnaManager {
    * Objekt-Kontext, sonst aus `serverId`, sonst der Standard-Server —
    * Konto-IDs sind je Server verschieden und nur dort gültig.
    *
+   * `ephemeral: true` bittet den Empfänger, den Inhalt anzuzeigen, aber nicht zu
+   * speichern — siehe AjnaClient.sendChat und `docs/fluechtige-daten.md`.
+   *
    * @param {string} to  Konto-ID (roh; bei Objekt-Kontext dessen `owner`)
-   * @param {{text:string, object?:string, meta?:any, serverId?:string}} msg
+   * @param {{text:string, object?:string, meta?:any, ephemeral?:boolean, serverId?:string}} msg
    */
-  async sendChat(to, { text, object = null, meta = null, serverId = null } = {}) {
+  async sendChat(to, { text, object = null, meta = null, ephemeral = false, serverId = null } = {}) {
     const client = object ? this._clientFor(object)
       : (serverId ? this.clients.get(serverId) : this.defaultClient)
     if (!client) throw new Error('sendChat: unknown server')
-    return client.sendChat(to, { text, object, meta })
+    return client.sendChat(to, { text, object, meta, ephemeral })
   }
 
   /**
