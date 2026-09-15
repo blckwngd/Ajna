@@ -38,7 +38,9 @@
     "test:landing": "node tests/run-landing.mjs",
     "test:geo": "node tests/run-geo.mjs",
     "test": "npm run test:unit && npm run test:ui && npm run test:geo && npm run test:landing && npm run test:quests && npm run test:privacy",
-    "test:visuell": "node tests/run-visuell.mjs"
+    "test:visuell": "node tests/run-visuell.mjs",
+    "address": "node agents/address-bridge.mjs",
+    "address:setup": "node agents/address-bridge.mjs --setup"
   },
   "dependencies": {
     "@babylonjs/core": "^8.54.3",
