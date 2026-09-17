@@ -23,6 +23,13 @@ const AGENTS = [
                            // der .env DIESER Umgebung — sonst fail-fast (exit 1)
                            // → pm2-Restart-Loop. .env ist nicht eingecheckt, also
                            // pro Server separat setzen (docs/homeassistant.md).
+  'address-bridge',  // Adress-Lupe. BEWUSST AUS: Der Agent trägt Angaben über
+  //                    // Adressen zusammen — im Modus `erweitert` auch über
+  //                    // Privatpersonen. Wer ihn einschaltet, entscheidet als
+  //                    // Betreiber über Zweck und Mittel; das gehört nicht in
+  //                    // eine Vorgabe. Braucht `agents/.env.address-bridge`
+  //                    // (npm run address:setup) und optional die Abzüge unter
+  //                    // `.cache/`. Siehe docs/adress-anreicherung-quellen.md.
   // 'wand-agent',   // optional: Online-Teil der Zauberstab-Kette (legt ein
   //                  // Demo-Zielobjekt an, schaltet animation_state auf wand_*).
   //                  // Nur nötig, wenn du diese spezielle Wand-Demo willst.

@@ -24,9 +24,14 @@
 // WARUM SQLITE: 1,4 Millionen Zeilen, 196 MB. Ein linearer Durchlauf dauert
 // 3,4 Sekunden — für ein Werkzeug, auf das jemand wartet, zu lang. Einmal
 // importiert und über gerundete Koordinaten indiziert, antwortet dieselbe
-// Abfrage in Millisekunden. `node:sqlite` ist in Node eingebaut.
+// Abfrage in Millisekunden. `node:sqlite` ist in Node eingebaut — ABER ERST AB
+// EINER GEWISSEN VERSION, und `docs/dev-setup.md` verlangt nur „Node 22+“.
+//
+// Deshalb wird es NACHGELADEN statt oben importiert: Ein fehlendes Modul wäre
+// sonst ein Absturz beim Start — unter pm2 eine Neustart-Schleife, und das
+// wegen einer Zusatzquelle. Fehlt es, verhält sich das Kataster wie eine
+// fehlende Datei: Es gibt keins, der Aufrufer nimmt seine anderen Quellen.
 
-import { DatabaseSync } from 'node:sqlite'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { join, dirname } from 'node:path'
@@ -34,6 +39,12 @@ import { fileURLToPath } from 'node:url'
 
 const HIER = dirname(fileURLToPath(import.meta.url))
 const WURZEL = join(HIER, '..', '..')
+
+/** `node:sqlite`, oder null auf einem Node, das es noch nicht mitbringt. */
+async function sqlite() {
+  try { return (await import('node:sqlite')).DatabaseSync }
+  catch { return null }
+}
 
 export const HERKUNFT = 'Liegenschaftskataster (©GeoBasis-DE / LVermGeoRP, dl-de/by-2-0)'
 
@@ -124,10 +135,17 @@ function abstandM(lat1, lon1, lat2, lon2) {
 export async function oeffne({ csv = ORTE.csv, db = ORTE.db, log = () => {} } = {}) {
   if (!existsSync(csv) && !existsSync(db)) return null
 
+  const DatabaseSync = await sqlite()
+  if (!DatabaseSync) {
+    log(`Kataster übersprungen: dieses Node (${process.version}) bringt `
+      + '`node:sqlite` nicht mit. Adressen kommen dann aus OSM und der Geokodierung.')
+    return null
+  }
+
   if (!existsSync(db) || (existsSync(csv) && statSync(db).mtimeMs < statSync(csv).mtimeMs)) {
     if (!existsSync(csv)) return null
     log(`Kataster: baue Index aus ${csv} — das dauert einmalig ein bis zwei Minuten`)
-    await bauen(csv, db, log)
+    await bauen(DatabaseSync, csv, db, log)
   }
 
   try {
@@ -141,7 +159,7 @@ export async function oeffne({ csv = ORTE.csv, db = ORTE.db, log = () => {} } = 
   }
 }
 
-async function bauen(csv, dbPfad, log) {
+async function bauen(DatabaseSync, csv, dbPfad, log) {
   const d = new DatabaseSync(dbPfad)
   d.exec('PRAGMA journal_mode = OFF; PRAGMA synchronous = OFF;')
   d.exec('DROP TABLE IF EXISTS adressen')
