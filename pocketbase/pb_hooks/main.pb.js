@@ -64,6 +64,25 @@ function pruefeQuellenanspruch(e) {
     const { parseState } = require(`${__hooks}/quests.js`)
     const src = parseState(e.record).source
     if (src && typeof src === "string") {
+      // EINE UNVERAENDERTE QUELLE IST KEIN ANSPRUCH.
+      //
+      // Der Hook soll verhindern, dass jemand ein Objekt unter FREMDEM Namen
+      // anlegt oder ihm einen fremden Namen verpasst. Stand der Name schon
+      // vorher da, behauptet diese Aenderung nichts Neues.
+      //
+      // OHNE DIESE AUSNAHME FRIERT BEUTE EIN: Aufnehmen uebertraegt den Besitz
+      // ("Loot: Eigentum uebergeht auf den Sammler"), der Vergleich unten laeuft
+      // aber gegen den Besitzer des Datensatzes. Ein aufgehobenes Agent-Objekt
+      // gehoerte danach dem Spieler, trug aber weiter die Quelle des Agenten —
+      // und JEDE weitere Aenderung scheiterte mit 403. Gemeldet als „ich kann
+      // die Adress-Lupe nicht verschieben"; es betrifft jede Beute mit `source`.
+      // Dass es nicht frueher auffiel, liegt daran, dass `/pickup` und `/place`
+      // ueber $app.save() gehen und diesen Request-Hook gar nicht ausloesen.
+      let vorher = null
+      try { vorher = parseState($app.findRecordById("objects", e.record.id)).source }
+      catch (err) { vorher = null }   // CREATE: es gibt kein Vorher
+      if (vorher === src) { e.next(); return }
+
       // Auf CREATE setzt der Owner-Hook oben bereits `owner`; als Netz der
       // Aufrufer, falls die Reihenfolge einmal wechselt.
       const owner = e.record.get("owner") || (e.auth ? e.auth.id : "")

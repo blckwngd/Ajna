@@ -230,6 +230,32 @@ ihre Regeln selbst, die Verwaltung ihr Login. Ohne Caddy (nur PocketBase)
 greift die Sperre nicht — sie sitzt bewusst dort, wo die Dateien ausgeliefert
 werden. Abmelden: `/zugang.html?abmelden`.
 
+## Falle: `npm run <agent>` stoppen tötet den Agenten nicht
+
+`npm run address` (und jedes andere Agent-Skript) startet `node` als KIND von
+npm. Wer den npm-Prozess beendet, lässt das Kind am Leben — es bleibt angemeldet,
+bleibt auf seinen Topics und **antwortet weiter**.
+
+Gemessen: Nach einem vermeintlichen Neustart liefen zwei Adress-Agenten
+gleichzeitig, einer mit altem und einer mit neuem Code. Geantwortet hat der
+schnellere — also scheinbar zufällig der alte. Eine Code-Änderung sah damit aus,
+als hätte sie nicht gewirkt.
+
+Vor dem Neustart eines Agenten prüfen, ob wirklich keiner mehr läuft:
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+  Where-Object { $_.CommandLine -like '*address-bridge*' } |
+  Select-Object ProcessId, CreationDate
+```
+
+Es gehören **zwei** Prozesse zu einem Agenten: das Skript und sein
+Re-Exec-Kind mit `--use-system-ca` (aus `maybeReexecWithSystemCa`). Beide
+müssen weg.
+
+Dasselbe Bild entsteht bei Agents, die per `&` in einer Befehlskette gestartet
+wurden — deshalb nie so starten.
+
 ## Gegen eine Kopie prüfen
 
 Hook- und Migrations-Änderungen lassen sich ausprobieren, ohne die laufende

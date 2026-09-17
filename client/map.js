@@ -31,6 +31,7 @@ import { PresenceService, PRESENCE_TYPE, zeigeAnwesenheit, anwesenheitsText } fr
 import { InterestArea } from "./core/InterestArea.js"
 import { ProximityReporter } from "./core/ProximityReporter.js"
 import { InterestAreaDebug } from "./core/InterestAreaDebug.js"
+import { AdressMarker } from "./core/AdressMarker.js"
 import { setupMapGps } from "./core/MapGpsControl.js"
 import { getAccessoryHub } from "./core/AccessoryHub.js"
 import { InventoryUI, DRAG_MIME } from "./core/InventoryUI.js"
@@ -754,6 +755,14 @@ async function init() {
     window.ajnaInterestAreaDebug = new InterestAreaDebug({ map, ajna, getInterestArea: () => window.ajnaInterestArea })
   } catch (err) { console.warn('[map] InterestAreaDebug init:', err?.message || err) }
 
+  // Adress-Lupe: fluechtige Punkte an den gefundenen Adressen, Popup mit den
+  // Angaben und ihrer Herkunft. Eigene LayerGroup, nichts davon geht in die
+  // Objekt-Ebene oder in die Datenbank.
+  try {
+    window.ajnaAdressMarker = new AdressMarker({ ajna, L, map })
+    window.ajnaAdressMarker.start().catch(err => console.warn('[adress-marker]', err?.message || err))
+  } catch (err) { console.warn('[map] AdressMarker init:', err?.message || err) }
+
   // Karte verschiebt sich → Off-Screen-Linie zum hervorgehobenen Marker neu zeichnen
   map.on('move', updateHighlightLine)
   map.on('zoom', updateHighlightLine)
@@ -866,6 +875,12 @@ async function init() {
   }
   const _endPlacing = () => { _placing = null; if (window.map) window.map.getContainer().style.cursor = '' }
   window.map.on('click', (e) => { if (_placing) { const r = _placing; _endPlacing(); _placeAt(r, e.latlng) } })
+  /** Steht der Spieler gerade in der 3D-Ansicht der Shell? */
+  const arAnsichtOffen = () => {
+    try {
+      return !!document.querySelector('.shell-view[data-view="ar"].active')
+    } catch { return false }
+  }
 
   const mapEl = document.getElementById('map')
   mapEl.addEventListener('dragover', (e) => {
@@ -892,6 +907,19 @@ async function init() {
       _announcer?.interaction(rec, 'examine')
     },
     onPlace: (rec) => {
+      // DAS INVENTAR IST GLOBAL, DER ABLAGEORT NICHT. In der Shell haengt der
+      // Inventar-Knopf am `body` und ist in JEDEM Reiter erreichbar — dieses
+      // `onPlace` lief deshalb auch dann, wenn der Spieler gerade in der
+      // 3D-Ansicht stand. Die Karte wartete auf einen Klick, den es dort nicht
+      // gibt, und „Platzieren" tat in 3D schlicht nichts.
+      //
+      // `main.js` legt `ajnaPlaceInScene` bereit, sobald die Szene steht; der
+      // Weg ueber `window` ist noetig, weil die Reiter aus verschiedenen
+      // Buendeln kommen.
+      if (arAnsichtOffen() && window.ajnaPlaceInScene) {
+        window.ajnaPlaceInScene(rec)
+        return
+      }
       _placing = rec
       window.map.getContainer().style.cursor = 'crosshair'
       toast.show(`Tippe auf die Karte, um „${rec.name || 'Objekt'}" zu platzieren`, { title: 'Platzieren' })

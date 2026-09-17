@@ -22,6 +22,46 @@ const STYLE_ID = 'ajna-msglog-style'
 
 const fmtTime = (zeit) => { try { return new Date(zeit).toTimeString().slice(0, 5) } catch { return '' } }
 
+// Adressen im Text anklickbar machen — OHNE HTML aus dem Text zu bauen.
+//
+// Die Zeilen kommen von aussen: aus Agenten-Antworten, Dialogen, fremden
+// Servern. Sie deshalb als HTML einzusetzen, waere die klassische Luecke.
+// Stattdessen wird der Text zerlegt und jedes Stueck als Textknoten bzw. als
+// `<a>` mit `textContent` gesetzt — der Browser bekommt nie Markup zu sehen,
+// egal was in der Nachricht steht.
+//
+// NUR http(s): `javascript:` und Konsorten kommen hier gar nicht erst vor,
+// weil die Erkennung nur auf diese beiden Schemata passt.
+const URL_MUSTER = /\bhttps?:\/\/[^\s<>"')\]]+/g
+
+/** Satzzeichen am Ende gehoeren zum Satz, nicht zur Adresse. */
+const ohneSchlusszeichen = (roh) => {
+  let u = roh
+  while (u.length > 1 && '.,;:!?'.includes(u[u.length - 1])) u = u.slice(0, -1)
+  return u
+}
+
+export function setzeTextMitLinks(el, text) {
+  el.textContent = ''
+  const s = String(text ?? '')
+  let zuletzt = 0
+  URL_MUSTER.lastIndex = 0
+  let m
+  while ((m = URL_MUSTER.exec(s))) {
+    const url = ohneSchlusszeichen(m[0])
+    if (m.index > zuletzt) el.appendChild(document.createTextNode(s.slice(zuletzt, m.index)))
+    const a = document.createElement('a')
+    a.href = url
+    a.textContent = url
+    a.target = '_blank'
+    a.rel = 'noopener noreferrer'
+    a.className = 'mlg-link'
+    el.appendChild(a)
+    zuletzt = m.index + url.length
+  }
+  if (zuletzt < s.length) el.appendChild(document.createTextNode(s.slice(zuletzt)))
+}
+
 export class MessageLogPanel {
   constructor({ parent = document.body, ajna = null, toast = null } = {}) {
     this.parent = parent
@@ -398,13 +438,14 @@ export class MessageLogPanel {
   /** Nur nachziehen, wenn der Leser nicht gerade oben etwas nachliest. */
   _scrollIfSticking() { if (this._stickToBottom) this._scrollToBottom() }
 
-  // Text als textContent setzen (kein HTML-Injection über Nachrichteninhalte).
+  // Text als Textknoten setzen (kein HTML-Injection über Nachrichteninhalte),
+  // Adressen dabei als echte Links — siehe `setzeTextMitLinks`.
   _appendRow(entry) {
     if (!this._listEl) return
     const tmp = document.createElement('div')
     tmp.innerHTML = this._rowHtml(entry)
     const row = tmp.firstElementChild
-    row.querySelector('.mlg-x').textContent = entry.text
+    setzeTextMitLinks(row.querySelector('.mlg-x'), entry.text)
     this._listEl.appendChild(row)
     this._scrollIfSticking()
   }
@@ -417,9 +458,9 @@ export class MessageLogPanel {
       return
     }
     this._listEl.innerHTML = rows.map(e => this._rowHtml(e)).join('')
-    // Texte sicher als textContent nachtragen (Reihenfolge = rows).
+    // Texte sicher als Textknoten nachtragen (Reihenfolge = rows).
     const xs = this._listEl.querySelectorAll('.mlg-x')
-    rows.forEach((e, i) => { if (xs[i]) xs[i].textContent = e.text })
+    rows.forEach((e, i) => { if (xs[i]) setzeTextMitLinks(xs[i], e.text) })
     this._scrollIfSticking()
   }
 
@@ -472,6 +513,8 @@ export class MessageLogPanel {
     .ajna-msglog .mlg-row .mlg-t{color:#7d7d88;font:11px ui-monospace,Menlo,Consolas,monospace;flex:0 0 auto}
     .ajna-msglog .mlg-row .mlg-i{flex:0 0 auto}
     .ajna-msglog .mlg-row .mlg-x{flex:1;word-break:break-word;white-space:pre-wrap}
+    .ajna-msglog .mlg-x .mlg-link{color:#7fb2ff;text-decoration:underline;word-break:break-all}
+    .ajna-msglog .mlg-x .mlg-link:hover{color:#a8ccff}
     .ajna-msglog .mlg-dialog{border-left-color:#5b8dd6}
     .ajna-msglog .mlg-interact{border-left-color:#c79be0}
     .ajna-msglog .mlg-system{border-left-color:#6fae7a}

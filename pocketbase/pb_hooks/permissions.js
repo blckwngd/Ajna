@@ -289,6 +289,13 @@ function recomputeForObject(objectId) {
 
   console.log(`[recompute] object=${objectId} aces=${aces.length}`)
 
+  // Implizite Audiences bekommen KEINEN Cache-Eintrag — sie gelten für
+  // Nutzer, die man nicht aufzählen kann. Stattdessen werden sie als zwei
+  // Merker am Objekt festgehalten (siehe Migration 1788300000_audience_flags):
+  // Als zweiter JOIN in der View-Regel kostete dieselbe Auskunft das
+  // Hundertfache — 4,02 s statt 0,04 s für hundert Sätze.
+  let sichtbarAuth = false, sichtbarAnon = false
+
   for (const ace of aces) {
     const type = ace.get("subject_type")
     const subj = ace.get("subject") || ""
@@ -296,8 +303,21 @@ function recomputeForObject(objectId) {
       affectedUsers.add(subj)
     } else if (type === "group" && subj) {
       for (const m of transitiveMembersOf(subj)) affectedUsers.add(m)
+    } else if (IMPLICIT_AUDIENCES.has(type)) {
+      if (coerceStringArray(ace.get("rights")).indexOf("view") === -1) continue
+      if (type === "authenticated" || type === "everyone") sichtbarAuth = true
+      if (type === "anonymous" || type === "everyone") sichtbarAnon = true
     }
-    // implicit audiences: kein Cache-Eintrag nötig
+  }
+
+  // NUR SCHREIBEN, WENN SICH ETWAS ÄNDERT. Ein Speichern hebt `updated` und
+  // schickt allen verbundenen Clients eine Realtime-Nachricht — bei jedem
+  // Recompute wäre das ein ständiges Grundrauschen für nichts.
+  if (obj.get("view_auth") !== sichtbarAuth || obj.get("view_anon") !== sichtbarAnon) {
+    obj.set("view_auth", sichtbarAuth)
+    obj.set("view_anon", sichtbarAnon)
+    try { $app.save(obj) }
+    catch (err) { console.log(`[recompute] Audience-Merker nicht gespeichert object=${objectId}: ${err && err.message}`) }
   }
 
   console.log(`[recompute] object=${objectId} affectedUsers=${affectedUsers.size}`)

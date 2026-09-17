@@ -38,6 +38,9 @@ const head = mkEl('head'); head.isConnected = true
 globalThis.document = {
   body, head,
   createElement: mkEl,
+  // Textknoten: was `setzeTextMitLinks` zwischen die Verweise haengt.
+  createTextNode: (text) => ({ nodeType: 3, tagName: '#text', children: [], _text: String(text),
+    get textContent() { return this._text }, set textContent(v) { this._text = String(v) } }),
   getElementById: () => null,
   querySelector: () => null,
   addEventListener: (t, fn, cap) => listeners.set(t + (cap ? ':cap' : ''), fn),
@@ -1756,6 +1759,472 @@ console.log('\n── Flüchtige Daten')
   const pan = readFileSync(new URL('../client/core/MessageLogPanel.js', import.meta.url), 'utf8')
   check('das Gesprächsfenster wertet es aus',
     /\{ ephemeral: m\.ephemeral === true \}/.test(pan))
+}
+
+// ── Adress-Marker: sichtbar, sammelnd, und nirgends gespeichert ──────────
+// Je Treffer der Adress-Lupe ein Marker an der echten Position. Ohne Szene und
+// ohne Leaflet hält die Klasse nur Daten — damit ist der Lebenszyklus prüfbar,
+// und genau dort sitzen die Zusagen.
+console.log('\n── Adress-Marker')
+{
+  const { AdressMarker } = await import('../client/core/AdressMarker.js')
+
+  const echtesLS = globalThis.localStorage
+  const platte = {}
+  globalThis.localStorage = {
+    getItem: (k) => (k in platte ? platte[k] : null),
+    setItem: (k, v) => { platte[k] = String(v) },
+    removeItem: (k) => { delete platte[k] },
+  }
+
+  let chatCb = null, objCb = null
+  const ajna = {
+    onChat: async (cb) => { chatCb = cb; return () => {} },
+    onObjectEvent: (cb) => { objCb = cb; return () => {} },
+  }
+  const m = new AdressMarker({ ajna })
+  await m.start()
+
+  const treffer = (lat, lon, felder = []) => ({ lat, lon, titel: 'X', ort: 'Y', genauigkeit: 'genau', felder })
+
+  chatCb({ ephemeral: true, meta: { adressen: [treffer(50.1, 7.1)], werkzeug: 'default:tool1' } })
+  check('flüchtige Nachricht mit Adressen erzeugt einen Marker', m.anzahl === 1, `${m.anzahl}`)
+
+  // DIE FALLE: Eine gewöhnliche Chat-Nachricht darf nichts setzen — sonst
+  // könnte jeder Mitspieler dir Marker in die Welt schreiben.
+  chatCb({ ephemeral: false, meta: { adressen: [treffer(50.2, 7.2)] } })
+  check('NICHT-flüchtige Nachricht wird ignoriert', m.anzahl === 1, `${m.anzahl}`)
+  chatCb({ ephemeral: true, meta: {} })
+  chatCb({ ephemeral: true })
+  check('Nachricht ohne Adressen wird ignoriert', m.anzahl === 1, `${m.anzahl}`)
+
+  // Sammeln über mehrere Abfragen — dafür ist es gedacht (Bild eines Areals).
+  chatCb({ ephemeral: true, meta: { adressen: [treffer(50.3, 7.3), treffer(50.4, 7.4)] } })
+  check('weitere Abfragen legen dazu', m.anzahl === 3, `${m.anzahl}`)
+
+  // Dieselbe Stelle zweimal darf sich nicht stapeln — sonst lägen identische
+  // Beschriftungen übereinander.
+  chatCb({ ephemeral: true, meta: { adressen: [treffer(50.3, 7.3)] } })
+  check('dieselbe Stelle bleibt EIN Marker', m.anzahl === 3, `${m.anzahl}`)
+
+  // Ungültige Koordinaten erzeugen keinen Marker an (0,0).
+  chatCb({ ephemeral: true, meta: { adressen: [{ titel: 'ohne Ort' }, { lat: 'x', lon: 1 }] } })
+  check('Treffer ohne brauchbare Koordinate wird übersprungen', m.anzahl === 3, `${m.anzahl}`)
+
+  // Die Zusage, auf der alles ruht.
+  check('NICHTS davon liegt in localStorage', JSON.stringify(platte) === '{}', JSON.stringify(platte))
+
+  // Protokoll unter „Alle": WAS wurde nachgeschlagen — auch das, was der Filter
+  // entfernt hat. Sonst bliebe die Frage offen, ob überhaupt gesucht wurde.
+  const protokoll = []
+  const vorherLog = globalThis.window?.ajnaLog
+  globalThis.window = globalThis.window || {}
+  window.ajnaLog = { push: (text, cat, opts) => protokoll.push({ text, cat, opts }) }
+  chatCb({
+    ephemeral: true,
+    meta: {
+      adressen: [treffer(50.5, 7.5)],
+      geprueft: [
+        { titel: 'Hauptstraße 1', ort: '56566 Neuwied', felder: 2, entfernungM: 4 },
+        { titel: 'Hauptstraße 2', ort: '56566 Neuwied', felder: 0, entfernungM: 9 },
+      ],
+    },
+  })
+  check('alle geprüften Adressen stehen im Protokoll', protokoll.length === 2, `${protokoll.length}`)
+  check('auch die vom Filter entfernte', protokoll.some(p => /Hauptstraße 2/.test(p.text)))
+  check('als Debug-Zeile, nicht im Gespräch', protokoll.every(p => p.cat === 'debug'))
+  // OHNE DAS wäre die Flüchtigkeit an dieser einen Zeile gebrochen: Der Verlauf
+  // schreibt sonst nach localStorage.
+  check('und ausdrücklich flüchtig', protokoll.every(p => p.opts?.ephemeral === true))
+  window.ajnaLog = vorherLog
+
+  // Aufnehmen der Lupe beendet die Anzeige.
+  const vorAufraeumen = m.anzahl
+  objCb({ id: 'fremdes-objekt', carried_by: 'u1' })
+  check('ein fremdes Objekt räumt nicht ab', m.anzahl === vorAufraeumen, `${m.anzahl}`)
+  objCb({ id: 'tool1', carried_by: '' })
+  check('die Lupe ohne Träger räumt nicht ab', m.anzahl === vorAufraeumen, `${m.anzahl}`)
+  objCb({ id: 'tool1', carried_by: 'u1' })
+  check('die aufgenommene Lupe räumt alles ab', m.anzahl === 0, `${m.anzahl}`)
+
+  // Obergrenze: sammeln ja, unbegrenzt nein.
+  const viele = Array.from({ length: 260 }, (_, i) => treffer(50 + i / 1000, 7))
+  chatCb({ ephemeral: true, meta: { adressen: viele } })
+  check('die Zahl der Marker ist gedeckelt', m.anzahl <= 200, `${m.anzahl}`)
+
+  m.dispose()
+  if (echtesLS === undefined) delete globalThis.localStorage
+  else globalThis.localStorage = echtesLS
+
+  // Die Kette vom Agenten bis in die Ansicht.
+  const agent = readFileSync(new URL('../agents/address-bridge.mjs', import.meta.url), 'utf8')
+  check('der Agent schickt die Struktur mit', /adressen: alsMarker\(erg\)/.test(agent))
+  check('und die vollständige Prüfliste fürs Protokoll', /geprueft: \(erg\.alle \|\| \[\]\)/.test(agent))
+  check('und weiterhin als flüchtige Nachricht', /ephemeral: true,/.test(agent))
+
+  for (const [datei, was] of [['../client/main.js', '3D'], ['../client/map.js', 'Karte']]) {
+    const q = readFileSync(new URL(datei, import.meta.url), 'utf8')
+    check(`${was} hängt den Adress-Marker ein`, /new AdressMarker\(/.test(q))
+  }
+
+  // Kommentare RAUS vor der Prüfung: Die Datei ERKLÄRT, warum sie nichts
+  // speichert — das Wort steht also drin, ohne dass etwas gespeichert wird.
+  const src = readFileSync(new URL('../client/core/AdressMarker.js', import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  check('der Marker selbst speichert nirgends', !/localStorage|sessionStorage|indexedDB/.test(src))
+  check('und legt keine Weltobjekte an', !/createObject|updateObject/.test(src))
+}
+
+// ── Adress-Marker im Gelände ─────────────────────────────────────────────
+// Ein Marker steht auf dem BODEN, nicht auf der gedachten Startebene. Wo das
+// Gelände höher liegt als der Ursprung, ist der Unterschied genau die Strecke,
+// um die der Pfeiler im Hang versinkt — gemeldet und hier festgenagelt.
+console.log('\n── Adress-Marker im Gelände')
+{
+  // Ein Babylon-Ersatz, der gerade so viel kann, wie die Klasse anfasst.
+  const knoten = () => ({
+    position: { x: 0, y: 0, z: 0, set(x, y, z) { this.x = x; this.y = y; this.z = z } },
+    rotation: { x: 0, y: 0, z: 0 },
+    scaling: { set() {} },
+    dispose() {},
+  })
+  const mesh = (name) => Object.assign(knoten(), { name, isPickable: true, material: null, parent: null })
+  // Der Zeichen-Kontext merkt sich, was gemalt wurde — nur so ist pruefbar,
+  // dass die aufgeklappte Tafel wirklich jede Angabe UND ihre Herkunft zeigt.
+  const ctxFuer = (ziel) => {
+    let schrift = ''
+    return {
+      clearRect() {}, fillRect() {},
+      // Schriftgroesse MIT aufzeichnen: Wie gross der Text im Raum wirklich
+      // ist, ergibt sich erst aus px/Texturbreite × Tafelbreite.
+      fillText(t) { ziel._texte.push(String(t)); ziel._zeilen.push({ text: String(t), font: schrift }) },
+      measureText: (s) => ({ width: String(s).length * 14 }),
+      set fillStyle(v) {}, set font(v) { schrift = String(v) }, set textAlign(v) {},
+    }
+  }
+  const vorherBabylon = globalThis.BABYLON
+  globalThis.BABYLON = {
+    TransformNode: function (name) { return Object.assign(knoten(), { name }) },
+    Vector3: function (x, y, z) { return { x, y, z, set(a, b, c) { this.x = a; this.y = b; this.z = c } } },
+    Color3: Object.assign(
+      function () { return { scale: () => ({}), toHexString: () => '#fff' } },
+      { FromHexString: () => ({ scale: () => ({}), toHexString: () => '#fff' }) }),
+    StandardMaterial: function (name) { return { name } },
+    DynamicTexture: function (name, opts) {
+      const t = { name, _texte: [], _zeilen: [], breite: opts?.width, hoehe: opts?.height, hasAlpha: false, update() {}, dispose() {} }
+      t.getContext = () => ctxFuer(t)
+      return t
+    },
+    Mesh: { BILLBOARDMODE_ALL: 7 },
+    PointerEventTypes: { POINTERTAP: 4 },
+    MeshBuilder: {
+      CreateTorus: (n) => mesh(n), CreateCylinder: (n) => mesh(n),
+      CreateDisc: (n) => mesh(n),
+      CreatePlane: (n, o) => Object.assign(mesh(n), { _breite: o?.width, _hoehe: o?.height }),
+    },
+  }
+  globalThis.BABYLON.Vector3.Zero = () => globalThis.BABYLON.Vector3(0, 0, 0)
+
+  const { AdressMarker } = await import('../client/core/AdressMarker.js')
+
+  // Die Szene merkt sich den Zeiger-Beobachter und was gerade getroffen wird —
+  // damit laesst sich ein Tipp auf die Tafel nachstellen.
+  let zeigerCb = null
+  let treffer = null
+  // Ein Modell in der Szene, das dem Werkzeug gehoert — daran haengt das
+  // Huepfen waehrend des Gruebelns.
+  const lupe = { id: 'tool1', _gruebelt: null, gruebelt(an) { this._gruebelt = an } }
+  const scene = {
+    meshes: [{ name: 'lupe', metadata: { gameObject: lupe } }],
+    onBeforeRenderObservable: { add: () => ({}), remove: () => {} },
+    onPointerObservable: { add: (cb) => { zeigerCb = cb; return { cb } }, remove: () => { zeigerCb = null } },
+    pointerX: 0, pointerY: 0,
+    pick: (x, y, pred) => (treffer && (!pred || pred(treffer)) ? { hit: true, pickedMesh: treffer } : { hit: false }),
+  }
+  // Zwei Wege in den Beobachter: MIT `pickInfo` (so liefert Babylon es, auch im
+  // XR) und ohne (dann greift der Rueckfall ueber die Zeigerposition).
+  const tippAuf = (mesh) => { treffer = mesh; zeigerCb?.({ type: 4, pickInfo: { pickedMesh: mesh } }) }
+  const tippAufOhnePick = (mesh) => { treffer = mesh; zeigerCb?.({ type: 4 }) }
+  // Geländehöhe, die sich ändern kann — genau der Fall „Höhenkachel kommt
+  // erst später", den `neuAusrichten` abfängt.
+  let hoehe = 137.5
+  const geo = {
+    origin: { lat: 50, lon: 7, altitude: 0 },
+    toLocalRef: (lat, lon, alt = 0) => ({ x: (lon - 7) * 1000, y: hoehe + alt, z: (lat - 50) * 1000 }),
+  }
+  let chatCb = null
+  const ajna = {
+    onChat: async (cb) => { chatCb = cb; return () => {} },
+    onObjectEvent: () => () => {},
+    getObjectById: (id) => (id === 'tool1' ? { id, lat: 50.1, lon: 7.1 } : null),
+  }
+
+  const m = new AdressMarker({ ajna, scene, geo })
+  await m.start()
+  chatCb({ ephemeral: true, meta: { adressen: [{ lat: 50.1, lon: 7.1, titel: 'X', genauigkeit: 'genau', felder: [] }] } })
+
+  const ersterKnoten = [...m._marker.values()][0]?.node
+  check('der Marker sitzt auf der Geländehöhe, nicht auf y=0',
+    ersterKnoten?.position?.y === 137.5, `y=${ersterKnoten?.position?.y}`)
+
+  // Relief zieht weiter / lädt nach → Höhe nachziehen statt neu zeichnen.
+  hoehe = 212.25
+  m.neuAusrichten()
+  check('nachgeladenes Relief zieht bestehende Marker nach',
+    ersterKnoten?.position?.y === 212.25, `y=${ersterKnoten?.position?.y}`)
+
+  // Der Warte-Ring hängt an derselben Höhe — sonst dreht er im Boden.
+  m.wartet('default:tool1', true)
+  const ring = [...(m._warten?.values() || [])][0]?.ring
+  check('auch der Warte-Ring steht auf dem Gelände',
+    ring && Math.abs(ring.position.y - 212.3) < 0.01, `y=${ring?.position?.y}`)
+  hoehe = 300
+  m.neuAusrichten()
+  check('und wird mit nachgezogen', Math.abs(ring.position.y - 300.05) < 0.01, `y=${ring?.position?.y}`)
+
+  // ── Zwei Stufen: antippen zeigt alles, danebentippen klappt zu ─────────
+  // Im Raum ist Platz für wenig. Zusammengeklappt steht nur, WAS hier ist;
+  // aufgeklappt jede Angabe mit ihrer Herkunft.
+  const textVon = (t) => (t?.material?.diffuseTexture?._texte || []).join('\n')
+  const mitFeldern = {
+    lat: 50.2, lon: 7.2, titel: 'Koblenzer Straße 39', ort: '56218 Mülheim-Kärlich',
+    genauigkeit: 'genau', entfernungM: 12,
+    felder: [
+      { feld: 'Eintrag', wert: 'Mustermann, Erika', herkunft: 'Das Telefonbuch (Eintrag freiwillig)' },
+      { feld: 'Telefon', wert: '02630 123456', herkunft: 'Das Telefonbuch (Eintrag freiwillig)' },
+      { feld: 'Eintrag ansehen', wert: 'https://www.dastelefonbuch.de/Details/xyz',
+        herkunft: 'Das Telefonbuch (Eintrag freiwillig)', link: true },
+    ],
+  }
+  chatCb({ ephemeral: true, meta: { adressen: [mitFeldern] } })
+  const eintrag = [...m._marker.values()].find(e => e.daten.titel === 'Koblenzer Straße 39')
+
+  check('die Tafel startet zusammengeklappt', eintrag?.gross === false, `${eintrag?.gross}`)
+  check('und ist antippbar — sonst käme man nie an die Details',
+    eintrag?.tafel?.isPickable === true && eintrag?.tafel?.metadata?.adressTafel)
+  const schmal = eintrag?.tafel?._breite
+  check('zusammengeklappt ist sie schmal', schmal === 2.0, `${schmal}`)
+
+  tippAuf(eintrag.tafel)
+  check('ein Tipp klappt sie auf', eintrag.gross === true, `${eintrag.gross}`)
+  check('und macht sie breiter', eintrag.tafel?._breite === 3.4, `${eintrag.tafel?._breite}`)
+  // Die Unterkante bleibt auf dem Pfeilerkopf — sonst wüchse die Tafel in den
+  // Boden statt nach oben.
+  check('sie wächst nach oben, nicht in den Boden',
+    eintrag.tafel.position.y > 1.6 + eintrag.tafel._hoehe / 2 - 0.001, `${eintrag.tafel.position.y}`)
+  check('aufgeklappt zeigt sie mehr Zeilen als zugeklappt',
+    eintrag.tafel._hoehe > 0.75, `${eintrag.tafel._hoehe}`)
+
+  // Jede Angabe MIT Herkunft — ohne sie wäre die Tafel eine Behauptung.
+  const gemalt = textVon(eintrag.tafel)
+  check('jede Angabe steht drauf', /Telefon: 02630 123456/.test(gemalt), gemalt.slice(0, 80))
+  check('und ihre Herkunft darunter', /Das Telefonbuch/.test(gemalt))
+  check('die Lage-Angabe ebenso', /12 m/.test(gemalt))
+  // Ein Verweis in einer Textur lässt sich nicht anklicken — also dorthin
+  // zeigen, wo er es kann, statt eine Schaltfläche vorzutäuschen.
+  check('für Verweise zeigt sie ins Verlaufsfenster', /Verlaufsfenster/.test(gemalt))
+  check('und sagt weiterhin, dass nichts gespeichert wird', /Flüchtig/.test(gemalt))
+
+  // Ein zweiter Marker: nur EINE Tafel darf offen sein, sonst verdecken sie
+  // sich gegenseitig.
+  chatCb({ ephemeral: true, meta: { adressen: [{ lat: 50.21, lon: 7.21, titel: 'Zweite', genauigkeit: 'genau', felder: [] }] } })
+  const zweiter = [...m._marker.values()].find(e => e.daten.titel === 'Zweite')
+  tippAuf(zweiter.tafel)
+  check('eine zweite Tafel klappt die erste zu', eintrag.gross === false && zweiter.gross === true,
+    `${eintrag.gross}/${zweiter.gross}`)
+  check('und genau eine gilt als offen', m.offeneTafel !== null)
+
+  // „Unfocus": ein Tipp daneben.
+  tippAuf(null)
+  check('ein Tipp daneben klappt alles zu', m.offeneTafel === null, `${m.offeneTafel}`)
+
+  // Ein Tipp auf dieselbe Tafel klappt sie wieder zu.
+  tippAuf(zweiter.tafel)
+  tippAuf(zweiter.tafel)
+  check('derselbe Tipp noch einmal schliesst sie', zweiter.gross === false, `${zweiter.gross}`)
+
+  // Eine Nachlieferung darf niemandem die offene Tafel zuklappen.
+  tippAuf(eintrag.tafel)
+  chatCb({ ephemeral: true, meta: { adressen: [{ ...mitFeldern, felder: [...mitFeldern.felder,
+    { feld: 'Webseite', wert: 'https://beispiel.de', herkunft: 'OpenStreetMap' }] }] } })
+  const nachher = [...m._marker.values()].find(e => e.daten.titel === 'Koblenzer Straße 39')
+  check('eine Nachlieferung lässt die offene Tafel offen', nachher?.gross === true, `${nachher?.gross}`)
+
+  // Ohne `pickInfo` (aelteres Ereignis, Maus-Weg) muss der Rueckfall greifen.
+  m._alleZuklappen()
+  tippAufOhnePick(zweiter.tafel)
+  check('auch ohne Treffer im Ereignis klappt sie auf', zweiter.gross === true, `${zweiter.gross}`)
+  m._alleZuklappen()
+
+  // Die 3D-Seite muss den Tipp abgeben — sonst öffnet der Strahl hinter der
+  // Tafel ein Objektmenü.
+  const mainSrc = readFileSync(new URL('../client/main.js', import.meta.url), 'utf8')
+  check('ein Tipp auf die Tafel öffnet kein Menü dahinter',
+    /metadata\?\.adressTafel\) return/.test(mainSrc))
+
+  // Wie gross die Schrift IM RAUM ist, entscheidet nicht die Pixelzahl,
+  // sondern px/Texturbreite × Tafelbreite. Genau daran ging die erste Fassung
+  // vorbei: Die aufgeklappte Tafel war kleiner geschrieben als die
+  // zusammengeklappte, obwohl sie mehr Platz hatte.
+  const schriftM = (tafel, muster) => {
+    const tex = tafel?.material?.diffuseTexture
+    const z = (tex?._zeilen || []).find(x => muster.test(x.text))
+    const px = z ? Number((/(\d+)px/.exec(z.font) || [])[1]) : 0
+    return px && tex?.breite ? px / tex.breite * tafel._breite : 0
+  }
+
+  // FRISCH HOLEN: Der Eintrag oben ist nach der Nachlieferung ein anderes
+  // Objekt — `_aktualisieren` baut den Marker neu auf.
+  const jetzt = [...m._marker.values()].find(e => e.daten.titel === 'Koblenzer Straße 39')
+  m._alleZuklappen()
+  const kleinTitel = schriftM(jetzt.tafel, /Koblenzer/)
+  const kleinZeile = schriftM(jetzt.tafel, /Mustermann/)
+  tippAuf(jetzt.tafel)
+  const grossTitel = schriftM(jetzt.tafel, /Koblenzer/)
+  const grossFeld = schriftM(jetzt.tafel, /Telefon: /)
+
+  check('der Titel ist auf beiden Tafeln über 13 cm hoch',
+    kleinTitel > 0.13 && grossTitel > 0.13, `${kleinTitel.toFixed(3)} / ${grossTitel.toFixed(3)}`)
+  // DIE FALLE, die wirklich auftrat.
+  check('die aufgeklappte Tafel schreibt NICHT kleiner als die zugeklappte',
+    grossFeld >= kleinZeile, `${grossFeld.toFixed(3)} vs ${kleinZeile.toFixed(3)}`)
+  check('und der Titel ist dort am grössten', grossTitel > grossFeld,
+    `${grossTitel.toFixed(3)} vs ${grossFeld.toFixed(3)}`)
+  m._alleZuklappen()
+
+  // ── Grübeln: das Werkzeug selbst hüpft ──────────────────────────────────
+  // Der Ring am Boden kann hinter einem Haus liegen; das hüpfende Modell sieht
+  // man auch dann.
+  m.wartet('default:tool1', true)
+  check('das Werkzeug fängt an zu hüpfen', lupe._gruebelt === true, `${lupe._gruebelt}`)
+  check('und der Ring steht trotzdem', !!m._warten?.get('tool1')?.ring)
+  // Die Antwort beendet beides.
+  chatCb({ ephemeral: true, meta: {
+    adressen: [{ lat: 50.9, lon: 7.9, titel: 'Antwort', genauigkeit: 'genau', felder: [] }],
+    werkzeug: 'default:tool1' } })
+  check('die Antwort lässt es wieder aufhören', lupe._gruebelt === false, `${lupe._gruebelt}`)
+  check('und nimmt den Ring weg', !m._warten?.get('tool1'))
+
+  // Die Bewegung gehört der Szene: Sie sitzt im GameObject und arbeitet NICHT
+  // auf root.position — dort schreibt die Geo-Komponente jeden Frame hinein.
+  const goSrc = readFileSync(new URL('../client/engine/GameObject.js', import.meta.url), 'utf8')
+  check('das Hüpfen sitzt im GameObject', /gruebelt\(an = true\)/.test(goSrc))
+  check('und läuft über den Gesten-Knoten, nicht über root.position',
+    /gruebelt\(an = true\)[\s\S]{0,1600}gestenKnoten\(\)/.test(goSrc)
+    && !/gruebelt\(an = true\)[\s\S]{0,1600}root\.position\.y =/.test(goSrc))
+
+  // Beide Ansichten tragen sich ein — sonst bekommt nur die zuletzt erzeugte
+  // den Warte-Ring zu sehen (in der Shell laufen Karte UND 3D).
+  check('die Ansicht trägt sich in die globale Liste ein',
+    Array.isArray(window.ajnaAdressMarkers) && window.ajnaAdressMarkers.includes(m))
+  m.dispose()
+  check('und beim Aufräumen wieder aus', !window.ajnaAdressMarkers.includes(m))
+
+  if (vorherBabylon === undefined) delete globalThis.BABYLON
+  else globalThis.BABYLON = vorherBabylon
+
+  // Die Auslöser-Seite: EIN Aufruf pro Ansicht, nicht nur für die letzte.
+  const oa = readFileSync(new URL('../client/core/ObjectActions.js', import.meta.url), 'utf8')
+  check('der Auslöser benachrichtigt alle Ansichten', /ajnaAdressMarkers/.test(oa))
+  const mj = readFileSync(new URL('../client/main.js', import.meta.url), 'utf8')
+  check('und das Relief-Nachladen richtet sie neu aus', /neuAusrichten\?\.\(\)/.test(mj))
+}
+
+// ── Verweise im Verlauf ──────────────────────────────────────────────────
+// Eine Auskunft, die eine Adresse im Telefonbuch nennt, muss sich nachprüfen
+// lassen — der Verweis dorthin gehört anklickbar. Die Zeilen kommen aber von
+// aussen (Agenten, Dialoge, fremde Server); sie als HTML einzusetzen wäre die
+// klassische Lücke. Deshalb: zerlegen und als Knoten setzen.
+console.log('\n── Verweise im Verlauf')
+{
+  const { setzeTextMitLinks } = await import('../client/core/MessageLogPanel.js')
+
+  const feld = () => {
+    const el = document.createElement('span')
+    el.links = () => el.children.filter(c => c.tagName === 'a')
+    return el
+  }
+
+  let el = feld()
+  setzeTextMitLinks(el, '· Eintrag ansehen: https://www.dastelefonbuch.de/Details/abc   [Das Telefonbuch]')
+  check('die Adresse wird zum Verweis', el.links().length === 1, `${el.links().length}`)
+  check('mit genau der Adresse als Ziel',
+    el.links()[0]?.href === 'https://www.dastelefonbuch.de/Details/abc', el.links()[0]?.href)
+  check('der neue Tab kann nicht auf uns zugreifen',
+    el.links()[0]?.rel === 'noopener noreferrer' && el.links()[0]?.target === '_blank')
+  check('der übrige Text bleibt vollständig erhalten',
+    el.textContent === '· Eintrag ansehen: https://www.dastelefonbuch.de/Details/abc   [Das Telefonbuch]',
+    el.textContent)
+
+  el = feld()
+  setzeTextMitLinks(el, 'Siehe https://a.de/x, danach https://b.de/y.')
+  check('mehrere Adressen in einer Zeile', el.links().length === 2, `${el.links().length}`)
+  check('ein Komma gehört zum Satz, nicht zur Adresse',
+    el.links()[0]?.href === 'https://a.de/x', el.links()[0]?.href)
+  check('ein Schlusspunkt ebenso', el.links()[1]?.href === 'https://b.de/y', el.links()[1]?.href)
+  check('und beides steht weiterhin im Text',
+    el.textContent === 'Siehe https://a.de/x, danach https://b.de/y.', el.textContent)
+
+  // DIE FALLE: Nachrichten kommen von aussen. Würde der Text als HTML gesetzt,
+  // stünde hier ein Skript statt eines Satzes.
+  el = feld()
+  const bösartig = '<img src=x onerror=alert(1)> und <b>fett</b>'
+  setzeTextMitLinks(el, bösartig)
+  check('Markup im Text bleibt Text', el.textContent === bösartig, el.textContent)
+  check('und erzeugt kein einziges Element', el.children.every(c => c.tagName !== 'img'))
+
+  // NUR http(s). `javascript:` kommt gar nicht erst durch die Erkennung.
+  el = feld()
+  setzeTextMitLinks(el, 'javascript:alert(1) und data:text/html,<b>x</b> und file:///etc/passwd')
+  check('andere Schemata werden nicht verlinkt', el.links().length === 0, `${el.links().length}`)
+
+  el = feld()
+  setzeTextMitLinks(el, 'Keine Adresse weit und breit.')
+  check('Text ohne Adresse bleibt unangetastet', el.textContent === 'Keine Adresse weit und breit.')
+
+  const panel = readFileSync(new URL('../client/core/MessageLogPanel.js', import.meta.url), 'utf8')
+  check('beide Wege in die Liste nutzen dieselbe Funktion',
+    (panel.match(/setzeTextMitLinks\(/g) || []).length >= 3)
+  check('der Zeilentext wird nirgends mehr als HTML gesetzt',
+    !/mlg-x[^\n]*innerHTML\s*=/.test(panel))
+
+  // Die Quelle des Verweises: Der Agent liefert ihn, notfalls die Suchseite —
+  // sonst stünde eine Angabe da, die sich nicht überprüfen lässt.
+  const agent = readFileSync(new URL('../agents/address-bridge.mjs', import.meta.url), 'utf8')
+  check('der Agent hängt immer einen prüfbaren Verweis an',
+    /if \(!felder\.some\(f => f\.link\)\)[\s\S]{0,200}wert: url/.test(agent))
+}
+
+// ── Platzieren landet in der Ansicht, in der man steht ───────────────────
+// Der Inventar-Knopf haengt in der Shell am `body` und ist in JEDEM Reiter
+// erreichbar. Sein „Platzieren" fuehrte trotzdem immer in den Kartenzweig —
+// der auf einen Klick auf die Karte wartet. In 3D passierte damit nichts.
+console.log('\n── Platzieren in der richtigen Ansicht')
+{
+  const map = readFileSync(new URL('../client/map.js', import.meta.url), 'utf8')
+  const main = readFileSync(new URL('../client/main.js', import.meta.url), 'utf8')
+
+  check('die 3D-Seite bietet einen Weg an', /window\.ajnaPlaceInScene = \(rec\) =>/.test(main))
+  check('und merkt sich das Stueck fuer den naechsten Tipp',
+    /ajnaPlaceInScene[\s\S]{0,200}_placingRecord = rec/.test(main))
+  check('das Inventar fragt zuerst die offene Ansicht',
+    /if \(arAnsichtOffen\(\) && window\.ajnaPlaceInScene\)/.test(map))
+  check('und erkennt sie am aktiven Reiter',
+    /shell-view\[data-view="ar"\]\.active/.test(map))
+  // Ohne den Ruecksprung liefe beides: Szene UND Karte warten auf einen Klick.
+  check('danach laeuft der Kartenzweig nicht mehr mit',
+    /window\.ajnaPlaceInScene\(rec\)\s*\n\s*return/.test(map))
+
+  // Am Hang trifft die gedachte Ebene y=0 einen ganz anderen Punkt als den
+  // Boden, den der Spieler sieht.
+  check('der Ablageort wird gegen das Gelaende gepickt',
+    /_groundGeoAt[\s\S]{0,900}terrain\?\.mesh \? scene\.pickWithRay/.test(main))
+  check('ohne Relief bleibt die Ebene als Rueckfall',
+    /_groundGeoAt[\s\S]{0,1200}intersectsPlane\(groundPlane\)/.test(main))
+  // Im immersiven XR gibt es keinen Mauszeiger — dort zaehlt der Strahl des
+  // Controllers.
+  check('im XR zaehlt der Strahl aus dem Ereignis',
+    /_groundGeoAt\(scene\.pointerX, scene\.pointerY, eventData\.pickInfo\?\.ray/.test(main))
 }
 
 // ── Aktions-Reichweite (max_distance) und Privatsphaere ──────────────────

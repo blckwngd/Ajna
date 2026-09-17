@@ -81,6 +81,7 @@ import { compassHeadingDeg } from "./core/compassHeading.js"
 import { ObjectAura } from "./core/ObjectAura.js"
 import { QuickActions } from "./core/QuickActions.js"
 import { UwbAnchorOverlay } from "./core/UwbAnchorOverlay.js"
+import { AdressMarker } from "./core/AdressMarker.js"
 import { OSMContext } from "./engine/environment/OSMContext.js"
 import { Terrain } from "./engine/environment/Terrain.js"
 import { PathOverlay } from "./engine/debug/PathOverlay.js"
@@ -1328,13 +1329,30 @@ async function init() {
 
   // Bildschirmpunkt → Boden-GPS (Ray gegen die y=0-Ebene). Für Inventar-
   // Platzieren (Tipp) und Drag&Drop.
-  const _groundGeoAt = (px, py) => {
+  /**
+   * Geo-Position unter einem Bildschirmpunkt.
+   *
+   * ZUERST GEGEN DAS GELAENDE: Die gedachte Ebene y=0 trifft am Hang einen
+   * ganz anderen Punkt als der Boden, den der Spieler sieht — bei 10 % Gefaelle
+   * und 20 m Blickweite liegen Welten dazwischen. Ohne geladenes Relief bleibt
+   * es bei der Ebene.
+   *
+   * @param {object|null} ray  fertiger Strahl (im immersiven XR liefert ihn der
+   *        Controller; `pointerX/Y` sind dort ohne Aussage)
+   */
+  const _groundGeoAt = (px, py, ray = null) => {
     if (!geo.origin) return null
-    const ray = scene.createPickingRay(px, py, BABYLON.Matrix.Identity(), scene.activeCamera)
+    const strahl = ray
+      || scene.createPickingRay(px, py, BABYLON.Matrix.Identity(), scene.activeCamera)
+    const boden = terrain?.mesh ? scene.pickWithRay(strahl, m => m === terrain.mesh) : null
+    if (boden?.hit && boden.pickedPoint) {
+      const p = boden.pickedPoint
+      return geo.toWorld(p.x, p.y, p.z)
+    }
     const groundPlane = BABYLON.Plane.FromPositionAndNormal(BABYLON.Vector3.Zero(), new BABYLON.Vector3(0, 1, 0))
-    const dist = ray.intersectsPlane(groundPlane)
+    const dist = strahl.intersectsPlane(groundPlane)
     if (dist === null || dist < 0) return null
-    const point = ray.origin.add(ray.direction.scale(dist))
+    const point = strahl.origin.add(strahl.direction.scale(dist))
     return geo.toWorld(point.x, point.y, point.z)
   }
 
@@ -1347,6 +1365,19 @@ async function init() {
       if (!_toast) _toast = new Toast()
       _toast.show(t('Platzieren fehlgeschlagen: ') + (err?.response?.error || err?.message || err), { title: 'Platzieren' })
     }
+  }
+
+  // DAS GLOBALE INVENTAR DER SHELL BRAUCHT EINEN WEG HIERHER.
+  //
+  // In der Shell haengt der Inventar-Knopf an `map.js` und ist in jedem Reiter
+  // erreichbar — auch im 3D-Reiter. Ohne diesen Haken landete „Platzieren" dort
+  // im Kartenzweig, der auf einen Klick auf die Karte wartet: In 3D passierte
+  // nichts. `map.js` ruft das hier, sobald die 3D-Ansicht offen ist.
+  window.ajnaPlaceInScene = (rec) => {
+    if (!rec) return
+    _placingRecord = rec
+    if (!_toast) _toast = new Toast()
+    _toast.show(`Tippe in die Szene, um „${rec.name || 'Objekt'}" abzulegen`, { title: 'Platzieren' })
   }
 
   // In der Mobile-Shell stellt map.js bereits ein GLOBALES Inventar (body-FAB,
@@ -1473,7 +1504,9 @@ async function init() {
 
     // Inventar-Platzieren aktiv? Nächster Tap legt das Objekt auf den Boden.
     if (_placingRecord) {
-      const geoPos = _groundGeoAt(scene.pointerX, scene.pointerY)
+      // Im immersiven XR zeigt der Controller, nicht der Mauszeiger — dann
+      // zaehlt der Strahl aus dem Ereignis.
+      const geoPos = _groundGeoAt(scene.pointerX, scene.pointerY, eventData.pickInfo?.ray || null)
       const rec = _placingRecord
       _placingRecord = null
       if (geoPos) _placeRecordAt(rec, geoPos)
@@ -1485,6 +1518,10 @@ async function init() {
     // zusätzlich den raw-Pick, falls Observer-Reihenfolge mal wechselt.
     const rawPick = scene.pick(scene.pointerX, scene.pointerY)
     if (rawPick?.pickedMesh?.metadata?.isActionButton) return
+    // Eine Adress-Tafel angetippt? Die klappt sich selbst auf (AdressMarker
+    // horcht ebenfalls auf POINTERTAP). Ohne diesen Ausstieg liefe der Strahl
+    // durch die Tafel hindurch und oeffnete das Menue eines Objekts dahinter.
+    if (rawPick?.pickedMesh?.metadata?.adressTafel) return
 
     // UWB-Anker-Beacon angetippt (Debug-Overlay sichtbar)? → Editor öffnen
     // (präzise Position/Node-ID/mm-Koords bearbeiten).
@@ -1761,6 +1798,14 @@ async function init() {
   uwbAnchors.refresh()
   window.addEventListener('ajna:uwb-anchors', e => uwbAnchors.setVisible(!!e.detail))
 
+  // Adress-Lupe: fluechtige Marker an den gefundenen Adressen. Hoert selbst auf
+  // `onChat` (eigene Modulinstanz je Buendel — sich an das Gespraechsfenster zu
+  // haengen hiesse, auf ein fremdes Buendel zu hoffen). Nichts davon wird
+  // gespeichert; die Marker verschwinden, sobald die Lupe ins Inventar wandert.
+  const adressMarker = new AdressMarker({ ajna: ajnaManager, scene, geo })
+  window.ajnaAdressMarker = adressMarker
+  adressMarker.start().catch(err => console.warn('[adress-marker]', err?.message || err))
+
   // Marker-Vorschau: Bild-Marker (Datum am Ajna-Objekt: obj.marker = {image,
   // widthM, heightM?, headingDeg?, alt?}) als originalgetreue Fläche an ihrer
   // realen Geo-Pose. Umschaltbar (Event 'ajna:markers' / ?markers=0). window.ajnaMarkers
@@ -1925,6 +1970,11 @@ async function init() {
         // Objekt-Liste der Szene. Ohne diesen Aufruf blieben sie auf der ebenen
         // Startfläche — also unter dem Gelände.
         try { window.uwbAnchorOverlay?.refresh({ neuAufbauen: true }) } catch {}
+        // Adress-Marker haengen an derselben Hoehenreferenz und stehen
+        // ebensowenig in der Objektliste.
+        for (const m of (window.ajnaAdressMarkers || [])) {
+          try { m?.neuAusrichten?.() } catch {}
+        }
       }
     }
     // Die Drapierung steckt fest in den Kulissen-Vertices. Sie neu zu zeichnen,

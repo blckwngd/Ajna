@@ -63,6 +63,33 @@ HTTP und einen Komplettabzug als SQLite-Datenbank.
 HTML-Suchmaske, offline nutzbar, keine AGB-Reibung bei automatisierten
 Abrufen — ein lokaler Abzug erzeugt überhaupt keine Fremdlast.
 
+### So ist es angebunden
+
+Die HTTP-Schnittstelle (`db.offeneregister.de`) antwortet mit **502** — darauf
+zu warten hiesse, die Quelle auf unbestimmte Zeit auszulassen. Deshalb liest der
+Agent den **Komplettabzug lokal**:
+
+| | |
+|---|---|
+| Datei | `daten.offeneregister.de/handelsregister.db` |
+| Format | SQLite, 3,7 GB |
+| Stand der Daten | **21.10.2022** |
+| Ablage | `.cache/` (ignoriert; auf dem Linux-VPS ebenso) |
+| Leser | `node:sqlite` — in Node eingebaut, keine neue Abhängigkeit |
+
+Regler: `adr.register_db` (leer = die üblichen Orte unter `.cache/` durchsuchen)
+und `adr.register_stand`.
+
+**`adr.register_stand` erscheint an JEDEM Feld aus dieser Quelle.** Wer eine
+neuere Fassung einspielt, muss den Wert mitziehen — sonst behauptet die Anzeige
+ein falsches Datum. `registerFelder()` gibt **ohne** Stand gar nichts aus:
+lieber keine Angabe als eine, die sich als aktuell ausgibt. Ein Test hält das
+fest.
+
+**Fehlt die Datei, ist das ein Ausfall, keine Fehlanzeige.** „Kein Eintrag" wäre
+eine Aussage über die Firma, die sich ohne Datenbank nicht treffen lässt —
+dieselbe Regel wie beim Telefonbuch-Parser.
+
 **Die Schwäche, die man kennen muss: Aktualität.** Das Projekt wird nicht
 durchgängig gepflegt; der Komplettabzug hinkt dem amtlichen Register um Jahre
 hinterher. Für eine Demonstration ist das unerheblich, für eine Auskunft über
@@ -243,15 +270,28 @@ Stück offen herumlag*. Für eine Vorführung ist das der ganze Punkt.
 
 ## Konfiguration
 
-Über `Konfig.eigene()` (`agents/lib/konfig.mjs`) — die Regler gehören dem
-Agenten-Konto, nicht der Instanz.
+Zwei Wege, dieselben Werte: `agents/.env.address-bridge` legt sie fest, ein
+**nicht leerer** Eintrag in `agent_settings` übersteuert sie im Betrieb. Die
+Regler gehören dem Agenten-Konto, nicht der Instanz — zwei Betreiber desselben
+Agenten sollen verschiedene Betriebsarten fahren können (`Konfig.eigene()` in
+`agents/lib/konfig.mjs`).
 
-| Schlüssel | Vorgabe | Wirkung |
-|---|---|---|
-| `adress.modus` | `gewerbe` | `gewerbe` \| `erweitert` |
-| `adress.radius_m` | `25` | Umkreis der Adressliste |
-| `adress.halten_m` | `15` | Erst nach dieser Bewegung neu abfragen |
-| `adress.protokoll` | `true` | Im erweiterten Modus jeden Abruf protokollieren |
+| Regler | `.env` | Vorgabe | Wirkung |
+|---|---|---|---|
+| `adr.modus` | `ADR_MODUS` | `gewerbe` | `gewerbe` \| `erweitert` |
+| `adr.radius_m` | `ADR_RADIUS_M` | `25` | Umkreis der Adressliste in Metern (5–250) |
+| `adr.halten_m` | `ADR_HALTEN_M` | `15` | Erst nach dieser Bewegung neu abfragen |
+| `adr.max_treffer` | `ADR_MAX` | `8` | Höchstzahl angezeigter Adressen |
+| `adr.protokoll` | `ADR_PROTOKOLL` | `true` | Jeden Abruf protokollieren (Tatsachen, nie Werte) |
+
+**Der Umkreis ist nach oben begrenzt (250 m), und das ist keine Bevormundung:**
+Jede gefundene Adresse läuft *einzeln* durch Impressum, Register und
+Telefonbuch. 500 Meter ergeben leicht hundert Adressen — also hundert
+Fremdabfragen aus einem Tastendruck. Das sperrt die Quellen aus, und zwar zu
+Recht. Geprüft wird an beiden Enden: im Einrichter und bei jeder Abfrage, denn
+der Wert kann auch aus der Datenbank kommen und läuft dann am Einrichter vorbei
+(`radiusPruefen` in `agents/lib/adresse.mjs`). Beim Start sagt der Agent, welcher
+Wert gilt — man soll ihn nicht raten müssen.
 
 **Ein benannter Modus, keine Sammlung von Schaltern** — bei einem halben Dutzend
 Booleans weiß niemand mehr, in welchem Zustand der Agent gerade läuft.

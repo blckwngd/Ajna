@@ -343,6 +343,19 @@ export class ObjectActions {
       }
       const res = await this.ajna.interact(record.id, actionKey, payload)
       console.log('[interact]', actionKey, '→', res)
+      // SICHTBAR WARTEN. Eine Auskunft der Adress-Lupe braucht Sekunden
+      // (Overpass, Impressum, Register, Telefonbuch nacheinander); ohne Zeichen
+      // wirkt der Knopf tot und man stupst erneut. Der Ring verschwindet, sobald
+      // die Antwort da ist — oder nach einer Frist, falls keine kommt.
+      // Über `window`, weil der Marker in einem anderen Bündel lebt — und als
+      // LISTE, weil in der Shell zwei Ansichten gleichzeitig offen sind (Karte
+      // und 3D). Nur die zuletzt erzeugte zu benachrichtigen liesse die andere
+      // stumm.
+      if (actionKey === 'lookup' && res?.delivered) {
+        const ansichten = window.ajnaAdressMarkers
+          || (window.ajnaAdressMarker ? [window.ajnaAdressMarker] : [])
+        for (const m of ansichten) { try { m?.wartet?.(record.id, true) } catch {} }
+      }
       // ZUERST die Nebenwirkung (Einsammeln → Inventar, Auftrag → annehmen/
       // abschließen), DANN das Feedback: der Reply-Text leitet sich nur aus dem
       // Aktions-Key ab und würde sonst Erfolg melden, obwohl der Server ablehnt.

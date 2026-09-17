@@ -1065,6 +1065,50 @@ export class GameObject {
   }
 
   /**
+   * „Grübeln" sichtbar machen: Das Modell hüpft sachte auf der Stelle, bis es
+   * abgeschaltet wird.
+   *
+   * WOFÜR: Ein Werkzeug, hinter dem ein Agent steckt, antwortet nicht sofort —
+   * die Adress-Lupe fragt Kataster, Karte, Impressum, Register und Telefonbuch
+   * nacheinander ab. Ohne Zeichen wirkt der Knopf tot, und man stupst erneut.
+   * Es ist dasselbe Mittel, mit dem eine Figur beim Nachdenken lebendig bleibt.
+   *
+   * WARUM NICHT `root.position.y`: Dorthin schreibt die Geo-Komponente in JEDEM
+   * Bild die Position aus lat/lon (siehe GeospatialComponent.update) — ein
+   * Hüpfer wäre einen Frame später wieder weg. Schlimmer noch: Alles, was
+   * `root.position` LIEST (Beschriftungen, Minimap, Diagnose, Editor), bekäme
+   * eine Höhe, die nichts mit dem Standort zu tun hat. Der Gesten-Knoten
+   * zwischen root und Modell ist der vorgesehene Platz für so etwas.
+   *
+   * @param {boolean} an
+   */
+  gruebelt(an = true) {
+    if (!an) {
+      this._gruebelt = false
+      // Nur zurücksetzen, wenn nicht gerade eine Kampfgeste auf demselben
+      // Knoten arbeitet — sonst richtete ein Ende des Grübelns einen
+      // umgefallenen Gegner wieder auf.
+      if (!this._gesteTot && this._gestenNode) this._gestenNode.position.y = 0
+      return
+    }
+    if (this._gruebelt || this._gesteTot) return
+    const knoten = this.#gestenKnoten()
+    if (!knoten) return
+    this._gruebelt = true
+    const start = performance.now()
+    const lauf = () => {
+      if (!this._gruebelt || !this.root || this.root.isDisposed?.()) return
+      const t = (performance.now() - start) / 1000
+      // |sin| statt sin: Der Bogen geht schnell hoch und wieder runter, mit
+      // einer kurzen Pause unten — das liest sich als Hüpfen, ein reiner Sinus
+      // dagegen als Schweben.
+      knoten.position.y = Math.abs(Math.sin(t * Math.PI * 1.15)) * 0.22
+      requestAnimationFrame(lauf)
+    }
+    requestAnimationFrame(lauf)
+  }
+
+  /**
    * Treffer und Tod nachbauen, wenn das Modell keine Clips dafür hat.
    *
    * Gearbeitet wird auf einem EIGENEN Knoten zwischen Objekt und Modell — die

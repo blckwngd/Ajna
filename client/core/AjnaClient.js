@@ -293,7 +293,20 @@ export class AjnaClient {
     // Timestamp VOR dem Request stempeln — der Catch-up-Trigger aus
     // PB_CONNECT prüft das Fenster, um Doppel-Calls beim Boot zu sparen.
     this._lastRefreshAt = Date.now()
-    const objects = await this.pb.collection('objects').getFullList()
+    // `requestKey: null` schaltet die Auto-Stornierung des SDK ab.
+    //
+    // WARUM: Ohne Schlüssel storniert das SDK eine laufende Anfrage, sobald eine
+    // gleichartige startet. Beim Boot passiert genau das zwischen `connect()`
+    // und dem Nachzieher aus PB_CONNECT — der Erstabruf fliegt, und sein `await`
+    // wirft einen „AbortError" bis in den Agenten, der daran stirbt. Mit
+    // wachsendem Objektbestand dauert der Erstabruf länger und trifft das
+    // Nachzieher-Fenster zuverlässig; aus der gelegentlichen Flanke wurde ein
+    // Agent, der gar nicht mehr hochkam.
+    //
+    // Den Abbruch bloss abzufangen wäre schlimmer: Der Aufrufer liefe mit einer
+    // LEEREN Objektliste weiter — ein Agent fand daraufhin sein eigenes Werkzeug
+    // nicht und legte ein zweites an. Lieber gar nicht erst stornieren lassen.
+    const objects = await this.pb.collection('objects').getFullList({ requestKey: null })
     this.objectMap.clear()
     for (const o of objects) {
       this._rewriteRecord(o)
