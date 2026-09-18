@@ -46,6 +46,11 @@ loadAgentEnv('cli')
 const URL  = process.env.AJNA_URL  || 'http://127.0.0.1:8090'
 const USER = process.env.AJNA_USER
 const PASS = process.env.AJNA_PASS
+// Nur für `prune-objects`: Aufräumen betrifft in der Regel Objekte FREMDER
+// Konten (ein stillgelegter Agent), und dorthin reicht ein gewöhnlicher Login
+// nicht. Bleibt leer, solange niemand aufräumt.
+const SU   = process.env.AJNA_SU
+const SU_PASS = process.env.AJNA_SU_PASS
 
 // HTTPS (z. B. https://localhost durch Caddy): einmaliger Re-Exec mit
 // --use-system-ca, damit Node Caddys lokaler Root-CA vertraut.
@@ -69,6 +74,12 @@ Commands:
   create-object <json>             Objekt aus JSON-Body anlegen.
   update-object <id> <json>        Objekt patchen.
   delete-object <id>               Objekt löschen.
+  prune-objects <filter> [--loeschen]
+                                   Viele Objekte auf einmal wegräumen. OHNE
+                                   --loeschen nur zählen und zeigen (Trockenlauf).
+                                   Der Filter ist PFLICHT — es gibt bewusst kein
+                                   „Lösche alles". Braucht meist AJNA_SU/AJNA_SU_PASS,
+                                   weil Altlasten fremden Konten gehören.
   debug-view <id>                  PB-View-Rule für ein Objekt klauselweise
                                    auswerten (Owner / Cache / implicit audiences).
                                    Listet außerdem alle ACEs des Objekts roh auf —
@@ -94,6 +105,18 @@ Beispiele:
   node tools/ajna.mjs delete-object abc123def456ghi
   node tools/ajna.mjs add-permission abc123 '{"subject_type":"authenticated","rights":["view"]}'`)
   process.exit(2)
+}
+
+/** Anmeldung als Superuser — nur für Aufräumarbeiten an fremden Objekten. */
+async function loginSu(pb) {
+  if (!SU || !SU_PASS) die('AJNA_SU und AJNA_SU_PASS setzen (Superuser der Instanz).')
+  try {
+    await pb.collection('_superusers').authWithPassword(SU, SU_PASS)
+  } catch (err) {
+    const detail = err?.response?.data?.message || err?.message || String(err)
+    die(`Superuser-Login fehlgeschlagen: ${detail}`)
+  }
+  return pb.authStore.record || pb.authStore.model
 }
 
 async function login(pb) {
@@ -266,6 +289,87 @@ async function cmdAddPermission(pb, [objectId, aceRaw]) {
   console.error(`✓ ACE angelegt: ${created.id}`)
 }
 
+/**
+ * Viele Objekte auf einmal wegräumen — mit Trockenlauf als Vorgabe.
+ *
+ * WOFÜR: Ein stillgelegter Agent hinterlässt seine Welt. Auf der Produktiv-
+ * instanz waren das 187 Objekte eines Kontos, das zuletzt im Juli geschrieben
+ * hatte. Einzeln über `delete-object` sind das 187 Aufrufe von Hand.
+ *
+ * ZWEI SICHERUNGEN, weil Löschen nicht zurückzunehmen ist:
+ *   • Der Filter ist PFLICHT. Es gibt kein „lösche alles" — wer alles will,
+ *     schreibt einen Filter, der alles trifft, und sieht ihn dabei an.
+ *   • Ohne `--loeschen` wird nur gezählt und gezeigt. Erst der zweite Aufruf
+ *     räumt weg.
+ *
+ * ACEs UND CACHE GEHEN MIT: `object_permissions.object` und
+ * `effective_permissions.object` stehen auf cascadeDelete — es bleiben keine
+ * Waisen zurück. Nachgeprüft am Schema, nicht angenommen.
+ */
+async function cmdPruneObjects(pb, args) {
+  const echt = args.includes('--loeschen')
+  const filter = args.filter(a => a !== '--loeschen')[0]
+  if (!filter) die('Args: prune-objects <filter> [--loeschen]\n'
+    + '  z. B. \'owner = "ghpmtuglp3hyboc" && updated < "2026-09-01"\'')
+
+  // Erst als gewöhnlicher Nutzer; nur wenn Superuser-Daten da sind, damit.
+  // Fremde Objekte sieht und löscht ein gewöhnliches Konto nicht.
+  if (SU && SU_PASS) await loginSu(pb)
+  else await login(pb)
+
+  let liste
+  try {
+    liste = await pb.collection('objects').getFullList({ filter, sort: '+created' })
+  } catch (err) {
+    die(`Listen fehlgeschlagen: ${describePbError(err)}`)
+  }
+
+  if (!liste.length) {
+    console.error('Kein Objekt passt auf diesen Filter — nichts zu tun.')
+    console.log(JSON.stringify({ gefunden: 0, geloescht: 0 }, null, 2))
+    return
+  }
+
+  // ZEIGEN, WAS GETROFFEN WIRD. Eine nackte Zahl lädt dazu ein, sie zu
+  // glauben; die Aufschlüsselung nach Quelle und Besitzer zeigt sofort, wenn
+  // der Filter zu weit greift.
+  const gruppen = {}
+  for (const o of liste) {
+    let q = null
+    try { q = (typeof o.state === 'string' ? JSON.parse(o.state) : o.state)?.source } catch {}
+    const k = `${q ?? '(ohne Quelle)'} · ${o.owner || '(ohne Besitzer)'}`
+    if (!gruppen[k]) gruppen[k] = { n: 0, juengste: '' }
+    gruppen[k].n++
+    if ((o.updated || '') > gruppen[k].juengste) gruppen[k].juengste = o.updated || ''
+  }
+  console.error(`${liste.length} Objekt(e) treffen auf den Filter:`)
+  for (const [k, v] of Object.entries(gruppen).sort((a, b) => b[1].n - a[1].n)) {
+    console.error(`  ${String(v.n).padStart(5)}  ${k}   zuletzt geändert ${String(v.juengste).slice(0, 16) || '?'}`)
+  }
+  console.error('  Beispiele: ' + liste.slice(0, 3).map(o => `„${o.name}"`).join(', ')
+    + (liste.length > 3 ? ' …' : ''))
+
+  if (!echt) {
+    console.error('\nTrockenlauf — mit --loeschen wird gelöscht.')
+    console.log(JSON.stringify({ gefunden: liste.length, geloescht: 0, trockenlauf: true }, null, 2))
+    return
+  }
+
+  let weg = 0
+  const fehler = []
+  for (const o of liste) {
+    try { await pb.collection('objects').delete(o.id); weg++ }
+    catch (err) { fehler.push({ id: o.id, name: o.name, grund: describePbError(err) }) }
+    if (weg % 25 === 0 && weg) console.error(`  … ${weg}/${liste.length}`)
+  }
+  for (const f of fehler.slice(0, 5)) console.error(`  ✗ ${f.id} („${f.name}"): ${f.grund}`)
+  if (fehler.length > 5) console.error(`  ✗ … und ${fehler.length - 5} weitere`)
+
+  console.log(JSON.stringify({ gefunden: liste.length, geloescht: weg, fehler: fehler.length }, null, 2))
+  console.error(`✓ ${weg} gelöscht, ${fehler.length} fehlgeschlagen`)
+}
+
+
 // ───────────────────────────────────────────────────────────────────────
 //  Entry
 // ───────────────────────────────────────────────────────────────────────
@@ -282,6 +386,7 @@ async function main() {
     case 'create-object':  await cmdCreateObject(pb, rest);   break
     case 'update-object':  await cmdUpdateObject(pb, rest);   break
     case 'delete-object':  await cmdDeleteObject(pb, rest);   break
+    case 'prune-objects':  await cmdPruneObjects(pb, rest);   break
     case 'add-permission': await cmdAddPermission(pb, rest);  break
     case 'list-permissions': await cmdListPermissions(pb, rest); break
     case 'debug-view':     await cmdDebugView(pb, rest);      break

@@ -322,6 +322,37 @@ mit `sql: no rows in result set`). Für eine Neuinstallation ist das zu klären.
 
 ## Aufräumen
 
+### Objekte eines stillgelegten Agenten
+
+Ein Agent, den niemand mehr startet, hinterlässt seine Welt. Auf der
+Produktivinstanz waren das 187 Objekte eines Kontos, dessen Agenten zuletzt im
+Juli geschrieben hatten — sie liegen weiter herum, zählen gegen das
+Render-Budget und tragen nach dem Löschen des zugehörigen Manifests die Marke
+„angeblich".
+
+```bash
+# 1. Trockenlauf: zeigt, was getroffen wird, nach Quelle und Besitzer
+node tools/ajna.mjs prune-objects 'owner = "ghpmtuglp3hyboc" && updated < "2026-09-01"'
+
+# 2. Wenn die Aufschlüsselung stimmt: dasselbe mit --loeschen
+node tools/ajna.mjs prune-objects 'owner = "ghpmtuglp3hyboc" && updated < "2026-09-01"' --loeschen
+```
+
+**Der Filter ist Pflicht** — es gibt bewusst kein „lösche alles". Und weil
+Altlasten fremden Konten gehören, braucht es meist einen Superuser:
+
+```bash
+export AJNA_SU=admin@example.invalid AJNA_SU_PASS=...
+```
+
+Die Bedingung auf `updated` ist keine Zierde: Sollte das Konto doch noch leben,
+bleibt frisch Geschriebenes verschont.
+
+**ACEs und Cache gehen mit.** `object_permissions.object` und
+`effective_permissions.object` stehen auf `cascadeDelete` — nachgeprüft am
+Schema und an einem Wegwerf-Objekt, es bleiben keine Waisen. Direkt per SQL zu
+löschen wäre genau deshalb falsch: Dort greift der Cascade nicht.
+
 ### Logs
 
 PocketBase schrieb ohne Frist mit. Gemessen am 26.08.2026:
