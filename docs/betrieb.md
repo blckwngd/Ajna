@@ -148,6 +148,36 @@ starten, misst den alten Stand.
 Zum Ausprobieren ohne den laufenden Betrieb anzufassen, siehe „Gegen eine Kopie
 prüfen" weiter unten.
 
+### Zwei Fallen beim Schreiben einer Migration
+
+**Ein Autodate-Feld füllt BESTEHENDE Zeilen nicht.** Wer `created` oder
+`updated` nachträglich in eine Collection aufnimmt, bekommt es nur für Zeilen,
+die danach entstehen. Alle älteren behalten einen leeren String — und leer
+sortiert vor jedem Datum.
+
+Das ist keine Theorie: In `agent_manifests` entschied der Client über `created`,
+WER einen Agentennamen führt. Weil das Feld später kam, war es auf der
+gewachsenen Instanz fast überall leer, die Notfallregel verglich stattdessen
+DATENSATZ-IDs — und ein seit drei Wochen totes Konto hielt dadurch fünf von acht
+Namen. Die Inhaltsfilter boten dessen veraltete Schichten an und griffen nicht
+mehr; sichtbar war davon nichts. Nachgetragen in
+`1788400000_manifest_created_nachtragen.js`.
+
+Wer ein Autodate-Feld hinzufügt, schreibt die Nachtragung gleich mit — im
+Zweifel aus dem jeweils anderen Zeitstempel.
+
+**Eine Migration darf nichts zurückgeben.** Der JSVM deutet jeden Rückgabewert
+als Fehler und rollt zurück:
+
+```
+failed to apply migration …: could not convert [object Object] to error
+```
+
+Tückisch daran: Die Anweisungen davor LAUFEN, ihre `console.log`-Zeilen stehen
+im Protokoll — nur ist am Ende nichts gespeichert. `app.save(...)` als letzten
+Ausdruck zurückzugeben ist üblich und geht gut; das Ergebnis von
+`app.db().newQuery(…).execute()` nicht.
+
 ## Ratenbegrenzung
 
 Seit `1788000000_rate_limits.js` aktiv — **nur für anonymen Verkehr**.

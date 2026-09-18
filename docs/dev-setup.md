@@ -7,7 +7,7 @@
 
 | Tool | Hinweis |
 |---|---|
-| **Node.js 22+** (mit npm) | [nodejs.org](https://nodejs.org/) |
+| **Node.js 24 LTS** (mit npm) | [nodejs.org](https://nodejs.org/) — 22.13+ geht auch, ältere nicht: `node:sqlite` (Kataster-Hausnummern im Adress-Agenten) gibt es erst ab 22.5 und ohne Flag erst ab 22.13/23.4. Node 20 ist seit 30.04.2026 ohne Wartung. |
 | **PocketBase-Binary** unter `pocketbase/pocketbase.exe` (Windows) bzw. `pocketbase/pocketbase` (Linux/macOS) | [pocketbase.io/docs](https://pocketbase.io/docs/) |
 | **Caddy** auf `PATH` | Windows: `winget install CaddyServer.Caddy` oder `scoop install caddy` · macOS: `brew install caddy` · Linux: [caddyserver.com/download](https://caddyserver.com/download) |
 | Optional: VS Code | für die vorbereiteten Tasks (siehe Variante B) |

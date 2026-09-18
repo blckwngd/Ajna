@@ -27,6 +27,45 @@ const STORAGE_KEY = 'ajna.layer_filters'
 // unbegrenzt, z. B. ein Flugzeug-Tracker mit großer Reichweite).
 const DEFAULT_RENDER_BUDGET = 50
 
+/**
+ * Zeitpunkt, zu dem ein Manifest seinen Namen beansprucht hat.
+ *
+ * WARUM NICHT EINFACH `created`: Das Feld kam erst per Migration in die
+ * Collection, und PocketBase füllt Autodate-Felder für BESTEHENDE Zeilen nicht
+ * nach. Alle Manifeste, die älter sind als diese Migration, haben dort einen
+ * leeren String — auf einer gewachsenen Instanz sind das fast alle.
+ *
+ * Genau daran ist die Namensfrage einmal still gescheitert: Waren beide Daten
+ * leer, entschied die Notfallregel nach DATENSATZ-ID, also nach einem
+ * Zufallsstring. Auf einer Instanz hielt ein drei Wochen totes Konto dadurch
+ * fünf von acht Agentennamen, der Filterdialog bot dessen veraltete Schichten
+ * an, und die Objekte der laufenden Agenten passten auf keine davon — sie
+ * blieben sichtbar, was immer der Spieler anklickte.
+ *
+ * `updated` ist die beste verbleibende Schranke: Für eine alte Zeile ist sie
+ * alt, für eine neue neu. Die Reihenfolge stimmt damit wieder, auch ohne
+ * `created`.
+ *
+ * @returns {string} sortierbarer Zeitstempel, '' wenn nichts bekannt ist
+ */
+export const anspruchsZeit = (m) => String(m?.created || m?.updated || '')
+
+/**
+ * Hat `a` den Namen früher beansprucht als `b`?
+ *
+ * Der ÄLTERE gewinnt — das ist der Schutz gegen Übernahme: Wer einen Namen
+ * zuerst führt, behält ihn, und ein neues Konto kann ihn nicht an sich ziehen.
+ * Wer beide Konten besitzt, trägt das zweite bei `delegates` des älteren ein.
+ *
+ * Die ID entscheidet nur noch bei exakt gleichem Zeitstempel — dann ist sie
+ * kein Zufall, sondern schlicht ein stabiles Losverfahren.
+ */
+export function beanspruchtFrueher(a, b) {
+  const za = anspruchsZeit(a), zb = anspruchsZeit(b)
+  if (za !== zb) return za < zb
+  return String(a?.id) < String(b?.id)
+}
+
 export class AgentFilters {
   constructor(ajna) {
     this.ajna = ajna
@@ -77,10 +116,7 @@ export class AgentFilters {
       const schluessel = JSON.stringify([m._origin || '', m.source])
       const bisher = inhaber.get(schluessel)
       if (!bisher) { inhaber.set(schluessel, m); continue }
-      // Frühestes `created` gewinnt; bei Gleichstand die kleinere ID (stabil).
-      const frueher = (m.created || '') < (bisher.created || '')
-        || ((m.created || '') === (bisher.created || '') && String(m.id) < String(bisher.id))
-      if (frueher) { verworfen.push(bisher); inhaber.set(schluessel, m) }
+      if (beanspruchtFrueher(m, bisher)) { verworfen.push(bisher); inhaber.set(schluessel, m) }
       else verworfen.push(m)
     }
     // Einmal je Kollision melden, nicht bei jedem Abgleich. Und den SERVER
@@ -104,8 +140,15 @@ export class AgentFilters {
       // erklärt sie die roten „angeblich"-Marken an den Objekten des
       // verworfenen Kontos (siehe Provenance.js). Wer beides nicht in
       // Verbindung bringt, sucht den Fehler an der falschen Stelle.
+      // DIE ENTSCHEIDUNG NACHPRÜFBAR MACHEN. Sie hing schon einmal an einem
+      // leeren `created` und fiel dadurch nach Datensatz-ID — unsichtbar. Wer
+      // die Zeitpunkte sieht, erkennt sofort, wenn sie fehlen.
+      const woher = (x) => x?.created ? 'created' : (x?.updated ? 'updated (created fehlt)' : 'unbekannt')
       console.warn(`[filters] Zwei Konten beanspruchen den Namen "${m.source}" auf `
-        + `${this._serverName(m._origin)}. Es gilt der ältere Eintrag (${inhaberVon?.owner}); `
+        + `${this._serverName(m._origin)}. Anspruch: ${inhaberVon?.owner} seit `
+        + `${anspruchsZeit(inhaberVon) || '?'} (${woher(inhaberVon)}), ${m.owner} seit `
+        + `${anspruchsZeit(m) || '?'} (${woher(m)}). `
+        + `Es gilt der ältere Eintrag (${inhaberVon?.owner}); `
         + `verworfen wurde der von ${m.owner}. Objekte des verworfenen Kontos `
         + `erscheinen dadurch als „angeblich ${m.agent_name || m.source}". `
         + `Gehören beide Konten dir, trage ${m.owner} bei „delegates" des älteren Manifests ein.`)

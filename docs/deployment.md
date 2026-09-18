@@ -41,8 +41,16 @@ brauchst.
 
 ## Einmalige Einrichtung
 
-Voraussetzungen wie in [dev-setup.md](dev-setup.md) (Node 22+, PocketBase-Binary
+Voraussetzungen wie in [dev-setup.md](dev-setup.md) (Node 24 LTS, PocketBase-Binary
 unter `pocketbase/pocketbase`, Caddy). Dann:
+
+> **Node-Version wechseln, wenn pm2 schon läuft:** pm2 liegt PRO Node-Version
+> im globalen Verzeichnis. Nach einem Wechsel (nvm, NodeSource) ist der
+> `pm2`-Befehl weg, während der alte Daemon unter dem alten Node weiterläuft.
+> Reihenfolge: `npm i -g pm2` → `pm2 update` (startet den Daemon unter dem neuen
+> Node neu) → `pm2 save`. Wer `pm2 startup` benutzt hat: Die erzeugte
+> systemd-Unit trägt den PFAD der alten Node-Installation — `pm2 unstartup` und
+> `pm2 startup` neu ausführen, sonst startet nach dem nächsten Reboot nichts.
 
 ```bash
 # 1. PM2 global installieren
