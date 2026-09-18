@@ -337,7 +337,10 @@ async function cmdPruneObjects(pb, args) {
   for (const o of liste) {
     let q = null
     try { q = (typeof o.state === 'string' ? JSON.parse(o.state) : o.state)?.source } catch {}
-    const k = `${q ?? '(ohne Quelle)'} · ${o.owner || '(ohne Besitzer)'}`
+    // AUCH NACH TYP GRUPPIEREN. Bei Altlasten hat oft alles dieselbe Quelle und
+    // denselben Besitzer — dann sagt eine Zeile über 50 Objekte nichts. Der Typ
+    // ist es, an dem man erkennt, ob die eigene Ausrüstung mit im Netz hängt.
+    const k = `${q ?? '(ohne Quelle)'} · ${o.type || '(ohne Typ)'} · ${o.owner || '(ohne Besitzer)'}`
     if (!gruppen[k]) gruppen[k] = { n: 0, juengste: '' }
     gruppen[k].n++
     if ((o.updated || '') > gruppen[k].juengste) gruppen[k].juengste = o.updated || ''

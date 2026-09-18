@@ -348,6 +348,29 @@ export AJNA_SU=admin@example.invalid AJNA_SU_PASS=...
 Die Bedingung auf `updated` ist keine Zierde: Sollte das Konto doch noch leben,
 bleibt frisch Geschriebenes verschont.
 
+### Waisen ohne `state.source`
+
+Es gibt eine zweite Sorte Altlast, die schwerer auffällt: Objekte **ohne**
+`state.source`. Der Client behandelt sie in `AgentFilters.matches()` bewusst als
+selbstgemacht — *„user-created / nicht-Agent-Objekte immer sichtbar"* — und sie
+lassen sich deshalb durch KEINEN Inhaltsfilter abschalten.
+
+Für Spieler-Objekte ist das richtig. Für Kreaturen einer alten Director-Fassung
+ist es eine Falle: Der Director adoptiert nur, was `state.director === true`
+trägt, und heilt nur daran ein fehlendes `source`. Wer diese Marke nicht hat,
+wird nie wieder eingesammelt — unsichtbar für den Director, unabschaltbar im
+Client. Auf der Produktivinstanz waren das 44 Drachen, Tiere, Gegner und NPCs
+vom August.
+
+```bash
+node tools/ajna.mjs prune-objects   'state.source = null && updated < "2026-09-01" && (type = "dragon" || type = "animal" || type = "enemy" || type = "npc")'
+```
+
+**Die Typen einzeln aufzählen, nicht pauschal `state.source = null`.** In
+derselben Menge stecken `uwb_anchor` und `uwb_network` — die Anker-Kalibrierung,
+also echte Messwerte, die niemand wiederherstellen kann. Genau dafür zeigt der
+Trockenlauf die Aufschlüsselung nach Quelle, **Typ** und Besitzer.
+
 **ACEs und Cache gehen mit.** `object_permissions.object` und
 `effective_permissions.object` stehen auf `cascadeDelete` — nachgeprüft am
 Schema und an einem Wegwerf-Objekt, es bleiben keine Waisen. Direkt per SQL zu
