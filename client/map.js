@@ -869,12 +869,33 @@ async function init() {
 
   // ── Inventar: Fenster + Platzieren (Tipp-Modus & Drag&Drop) ──
   let _placing = null
-  const _placeAt = async (rec, latlng) => {
-    try { await ajna.place(rec.id, { lat: latlng.lat, lon: latlng.lng }) }
-    catch (err) { toast.show(t('Platzieren fehlgeschlagen: ') + (err?.response?.error || err?.message || err), { title: 'Platzieren' }) }
+  /**
+   * Ein oder mehrere Stücke ablegen — alle auf DIESELBE Stelle. Ein Stapel in
+   * der Welt ist nichts weiter als mehrere Datensätze am selben Punkt.
+   *
+   * Nacheinander, nicht parallel: Jedes `place` läuft durch die Server-Hooks.
+   */
+  const _placeAt = async (rec, latlng, ids = null) => {
+    const liste = (Array.isArray(ids) && ids.length) ? ids : [rec.id]
+    let ok = 0, fehler = null
+    for (const id of liste) {
+      try { await ajna.place(id, { lat: latlng.lat, lon: latlng.lng }); ok++ }
+      catch (err) { fehler = err; break }
+    }
+    if (fehler) {
+      toast.show(t('Platzieren fehlgeschlagen: ') + (fehler?.response?.error || fehler?.message || fehler)
+        + (ok ? ` (${ok} von ${liste.length} abgelegt)` : ''), { title: 'Platzieren' })
+    } else if (liste.length > 1) {
+      toast.show(`${ok}× „${rec.name || 'Objekt'}" abgelegt`, { title: 'Platzieren' })
+    }
   }
   const _endPlacing = () => { _placing = null; if (window.map) window.map.getContainer().style.cursor = '' }
-  window.map.on('click', (e) => { if (_placing) { const r = _placing; _endPlacing(); _placeAt(r, e.latlng) } })
+  window.map.on('click', (e) => {
+    if (!_placing) return
+    const auftrag = _placing
+    _endPlacing()
+    _placeAt(auftrag.rec, e.latlng, auftrag.ids)
+  })
   /** Steht der Spieler gerade in der 3D-Ansicht der Shell? */
   const arAnsichtOffen = () => {
     try {
@@ -906,7 +927,8 @@ async function init() {
       toast.show(interactionReply(rec, 'examine', rec.name), { title: rec.name || 'Objekt' })
       _announcer?.interaction(rec, 'examine')
     },
-    onPlace: (rec) => {
+    onPlace: (rec, ids = null) => {
+      const liste = Array.isArray(ids) && ids.length ? ids : [rec.id]
       // DAS INVENTAR IST GLOBAL, DER ABLAGEORT NICHT. In der Shell haengt der
       // Inventar-Knopf am `body` und ist in JEDEM Reiter erreichbar — dieses
       // `onPlace` lief deshalb auch dann, wenn der Spieler gerade in der
@@ -917,12 +939,13 @@ async function init() {
       // Weg ueber `window` ist noetig, weil die Reiter aus verschiedenen
       // Buendeln kommen.
       if (arAnsichtOffen() && window.ajnaPlaceInScene) {
-        window.ajnaPlaceInScene(rec)
+        window.ajnaPlaceInScene(rec, liste)
         return
       }
-      _placing = rec
+      _placing = { rec, ids: liste }
       window.map.getContainer().style.cursor = 'crosshair'
-      toast.show(`Tippe auf die Karte, um „${rec.name || 'Objekt'}" zu platzieren`, { title: 'Platzieren' })
+      const was = liste.length > 1 ? `${liste.length}× „${rec.name || 'Objekt'}"` : `„${rec.name || 'Objekt'}"`
+      toast.show(`Tippe auf die Karte, um ${was} zu platzieren`, { title: 'Platzieren' })
     },
     getDevices: () => inventoryDevices(_hub),
   })

@@ -2195,6 +2195,88 @@ console.log('\n── Verweise im Verlauf')
     /if \(!felder\.some\(f => f\.link\)\)[\s\S]{0,200}wert: url/.test(agent))
 }
 
+// ── Inventar: was stapelt, und was nicht ────────────────────────────────
+// Ein Stapel ist keine neue Datenstruktur, sondern eine Ansicht auf mehrere
+// gleiche Datensätze. Die Frage ist deshalb allein: Wann sind zwei Stücke
+// DASSELBE?
+console.log('\n── Inventar-Stapel')
+{
+  const { stapelSchluessel, gruppiereStapel, InventoryUI } =
+    await import('../client/core/InventoryUI.js')
+
+  const diamant = (extra = {}) => ({
+    id: 'd' + Math.random().toString(36).slice(2, 8),
+    name: 'Diamant', type: 'diamond',
+    appearance: { gltf: '/models/Diamond.glb' },
+    state: { spawn_id: Math.random().toString(36) },   // je Stück verschieden
+    ...extra,
+  })
+
+  // Der Grund, warum `state` NICHT in den Schlüssel gehört.
+  check('zwei Diamanten stapeln, obwohl ihr state sich unterscheidet',
+    stapelSchluessel(diamant()) === stapelSchluessel(diamant()))
+
+  check('ein anderer Name stapelt nicht',
+    stapelSchluessel(diamant()) !== stapelSchluessel(diamant({ name: 'Rubin' })))
+  check('ein anderer Typ stapelt nicht',
+    stapelSchluessel(diamant()) !== stapelSchluessel(diamant({ type: 'item' })))
+  check('ein anderes Modell stapelt nicht',
+    stapelSchluessel(diamant()) !== stapelSchluessel(diamant({ appearance: { gltf: '/models/X.glb' } })))
+
+  // DIE FALLE BEI MEHREREN SERVERN: Gleiche Dinge aus zwei Welten sind nicht
+  // dasselbe Ding — man könnte sie nicht gemeinsam ablegen.
+  check('gleiche Gegenstände VERSCHIEDENER Server stapeln nicht',
+    stapelSchluessel(diamant({ _origin: 'a' })) !== stapelSchluessel(diamant({ _origin: 'b' })))
+  check('gleiche Gegenstände DESSELBEN Servers stapeln',
+    stapelSchluessel(diamant({ _origin: 'a' })) === stapelSchluessel(diamant({ _origin: 'a' })))
+
+  // Früher entschied ein Merker `state.stackable`, den nur der Director setzte.
+  // Jetzt entscheidet, was das Ding IST.
+  const ohneMerker = { id: 'x1', name: 'Fackel', type: 'item', appearance: {} }
+  const ohneMerker2 = { id: 'x2', name: 'Fackel', type: 'item', appearance: {} }
+  check('auch Items ohne stackable-Merker stapeln',
+    stapelSchluessel(ohneMerker) === stapelSchluessel(ohneMerker2))
+
+  const gruppen = gruppiereStapel([diamant(), diamant(), diamant(), ohneMerker, ohneMerker2,
+    diamant({ name: 'Rubin' })])
+  const groessen = gruppen.map(g => g.mitglieder.length).sort((a, b) => b - a)
+  check('drei Diamanten, zwei Fackeln, ein Rubin → 3 Stapel',
+    gruppen.length === 3 && groessen.join(',') === '3,2,1', `${gruppen.length}: ${groessen}`)
+  check('jeder Stapel führt einen Repräsentanten',
+    gruppen.every(g => g.rep && g.mitglieder.includes(g.rep)))
+  check('leeres Inventar ergibt keine Stapel', gruppiereStapel([]).length === 0)
+  check('und verträgt undefined', gruppiereStapel(undefined).length === 0)
+
+  // _stapelVon arbeitet gegen das echte Inventar — ohne DOM prüfbar, indem wir
+  // nur die Methode an einem Rumpf-Objekt aufrufen.
+  const vorrat = [diamant({ id: 'a' }), diamant({ id: 'b' }), ohneMerker]
+  const rumpf = Object.create(InventoryUI.prototype)
+  rumpf.ajna = { inventoryItems: () => vorrat }
+  check('_stapelVon findet alle gleichen Stücke',
+    rumpf._stapelVon(vorrat[0]).length === 2, `${rumpf._stapelVon(vorrat[0]).length}`)
+  check('und für ein einzelnes Stück genau eines',
+    rumpf._stapelVon(ohneMerker).length === 1)
+
+  // Die Verdrahtung: Menge fragen nur bei mehr als einem Stück, und beide
+  // Ansichten müssen mehrere IDs ablegen können. (Das DOM des Fensters baut
+  // der Stub nicht nach — geprüft wird deshalb der Code, der es steuert.)
+  const inv = readFileSync(new URL('../client/core/InventoryUI.js', import.meta.url), 'utf8')
+  check('ein einzelnes Stück fragt nicht nach der Menge',
+    /stapel\.length > 1\s*\)\s*this\._frageMenge[\s\S]{0,120}else[\s\S]{0,80}onPlace\?\.\(rec, \[rec\.id\]\)/.test(inv))
+  check('die Menge wird auf den Stapel begrenzt',
+    /Math\.min\(stapel\.length,/.test(inv))
+  check('und nur so viele IDs weitergereicht wie gewählt',
+    /stapel\.slice\(0, n\)\.map\(r => r\.id\)/.test(inv))
+
+  for (const [datei, was] of [['../client/main.js', '3D'], ['../client/map.js', 'Karte']]) {
+    const q = readFileSync(new URL(datei, import.meta.url), 'utf8')
+    check(`${was}: legt die ganze Liste ab, nicht nur eines`,
+      /for \(const id of liste\)/.test(q))
+    check(`${was}: alle auf dieselbe Stelle`,
+      /place\(id, \{ lat: (geoPos|latlng)\.lat/.test(q))
+  }
+}
+
 // ── Platzieren landet in der Ansicht, in der man steht ───────────────────
 // Der Inventar-Knopf haengt in der Shell am `body` und ist in JEDEM Reiter
 // erreichbar. Sein „Platzieren" fuehrte trotzdem immer in den Kartenzweig —
@@ -2204,16 +2286,16 @@ console.log('\n── Platzieren in der richtigen Ansicht')
   const map = readFileSync(new URL('../client/map.js', import.meta.url), 'utf8')
   const main = readFileSync(new URL('../client/main.js', import.meta.url), 'utf8')
 
-  check('die 3D-Seite bietet einen Weg an', /window\.ajnaPlaceInScene = \(rec\) =>/.test(main))
+  check('die 3D-Seite bietet einen Weg an', /window\.ajnaPlaceInScene = \(rec, ids/.test(main))
   check('und merkt sich das Stueck fuer den naechsten Tipp',
-    /ajnaPlaceInScene[\s\S]{0,200}_placingRecord = rec/.test(main))
+    /ajnaPlaceInScene[\s\S]{0,240}_placingRecord = { rec, ids/.test(main))
   check('das Inventar fragt zuerst die offene Ansicht',
     /if \(arAnsichtOffen\(\) && window\.ajnaPlaceInScene\)/.test(map))
   check('und erkennt sie am aktiven Reiter',
     /shell-view\[data-view="ar"\]\.active/.test(map))
   // Ohne den Ruecksprung liefe beides: Szene UND Karte warten auf einen Klick.
   check('danach laeuft der Kartenzweig nicht mehr mit',
-    /window\.ajnaPlaceInScene\(rec\)\s*\n\s*return/.test(map))
+    /window\.ajnaPlaceInScene\(rec, liste\)[\s\S]{0,40}return/.test(map))
 
   // Am Hang trifft die gedachte Ebene y=0 einen ganz anderen Punkt als den
   // Boden, den der Spieler sieht.

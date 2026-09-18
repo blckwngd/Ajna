@@ -23,6 +23,47 @@ export const DRAG_MIME = 'application/x-ajna-inventory-item'
 
 const iconFor = (obj) => iconOf(obj)
 
+/**
+ * Wann sind zwei Gegenstände DASSELBE — und dürfen aufeinander?
+ *
+ * Nicht über einen Merker am Objekt, sondern über das, was es ist: Server,
+ * Name, Typ und Aussehen. Wer davon in einem Stück abweicht, bildet einen
+ * eigenen Stapel.
+ *
+ * DER SERVER STEHT VORNE, und das ist keine Feinheit: Bei mehreren verbundenen
+ * Servern trägt jedes Objekt eine zusammengesetzte ID (`<server>:<id>`). Zwei
+ * gleichnamige Diamanten von zwei Servern sind zwei verschiedene Dinge — man
+ * kann sie nicht gemeinsam ablegen, denn jeder gehört in seine eigene Welt.
+ *
+ * NICHT im Schlüssel: `state`. Dort steht Instanz-Eigenes (der Director legt
+ * eine `spawn_id` je Stück an), und darauf zu vergleichen hiesse, dass nie
+ * etwas stapelt.
+ */
+export const stapelSchluessel = (rec) => JSON.stringify([
+  rec?._origin || '',
+  rec?.name || '',
+  rec?.type || '',
+  rec?.appearance?.gltf || '',
+  rec?.appearance?.emoji || '',
+  rec?.appearance?.color || '',
+])
+
+/**
+ * Inventar in Stapel zerlegen — Reihenfolge bleibt die des ersten Fundes,
+ * damit die Kacheln nicht bei jedem Aufnehmen springen.
+ *
+ * @returns {Array<{schluessel: string, rep: object, mitglieder: object[]}>}
+ */
+export function gruppiereStapel(items) {
+  const nach = new Map()
+  for (const rec of items || []) {
+    const k = stapelSchluessel(rec)
+    if (!nach.has(k)) nach.set(k, { schluessel: k, rep: rec, mitglieder: [] })
+    nach.get(k).mitglieder.push(rec)
+  }
+  return [...nach.values()]
+}
+
 export class InventoryUI {
   /**
    * @param {{
@@ -107,22 +148,21 @@ export class InventoryUI {
       empty.textContent = 'Inventar leer — Objekte über „Einsammeln" aufnehmen.'
       this._itemsEl.appendChild(empty)
     } else {
-      // Stapelbare Items (state.stackable) nach Name+Modell gruppieren → EINE
-      // Kachel mit ×N-Badge; alles andere einzeln. Aktionen wirken auf eine
-      // Instanz (das Repräsentanten-Objekt) — Platzieren/Löschen zählt den Stapel
-      // beim nächsten Render runter.
-      const stacks = new Map()
-      const singles = []
-      for (const rec of items) {
-        if (rec.state?.stackable) {
-          const key = (rec.name || '') + '|' + (rec.appearance?.gltf || '')
-          const s = stacks.get(key) || { rep: rec, count: 0 }
-          s.count++
-          stacks.set(key, s)
-        } else singles.push(rec)
+      // ALLES STAPELT, was dasselbe IST — eine Kachel mit ×N-Badge.
+      //
+      // Früher entschied ein Merker `state.stackable`, den nur der Director an
+      // Diamanten setzte. Der Merker sagt aber nichts darüber, ob zwei Dinge
+      // austauschbar sind; das sagt, was sie sind. Also entscheidet der
+      // Schlüssel (siehe `stapelSchluessel`), und `stackable` wird nicht mehr
+      // gebraucht.
+      //
+      // In der Praxis ändert das für zufällig benannte Items nichts: Der
+      // Director gibt jedem einen eigenen Namen, also stapelt sich da auch
+      // nichts — richtig so. Nur was WIRKLICH gleich heißt und gleich aussieht,
+      // kommt zusammen. Diamanten heißen alle „Diamant".
+      for (const stapel of gruppiereStapel(items)) {
+        this._itemsEl.appendChild(this._itemTile(stapel.rep, stapel.mitglieder.length))
       }
-      for (const rec of singles) this._itemsEl.appendChild(this._itemTile(rec))
-      for (const s of stacks.values()) this._itemsEl.appendChild(this._itemTile(s.rep, s.count))
     }
 
     // Geräte-Kacheln (optional)
@@ -157,6 +197,71 @@ export class InventoryUI {
     return tile
   }
 
+  /** Alle Stücke, die mit diesem auf einem Stapel liegen (inkl. es selbst). */
+  _stapelVon(rec) {
+    const k = stapelSchluessel(rec)
+    return (this.ajna.inventoryItems?.() || []).filter(r => stapelSchluessel(r) === k)
+  }
+
+  /**
+   * „Wie viele?" — als Zeile in der Fußzeile, nicht als eigenes Fenster.
+   *
+   * Ein Modal über dem Inventar wäre ein zweiter Deckel über dem ersten; hier
+   * bleibt sichtbar, WORAUS man wählt. Vorbelegt ist der ganze Stapel: Wer alles
+   * ablegen will — der häufigere Fall — drückt einmal.
+   */
+  _frageMenge(rec, stapel) {
+    const foot = this._footEl
+    foot.innerHTML = ''
+    foot.hidden = false
+
+    const label = document.createElement('div')
+    label.className = 'ajna-inv-foot-name'
+    label.textContent = `${rec.name || rec.id} — wie viele ablegen?`
+    foot.appendChild(label)
+
+    const zeile = document.createElement('div')
+    zeile.className = 'ajna-inv-foot-actions'
+
+    const eingabe = document.createElement('input')
+    eingabe.type = 'number'
+    eingabe.className = 'ajna-inv-menge'
+    eingabe.min = '1'
+    eingabe.max = String(stapel.length)
+    eingabe.value = String(stapel.length)
+    zeile.appendChild(eingabe)
+
+    const von = document.createElement('span')
+    von.className = 'ajna-inv-von'
+    von.textContent = `von ${stapel.length}`
+    zeile.appendChild(von)
+
+    const los = document.createElement('button')
+    los.type = 'button'
+    los.className = 'ajna-inv-act'
+    los.textContent = '📍 Platzieren'
+    const ablegen = () => {
+      // Begrenzen statt ablehnen: Wer 99 tippt, meint „alle“.
+      const n = Math.max(1, Math.min(stapel.length, Math.round(Number(eingabe.value) || 1)))
+      this.close()
+      this.onPlace?.(rec, stapel.slice(0, n).map(r => r.id))
+    }
+    los.addEventListener('click', ablegen)
+    eingabe.addEventListener('keydown', (e) => { if (e.key === 'Enter') ablegen() })
+    zeile.appendChild(los)
+
+    const ab = document.createElement('button')
+    ab.type = 'button'
+    ab.className = 'ajna-inv-act'
+    ab.textContent = 'Abbrechen'
+    ab.addEventListener('click', () => this._renderFoot())
+    zeile.appendChild(ab)
+
+    foot.appendChild(zeile)
+    eingabe.focus()
+    eingabe.select?.()
+  }
+
   _deviceTile(d) {
     const tile = document.createElement('div')
     tile.className = 'ajna-inv-slot device' + (d.connected ? '' : ' offline')
@@ -189,11 +294,17 @@ export class InventoryUI {
     } else {
       const rec = (this.ajna.inventoryItems?.() || []).find(r => r.id === this._selectedId)
       if (!rec) { this._selectedId = null; foot.hidden = true; return }
-      name = rec.name || rec.id
+      const stapel = this._stapelVon(rec)
+      name = stapel.length > 1 ? `${rec.name || rec.id} ×${stapel.length}` : (rec.name || rec.id)
       actions = [
         { label: '🔍 Untersuchen', run: () => this.onExamine?.(rec) },
         { label: '✏️ Bearbeiten', run: () => { this.editorUI?.fillEditor?.(rec); this.close() } },
-        { label: '📍 Platzieren', run: () => { this.close(); this.onPlace?.(rec) } },
+        // EIN STÜCK FRAGT NICHT. Eine Mengenabfrage mit genau einer möglichen
+        // Antwort ist keine Frage, sondern ein Klick zu viel.
+        { label: '📍 Platzieren', run: () => {
+          if (stapel.length > 1) this._frageMenge(rec, stapel)
+          else { this.close(); this.onPlace?.(rec, [rec.id]) }
+        } },
         { label: '🗑 Löschen', danger: true, run: () => this._delete(rec) },
       ]
     }
@@ -305,6 +416,10 @@ export class InventoryUI {
       }
       .ajna-inv-act:hover { background: rgba(255,255,255,0.12); }
       .ajna-inv-act.danger { border-color: #7a3a3a; color: #f2b8b8; }
+      .ajna-inv-menge { width: 72px; padding: 6px 8px; border-radius: 8px;
+        border: 1px solid #3a3a44; background: rgba(0,0,0,.35); color: #eaeaea;
+        font: inherit; text-align: right; }
+      .ajna-inv-von { align-self: center; opacity: .7; margin-right: 4px; }
     `
     document.head.appendChild(s)
   }

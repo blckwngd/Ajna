@@ -1358,12 +1358,32 @@ async function init() {
 
   // Inventar-Platzieren: Tipp-Modus (nächster Tap legt das gewählte Objekt ab).
   let _placingRecord = null
-  const _placeRecordAt = async (rec, geoPos) => {
+  /**
+   * Ein oder mehrere Stücke ablegen — alle auf DIESELBE Stelle.
+   *
+   * Identische Koordinaten sind alles, was einen Stapel in der Welt ausmacht:
+   * Es gibt kein Stapel-Objekt, nur mehrere Datensätze am selben Punkt. Wer
+   * eines aufnimmt, nimmt eines.
+   *
+   * NACHEINANDER, nicht parallel: Jedes `place` läuft durch die Hooks des
+   * Servers (Besitz, Rechte-Cache). Zehn gleichzeitige Anfragen darauf
+   * loszulassen bringt nichts ausser Gleichzeitigkeitsfehlern.
+   */
+  const _placeRecordAt = async (rec, geoPos, ids = null) => {
     if (!rec || !geoPos) return
-    try { await ajnaManager.place(rec.id, { lat: geoPos.lat, lon: geoPos.lon, altitude: 0 }) }
-    catch (err) {
-      if (!_toast) _toast = new Toast()
-      _toast.show(t('Platzieren fehlgeschlagen: ') + (err?.response?.error || err?.message || err), { title: 'Platzieren' })
+    const liste = (Array.isArray(ids) && ids.length) ? ids : [rec.id]
+    let ok = 0
+    let fehler = null
+    for (const id of liste) {
+      try { await ajnaManager.place(id, { lat: geoPos.lat, lon: geoPos.lon, altitude: 0 }); ok++ }
+      catch (err) { fehler = err; break }
+    }
+    if (!_toast) _toast = new Toast()
+    if (fehler) {
+      _toast.show(t('Platzieren fehlgeschlagen: ') + (fehler?.response?.error || fehler?.message || fehler)
+        + (ok ? ` (${ok} von ${liste.length} abgelegt)` : ''), { title: 'Platzieren' })
+    } else if (liste.length > 1) {
+      _toast.show(`${ok}× „${rec.name || 'Objekt'}" abgelegt`, { title: 'Platzieren' })
     }
   }
 
@@ -1373,11 +1393,13 @@ async function init() {
   // erreichbar — auch im 3D-Reiter. Ohne diesen Haken landete „Platzieren" dort
   // im Kartenzweig, der auf einen Klick auf die Karte wartet: In 3D passierte
   // nichts. `map.js` ruft das hier, sobald die 3D-Ansicht offen ist.
-  window.ajnaPlaceInScene = (rec) => {
+  window.ajnaPlaceInScene = (rec, ids = null) => {
     if (!rec) return
-    _placingRecord = rec
+    _placingRecord = { rec, ids: Array.isArray(ids) && ids.length ? ids : [rec.id] }
     if (!_toast) _toast = new Toast()
-    _toast.show(`Tippe in die Szene, um „${rec.name || 'Objekt'}" abzulegen`, { title: 'Platzieren' })
+    const n = _placingRecord.ids.length
+    _toast.show(`Tippe in die Szene, um ${n > 1 ? `${n}× ` : ''}„${rec.name || 'Objekt'}" abzulegen`,
+      { title: 'Platzieren' })
   }
 
   // In der Mobile-Shell stellt map.js bereits ein GLOBALES Inventar (body-FAB,
@@ -1395,10 +1417,12 @@ async function init() {
       protokolliereInteraktion(rec, 'examine', antwort)
       _announcer?.interaction(rec, 'examine')
     },
-    onPlace: (rec) => {
-      _placingRecord = rec
+    onPlace: (rec, ids = null) => {
+      const liste = Array.isArray(ids) && ids.length ? ids : [rec.id]
+      _placingRecord = { rec, ids: liste }
       if (!_toast) _toast = new Toast()
-      _toast.show(`Tippe in die Szene, um „${rec.name || 'Objekt'}" abzulegen`, { title: 'Platzieren' })
+      const was = liste.length > 1 ? `${liste.length}× „${rec.name || 'Objekt'}"` : `„${rec.name || 'Objekt'}"`
+      _toast.show(`Tippe in die Szene, um ${was} abzulegen`, { title: 'Platzieren' })
     },
     getDevices: () => inventoryDevices(accessories),
   })
@@ -1507,9 +1531,9 @@ async function init() {
       // Im immersiven XR zeigt der Controller, nicht der Mauszeiger — dann
       // zaehlt der Strahl aus dem Ereignis.
       const geoPos = _groundGeoAt(scene.pointerX, scene.pointerY, eventData.pickInfo?.ray || null)
-      const rec = _placingRecord
+      const auftrag = _placingRecord
       _placingRecord = null
-      if (geoPos) _placeRecordAt(rec, geoPos)
+      if (geoPos) _placeRecordAt(auftrag.rec, geoPos, auftrag.ids)
       return
     }
 
