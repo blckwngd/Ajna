@@ -19,6 +19,15 @@ fi
 echo "▶ Client-Bundles bauen (npm run build) …"
 npm run build
 
+echo "▶ Migrations-Historie prüfen …"
+if ! node tools/migrations-check.mjs; then
+  echo
+  echo "✗ Abbruch VOR dem Neustart — PocketBase würde beim Start abstürzen."
+  echo "  Die laufenden Prozesse bleiben unangetastet."
+  echo "  Nachtragen: node tools/migrations-check.mjs --repair"
+  exit 1
+fi
+
 echo "▶ Prozesse neu laden (PM2) …"
 pm2 startOrReload ecosystem.config.cjs --update-env
 pm2 save

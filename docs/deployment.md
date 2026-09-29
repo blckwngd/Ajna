@@ -158,6 +158,46 @@ Prüft der Server unter anderer Adresse/Port: `AJNA_WAIT_HOST` / `AJNA_WAIT_PORT
 - **Git-Hook / CI-Webhook**: bei Push auf den Deploy-Branch `scripts/deploy.sh`
   triggern.
 
+## Migrations-Historie prüfen
+
+PocketBase führt in `_migrations` Buch, welche Datei aus `pocketbase/pb_migrations/`
+schon gelaufen ist. Fehlt dort eine Zeile, wendet PocketBase die Datei beim
+nächsten Start erneut an — und eine erzeugte `created_*`-Migration scheitert
+dann, weil die Sammlung längst existiert:
+
+```
+failed to apply migration 1779439512_created_groups.js:
+  id: The model id is invalid or already exists.;
+  name: Collection name must be unique (case insensitive)..
+```
+
+Das bricht den **ganzen** Start ab. Unter PM2 startet der Prozess sofort neu,
+scheitert wieder, und Caddy antwortet auf jede Anfrage mit 502 — der Login
+meldet „Something went wrong while processing your request".
+
+Die Datenbank ist dabei in Ordnung. Kaputt ist nur das Buch.
+
+```bash
+npm run migrations                          # nur berichten
+node tools/migrations-check.mjs --repair    # fehlende Zeilen nachtragen
+```
+
+`--repair` legt vorher eine Sicherung `data.db.<zeitstempel>.bak` an und trägt
+**nur** Migrationen nach, die älter sind als die jüngste bereits verbuchte —
+eine wirklich neue Migration bleibt unangetastet und läuft beim nächsten Start
+ganz normal durch.
+
+Vorher `pm2 stop pocketbase`, hinterher `pm2 start pocketbase`.
+
+`scripts/deploy.sh` führt die Prüfung vor jedem Neustart aus und bricht ab,
+solange ein Loch offen ist. Die laufenden Prozesse bleiben dabei unberührt —
+lieber ein abgebrochener Deploy als ein Server, der nicht mehr hochkommt.
+
+Wie ein Loch entsteht: `pb_data` und `pb_migrations` laufen auseinander. Eine
+eingespielte Sicherung, die älter ist als die Dateien; eine von Hand im
+Admin-Interface angelegte Sammlung; eine Datenbank von einer anderen Instanz.
+Auffallen tut es erst beim nächsten Neustart, und der kann Wochen später sein.
+
 ## Fehlerbehebung
 
 - **`pm2 start` findet die Binary nicht:** `./pocketbase/pocketbase` muss
@@ -167,5 +207,7 @@ Prüft der Server unter anderer Adresse/Port: `AJNA_WAIT_HOST` / `AJNA_WAIT_PORT
   (`AJNA_USER` / `AJNA_PASS`).
 - **Nach Reboot laufen die Prozesse nicht:** `pm2 startup` ausgeführt **und**
   danach `pm2 save`? Beides nötig.
+- **PocketBase startet gar nicht, `failed to apply migration …`:** siehe
+  „Migrations-Historie prüfen" oben — `npm run migrations`.
 - **Caddy bindet 443 nicht:** braucht root oder
   `setcap cap_net_bind_service=+ep $(which caddy)` — deshalb außerhalb von PM2.
