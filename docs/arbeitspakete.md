@@ -246,8 +246,8 @@ Damit es nicht zweimal gedacht wird:
 
 ## Erledigt (jüngste zuerst)
 
-* **Handbuch als Webseite** (29.09.) — `tools/handbuch.mjs` baut aus `wiki/`
-  und `docs/` statische Seiten nach `client/handbuch/`. Statisch, weil das drei
+* **Handbuch als Webseite** (29.09.) — `tools/manual.mjs` baut aus `wiki/`
+  und `docs/` statische Seiten nach `client/manual/`. Statisch, weil das drei
   Dinge auf einmal löst: kein Markdown-Parser im Browser-Bündel und keiner im
   Server, die Seiten laufen ohne JavaScript, und sie wandern in die Android-App
   mit. Liegt im Client-Ordner, den Caddy ohnehin ausliefert — **keine Zeile

@@ -141,17 +141,17 @@ Eine Instanz kann mehrere unabhängige Anwendungen tragen. Trennung läuft über
 ## Das Handbuch auf dem eigenen Server
 
 Diese Seiten liegen nicht nur im Repo — `npm run build` erzeugt daraus ein
-lesbares Handbuch unter `client/handbuch/`, und Caddy liefert `client/` ohnehin
+lesbares Handbuch unter `client/manual/`, und Caddy liefert `client/` ohnehin
 aus. Erreichbar ist es damit unter:
 
 ```
-https://<deine-domain>/handbuch/
+https://<deine-domain>/manual/
 ```
 
 Ohne eine Zeile in der Caddy-Konfiguration, und in der App über
 **Einstellungen → Hilfe → Handbuch öffnen**. Weil `scripts/deploy.sh` ohnehin
 `npm run build` aufruft, ist es nach jedem Deploy so frisch wie der Code. Wer
-nur die Texte geändert hat: `npm run handbuch` genügt.
+nur die Texte geändert hat: `npm run manual` genügt.
 
 Enthalten sind die Wiki-Seiten (dieses Handbuch) und die Vertiefungstexte aus
 `docs/`. Verweise auf Quelldateien zeigen ins Repo — im Handbuch gäbe das sonst
@@ -164,7 +164,7 @@ Zugang?" lesbar bleibt), nimmt es in `Caddyfile.prod` aus der Sperre — wie es
 dort schon für `/zugang.html` steht:
 
 ```caddy
-handle /handbuch/* {
+handle /manual/* {
     root * {args[0]}
     file_server
 }

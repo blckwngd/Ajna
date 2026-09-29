@@ -1339,7 +1339,7 @@ export class MobileShell {
 
       <section class="settings-section">
         <h3>${t('Hilfe')}</h3>
-        <a class="settings-btn secondary" href="/handbuch/" target="_blank" rel="noopener"
+        <a class="settings-btn secondary" href="/manual/" target="_blank" rel="noopener"
            style="display:block;text-align:center;text-decoration:none">${t('Handbuch öffnen')}</a>
         <div class="meta" style="margin-top:6px">${t('Anleitung für Benutzung, Betrieb und Entwicklung — liegt auf diesem Server.')}</div>
       </section>

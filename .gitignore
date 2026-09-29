@@ -170,6 +170,6 @@ vite.config.ts.timestamp-*
 .cache/
 tests/bilder/
 
-# Handbuch — aus wiki/ und docs/ erzeugt (tools/handbuch.mjs, laeuft in `npm run build`).
+# Handbuch — aus wiki/ und docs/ erzeugt (tools/manual.mjs, laeuft in `npm run build`).
 # Nicht einchecken: waere eine zweite Kopie derselben Texte, die still veraltet.
-client/handbuch/
+client/manual/
