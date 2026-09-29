@@ -1,0 +1,177 @@
+{
+  "name": "clownstatue",
+  "extends": "basis",
+  "_note": [
+    "Eine Clowns-Statue, die antwortet. Erbt den Grundfundus (Gruss, „wer bist du\", Unsinn-Auffang),",
+    "aber NICHT den Menschen-Satz: Sie soll nicht plaudern, sie soll etwas aus Stein sein, das spricht.",
+    "",
+    "Das Gruseln steckt in der Beharrlichkeit, nicht in Blut: Sie bewegt sich nie, weiss aber Dinge,",
+    "die eine Statue nicht wissen kann. Und sie zaehlt mit — `besuche` und `naeher` steigen im Gespraech,",
+    "die Antworten werden mit jeder Runde zutraulicher und damit unangenehmer.",
+    "",
+    "REIHENFOLGE: Die engeren Regeln (mit `if`) stehen VOR den allgemeinen mit denselben Mustern.",
+    "Sonst kommen sie nie dran — dieselbe Falle, die in der Wirtin dokumentiert ist.",
+    "",
+    "`?` ist im Muster ein Platzhalter fuer genau EIN Wort, kein Satzzeichen. Fragezeichen gehoeren",
+    "in die Antwort, nicht ins Muster."
+  ],
+  "input": "auto",
+  "vars": {
+    "art": "Statue",
+    "besuche": 0,
+    "naeher": 0,
+    "name_gefragt": false
+  },
+  "lists": {
+    "wer": [
+      "wer bist du",
+      "was bist du",
+      "wie heisst du",
+      "dein name",
+      "wer bin ich"
+    ],
+    "beweg": [
+      "beweg dich",
+      "kannst du dich bewegen",
+      "bewegst du dich",
+      "steh auf",
+      "komm her",
+      "lauf"
+    ],
+    "lachen": [
+      "lach",
+      "lache",
+      "lach doch",
+      "warum lachst du",
+      "du lachst"
+    ],
+    "nacht": [
+      "nacht",
+      "nachts",
+      "dunkel",
+      "dunkelheit",
+      "was machst du nachts",
+      "wenn es dunkel ist"
+    ],
+    "angst": [
+      "du machst mir angst",
+      "ich habe angst",
+      "das ist gruselig",
+      "unheimlich",
+      "hoer auf"
+    ],
+    "gehen": [
+      "ich gehe",
+      "ich muss los",
+      "tschuess",
+      "auf wiedersehen",
+      "bis dann",
+      "ich gehe jetzt"
+    ]
+  },
+  "rules": [
+    {
+      "label": "wieder_da",
+      "_note": "Steht ZUERST: fängt den Gruss ab, sobald man nicht zum ersten Mal da ist.",
+      "when": ["* @gruss *"],
+      "if": { "besuche": { ">=": 1 } },
+      "then": [
+        "Du wieder. Ich habe die Stelle behalten, an der du gestanden hast.",
+        "Schön. Ich hatte gehofft, du kommst zurück. Ich hoffe selten."
+      ],
+      "set": { "besuche": { "+": 1 } },
+      "suggest": false
+    },
+    {
+      "label": "gruss_erst",
+      "when": ["* @gruss *"],
+      "then": [
+        "Oh. Jemand grüßt zurück. Das kommt vielleicht zweimal im Jahr vor.",
+        "Hallo. Mein Mund ist so gemacht, dass ich immer freundlich aussehe. Verlass dich nicht darauf."
+      ],
+      "set": { "besuche": { "+": 1 } },
+      "suggest": "wer bist du"
+    },
+    {
+      "label": "wer_vertraut",
+      "when": ["* @wer *"],
+      "if": { "naeher": { ">=": 3 } },
+      "then": [
+        "Ich habe einen Namen. Er steht auf einer Tafel, die niemand mehr liest. Frag mich ein anderes Mal, dann sage ich ihn dir."
+      ],
+      "once": true,
+      "suggest": false
+    },
+    {
+      "label": "wer",
+      "when": ["* @wer *"],
+      "then": [
+        "Ich bin aus Stein gemacht und stehe hier. Beides stimmt seit Jahren.",
+        "Man hat mich hergestellt, damit Kinder lachen. Das hat nicht ganz funktioniert."
+      ],
+      "set": { "naeher": { "+": 1 }, "name_gefragt": true },
+      "suggest": "kannst du dich bewegen"
+    },
+    {
+      "label": "beweg_vertraut",
+      "when": ["* @beweg *"],
+      "if": { "naeher": { ">=": 2 } },
+      "then": [
+        "Nein. Ich bewege mich nicht, während du hinsiehst. Das wäre unhöflich."
+      ],
+      "do": ["anim:idle"],
+      "once": true,
+      "suggest": false
+    },
+    {
+      "label": "beweg",
+      "when": ["* @beweg *"],
+      "then": [
+        "Ich stehe. Das ist das Einzige, was ich richtig gut kann.",
+        "Wozu. Alles, was ich sehen will, kommt irgendwann von selbst vorbei."
+      ],
+      "set": { "naeher": { "+": 1 } },
+      "suggest": "was machst du nachts"
+    },
+    {
+      "label": "nacht",
+      "when": ["* @nacht *"],
+      "then": [
+        "Nachts ist es ruhiger. Dann hört man die Straße atmen.",
+        "Ich zähle. Laternen, Schritte, Fenster, die noch Licht haben. Gestern waren es vier.",
+        "Nichts Besonderes. Dasselbe wie tagsüber, nur sieht mich niemand dabei."
+      ],
+      "set": { "naeher": { "+": 1 } },
+      "suggest": "warum lachst du"
+    },
+    {
+      "label": "lachen",
+      "when": ["* @lachen *"],
+      "then": [
+        "Ich lache nicht. So wurde mein Gesicht gemacht. Der Unterschied fällt nach einer Weile auf.",
+        "Weil ich es nicht abstellen kann. Stell dir das für einen Moment vor."
+      ],
+      "set": { "naeher": { "+": 1 } },
+      "suggest": false
+    },
+    {
+      "label": "angst",
+      "when": ["* @angst *"],
+      "then": [
+        "Das will ich nicht. Ich rede so selten, dass ich aus der Übung bin.",
+        "Entschuldige. Geh ein paar Schritte zurück, dann bin ich wieder nur eine Statue."
+      ],
+      "do": ["anim:idle"],
+      "suggest": false
+    },
+    {
+      "label": "gehen",
+      "when": ["* @gehen *"],
+      "then": [
+        "Geh nur. Ich bin hier, falls du wiederkommst. Ich bin immer hier.",
+        "Bis dann. Ich merke mir, wie lange du gebraucht hast."
+      ],
+      "suggest": false
+    }
+  ]
+}

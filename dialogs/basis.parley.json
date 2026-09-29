@@ -301,6 +301,147 @@
       "suggest": false
     },
     {
+      "label": "wetter_gewitter",
+      "_note": "Ganz vorn: Ein Gewitter ist das Einzige am Wetter, das eine Warnung wert ist.",
+      "when": [
+        "* wetter *",
+        "* regnet *",
+        "* gewitter *",
+        "* blitz *"
+      ],
+      "if": {
+        "wetter.gewitter": true
+      },
+      "then": [
+        "Geh unter ein Dach. Es ist {wetter.text} — nichts, wobei man draußen steht.",
+        "Hörst du das? Es ist {wetter.text}. Ich würde jetzt nicht auf dem freien Feld stehen."
+      ],
+      "suggest": false
+    },
+    {
+      "label": "wetter_regen",
+      "_note": "Noch enger als `wetter_echt` und deshalb DAVOR. Wer im Regen steht, will nicht die Gradzahl hören.",
+      "when": [
+        "* wetter *",
+        "* regnet *",
+        "* schoen heute *"
+      ],
+      "if": {
+        "wetter.regen": true
+      },
+      "then": [
+        "Nass von oben. Es ist {wetter.text}, und es hört so bald nicht auf.",
+        "Bei dem Wetter fragst du noch? Es ist {wetter.text}."
+      ],
+      "suggest": false
+    },
+    {
+      "label": "wetter_echt",
+      "_note": "Steht VOR `wetter`: gleiche Muster, engere Bedingung. Greift nur, wenn der Welt-Kontext etwas geliefert hat (docs/welt-kontext.md). Ohne ihn bleibt der alte, allgemeine Spruch — eine Figur, die das Wetter nicht kennt, soll keines behaupten.",
+      "when": [
+        "* wetter *",
+        "* regnet *",
+        "* sonne *",
+        "* schoen heute *"
+      ],
+      "if": {
+        "wetter.text": {
+          "set": true
+        }
+      },
+      "then": [
+        {
+          "text": "Draußen ist {wetter.text}, {wetter.grad} Grad. Mehr weiß ich auch nicht.",
+          "weight": 2
+        },
+        {
+          "text": "{wetter.text} bei {wetter.grad} Grad. Anfühlen tut es sich wie {wetter.gefuehlt}.",
+          "weight": 1
+        },
+        {
+          "text": "Sieh doch selbst: {wetter.text}. Dazu {wetter.wind}.",
+          "weight": 2
+        }
+      ],
+      "suggest": false
+    },
+    {
+      "label": "zeit_echt",
+      "_note": "Steht VOR `zeit`. Die Figur sagt keine Uhrzeit — sie sagt, was sie sieht.",
+      "when": [
+        "* wie spaet *",
+        "* wie viel uhr *",
+        "* wieviel uhr *",
+        "* tageszeit *"
+      ],
+      "if": {
+        "himmel.tageszeit": {
+          "set": true
+        }
+      },
+      "then": [
+        "Uhrzeit habe ich keine. Es ist {himmel.tageszeit}, das reicht mir.",
+        "{himmel.tageszeit}. Die Sonne geht um {himmel.sonnenuntergang} unter, danach richte ich mich."
+      ],
+      "suggest": false
+    },
+    {
+      "label": "mond_neumond",
+      "_note": "Bei Neumond von „1 Prozent beleuchtet\" zu sprechen wäre richtig gerechnet und trotzdem Unsinn: Man sieht ihn nicht.",
+      "when": [
+        "* mond *",
+        "* vollmond *",
+        "* sterne *",
+        "* himmel *"
+      ],
+      "if": {
+        "himmel.mond": "Neumond"
+      },
+      "then": [
+        "Neumond. Heute Nacht siehst du ihn gar nicht — dafür die Sterne.",
+        "Gar nicht. Neumond. Die dunkelste Nacht im Monat, wenn die Wolken mitspielen."
+      ],
+      "suggest": false
+    },
+    {
+      "label": "mond_nacht",
+      "_note": "Nur nachts — tagsüber steht er vielleicht am Himmel, aber man sieht ihn kaum.",
+      "when": [
+        "* mond *",
+        "* vollmond *",
+        "* sterne *",
+        "* himmel *"
+      ],
+      "if": {
+        "himmel.nacht": true
+      },
+      "then": [
+        "Sieh hoch: {himmel.mond}, {himmel.mond_anteil} Prozent beleuchtet.",
+        "{himmel.mond}. Ich schaue jede Nacht, es ist jedes Mal ein bisschen anders."
+      ],
+      "suggest": false
+    },
+    {
+      "label": "mond_tag",
+      "_note": "Am Tag gefragt: Die Figur sagt, was kommt, statt zu behaupten, was man sähe.",
+      "when": [
+        "* mond *",
+        "* vollmond *",
+        "* sterne *",
+        "* himmel *"
+      ],
+      "if": {
+        "himmel.mond": {
+          "set": true
+        }
+      },
+      "then": [
+        "Jetzt siehst du ihn schlecht. Heute Nacht wird es {himmel.mond} sein.",
+        "Am Tag? Komm wieder, wenn es dunkel ist — dann steht dort {himmel.mond}."
+      ],
+      "suggest": false
+    },
+    {
       "label": "wetter",
       "when": [
         "* wetter *",

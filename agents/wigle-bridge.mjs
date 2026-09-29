@@ -41,7 +41,7 @@
 //
 // Start:  node agents/wigle-bridge.mjs   bzw.   npm run wigle
 
-import { bootAgent, die, envNum, envInt, envBool, envStr, publishManifest } from './lib/agent-base.mjs'
+import { bootAgent, die, envNum, envInt, envBool, envStr, publishManifest, ladeBestand } from './lib/agent-base.mjs'
 import { encCategory, ENC_STYLE, wifiManifestLayers } from '../client/core/wifiStyle.js'
 import { bboxAroundM, centerOf } from '../client/core/geoMath.js'
 import { watchInterestAreas } from '../client/core/interestAreas.js'
@@ -146,20 +146,15 @@ const nets = new Map()
 // weit gemerkt, damit das Backfill sie nicht jeden Sync erneut abfragt (sonst
 // verbrennt das Budget an aussichtslosen Netzen). Bei Neustart einmal neu geprüft.
 const detailInsufficient = new Set()
-try {
-  await ajna.refreshObjects()
-  for (const obj of ajna.getObjects()) {
-    if (obj.type !== 'wifi') continue
-    const netid = obj.state?.netid
-    if (netid) nets.set(String(netid), {
-      objectId: obj.id, name: obj.name,
-      basis: obj.state?.coverage_basis || null, lat: obj.lat, lon: obj.lon
-    })
-  }
-  console.log(`[ajna] ${nets.size} vorhandene WLANs geladen`)
-} catch (err) {
-  console.warn(`[ajna] initiales WLAN-Listing fehlgeschlagen: ${err?.message || err}`)
+for (const obj of await ladeBestand(ajna, { tag: 'wigle', warn: console.warn })) {
+  if (obj.type !== 'wifi') continue
+  const netid = obj.state?.netid
+  if (netid) nets.set(String(netid), {
+    objectId: obj.id, name: obj.name,
+    basis: obj.state?.coverage_basis || null, lat: obj.lat, lon: obj.lon
+  })
 }
+console.log(`[ajna] ${nets.size} vorhandene WLANs geladen`)
 
 // ─── WiGLE-Helfer ─────────────────────────────────────────────────────────
 

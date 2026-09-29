@@ -26,6 +26,23 @@ const MODEL_TARGET_HEIGHT = {
 // die Figur liefe zur Blickrichtung des Directors „rückwärts". Der Offset wird
 // auf einen Wrapper-Node zwischen root und Modell gelegt, damit die geo-Rotation
 // (root, vom Agent/Editor) unberührt bleibt.
+/**
+ * Zielhöhe für ganze Modell-SAMMLUNGEN, wenn kein Einzeleintrag greift.
+ *
+ * Die Quaternius-Pakete sind je Sammlung einheitlich modelliert, aber
+ * untereinander verschieden: Gemessen am 21.09.2026 sind die Alltagsleute rund
+ * 1,85 Einheiten hoch, die Helden-Sammlung rund 3,0. Ohne Normierung stünde
+ * ein Magier drei Meter hoch neben einem Bauern.
+ *
+ * Als PFAD-Regel statt 27 Einzeleinträgen: Die Sammlungen wachsen, und eine
+ * Tabelle, die man bei jedem neuen Modell nachpflegen muss, ist beim dritten
+ * vergessen. Ausserdem gibt es „Adventurer.gltf" zweimal (Männer und Frauen) —
+ * ein Dateiname allein taugt hier nicht als Schlüssel.
+ */
+function zielHoeheFuerPfad(pfad) {
+  return /\/quaternius_/.test(pfad) ? 1.8 : undefined
+}
+
 const MODEL_YAW_RAD = {
   "Soldier.glb": Math.PI,
 }
@@ -488,8 +505,9 @@ export class GameObject {
   // (nicht gelistete Modelle). Getrennt vom Record-`scale`-Vektor, damit er
   // nicht mit Legacy-Kompensations-Scales kollidiert.
   #normalizeModelSize(importRoot, url) {
-    const file = (url.split(/[?#]/)[0].split("/").pop() || "")
-    const target = MODEL_TARGET_HEIGHT[file]
+    const pfad = url.split(/[?#]/)[0]
+    const file = (pfad.split("/").pop() || "")
+    const target = MODEL_TARGET_HEIGHT[file] ?? zielHoeheFuerPfad(pfad)
     const sizeMult = Number(this._appearance?.scale) || 1
     if (!target) {
       // Nicht normiertes Modell: nur den gewollten Größen-Regler anwenden.

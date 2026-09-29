@@ -188,11 +188,40 @@ Seit `1788000000_rate_limits.js` aktiv — **nur für anonymen Verkehr**.
 | `/api/agents/` | anonym | 30 / Minute |
 | `/api/` | anonym | 120 / 10 s |
 
-**Anmeldeversuche sind nicht gedrosselt.** PocketBase liefert dafür 2 Versuche
-in 3 s; hier passte keine Zahl: `npm run stack` meldet mehrere Agents
-gleichzeitig von derselben Adresse an, die Testsuite loggt sich dutzendfach in
-Folge ein. Das ist eine offene Aufgabe, keine Lösung — wer sie angeht, braucht
-einen Weg, Agent-Schübe von Durchprobieren zu unterscheiden.
+### Anmeldeversuche
+
+Seit dem 23.09.2026 gedrosselt — aber **nach Fehlversuchen, nicht nach
+Versuchen** (`pb_hooks/auth-throttle.pb.js`).
+
+Die mitgelieferte Regel von PocketBase (2 Versuche in 3 s) war hier
+unbrauchbar: `npm run stack` meldet mehrere Agents gleichzeitig von derselben
+Adresse an, die Testsuite loggt sich dutzendfach in Folge ein. Keine Zahl passte
+zu beidem — also war Durchprobieren unbegrenzt möglich.
+
+Der Ausweg ist die Zählweise. Ein Agenten-Schub besteht aus **gelungenen**
+Anmeldungen, ein Angriff aus **misslungenen**; sobald man nur die Fehlversuche
+zählt, sehen die beiden nicht mehr gleich aus. Eine erfolgreiche Anmeldung
+löscht den Zähler, deshalb merken Agents und Tests von der Drossel nichts.
+
+| Zähler | Grenze | Sperre | warum so |
+|---|---|---|---|
+| je Konto | 5 Fehlversuche in 10 min | 15 min | wer sein Passwort vergisst, braucht selten mehr als fünf Anläufe |
+| je Adresse | 50 Fehlversuche in 10 min | **2 min** | gegen Streuangriffe. Kurz, weil hinter einer Adresse ein ganzes WLAN stehen kann |
+
+Alle vier Zahlen stehen in `settings` und lassen sich ohne Code-Änderung ändern:
+`auth.max_failures_identity`, `auth.max_failures_address`,
+`auth.failure_window_s`, `auth.lock_s`, `auth.lock_address_s`.
+
+Der Client bekommt bei einer Sperre `429` mit dem Code `auth_locked` und zeigt
+dafür einen deutschen Satz (`FEHLER_TEXT` in `core/i18n.js`).
+
+**Der Preis, offen gesagt:** Wer aus demselben Netz kommt wie ein Angreifer,
+wird mitgesperrt. Deshalb sind es zwei Minuten und nicht fünfzehn — die Aufgabe
+des Adress-Zählers ist, Streuangriffe sinnlos zu machen, nicht zu strafen.
+
+**Notausgang:** Die Zähler liegen im Arbeitsspeicher (`$app.store()`). Wer sich
+selbst ausgesperrt hat, startet PocketBase neu — dann sind sie weg. Ein
+Angreifer kann das nicht.
 
 Die Grenze für `users:create` war zuerst auf 10/Stunde gesetzt, mit der falschen
 Annahme, Gäste einer Veranstaltung kämen aus verschiedenen Netzen. Auf einem Hof

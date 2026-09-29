@@ -154,8 +154,8 @@ export class QuestService {
    * @returns {{noetig: boolean, ok: boolean, radiusM: number, text: string}}
    */
   meldePruefung(q) {
-    const noetig = Array.isArray(q?.roh?.nachweis) && q.roh.nachweis.includes('vorOrt')
-    const r = Number(q?.roh?.vorOrtRadiusM) || VOR_ORT_VORGABE_M
+    const noetig = Array.isArray(q?.roh?.proof) && q.roh.proof.includes('onSite')
+    const r = Number(q?.roh?.onSiteRadiusM) || VOR_ORT_VORGABE_M
     if (!noetig) return { noetig: false, ok: true, radiusM: 0, text: '' }
     const erlaubt = aktionErlaubt({ max_distance: r }, this.stufeFuer(q?.id), null)
     return { noetig: true, ok: erlaubt.ok, radiusM: r, text: erlaubt.text }
@@ -231,12 +231,12 @@ export class QuestService {
    * @returns {{noetig: string[], ort: boolean, foto: boolean, gegenstand: boolean}}
    */
   nachweisBedarf(q) {
-    const n = Array.isArray(q?.roh?.nachweis) ? q.roh.nachweis : []
+    const n = Array.isArray(q?.roh?.proof) ? q.roh.proof : []
     return {
       noetig: n,
-      ort: n.includes('vorOrt'),
-      foto: n.includes('foto'),
-      gegenstand: n.includes('gegenstand'),
+      ort: n.includes('onSite'),
+      foto: n.includes('photo'),
+      gegenstand: n.includes('item'),
     }
   }
 

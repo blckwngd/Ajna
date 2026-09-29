@@ -15,9 +15,10 @@ Agents sind normale Node-Prozesse, die sich als regulärer Benutzer anmelden und
 | Agent | Start | Was er tut | Braucht |
 |---|---|---|---|
 | **World-Director** | `npm run director` | Belebt die Welt: setzt Figuren, plant Wege über das Straßennetz, lässt Vögel und Drachen fliegen. Folgt den Interessensbereichen der Spieler. | — |
-| **POI-Bridge** | `npm run poi` | Legt Punkte von Interesse aus OpenStreetMap an (Bänke, Cafés, Brunnen). | — |
+| **POI-Bridge** | `npm run poi` | Legt Punkte von Interesse aus OpenStreetMap an (Bänke, Cafés, Brunnen), dazu Wikipedia-Artikel, Commons-Fotos und **Denkmäler** (Natur-, Kultur-, Stolpersteine) — drei getrennt schaltbare Quellen. | — |
 | **AIS-Bridge** | `npm run ais` | Schiffspositionen von aisstream.io. | API-Schlüssel |
 | **ADS-B-Bridge** | `npm run adsb` | Flugzeuge aus dem OpenSky-Network. | optional OAuth2 |
+| **C-ITS-Brücke** | `npm run cits` | Straßenverkehr aus C-ITS-Funksprüchen über opentrafficmap.org: Ampeln mit Signalphase, Straßenstationen, Straßenbahn und Bus mit Linie — und, wenn gewünscht, Fahrzeuge. Siehe unten. | — |
 | **WiGLE-Bridge** | `npm run wigle` | WLAN-Netze aus WiGLE. | Zugangsdaten |
 | **Movebank-Bridge** | `npm run movebank` | Besenderte Wildtiere aus Movebank. | Zugangsdaten |
 | **Home-Assistant-Gateway** | `npm run ha-gateway` | Smart-Home-Geräte als Objekte, in beide Richtungen. Eigene Anleitung: [`docs/homeassistant.md`](https://github.com/blckwngd/Ajna/blob/main/docs/homeassistant.md) | HA-Instanz |
@@ -92,3 +93,41 @@ Jeder Agent protokolliert mit seinem Namen als Präfix, etwa `[director] …`. B
 
 ← [Server betreiben](Server-betreiben.md) · [Inhalt](Home.md#inhalt) · [Berechtigungen](Berechtigungen.md) →
 <!-- /navfuss -->
+
+## C-ITS: Straßenverkehr — und was man dabei entscheidet
+
+`npm run cits` spiegelt, was Ampeln, Straßenbahnen, Busse und neuere Autos
+unverschlüsselt in die Luft funken (ITS-G5). Die Daten kommen über
+[opentrafficmap.org](https://opentrafficmap.org/), ein Gemeinschaftsprojekt mit
+selbstgebauten Empfängern — ohne Schlüssel und ohne Anmeldung, über denselben
+öffentlichen Kanal, den auch die Karte im Browser benutzt.
+
+**Die Entscheidung, die du treffen musst:** Ein Teil der Punkte sind private
+PKW. Kennzeichen liefert die Quelle nicht, aber eine Station plus Weg ist ein
+Bewegungsprofil. Voreingestellt werden sie mitgespiegelt; mit einer Zeile in
+`agents/.env.cits` bleiben nur Infrastruktur und öffentlicher Verkehr:
+
+```ini
+CITS_PRIVAT=off
+```
+
+Der Schalter wirkt sofort — bereits angelegte Fahrzeuge werden beim nächsten
+Durchlauf entfernt, nicht bloss nicht mehr gepflegt.
+
+| Regler | Vorgabe | wofür |
+|---|---|---|
+| `CITS_CENTER_LAT` / `CITS_CENTER_LON` | Neuwied | Mittelpunkt des Gebiets |
+| `CITS_RADIUS_KM` | 30 | Umkreis; darüber hinaus wird nichts angelegt |
+| `CITS_PRIVAT` | an | private Fahrzeuge mitspiegeln |
+| `CITS_ARTEN` | alle | Komma-Liste, z. B. `traffic_light,tram,bus` |
+| `CITS_MAX_AGE_S` | 900 | älter gilt als verschwunden |
+| `CITS_MAX` | 300 | Obergrenze, damit eine Kreuzung die Welt nicht flutet |
+| `CITS_RENDER_RANGE_M` | 1500 | Sichtweite je Quelle — eine Ampel in 20 km ist Rauschen |
+
+**Abdeckung ist örtlich sehr verschieden.** Es gibt Empfänger nur dort, wo
+jemand einen aufgestellt hat; um Koblenz sind es heute einzelne Fahrzeuge und
+keine Ampeln. Wer selbst empfangen will, findet im
+[Wiki des Projekts](https://wiki.opentrafficmap.org/) einen ESP32-Bausatz — das
+speist zugleich ins Netz ein und schaltet den vollen MQTT-Strom frei. Anonym
+mitlesen geht dort nicht: Der Broker nimmt die Verbindung an und lehnt jedes
+Abonnement ab.

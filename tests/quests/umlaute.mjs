@@ -38,30 +38,30 @@ export async function run(t) {
 
   // Beschreibende Felder wie aus dem Editor.
   let st = (await t.read(A.token, call.id)).state
-  st.call.kurz = TEXT.kurz
-  st.call.ort = TEXT.ort
+  st.call.summary = TEXT.kurz
+  st.call.place = TEXT.ort
   await t.patch(A.token, call.id, { state: st })
 
   st = (await t.read(A.token, call.id)).state
-  t.check('Datenbank speichert richtig', st.call.kurz === TEXT.kurz, 'kurz=' + st.call.kurz)
+  t.check('Datenbank speichert richtig', st.call.summary === TEXT.kurz, 'kurz=' + st.call.summary)
 
   // ── Jeder Hook, der den Stand anfasst ──────────────────────────────────
   let r = await t.quest.publish(A.token, call.id, { rewardItems: [lohn.id], verify: 'issuer' })
   t.check('Veröffentlichen geht', r.status === 200, 'HTTP ' + r.status)
   st = (await t.read(A.token, call.id)).state
-  t.check('Veröffentlichen lässt den Kurztext heil', st.call.kurz === TEXT.kurz, 'kurz=' + st.call.kurz)
+  t.check('Veröffentlichen lässt den Kurztext heil', st.call.summary === TEXT.kurz, 'kurz=' + st.call.summary)
   t.check('und die Aufgabe', st.call.task === TEXT.task, 'task=' + st.call.task)
-  t.check('und den Ort', st.call.ort === TEXT.ort)
-  t.check('das ß überlebt', /gießen/.test(st.call.kurz), st.call.kurz)
+  t.check('und den Ort', st.call.place === TEXT.ort)
+  t.check('das ß überlebt', /gießen/.test(st.call.summary), st.call.summary)
 
   await t.quest.accept(B.token, call.id)
   st = (await t.read(A.token, call.id)).state
-  t.check('Annehmen lässt den Text heil', st.call.kurz === TEXT.kurz, 'kurz=' + st.call.kurz)
+  t.check('Annehmen lässt den Text heil', st.call.summary === TEXT.kurz, 'kurz=' + st.call.summary)
 
   r = await t.quest.complete(B.token, call.id, { proof: { note: TEXT.notiz } })
   t.check('Melden geht in die Abnahme', r.status === 202, 'HTTP ' + r.status)
   st = (await t.read(A.token, call.id)).state
-  t.check('Melden lässt den Text heil', st.call.kurz === TEXT.kurz, 'kurz=' + st.call.kurz)
+  t.check('Melden lässt den Text heil', st.call.summary === TEXT.kurz, 'kurz=' + st.call.summary)
   t.check('und die Notiz kommt unverstümmelt an',
     st.call.submissionProof?.note === TEXT.notiz, 'note=' + st.call.submissionProof?.note)
 
@@ -79,7 +79,7 @@ export async function run(t) {
   t.check('Abnehmen geht', r.status === 200, 'HTTP ' + r.status)
   st = (await t.read(A.token, call.id)).state
   t.check('auch nach dem Abschluss steht der Text noch da',
-    st.call.kurz === TEXT.kurz, 'kurz=' + st.call.kurz)
+    st.call.summary === TEXT.kurz, 'kurz=' + st.call.summary)
 
   // ── Mehrfach durchlaufen darf nicht aufschaukeln ───────────────────────
   // Doppelte Kodierung fällt bei einem Durchgang kaum auf, bei dreien schon:

@@ -137,3 +137,38 @@ Eine Instanz kann mehrere unabhängige Anwendungen tragen. Trennung läuft über
 
 ← [Privatsphäre](Privatsphaere.md) · [Inhalt](Home.md#inhalt) · [Agents betreiben](Agents-betreiben.md) →
 <!-- /navfuss -->
+
+## Das Handbuch auf dem eigenen Server
+
+Diese Seiten liegen nicht nur im Repo — `npm run build` erzeugt daraus ein
+lesbares Handbuch unter `client/handbuch/`, und Caddy liefert `client/` ohnehin
+aus. Erreichbar ist es damit unter:
+
+```
+https://<deine-domain>/handbuch/
+```
+
+Ohne eine Zeile in der Caddy-Konfiguration, und in der App über
+**Einstellungen → Hilfe → Handbuch öffnen**. Weil `scripts/deploy.sh` ohnehin
+`npm run build` aufruft, ist es nach jedem Deploy so frisch wie der Code. Wer
+nur die Texte geändert hat: `npm run handbuch` genügt.
+
+Enthalten sind die Wiki-Seiten (dieses Handbuch) und die Vertiefungstexte aus
+`docs/`. Verweise auf Quelldateien zeigen ins Repo — im Handbuch gäbe das sonst
+einen toten Klick.
+
+**Der Zugang ist derselbe wie beim Client.** Steht `client.access` auf
+`authenticated` oder enger, verlangt auch das Handbuch eine Anmeldung. Wer es
+ausdrücklich offen halten will (etwa damit die Anleitung „Wie bekomme ich
+Zugang?" lesbar bleibt), nimmt es in `Caddyfile.prod` aus der Sperre — wie es
+dort schon für `/zugang.html` steht:
+
+```caddy
+handle /handbuch/* {
+    root * {args[0]}
+    file_server
+}
+```
+
+Dieser Block muss **vor** dem letzten `handle`-Block stehen, sonst greift die
+Sperre zuerst.

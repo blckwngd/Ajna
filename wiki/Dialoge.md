@@ -105,6 +105,46 @@ Welcher Satz greift, entscheidet `state.archetype`. Eine einzelne Figur kann
 über `state.dialog_set` einen anderen verlangen und über `state.dialog_vars`
 eigene Startvariablen mitgeben.
 
+## Was die Figur über ihre Umgebung weiß
+
+Seit dem 23.09.2026 legt der World-Director zu jedem Gespräch den **Welt-Kontext**
+in die Variablen — Wetter, Sonne, Mond und Tageszeit für die Gegend, in der die
+Figur steht:
+
+| Variable | Beispiel |
+|---|---|
+| `{wetter.text}` | `wechselnd bewölkt`, `leichter Regen`, `Gewitter` |
+| `{wetter.grad}` · `{wetter.gefuehlt}` | `21` · `19` |
+| `{wetter.wind}` · `{wetter.wind_kmh}` | `frischer Wind` · `14` |
+| `{wetter.uv}` | `4` |
+| `{himmel.tageszeit}` | `Morgen`, `Mittag`, `Abend`, `Nacht` |
+| `{himmel.mond}` · `{himmel.mond_anteil}` | `zunehmender Halbmond` · `52` |
+| `{himmel.sonnenaufgang}` · `{himmel.sonnenuntergang}` | `07:17` · `19:26` |
+
+Als Bedingung gibt es dazu `wetter.regen`, `wetter.schnee`, `wetter.gewitter`
+und `himmel.nacht` — alle vier wahr oder falsch:
+
+```jsonc
+{ "when": ["* wetter *"],
+  "if":   { "wetter.gewitter": true },
+  "then": "Geh unter ein Dach. Es ist {wetter.text}." }
+```
+
+**Prüfe, ob der Wert überhaupt da ist.** Der Kontext kann fehlen — der Agent
+läuft ohne (`WD_KONTEXT=off`), der Wetterdienst antwortet nicht, oder der Wert
+ist abgelaufen (dann gilt er als nicht vorhanden, weil ein Wetter von vor sechs
+Stunden schlechter ist als keines). Eine Figur, die das Wetter nicht kennt, soll
+keines behaupten:
+
+```jsonc
+{ "when": ["* wetter *"], "if": { "wetter.text": { "set": true } },
+  "then": "Draußen ist {wetter.text}." }
+```
+
+Im Grundfundus steht das als Muster: `wetter_gewitter`, `wetter_regen` und
+`wetter_echt` **vor** der allgemeinen Regel `wetter`, die ohne Kontext greift.
+Hintergrund in `docs/welt-kontext.md`.
+
 ## Ein eigener Dialogsatz
 
 Eine neue Datei `dialogs/wirtin.parley.json`:

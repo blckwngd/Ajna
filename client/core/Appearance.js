@@ -263,7 +263,8 @@ export function resolveLabel(template, record, ctx = {}) {
       // Figur verletzt ist. Ein Balken aus Blockzeichen sah nach Notlösung aus.
       case 'hp': {
         const hp = state.hp
-        const ist = Number(hp?.ist), max = Number(hp?.max)
+        // `ist` ist die alte Schreibweise (docs/key-rename.md).
+        const ist = Number(hp?.current ?? hp?.ist), max = Number(hp?.max)
         if (!Number.isFinite(ist) || !Number.isFinite(max) || max <= 0) return ''
         if (ist >= max) return ''
         return `${Math.round(ist)}/${Math.round(max)}`

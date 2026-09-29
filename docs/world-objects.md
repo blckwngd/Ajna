@@ -183,7 +183,7 @@ Implementierungen würden auseinanderlaufen.
 ### Auftrag nur vor Ort annehmen
 
 Derselbe Mechanismus, zweiter Nutzer. Ein Auftrag trägt
-`state.call.annahmeRadiusM` (0 oder fehlend = überall annehmbar, bestehende
+`state.call.acceptRadiusM` (0 oder fehlend = überall annehmbar, bestehende
 Aufträge ändern sich also nicht). Im Auftrags-Editor steht das als „Wo
 annehmbar": überall / 50 m / 250 m / 1 km.
 
@@ -195,7 +195,7 @@ man nur mit Absicht umgeht.
 Bearbeiters, er kann sie also erfinden — dieselbe Grenze, die schon über
 `POST /api/proximity` steht. Belastbare Anwesenheit braucht einen zweiten Faktor
 (UWB-Anker, NFC-Marke, signierter Sensor-Report). Das gilt genauso für den
-`vorOrt`-Nachweis beim Melden.
+`onSite`-Nachweis beim Melden.
 
 Was beim Annehmen mitgeht, entscheidet die Stufe — im `AjnaManager`, dem einen
 Ort, an dem Positionen freigegeben werden:
@@ -224,8 +224,8 @@ Sätze.
 
 ### Melden nur vor Ort
 
-`state.call.vorOrtRadiusM` steuert den Nachweis `vorOrt` beim **Melden** —
-50 / 150 / 500 m, Vorgabe 150 m. Nicht zu verwechseln mit `annahmeRadiusM`: Das
+`state.call.onSiteRadiusM` steuert den Nachweis `onSite` beim **Melden** —
+50 / 150 / 500 m, Vorgabe 150 m. Nicht zu verwechseln mit `acceptRadiusM`: Das
 eine begrenzt, wer den Auftrag übernimmt, das andere, was als erledigt gemeldet
 werden darf. Ein Auftrag kann weiträumig annehmbar und trotzdem nur am Ort
 meldbar sein.

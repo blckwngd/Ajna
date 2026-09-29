@@ -11,8 +11,11 @@
 // den niemand startet, ist keine Absicherung, sondern eine Behauptung.
 //
 // Auffinden statt Aufzählen: eine feste Liste würde beim nächsten neuen Test
-// wieder veralten. Alles unter `client/`, `agents/` und `parley/`, was auf
-// `.test.mjs` endet, läuft mit.
+// wieder veralten. Alles unter `client/`, `agents/`, `parley/` und
+// `pocketbase/`, was auf `.test.mjs` endet, läuft mit. (`pocketbase/` kam
+// dazu, als der erste PB-Hook eine prüfbare Regel bekam — die
+// Anmeldedrossel. Ein Hook ist CommonJS; der Test lädt ihn so, wie
+// PocketBase es tut.)
 
 import { readdirSync, statSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
@@ -20,8 +23,8 @@ import { join, dirname, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const SUCHE = ['client', 'agents', 'parley']
-const UEBERSPRINGEN = new Set(['node_modules', 'dist', 'poc'])
+const SUCHE = ['client', 'agents', 'parley', 'pocketbase', 'tools']
+const UEBERSPRINGEN = new Set(['node_modules', 'dist', 'poc', 'pb_data', 'pb_migrations'])
 
 function sammeln(dir, out = []) {
   for (const e of readdirSync(dir, { withFileTypes: true })) {

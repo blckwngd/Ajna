@@ -111,14 +111,16 @@ export const BEUTE_AUSSEHEN = {
 
 /**
  * Trefferpunkte eines Objekts — mit Ergänzung fehlender Angaben.
- * @returns {{ist: number, max: number}}
+ * @returns {{current: number, max: number}}
  */
 export function hpVon(obj) {
   const hp = obj?.state?.hp
   const max = Number(hp?.max) || Number(obj?.state?.hp_max)
     || HP_VORGABE[obj?.state?.archetype] || HP_VORGABE[obj?.type] || HP_VORGABE.enemy
-  const ist = Number.isFinite(Number(hp?.ist)) ? Number(hp.ist) : max
-  return { ist: Math.max(0, ist), max: Math.max(1, max) }
+  // `ist` ist die alte Schreibweise (docs/key-rename.md).
+  const roh = hp?.current ?? hp?.ist
+  const current = Number.isFinite(Number(roh)) ? Number(roh) : max
+  return { current: Math.max(0, current), max: Math.max(1, max) }
 }
 
 /** Schaden, den ein Schlag auf dieses Objekt macht. */
@@ -129,7 +131,7 @@ export function schadenFuer(obj, angabe) {
 
 /** Lebt das Objekt noch? Objekte ohne Trefferpunkte gelten als lebendig. */
 export function lebt(obj) {
-  return hpVon(obj).ist > 0
+  return hpVon(obj).current > 0
 }
 
 // ── Beute ────────────────────────────────────────────────────────────────
@@ -184,7 +186,7 @@ export function beuteObjekt(name, { lat, lon, altitude = 0, quelle = null }) {
     // `portable` macht es einsammelbar, `realtime` lässt Betrachter das
     // Verschwinden mitbekommen. Kein Besitzer-Anspruch: Wer zuerst kommt.
     state: {
-      portable: true, realtime: true, beute: true,
+      portable: true, realtime: true, loot: true,
       // Ein Agent-Objekt, das zu KEINER Schicht seines Manifests passt, blendet
       // der Inhaltsfilter aus, sobald ein Spieler dort einmal etwas ausgewählt
       // hat — die Beute wäre dann unsichtbar gefallen. Beute IST ein Item.
@@ -243,7 +245,7 @@ export class Kampf {
    * @param {boolean} [o.istNah]   meldet der Nähe-Melder den Spieler hier?
    * @param {number} [o.schaden]
    * @param {number} [o.jetzt]
-   * @returns {{ok: boolean, grund: string, hp?: {ist,max}, tot?: boolean,
+   * @returns {{ok: boolean, grund: string, hp?: {current,max}, tot?: boolean,
    *            beute?: Array, text?: string}}
    */
   schlag({ ziel, angreifer, absender = null, istNah = false, schaden = null, jetzt = Date.now() }) {
@@ -274,9 +276,9 @@ export class Kampf {
 
     const vorher = hpVon(ziel)
     const ab = schadenFuer(ziel, schaden)
-    const ist = Math.max(0, vorher.ist - ab)
-    const tot = ist <= 0
-    const ergebnis = { ok: true, grund: 'treffer', hp: { ist, max: vorher.max }, tot, schaden: ab }
+    const current = Math.max(0, vorher.current - ab)
+    const tot = current <= 0
+    const ergebnis = { ok: true, grund: 'treffer', hp: { current, max: vorher.max }, tot, schaden: ab }
     if (tot) {
       this._tot.set(ziel.id, jetzt)
       ergebnis.beute = wuerfleBeute(ziel, this.rnd)

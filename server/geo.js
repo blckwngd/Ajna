@@ -94,7 +94,25 @@ const FILTER_SETS = {
     // Funk-/Sendemasten: Mobilfunk, Rundfunk, Richtfunk. Fasst Masten
     // (man_made=mast) UND Türme (man_made=tower) mit Kommunikations-Zweck
     // zusammen; "communication" deckt auch Rundfunktürme ab.
-    masts:    'nwr["man_made"~"^(mast|tower|communications_tower)$"]["tower:type"~"communication",i]'
+    masts:    'nwr["man_made"~"^(mast|tower|communications_tower)$"]["tower:type"~"communication",i]',
+    // Historisches: Wegekreuze, Bildstoecke, Ruinen, Burgen, archaeologische
+    // Staetten, Grenzsteine. Bewusst `nwr` — vieles davon ist als Flaeche
+    // erfasst und faellt bei `node[...]` komplett heraus.
+    //
+    // `historic=memorial` ist NICHT dabei: Gedenkstaetten und Stolpersteine
+    // brauchen eine andere Sorgfalt in der Darstellung als eine Burgruine;
+    // sie kommen ueber die Wikipedia-Listen, wo Namen und Kontext stehen.
+    historic: 'nwr["historic"~"^(wayside_cross|wayside_shrine|ruins|castle|archaeological_site|boundary_stone|milestone|tower|city_gate|citywalls|monastery|mine|charcoal_pile)$"]',
+    // Landschaftsmerkmale, die sich als Ziel eignen: Quellen, Hoehleneingaenge,
+    // Aussichtspunkte, Muehlen, Ziehbrunnen.
+    // Ein Filtersatz darf MEHRERE Anweisungen sein. Ein einzelner String mit
+    // Kommas waere ungueltiges Overpass-QL: Der Bereich wird an jede Anweisung
+    // einzeln angehaengt, nicht an die Aufzaehlung.
+    nature:   [
+      'nwr["natural"~"^(spring|cave_entrance)$"]',
+      'nwr["tourism"="viewpoint"]',
+      'nwr["man_made"~"^(watermill|windmill|water_well)$"]',
+    ]
   },
   buildings: {
     all:      'way["building"]'
@@ -333,6 +351,13 @@ function toFeature(el) {
     f.coordinates = el.geometry.map(p => [p.lat, p.lon])
   } else if (el.type === 'node') {
     f.coordinates = [[el.lat, el.lon]]
+  } else if (el.center && Number.isFinite(el.center.lat)) {
+    // `out center` liefert fuer Wege und Relationen einen Mittelpunkt statt
+    // der vollen Geometrie. Ohne diesen Zweig fielen genau die Dinge heraus,
+    // die als Flaeche erfasst sind — Burgen, Ruinen, Stadtmauern,
+    // archaeologische Staetten. Gemessen im Raum Neuwied: 651 Objekte mit
+    // `historic=*`, ein grosser Teil davon Wege oder Relationen.
+    f.coordinates = [[el.center.lat, el.center.lon]]
   } else {
     f.coordinates = []
   }
@@ -347,7 +372,7 @@ function parseQuery(req, endpoint, defaultFilter) {
   const lat = parseFloat(req.query.lat)
   const lon = parseFloat(req.query.lon)
   let radius = parseInt(req.query.radius || DEFAULT_RADIUS_M, 10)
-  const filter = String(req.query.filter || defaultFilter)
+  let filter = String(req.query.filter || defaultFilter)
 
   if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
     throw new Error('lat fehlt oder ungültig (-90..90)')
@@ -361,6 +386,10 @@ function parseQuery(req, endpoint, defaultFilter) {
   if (radius > MAX_RADIUS_M) radius = MAX_RADIUS_M
 
   const filterSet = FILTER_SETS[endpoint]
+  // Alte deutsche Filternamen bleiben gueltig, damit ein bestehendes
+  // POI_FILTER=…,natur in einer .env nicht ins Leere laeuft (key-rename.md).
+  const ALT = { natur: 'nature' }
+  if (ALT[filter] && filterSet[ALT[filter]]) filter = ALT[filter]
   if (!filterSet[filter]) {
     throw new Error(`filter "${filter}" unbekannt für ${endpoint}. ` +
                     `Erlaubt: ${Object.keys(filterSet).join(', ')}`)
@@ -417,9 +446,10 @@ async function handleQuery(req, res, endpoint, defaultFilter, outDirective = 'ou
     (params.lat - dLat).toFixed(6), (params.lon - dLon).toFixed(6),
     (params.lat + dLat).toFixed(6), (params.lon + dLon).toFixed(6),
   ].join(',')
+  const anweisungen = Array.isArray(params.filterQL) ? params.filterQL : [params.filterQL]
   const ql = `[out:json][timeout:60];
 (
-  ${params.filterQL}(${bbox});
+${anweisungen.map(a => `  ${a}(${bbox});`).join('\n')}
 );
 ${outDirective}`
 
@@ -454,7 +484,10 @@ ${outDirective}`
 
 export function mountGeoRoutes(app) {
   app.get('/ajnaapi/geo/ways',      requireAuth, (req, res) => handleQuery(req, res, 'ways',      'walkable'))
-  app.get('/ajnaapi/geo/pois',      requireAuth, (req, res) => handleQuery(req, res, 'pois',      'common'))
+  // `out center` statt `out geom`: POIs sind Punkte. Fuer Wege und Relationen
+  // (Burgen, Ruinen, Stadtmauern) liefert Overpass damit einen Mittelpunkt —
+  // mit `out geom` haetten sie gar keine verwertbare Lage.
+  app.get('/ajnaapi/geo/pois',      requireAuth, (req, res) => handleQuery(req, res, 'pois',      'common', 'out center;'))
   app.get('/ajnaapi/geo/buildings', requireAuth, (req, res) => handleQuery(req, res, 'buildings', 'all'))
 
   // Diagnose-Endpoint: erlaubte Filter pro Endpoint + Konfig anzeigen.

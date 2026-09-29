@@ -59,10 +59,38 @@ function activeEscrowOf(app, rec, state) {
   return null                                        // nicht mehr gelistet → frei
 }
 
-/** `state.call` als Objekt (nie null). */
+// Alte deutsche Feldnamen → neue englische. Siehe docs/key-rename.md.
+//
+// WARUM HIER: `callDataOf` ist die EINZIGE Stelle, an der der Server einen
+// Auftrag aus dem Zustand holt (27 Aufrufe). Wer hier normalisiert, hat den
+// ganzen Server erschlagen — und weil der zurückgegebene Datensatz derselbe ist,
+// den die Aufrufer beschreiben und zurückschreiben, wandert die Umbenennung bei
+// jedem Anfassen von selbst in den Bestand.
+//
+// Die Übergangszeit bleibt stehen, bis die Android-App nachgezogen ist.
+var CALL_ALT_NEU = {
+  kurz: "summary", ort: "place", nachweis: "proof", steigt: "rewardStep",
+  vorOrtRadiusM: "onSiteRadiusM", annahmeRadiusM: "acceptRadiusM",
+  anbietenNachH: "listAfterHours", angeboten: "offered", probelauf: "dryRun",
+  pruefgruppe: "reviewGroup", schwarmZahl: "crowdCount",
+}
+var NACHWEIS_ALT_NEU = { foto: "photo", vorOrt: "onSite", gegenstand: "item" }
+
+/** `state.call` als Objekt (nie null), mit englischen Feldnamen. */
 function callDataOf(state) {
   const c = state && state.call
-  return (c && typeof c === "object" && !Array.isArray(c)) ? c : {}
+  if (!c || typeof c !== "object" || Array.isArray(c)) return {}
+  for (const alt in CALL_ALT_NEU) {
+    if (!Object.prototype.hasOwnProperty.call(c, alt)) continue
+    const neu = CALL_ALT_NEU[alt]
+    // Steht der neue Name schon da, gewinnt er — er ist der jüngere Schreiber.
+    if (c[neu] === undefined) c[neu] = c[alt]
+    delete c[alt]
+  }
+  if (Array.isArray(c.proof)) {
+    c.proof = c.proof.map(function (x) { return NACHWEIS_ALT_NEU[x] || x })
+  }
+  return c
 }
 
 /** Robuste String-ID-Liste aus beliebigem Body-Wert. */
@@ -208,10 +236,10 @@ function resolveSwap(app, call, callData, completerId, extraRequireIds) {
     // Die Bedingungspruefung darueber ist bereits gelaufen. Das ist Absicht:
     // Wer probelaeuft, will wissen, ob seine Forderungen greifen. Nur die
     // Auszahlung faellt weg, nicht die Pruefung.
-    if (callData.probelauf === true) {
+    if (callData.dryRun === true) {
       return {
         ok: true, issuer: issuer, rewards: [], required: required,
-        remainingRewards: [], repeatable: callData.repeatable === true, perRun: 0, steigt: 0,
+        remainingRewards: [], repeatable: callData.repeatable === true, perRun: 0, rewardStep: 0,
       }
     }
     return { ok: false, code: 409, error: "call has no escrowed reward" }
@@ -224,10 +252,10 @@ function resolveSwap(app, call, callData, completerId, extraRequireIds) {
   // „Belohnung steigt je Durchlauf": Der n-te Durchlauf zahlt
   // rewardPerRun + steigt·n. Die Einstellung wurde bisher gespeichert und an
   // die Oberfläche zurückgegeben — und nie angewandt. Ein Regler ohne Wirkung.
-  const steigt = repeatable ? Math.max(0, Number(callData.steigt) || 0) : 0
+  const rewardStep = repeatable ? Math.max(0, Number(callData.rewardStep) || 0) : 0
   const gelaufen = Math.max(0, Number(callData.completions) || 0)
   const perRun = repeatable
-    ? Math.max(1, (Number(callData.rewardPerRun) || 1) + steigt * gelaufen)
+    ? Math.max(1, (Number(callData.rewardPerRun) || 1) + rewardStep * gelaufen)
     : rewardIds.length
   if (rewardIds.length < perRun) {
     return { ok: false, code: 409, error: "reward pool exhausted: needs " + perRun + " per run, " + rewardIds.length + " left" }
@@ -253,7 +281,7 @@ function resolveSwap(app, call, callData, completerId, extraRequireIds) {
   return {
     ok: true, issuer: issuer, rewards: rewards, required: required,
     remainingRewards: rewardIds.slice(perRun), repeatable: repeatable, perRun: perRun,
-    steigt: steigt
+    rewardStep: rewardStep
   }
 }
 
@@ -290,7 +318,7 @@ function executeSwap(app, call, callState, callData, swap, completerId) {
     // Gegen den Bedarf des NÄCHSTEN Durchlaufs prüfen, nicht des gerade
     // bezahlten: Mit Steigerung kostet der nächste mehr. Sonst bliebe der
     // Auftrag offen, und der nächste Spieler liefe beim Abschluss in ein 409.
-    const naechsterBedarf = swap.perRun + (Number(swap.steigt) || 0)
+    const naechsterBedarf = swap.perRun + (Number(swap.rewardStep) || 0)
     if (swap.repeatable && swap.remainingRewards.length >= naechsterBedarf) {
       callData.status = "open"                  // zurück in den Umlauf
       delete callData.claimedBy
@@ -368,7 +396,7 @@ function markiereAbgelaufen(call) {
 //
 //   "items"           der Server, deterministisch (gelieferte Gegenstände)
 //   "issuer"/"agent"  der AUSSTELLER des Auftrags — Mensch oder Agent
-//   "group"           eine benannte Prüfgruppe (state.call.pruefgruppe)
+//   "group"           eine benannte Prüfgruppe (state.call.reviewGroup)
 //   "crowd"           andere Spieler, x von y (quest/confirm)
 //
 // ZUM NAMEN "agent": historisch. Als es die Aufträge zuerst gab, stellte sie
@@ -400,7 +428,7 @@ function brauchtAbnahme(verify) {
 function darfAbnehmen(app, callRec, c, userId, gruppenVon) {
   if (String(callRec.get("owner") || "") === userId) return { ok: true, grund: "issuer" }
   if (c.verify !== "group") return { ok: false, grund: "only the issuer may approve this call" }
-  const gruppe = String(c.pruefgruppe || "")
+  const gruppe = String(c.reviewGroup || "")
   if (!gruppe) return { ok: false, grund: "call names no review group" }
   // Die Auflösung kommt VON AUSSEN. Sie hier per require() nachzuladen ging
   // schief und der Fehler verschwand in einem catch — die Abnahme scheiterte
@@ -421,7 +449,7 @@ function darfAbnehmen(app, callRec, c, userId, gruppenVon) {
 
 /** Wie viele Ja-Stimmen dieser Auftrag braucht (Vorgabe 3, sinnvoll 1–9). */
 function noetigeStimmen(call) {
-  const n = Number(call && call.schwarmZahl)
+  const n = Number(call && call.crowdCount)
   if (!isFinite(n)) return 3
   return Math.max(1, Math.min(9, Math.round(n)))
 }
@@ -465,8 +493,8 @@ function zaehleStimmen(app, callId, submission) {
 // Abschluss hängt dann nicht an Ware, sondern an einem Nachweis:
 //
 //   foto        mindestens ein Bildverweis
-//   vorOrt      eine gemeldete Position nahe am Einsatzort
-//   gegenstand  läuft weiter über requires/requiresItems (resolveSwap)
+//   onSite      eine gemeldete Position nahe am Einsatzort
+//   item        läuft weiter über requires/requiresItems (resolveSwap)
 //
 // WAS DAS IST UND WAS NICHT: Keiner dieser Nachweise ist ein Beweis. Die
 // Position meldet das Gerät des Bearbeiters selbst und kann gefälscht werden;
@@ -496,7 +524,7 @@ function abstandM(aLat, aLon, bLat, bLon) {
  * @returns {{ok: boolean, fehlend: string[], gespeichert: object}}
  */
 function pruefeNachweis(callRec, c, proof) {
-  const noetig = Array.isArray(c.nachweis) ? c.nachweis : []
+  const noetig = Array.isArray(c.proof) ? c.proof : []
   const p = (proof && typeof proof === "object") ? proof : {}
   const fehlend = []
 
@@ -508,17 +536,17 @@ function pruefeNachweis(callRec, c, proof) {
   // gehört. `photos` bleibt als Verweis-Liste bestehen — ein Agent, der
   // Bilder woanders ablegt, soll deswegen nicht scheitern.
   const beleg = p.proofId ? String(p.proofId).slice(0, 40) : ""
-  if (noetig.indexOf("foto") !== -1 && !beleg && bilder.length === 0) {
-    fehlend.push("foto: mindestens ein Bild")
+  if (noetig.indexOf("photo") !== -1 && !beleg && bilder.length === 0) {
+    fehlend.push("photo: mindestens ein Bild")
   }
 
   let ort = null
-  if (noetig.indexOf("vorOrt") !== -1) {
+  if (noetig.indexOf("onSite") !== -1) {
     const lat = Number(p.at && p.at.lat), lon = Number(p.at && p.at.lon)
     if (!isFinite(lat) || !isFinite(lon)) {
-      fehlend.push("vorOrt: keine Position gemeldet")
+      fehlend.push("onSite: keine Position gemeldet")
     } else {
-      const grenze = Number(c.vorOrtRadiusM) > 0 ? Number(c.vorOrtRadiusM) : VOR_ORT_RADIUS_M
+      const grenze = Number(c.onSiteRadiusM) > 0 ? Number(c.onSiteRadiusM) : VOR_ORT_RADIUS_M
       const d = abstandM(Number(callRec.get("lat")), Number(callRec.get("lon")), lat, lon)
       // Kulanz für eine Rundung, die WIR verlangt haben: Bei der Stufe „Gegend"
       // meldet der Client auf 100 m gerundet (`precise: false`). Ohne Nachlass
@@ -529,7 +557,7 @@ function pruefeNachweis(callRec, c, proof) {
       const grob = p.at.precise !== true
       const kulanz = (grob && grenze >= FEIN_AB_M) ? AREA_KULANZ_M : 0
       if (!isFinite(d) || d > grenze + kulanz) {
-        fehlend.push("vorOrt: " + Math.round(d) + " m entfernt, erlaubt sind " + grenze + " m")
+        fehlend.push("onSite: " + Math.round(d) + " m entfernt, erlaubt sind " + grenze + " m")
       } else {
         // `precise` sagt, ob die Stufe „Genau" galt — eine vergröberte Angabe
         // ist schwächer und soll dem Prüfer nicht als exakt verkauft werden.
@@ -552,7 +580,7 @@ function pruefeNachweis(callRec, c, proof) {
 
 // ── „Auftrag nur vor Ort annehmen" ────────────────────────────────────────
 //
-// `state.call.annahmeRadiusM` (0 oder fehlend = keine Einschränkung). Bestehende
+// `state.call.acceptRadiusM` (0 oder fehlend = keine Einschränkung). Bestehende
 // Aufträge ändern ihr Verhalten damit nicht.
 //
 // WAS DAS IST UND WAS NICHT: eine Plausibilitätsschranke, kein Nachweis. Die
@@ -583,7 +611,7 @@ const AREA_KULANZ_M = 150
  * @returns {{ok: boolean, grund: string, grenzeM: number, entfernungM: number|null}}
  */
 function annahmeOrtPruefen(callRec, c, meldung) {
-  const grenze = Number(c && c.annahmeRadiusM) > 0 ? Number(c.annahmeRadiusM) : 0
+  const grenze = Number(c && c.acceptRadiusM) > 0 ? Number(c.acceptRadiusM) : 0
   if (!grenze) return { ok: true, grund: "ohne-grenze", grenzeM: 0, entfernungM: null }
 
   const m = (meldung && typeof meldung === "object") ? meldung : {}

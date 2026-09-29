@@ -781,14 +781,13 @@ const AKTIONEN = [
 
 /** Die Eigenschaften, die ein Werkzeug tragen MUSS, damit es benutzbar ist. */
 const WERKZEUG_STATE = {
-  source: AGENT,        // Haken fuer den Inhaltsfilter
-  quelle: AGENT,        // eigener Marker (Wiedererkennung beim Start)
-  werkzeug: true,
+  source: AGENT,        // Haken fuer den Inhaltsfilter UND Wiedererkennung
+  tool: true,
   portable: true,       // ← macht es aufnehmbar, auch fuer fremde Konten
   realtime: true,       // Verschwinden wird mitbekommen
   archetype: 'item',    // sonst blendet der Filter es als "Nachzuegler" aus
   actions: AKTIONEN,
-  hinweis: 'Zeigt öffentliche Angaben zur Adresse, an der sie liegt. Die Anzeige wird nicht gespeichert.',
+  hint: 'Zeigt öffentliche Angaben zur Adresse, an der sie liegt. Die Anzeige wird nicht gespeichert.',
 }
 
 // NUR `view`. `move` stand hier kurz mit drin — der Gedanke war, dass jeder die
@@ -836,7 +835,10 @@ async function ensureAce(objId) {
 }
 
 async function werkzeugSichern() {
-  const meine = ajna.getObjects().filter(o => o.state?.quelle === AGENT && o.state?.werkzeug)
+  // `quelle`/`werkzeug` sind die alten Schreibweisen; `quelle` war ohnehin eine
+  // Dublette zu `source` und faellt ersatzlos weg (docs/key-rename.md).
+  const meine = ajna.getObjects().filter(o =>
+    (o.state?.source === AGENT || o.state?.quelle === AGENT) && (o.state?.tool || o.state?.werkzeug))
   if (meine.length) {
     // NACHRUESTEN: Werkzeuge aus der Zeit vor dem Inhaltsfilter tragen kein
     // `state.source`. Ohne das greift AgentFilters.matches() nicht — sie
@@ -913,12 +915,12 @@ function darfWiederverwenden(id, lat, lon) {
 function alsMarker(erg) {
   return (erg.adressen || []).map(a => ({
     lat: a.lat, lon: a.lon,
-    titel: [a.strasse, a.hausnummer].filter(Boolean).join(' ') || a.ort || 'Adresse',
-    ort: [a.plz, a.ort].filter(Boolean).join(' '),
-    genauigkeit: a.genauigkeit || 'genau',
-    felder: (a.felder || a.gewerbe || []).map(f => ({
-      feld: f.feld, wert: f.wert, herkunft: f.herkunft,
-      ausfall: !!f.ausfall, link: !!f.link,
+    title: [a.strasse, a.hausnummer].filter(Boolean).join(' ') || a.ort || 'Adresse',
+    place: [a.plz, a.ort].filter(Boolean).join(' '),
+    precision: (a.genauigkeit || 'genau') === 'genau' ? 'exact' : 'estimated',
+    fields: (a.felder || a.gewerbe || []).map(f => ({
+      field: f.feld, value: f.wert, origin: f.herkunft,
+      failed: !!f.ausfall, link: !!f.link,
     })),
   }))
 }
@@ -939,25 +941,25 @@ async function bearbeite(objektId, nutzerId, lat, lon) {
   // Abonnenten des Objekts, und eine Auskunft im Auftrag einer Person geht
   // niemanden sonst etwas an.
   //
-  // `meta.adressen` trägt dieselben Angaben strukturiert, damit der Client
+  // `meta.addresses` trägt dieselben Angaben strukturiert, damit der Client
   // Marker setzen kann. Es ist DIESELBE flüchtige Nachricht — für die Marker
   // gilt damit dieselbe Zusage wie für den Text.
   await ajna.sendChat(nutzerId, {
     text: alsText(erg),
     object: objektId,
     meta: {
-      adressen: alsMarker(erg),
+      addresses: alsMarker(erg),
       // ALLE geprueften Adressen, auch die vom Filter entfernten — fuers
       // Protokoll unter „Alle". Ohne das saehe man dort nur die Ueberlebenden
       // und wuesste nicht, was ueberhaupt nachgeschlagen wurde.
-      geprueft: (erg.alle || []).map(a => ({
-        titel: [a.strasse, a.hausnummer].filter(Boolean).join(' ') || a.ort || 'Adresse',
-        ort: [a.plz, a.ort].filter(Boolean).join(' '),
-        genauigkeit: a.genauigkeit || 'genau',
-        felder: (a.felder || a.gewerbe || []).length,
-        entfernungM: a.entfernungM,
+      checked: (erg.alle || []).map(a => ({
+        title: [a.strasse, a.hausnummer].filter(Boolean).join(' ') || a.ort || 'Adresse',
+        place: [a.plz, a.ort].filter(Boolean).join(' '),
+        precision: (a.genauigkeit || 'genau') === 'genau' ? 'exact' : 'estimated',
+        fields: (a.felder || a.gewerbe || []).length,
+        distanceM: a.entfernungM,
       })),
-      werkzeug: objektId,
+      tool: objektId,
     },
     ephemeral: true,
   })

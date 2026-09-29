@@ -25,7 +25,7 @@ async function auftragMit(t, A, titel, radiusM) {
   await t.share(A.token, c.id)
   await t.quest.publish(A.token, c.id, { rewardItems: [lohn.id], verify: 'items' })
   const st = (await t.read(A.token, c.id)).state
-  st.call.annahmeRadiusM = radiusM
+  st.call.acceptRadiusM = radiusM
   await t.patch(A.token, c.id, { state: st })
   return c
 }

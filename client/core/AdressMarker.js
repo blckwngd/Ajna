@@ -53,6 +53,28 @@ const SCHRIFT = {
 const schluesselVon = (a) =>
   `${Math.round(a.lat * RASTER)}:${Math.round(a.lon * RASTER)}`
 
+// Alte deutsche Feldnamen der Lupen-Antwort → neue englische.
+//
+// WARUM ES BEIDE GIBT: Der Agent kann älter sein als der Client — auf dem VPS
+// läuft er als eigener Prozess und wird getrennt aktualisiert. Siehe
+// docs/key-rename.md.
+function adresseFelder(a) {
+  if (!a || typeof a !== 'object') return a
+  if (a.title !== undefined || a.fields !== undefined) return a   // schon neu
+  const felder = Array.isArray(a.felder)
+    ? a.felder.map(f => ({ field: f.feld, value: f.wert, origin: f.herkunft,
+                           failed: !!f.ausfall, link: !!f.link }))
+    : a.felder
+  return {
+    ...a,
+    title: a.titel,
+    place: a.ort,
+    precision: a.genauigkeit === 'genau' ? 'exact' : 'estimated',
+    fields: felder,
+    distanceM: a.entfernungM,
+  }
+}
+
 export class AdressMarker {
   /**
    * @param {{
@@ -144,20 +166,22 @@ export class AdressMarker {
 
   _aufNachricht(m) {
     // NUR flüchtige Nachrichten mit Adressdaten. Ohne diese Prüfung würde jede
-    // beliebige Chat-Nachricht mit einem `adressen`-Feld Marker setzen.
+    // beliebige Chat-Nachricht mit einem `addresses`-Feld Marker setzen.
     if (m?.ephemeral !== true) return
-    const liste = m?.meta?.adressen
+    const liste = (m?.meta?.addresses ?? m?.meta?.adressen)?.map(adresseFelder)
     if (!Array.isArray(liste) || !liste.length) return
-    if (m?.meta?.werkzeug) {
-      const roh = String(m.meta.werkzeug).split(':').pop()
+    const werkzeug = m?.meta?.tool ?? m?.meta?.werkzeug
+    if (werkzeug) {
+      const roh = String(werkzeug).split(':').pop()
       this._werkzeuge.add(roh)
       this._wartenAus(roh)   // Antwort da — Ring weg
     }
     this.hinzufuegen(liste)
-    // `geprueft` enthält AUCH die vom Filter entfernten Adressen. Nur die
+    // `checked` enthält AUCH die vom Filter entfernten Adressen. Nur die
     // angezeigten zu protokollieren hiesse, die Frage „was wurde eigentlich
     // nachgeschlagen?" unbeantwortet zu lassen.
-    this._insProtokoll(m.meta.geprueft || liste)
+    const geprueft = m.meta.checked ?? m.meta.geprueft
+    this._insProtokoll(Array.isArray(geprueft) ? geprueft.map(adresseFelder) : liste)
   }
 
   /**
@@ -179,13 +203,13 @@ export class AdressMarker {
     const log = (typeof window !== 'undefined' && window.ajnaLog) || null
     if (!log?.push) return
     for (const a of liste) {
-      const wie = a.genauigkeit && a.genauigkeit !== 'genau' ? ' (Lage geschätzt)' : ''
+      const wie = a.precision && a.precision !== 'exact' ? ' (Lage geschätzt)' : ''
       // `felder` ist je nach Quelle eine Liste (Marker) oder schon eine Zahl
       // (die kompakte Protokoll-Fassung aus `meta.geprueft`).
-      const felder = Array.isArray(a.felder) ? a.felder.length : (a.felder || 0)
-      const weg = Number.isFinite(a.entfernungM) ? ` (${a.entfernungM} m)` : ''
+      const felder = Array.isArray(a.fields) ? a.fields.length : (a.fields || 0)
+      const weg = Number.isFinite(a.distanceM) ? ` (${a.distanceM} m)` : ''
       log.push(
-        `Adress-Lupe: ${a.titel || 'Adresse'}${a.ort ? `, ${a.ort}` : ''}${weg}${wie}` +
+        `Adress-Lupe: ${a.title || 'Adresse'}${a.place ? `, ${a.place}` : ''}${weg}${wie}` +
         ` — ${felder} Angabe(n)`,
         'debug', { ephemeral: true })
     }
@@ -220,7 +244,7 @@ export class AdressMarker {
   _aktualisieren(key, a) {
     const alt = this._marker.get(key)
     if (!alt) return
-    if (JSON.stringify(alt.daten.felder) === JSON.stringify(a.felder)) return
+    if (JSON.stringify(alt.daten.fields) === JSON.stringify(a.fields)) return
     // War die Tafel offen, bleibt sie es: Wer gerade liest, soll nicht dadurch
     // zugeklappt werden, dass eine Nachlieferung eintrifft.
     const warOffen = !!alt.gross
@@ -399,7 +423,7 @@ export class AdressMarker {
     const p = this.geo?.toLocalRef?.(a.lat, a.lon, 0, 'ground')
     if (!p) return null
 
-    const genau = a.genauigkeit === 'genau'
+    const genau = a.precision === 'exact'
     const farbe = BABYLON.Color3.FromHexString(genau ? '#ffd479' : '#9aa0a6')
 
     const node = new BABYLON.TransformNode(`adr_${key}`, this.scene)
@@ -468,7 +492,7 @@ export class AdressMarker {
   }
 
   _tafel(key, a, gross) {
-    const genau = a.genauigkeit === 'genau'
+    const genau = a.precision === 'exact'
     const bild = gross ? this._bildGross(key, a, genau) : this._bildKlein(key, a, genau)
     if (!bild) return null
     const { dt, B, H } = bild
@@ -501,13 +525,13 @@ export class AdressMarker {
    * Rest. Der Zähler sagt zugleich, dass es sich lohnt zu tippen.
    */
   _bildKlein(key, a, genau) {
-    const wichtig = (a.felder || []).find(f => f.feld === 'Firma')
-                 || (a.felder || []).find(f => f.feld === 'Name')
-                 || (a.felder || []).find(f => f.feld === 'Eintrag')
-    const rest = Math.max(0, (a.felder || []).length - (wichtig ? 1 : 0))
-    const zeile2 = wichtig ? wichtig.wert : (a.ort || '')
+    const wichtig = (a.fields || []).find(f => f.field === 'Firma')
+                 || (a.fields || []).find(f => f.field === 'Name')
+                 || (a.fields || []).find(f => f.field === 'Eintrag')
+    const rest = Math.max(0, (a.fields || []).length - (wichtig ? 1 : 0))
+    const zeile2 = wichtig ? wichtig.wert : (a.place || '')
     const zeile3 = rest ? `+${rest} Angabe(n) · antippen`
-                        : (genau ? (a.felder || []).length ? 'antippen' : '' : 'Lage geschätzt')
+                        : (genau ? (a.fields || []).length ? 'antippen' : '' : 'Lage geschätzt')
 
     const B = 512, H = 192
     const dt = new BABYLON.DynamicTexture(`adrLbl_${key}`, { width: B, height: H }, this.scene, true)
@@ -519,7 +543,7 @@ export class AdressMarker {
     ctx.textAlign = 'center'
     ctx.font = 'bold 44px sans-serif'
     ctx.fillStyle = genau ? '#ffd479' : '#c5c9ce'
-    ctx.fillText(this._kuerzen(ctx, a.titel || 'Adresse', B - 24), B / 2, 56)
+    ctx.fillText(this._kuerzen(ctx, a.title || 'Adresse', B - 24), B / 2, 56)
     ctx.font = '34px sans-serif'
     ctx.fillStyle = '#ffffff'
     ctx.fillText(this._kuerzen(ctx, zeile2, B - 24), B / 2, 110)
@@ -539,20 +563,20 @@ export class AdressMarker {
    */
   _bildGross(key, a, genau) {
     const roh = []
-    roh.push({ art: 'titel', text: a.titel || 'Adresse' })
-    const kopf = [a.ort, Number.isFinite(a.entfernungM) ? `${a.entfernungM} m` : null]
+    roh.push({ art: 'titel', text: a.title || 'Adresse' })
+    const kopf = [a.place, Number.isFinite(a.distanceM) ? `${a.distanceM} m` : null]
       .filter(Boolean).join('  ·  ')
     if (kopf) roh.push({ art: 'kopf', text: kopf })
     if (!genau) roh.push({ art: 'notiz', text: 'Lage geschätzt' })
 
-    const felder = a.felder || []
+    const felder = a.fields || []
     if (!felder.length) roh.push({ art: 'notiz', text: '— keine weiteren öffentlichen Angaben' })
     let hatVerweis = false
     for (const f of felder) {
       if (f.link) hatVerweis = true
-      const wert = f.link ? String(f.wert || '').replace(/^https?:\/\//, '') : f.wert
-      roh.push({ art: 'feld', text: `${f.ausfall ? '⚠' : '·'} ${f.feld}: ${wert}` })
-      if (f.herkunft) roh.push({ art: 'herkunft', text: `↳ ${f.herkunft}` })
+      const wert = f.link ? String(f.value || '').replace(/^https?:\/\//, '') : f.value
+      roh.push({ art: 'feld', text: `${f.failed ? '⚠' : '·'} ${f.field}: ${wert}` })
+      if (f.origin) roh.push({ art: 'herkunft', text: `↳ ${f.origin}` })
     }
     // Ein Verweis in einer Textur lässt sich nicht anklicken — also dorthin
     // zeigen, wo er es kann, statt eine Schaltfläche vorzutäuschen.
@@ -640,7 +664,7 @@ export class AdressMarker {
   // ── Karte ───────────────────────────────────────────────────────────────
 
   _zeichneKarte(key, a) {
-    const genau = a.genauigkeit === 'genau'
+    const genau = a.precision === 'exact'
     const m = this.L.circleMarker([a.lat, a.lon], {
       radius: 7,
       color: genau ? '#ffd479' : '#9aa0a6',
@@ -659,17 +683,17 @@ export class AdressMarker {
   _popup(a) {
     const esc = (s) => String(s ?? '').replace(/[&<>"]/g,
       (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
-    const kopf = `<b>${esc(a.titel)}</b>${a.ort ? `<br><span style="opacity:.75">${esc(a.ort)}</span>` : ''}`
-    const hinweis = a.genauigkeit === 'genau' ? ''
+    const kopf = `<b>${esc(a.title)}</b>${a.place ? `<br><span style="opacity:.75">${esc(a.place)}</span>` : ''}`
+    const hinweis = a.precision === 'exact' ? ''
       : '<div style="opacity:.7;font-style:italic">Lage geschätzt</div>'
-    const zeilen = (a.felder || []).map(f => {
+    const zeilen = (a.fields || []).map(f => {
       // NUR als Link, wenn der Agent das Feld ausdrücklich so gekennzeichnet
       // hat — nicht, weil ein Wert nach einer Adresse aussieht.
-      const wert = f.link && /^https:\/\//.test(f.wert)
-        ? `<a href="${esc(f.wert)}" target="_blank" rel="noopener noreferrer">Eintrag öffnen</a>`
-        : esc(f.wert)
-      return `<div>${f.ausfall ? '⚠' : '·'} ${esc(f.feld)}: ${wert}` +
-             `<br><span style="opacity:.6;font-size:.85em">${esc(f.herkunft)}</span></div>`
+      const wert = f.link && /^https:\/\//.test(f.value)
+        ? `<a href="${esc(f.value)}" target="_blank" rel="noopener noreferrer">Eintrag öffnen</a>`
+        : esc(f.value)
+      return `<div>${f.failed ? '⚠' : '·'} ${esc(f.field)}: ${wert}` +
+             `<br><span style="opacity:.6;font-size:.85em">${esc(f.origin)}</span></div>`
     }).join('')
     const fuss = '<div style="opacity:.6;font-size:.85em;margin-top:.4em">' +
                  'Flüchtig — wird nicht gespeichert.</div>'

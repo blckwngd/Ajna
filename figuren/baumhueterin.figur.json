@@ -1,0 +1,37 @@
+{
+  "id": "baumhueterin-wollendorf",
+  "name": "Die Baumhüterin",
+  "type": "npc",
+  "lat": 50.452227,
+  "lon": 7.432314,
+  "description": "Eine ältere Frau, die bei der Gerichtslinde steht und von ihr erzählt. Sie ist immer hier.",
+  "dialog": "baumhueterin",
+  "dialog_vars": {
+    "baum": "die alte Gerichtslinde"
+  },
+  "movement": "still",
+  "appearance": {
+    "emoji": "🌳",
+    "color": "#6fae7a"
+  },
+  "quest": {
+    "text": "Geh zur Gerichtslinde, sieh dir den Stamm an und schick mir ein Bild davon. Ich komme nicht mehr so oft hin, und ich will wissen, wie es ihr geht.",
+    "summary": "Nach der Gerichtslinde sehen",
+    "place": "Gerichtslinde, Neuwied-Wollendorf",
+    "proof": [
+      "photo",
+      "onSite"
+    ],
+    "review": "issuer",
+    "karma": 0,
+    "listAfter": 0,
+    "repeatable": true,
+    "reward": {
+      "name": "Lindenblatt",
+      "count": 5,
+      "perRun": 1,
+      "emoji": "🍃",
+      "description": "Ein Blatt der alten Gerichtslinde. Wer eines hat, hat hingesehen."
+    }
+  }
+}

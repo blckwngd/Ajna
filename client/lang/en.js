@@ -227,6 +227,12 @@ export const texte = {
   'Verlauf wirklich leeren?': 'Really clear the history?',
   'Diese Figur hat kein Konto — niemand kann antworten.': 'This character has no account — nobody can reply.',
   'Antippen zum Antworten': 'Tap to reply',
+  'Allgemein': 'General',
+  'Beenden': 'End',
+  'Gespräch beenden': 'End conversation',
+  'Gespräch': 'Conversation',
+  'Niemand antwortet gerade — antippen, um trotzdem zu schreiben.':
+    'Nobody is answering — tap to write anyway.',
 
   // ── Zauberstab und UWB ──────────────────────────────────────────────
   'Zauberstab verbinden': 'Connect wand',
@@ -345,11 +351,18 @@ export const texte = {
   'Objekt': 'Object',
 
   // ── Server-Meldungen (Schlüssel = code aus der Antwort) ─────────────
-  'fehler.proof_not_found': 'Those images could not be found.',
-  'fehler.proof_foreign': 'Those images belong to someone else.',
-  'fehler.proof_other_call': 'Those images belong to a different quest.',
-  'fehler.proof_empty': 'No image was attached.',
-  'fehler.reward_reduced': 'Someone is working on this quest — the reward may be raised, not reduced.',
+  'Diese Bilder wurden nicht gefunden.': 'Those images could not be found.',
+  'Diese Bilder gehören jemand anderem.': 'Those images belong to someone else.',
+  'Diese Bilder gehören zu einem anderen Auftrag.': 'Those images belong to a different quest.',
+  'Es war kein Bild dabei.': 'No image was attached.',
+  'Jemand arbeitet an diesem Auftrag — die Belohnung darf erhöht, nicht gekürzt werden.':
+    'Someone is working on this quest — the reward may be raised, not reduced.',
+  'Hilfe': 'Help',
+  'Handbuch öffnen': 'Open the manual',
+  'Anleitung für Benutzung, Betrieb und Entwicklung — liegt auf diesem Server.':
+    'Guide for using, operating and developing — served from this machine.',
+  'Zu viele Fehlversuche. Warte einen Moment und versuch es erneut.':
+    'Too many failed attempts. Please wait a moment and try again.',
 
   // ── Auftragsfenster ────────────────────────────────────────────────────
   'Aufträge': 'Calls',

@@ -3,7 +3,7 @@ import { LOCAL_MODELS } from './localModels.js'
 import { randomHexColor } from './randomColor.js'
 import { SPAWN_ARCHETYPES } from './SpawnHere.js'
 import { emojiOf } from './Appearance.js'
-import { t } from './i18n.js'
+import { t, serverFehler } from './i18n.js'
 import { klickDaneben } from './klickDaneben.js'
 
 const EXT_MODELS_KEY = 'ajna_allow_ext_models'
@@ -455,7 +455,7 @@ export class EditorUI {
         // emitObjectsChanged triggert Listenrefresh und (im AR) syncSceneObjects.
         await this.ajna.loadObjects()
       } catch (err) {
-        this.setStatus(t('Anmeldung fehlgeschlagen: ') + err.message)
+        this.setStatus(serverFehler(err, 'Anmeldung fehlgeschlagen'))
       }
       this.updateAuthUI()
     })

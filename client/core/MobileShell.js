@@ -18,7 +18,7 @@ import { PermissionDialog } from './PermissionDialog.js'
 import { InterestArea } from './InterestArea.js'
 import { ProximityReporter } from './ProximityReporter.js'
 import { PresenceService } from './PresenceService.js'
-import { t, SPRACHEN, sprache, setzeSprache } from './i18n.js'
+import { t, SPRACHEN, sprache, setzeSprache, serverFehler } from './i18n.js'
 import { starteKompass, kompassKurs } from './Kompass.js'
 import { PEIL_BAENDER } from './PointingResolver.js'
 import { klickDaneben } from './klickDaneben.js'
@@ -34,9 +34,16 @@ import { Minimap } from './Minimap.js'
 import { QuestPanel } from './QuestPanel.js'
 import { QuestEditor } from './QuestEditor.js'
 import { QuestService } from './QuestService.js'
+import { callFelder } from './questMapping.js'
 import { isMultiServer, serverLabelFor } from './ServerBadge.js'
 import { RANGE_DEFS, RANGE_EVENT, readRange, writeRange, valueFromSlider, sliderFromValue, formatRange }
   from './renderRange.js'
+
+// Wie lange auf eine Antwort gewartet wird, bevor der Hinweis doch erscheint.
+// Vier Sekunden: lang genug, dass ein laufender Agent zuerst da ist (gemessen
+// antwortet der World-Director in deutlich unter einer Sekunde), kurz genug,
+// dass niemand ratlos vor der Figur steht.
+const STILLE_MS = 4000
 
 // Eingeblendete Agent-Quellen (für den Interest-Area-Publish): alles, was im
 // Agent-Filter nicht explizit deaktiviert ist.
@@ -642,8 +649,20 @@ export class MobileShell {
       objectId: rec.id,
       serverId: rec._origin || null,
     }, { open: false })
-    this._toast?.show(t('Antippen zum Antworten'),
-      { title: rec.name || 'Gespräch', onClick: () => this._logPanel?.open() })
+
+    // KEIN HINWEIS VORAB. Er stand sonst da, bevor es etwas zu beantworten gab:
+    // erst „Antippen zum Antworten", dann die Antwort. Jetzt trägt die Antwort
+    // den Hinweis selbst (MessageLogPanel._onChat).
+    //
+    // NUR WENN NIEMAND ANTWORTET, meldet sich der Rueckfall — sonst sässe der
+    // Spieler vor einem stummen Bildschirm und wuesste nicht, ob er etwas falsch
+    // gemacht hat. Genau dieser Fall trat ein, als kein Agent lief.
+    const seit = Date.now()
+    setTimeout(() => {
+      if ((this._logPanel?.letzteAntwort(rec.owner) || 0) >= seit) return
+      this._toast?.show(t('Niemand antwortet gerade — antippen, um trotzdem zu schreiben.'),
+        { title: rec.name || 'Gespräch', onClick: () => this._logPanel?.oeffneGespraech() })
+    }, STILLE_MS)
   }
 
   // ── Aufträge ───────────────────────────────────────────────────────────
@@ -978,18 +997,18 @@ export class MobileShell {
    */
   _questAus(rec) {
     if (!rec) return null
-    const c = rec.state?.call || {}
+    const c = callFelder(rec.state?.call)
     const frist = c.deadline ? Date.parse(c.deadline) : NaN
     return {
       id: rec.id,
       meine: true,
       status: c.publishedAt ? (c.status === 'open' ? 'offen' : 'angenommen') : 'entwurf',
       titel: rec.name || '',
-      kurz: c.kurz || '',
+      kurz: c.summary || '',
       text: c.task || rec.description || '',
-      ort: c.ort || '',
+      ort: c.place || '',
       frist: Number.isFinite(frist) ? frist : null,
-      belohnung: { anzahl: (c.rewardItems || []).length, was: '', steigt: Number(c.steigt) || 0 },
+      belohnung: { anzahl: (c.rewardItems || []).length, was: '', steigt: Number(c.rewardStep) || 0 },
       karma: Number(c.karma) || 0,
       // ALLES aus dem Auftrag durchreichen, dann das Nötige geradeziehen.
       //
@@ -1004,10 +1023,10 @@ export class MobileShell {
       roh: {
         ...c,
         verify: c.verify || 'items',
-        pruefgruppe: c.pruefgruppe || '',
-        votesNeeded: Number(c.schwarmZahl) || 3,
-        nachweis: Array.isArray(c.nachweis) ? c.nachweis : [],
-        anbietenNachH: Number(c.anbietenNachH) || 0,
+        reviewGroup: c.reviewGroup || '',
+        votesNeeded: Number(c.crowdCount) || 3,
+        proof: Array.isArray(c.proof) ? c.proof : [],
+        listAfterHours: Number(c.listAfterHours) || 0,
       },
     }
   }
@@ -1317,6 +1336,13 @@ export class MobileShell {
           <pre data-role="debug-log" style="max-height:240px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:11px ui-monospace,Menlo,Consolas,monospace;background:rgba(0,0,0,0.25);padding:8px;border-radius:6px;margin:0">${escapeHtml(this._debugLogText())}</pre>
         </details>
       </section>
+
+      <section class="settings-section">
+        <h3>${t('Hilfe')}</h3>
+        <a class="settings-btn secondary" href="/handbuch/" target="_blank" rel="noopener"
+           style="display:block;text-align:center;text-decoration:none">${t('Handbuch öffnen')}</a>
+        <div class="meta" style="margin-top:6px">${t('Anleitung für Benutzung, Betrieb und Entwicklung — liegt auf diesem Server.')}</div>
+      </section>
     `
 
     this._wireSettingsEvents(root)
@@ -1561,7 +1587,9 @@ export class MobileShell {
         await this.ajna.login(email, pwd)
         // _renderSettings wird ueber onAuthChanged neu gerendert.
       } catch (err) {
-        if (status) status.textContent = err?.message || t('Anmeldung fehlgeschlagen')
+        // Der Server schickt bei einer Sperre `auth_locked` — dann steht hier
+        // ein Satz statt „Failed to authenticate".
+        if (status) status.textContent = serverFehler(err, 'Anmeldung fehlgeschlagen')
       }
     })
 

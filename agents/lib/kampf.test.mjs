@@ -31,9 +31,11 @@ const noerdlich = (m) => ({ lat: ORT.lat + m / 111320, lon: ORT.lon })
 // ── Trefferpunkte ────────────────────────────────────────────────────────
 check('ohne Angabe gilt die Vorgabe des Archetyps',
   hpVon(gegner()).max === HP_VORGABE.enemy)
-check('und volle Punkte zu Beginn', hpVon(gegner()).ist === HP_VORGABE.enemy)
-check('eigene Angabe geht vor', hpVon(gegner({ hp: { ist: 5, max: 50 } })).ist === 5)
-check('negatives wird abgefangen', hpVon(gegner({ hp: { ist: -9, max: 50 } })).ist === 0)
+check('und volle Punkte zu Beginn', hpVon(gegner()).current === HP_VORGABE.enemy)
+check('eigene Angabe geht vor', hpVon(gegner({ hp: { current: 5, max: 50 } })).current === 5)
+check('negatives wird abgefangen', hpVon(gegner({ hp: { current: -9, max: 50 } })).current === 0)
+// Bestandsobjekte tragen noch `ist` (docs/key-rename.md).
+check('die alte Schreibweise wird weiter gelesen', hpVon(gegner({ hp: { ist: 7, max: 50 } })).current === 7)
 check('lebt, solange Punkte da sind', lebt(gegner()) === true)
 check('bei 0 nicht mehr', lebt(gegner({ hp: { ist: 0, max: 30 } })) === false)
 check('Schaden hat eine Vorgabe', schadenFuer(gegner()) === SCHADEN_VORGABE)
@@ -92,7 +94,7 @@ check('am Objekt überschreibbar', schadenFuer(gegner({ schaden: 7 })) === 7)
     if (r.tot) break
   }
   check('nach mehreren Schlägen tot', letzte?.tot === true, schlaege + ' Schläge')
-  check('Trefferpunkte enden bei 0', letzte?.hp.ist === 0)
+  check('Trefferpunkte enden bei 0', letzte?.hp.current === 0)
   check('und es fällt Beute', Array.isArray(letzte?.beute))
 
   // Eine Leiche lässt sich nicht weiterprügeln.
@@ -142,7 +144,7 @@ check('am Objekt überschreibbar', schadenFuer(gegner({ schaden: 7 })) === 7)
   check('Beute ist ein Gegenstand', o.type === 'item')
   check('sie ist einsammelbar', o.state.portable === true)
   check('sie gehört niemandem', o.owner === undefined)
-  check('sie ist als Beute erkennbar', o.state.beute === true)
+  check('sie ist als Beute erkennbar', o.state.loot === true)
   check('mit Aussehen', !!o.appearance.emoji)
   check('und mit Quelle für den Filter', o.state.source === 'world-director')
   check('unbekannte Gattung bekommt trotzdem ein Aussehen',

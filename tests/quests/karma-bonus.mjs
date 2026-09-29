@@ -100,7 +100,7 @@ export async function run(t) {
   const vorherP2 = await karma(P)
   call = await auftrag('Schwarm', 'crowd')
   let st = (await t.read(A.token, call.id)).state
-  st.call.schwarmZahl = 1
+  st.call.crowdCount = 1
   await t.patch(A.token, call.id, { state: st })
   await t.quest.accept(B.token, call.id)
   await t.quest.complete(B.token, call.id)

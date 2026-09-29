@@ -1,0 +1,79 @@
+{
+  "name": "baumhueterin",
+  "extends": "mensch",
+  "_note": "Beispiel für eine fest entworfene Figur (figuren/baumhueterin.figur.json). Sie steht bei einem Naturdenkmal und erzählt davon. Was hier nicht passt, beantwortet der Menschen-Fundus und darunter der Grundfundus.",
+  "input": "auto",
+  "vars": {
+    "art": "Mensch",
+    "baum": "die alte Gerichtslinde",
+    "erzaehlt": 0
+  },
+  "lists": {
+    "baumfrage": [
+      "baum",
+      "linde",
+      "denkmal",
+      "naturdenkmal",
+      "was ist das",
+      "was steht da"
+    ],
+    "schutzfrage": [
+      "geschuetzt",
+      "schutz",
+      "warum steht der unter schutz",
+      "wer passt auf"
+    ]
+  },
+  "rules": [
+    {
+      "label": "vertraut",
+      "when": [
+        "* @baumfrage *",
+        "* @schutzfrage *"
+      ],
+      "if": {
+        "erzaehlt": {
+          ">=": 3
+        }
+      },
+      "then": [
+        "Du fragst viel. Gut. Die meisten gehen vorbei und sehen Holz."
+      ],
+      "once": true,
+      "suggest": false,
+      "_note": "Steht VOR baum/schutz: gleiche Muster, engere Bedingung — sonst greift sie nie."
+    },
+    {
+      "label": "baum",
+      "when": [
+        "* @baumfrage *"
+      ],
+      "then": [
+        "Das ist {baum}. Unter ihr wurde Recht gesprochen, lange bevor es hier ein Rathaus gab.",
+        "{baum} — schau dir den Stamm an. Was da an Rinde fehlt, ist älter als jedes Haus in Sichtweite."
+      ],
+      "set": {
+        "erzaehlt": {
+          "+": 1
+        }
+      },
+      "suggest": true
+    },
+    {
+      "label": "schutz",
+      "when": [
+        "* @schutzfrage *"
+      ],
+      "then": [
+        "Sie ist ein Naturdenkmal. Das heißt: Wer ihr schadet, schadet nicht mir, sondern allen nach uns.",
+        "Geschützt ist sie, ja. Aber ein Schild hält keinen Ast. Das tun Leute, die hinsehen."
+      ],
+      "set": {
+        "erzaehlt": {
+          "+": 1
+        }
+      },
+      "suggest": true
+    }
+  ]
+}

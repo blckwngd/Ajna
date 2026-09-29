@@ -1,31 +1,73 @@
 # Welt-Kontext — orts- und regionsbezogene Tatsachen
 
-**Noch nicht gebaut.** Diese Datei hält den Entwurf fest, samt der zwei Stellen,
-an denen er schiefgehen kann.
+**Gebaut am 23.09.2026** (Wetter, Sonne, Mond, Tageszeit). Diese Datei hält den
+Entwurf fest, samt der zwei Stellen, an denen er schiefgehen kann — und unten,
+was davon steht und was noch offen ist.
 
 ---
 
-## ARBEITSPAKET (vorgemerkt, entschieden)
+## Was steht
 
-Der Weg steht fest; die Begründungen stehen unten. Reihenfolge:
+| | |
+|---|---|
+| `agents/lib/weltkontext.mjs` | Der Vorrat: Zelle als Schlüssel, Gültigkeit je Eintrag, `Quellcache` auf Platte darunter |
+| `agents/lib/wetter.mjs` | Anbieter für Open-Meteo (kein Schlüssel nötig) samt Übersetzung der WMO-Codes in deutsche Wendungen |
+| `agents/lib/himmel.mjs` | Mondphase und Tageszeit — reine Arithmetik, ohne Netz |
+| `world-director.mjs` | Auffrischen auf dem Puls des Reconcile-Laufs, Einsetzen in `dialogVarsFor` |
+| `dialogs/basis.parley.json` | Regeln, die es benutzen: `wetter_gewitter`, `wetter_regen`, `wetter_echt`, `zeit_echt`, `mond_*` |
 
-1. **`agents/lib/weltkontext.mjs`** — Vorausholen je Zelle, `Quellcache`
-   darunter (er teilt seine Dateien über den Quellnamen, also auch zwischen
-   Agent-Prozessen). Anbieter als lokale Funktionstabelle im Agenten.
-2. **Takt je Datenart** über `taktgeber()`: Wetter 15 min, UV/Luft 30–60 min,
-   Stadt/Land einmal je Zelle, Mond/Sonne stündlich oder gerechnet.
-3. **Sofort holen bei neuer Zelle** — sonst steht der Neuankömmling bis zu
-   15 Minuten vor einer ahnungslosen Figur (Interessensgebiete leben 3 Minuten,
-   der Takt schlägt alle 15).
-4. **Menge begrenzen:** Schnitt aus aktiven Interessensgebieten und Zellen, in
-   denen dieser Agent eigene Figuren hat.
-5. **Werte in `dialogVarsFor()`** legen, namensraumweise (`wetter.*`, `ort.*`).
-6. **Abfahrten als 30-Minuten-Vorrat**, Plan und Verspätung getrennt.
-7. **„Grübeln"** für das, was doch erst geholt werden muss.
+**Abschaltbar** über `WD_KONTEXT=off`; Gültigkeitsdauer über `WD_KONTEXT_TTL_S`
+(Vorgabe 900 s).
 
-**Was ausdrücklich NICHT dazugehört:** eine Änderung an Parley. Punktpfade in
-Text und Bedingungen funktionieren bereits. Und die `world_context`-Collection —
-die wird erst fällig, wenn ein **Client** die Daten anzeigen soll.
+Was eine Figur damit sagen kann:
+
+```
+„wie ist das wetter"  → Draußen ist wechselnd bewölkt, 21 Grad.
+bei Regen             → Bei dem Wetter fragst du noch? Es ist leichter Regen.
+bei Gewitter          → Geh unter ein Dach. Es ist Gewitter — nichts, wobei man draußen steht.
+„wie spät ist es"     → Nachmittag. Die Sonne geht um 19:26 unter, danach richte ich mich.
+„wie steht der mond"  → Sieh hoch: zunehmender Halbmond, 52 Prozent beleuchtet.
+```
+
+**Ohne Kontext bleibt der alte, allgemeine Spruch stehen.** Die neuen Regeln
+tragen alle eine Bedingung auf das Vorhandensein des Wertes — eine Figur, die
+das Wetter nicht kennt, soll keines behaupten.
+
+### Zwei Abweichungen vom Entwurf, beide mit Grund
+
+**Kein eigener `taktgeber()`.** Aufgefrischt wird auf dem Puls des
+Reconcile-Laufs (alle 45 s), und ob wirklich geholt wird, entscheidet die
+Gültigkeitsdauer des Anbieters. Ein zweiter Zeitgeber wäre ein zweiter Ort, an
+dem dieselbe Zahl steht. Nebenbei löst das den „Neuankömmling" aus Schritt 3
+von selbst: Der Reconcile-Lauf sieht ein neues Zentrum sofort.
+
+**Tageszeit und Mond liegen NICHT im Vorrat.** Sie ändern sich schneller als der
+Takt — aus einem Viertelstunden-Vorrat bedient, sagt eine Figur um 19:59
+„Nachmittag". Der Anbieter liefert deshalb nur die Sonnenzeiten (die gelten den
+ganzen Tag); Tageszeit und Mondphase rechnet `abgeleitet()` im Moment des
+Sprechens. Kostet nichts und ist immer richtig.
+
+## Was noch offen ist
+
+* **Stadt / Bundesland / Land** (`ort.*`) — Rückwärts-Geokodierung. Genau der
+  Fall, für den sich der geteilte Vorrat am meisten lohnt (Nominatim erlaubt
+  eine Anfrage je Sekunde), aber er braucht eine eigene Quelle mit eigenem
+  Bereichsmodell: amtliche Grenzen, kein Raster.
+* **Abfahrten** als 30-Minuten-Vorrat (Schritt 6) — eigene Datenquelle.
+* **Luftqualität** — Open-Meteo hat einen eigenen Endpunkt dafür; ein zweiter
+  Anbieter, mehr nicht.
+* **Die `world_context`-Collection.** Erst fällig, wenn ein **Client** die Werte
+  anzeigen soll. Solange nur Agents lesen, genügt Arbeitsspeicher plus
+  `Quellcache` — und der teilt seine Dateien bereits zwischen Agent-Prozessen.
+
+**Was ausdrücklich NICHT dazugehörte:** eine Änderung an Parley. Punktpfade in
+Text und Bedingungen funktionierten bereits — der Einbau hat das bestätigt.
+
+**Zustand, nicht Ereignis.** Hier geht es um Tatsachen, die eine Weile gelten —
+Wetter, UV, Luft, Ort. Ein Blitzeinschlag ist das Gegenteil: ein Punkt mit
+Zeitstempel, der etwas auslöst. Er gehört NICHT in eine 10-km-Zelle mit
+15-Minuten-Takt, sonst ist die Ortsgenauigkeit weg. Siehe `arbeitspakete.md`,
+Paket 6 — derselbe Agent darf beides bedienen, aber über zwei Ausgänge.
 
 ## Der Gedanke
 

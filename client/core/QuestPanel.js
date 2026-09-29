@@ -558,7 +558,7 @@ export class QuestPanel {
         </label>
         ${q.melden?.noetig && !q.melden.ok
           ? `<div class="qp-hinweis qp-warn">${esc(q.melden.text)}</div>` : ''}
-        ${(q.roh?.nachweis || []).includes('foto') ? `
+        ${(q.roh?.proof || []).includes('photo') ? `
         <label class="qp-feld">${esc(t('Bilder (bis zu drei)'))}
           <input type="file" data-role="bilder" accept="image/*" capture="environment" multiple>
         </label>
@@ -667,7 +667,7 @@ export class QuestPanel {
     // Verlangt der Auftrag einen Nachweis, wird er vorher erhoben — sonst
     // schickte der Knopf eine Meldung los, die der Server zu Recht ablehnt.
     if (key === 'submit' && !extra
-        && ((q.anforderungen || []).length || (q.roh?.nachweis || []).length)) {
+        && ((q.anforderungen || []).length || (q.roh?.proof || []).length)) {
       this._meldeFormular(q)
       return
     }

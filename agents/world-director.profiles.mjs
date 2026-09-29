@@ -23,7 +23,42 @@
 //             z. B. { idle: 'Idle_A', fly: 'FlapFlight' } — ersetzt die
 //             Namens-Heuristik des Clients für dieses Modell.
 
+// ── Quaternius-Pakete (CC0, quaternius.com) ──────────────────────
+//
+// Drei Sammlungen mit gleichem Rig und gleichen Clip-Namen — gemessen am
+// 21.09.2026: `Walk`, `Run`, `Idle`, `Death` überall; `Wave` und `Interact` bei
+// den Alltagsleuten, `Spell`/`Staff_Attack`/`PickUp` bei den Helden.
+//
+// EINE ZEILE JE MODELL WÄRE 27-MAL DIESELBE. Die Physis unterscheidet sich
+// nicht zwischen einem Bauern und einer Büroangestellten; was sie unterscheidet,
+// ist das Aussehen, und das steckt im Modell. Deshalb zwei Profile und zwei
+// Namenslisten statt einer Tabelle, die niemand pflegt.
+//
+// SCHLÜSSEL IST DER DATEINAME OHNE PFAD (siehe `modelOf`). „Adventurer.gltf"
+// gibt es bei Männern UND Frauen — beide teilen sich damit einen Eintrag, was
+// hier richtig ist: gleiches Rig, gleiche Werte.
+const QUAT_LEUTE = [
+  // quaternius_men
+  'Adventurer', 'Beach', 'Casual_2', 'Casual_Hoodie', 'Farmer', 'King',
+  'Punk', 'Spacesuit', 'Suit', 'Swat', 'Worker',
+  // quaternius_women (Adventurer/Punk/Suit/Worker doppelt — Set entfernt sie)
+  'Casual', 'Formal', 'Medieval', 'SciFi', 'Soldier', 'Witch',
+]
+const QUAT_HELDEN = ['Cleric', 'Monk', 'Ranger', 'Rogue', 'Warrior', 'Wizard']
+
+const LEUTE_PHYSIS  = { speed: 1.4, animSpeed: 1.0, idle: true }
+// `kampf` beschreibt nur, dass das Modell Angriffs-Clips mitbringt — gelesen
+// wird das Feld derzeit nirgends.
+const HELDEN_PHYSIS = { speed: 1.5, animSpeed: 1.0, idle: true, kampf: true }
+
+const quaterniusProfile = () => Object.fromEntries([
+  ...new Set(QUAT_LEUTE).values().map(n => [`${n}.gltf`, { ...LEUTE_PHYSIS }]),
+  ...QUAT_HELDEN.map(n => [`${n}.gltf`, { ...HELDEN_PHYSIS }]),
+])
+
 export const MODEL_PROFILES = {
+  ...quaterniusProfile(),
+
   // ── Menschen/Roboter (Straße) ────────────────────────────────────────
   'CesiumMan.glb':       { speed: 1.4, animSpeed: 1.0 },
   // Kein `yaw` mehr: Der Client kennt diese Datei und korrigiert sie selbst

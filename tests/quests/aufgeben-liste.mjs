@@ -62,9 +62,9 @@ export async function run(t) {
 
   // ── Was die Liste liefert ──────────────────────────────────────────────
   st = (await t.read(A.token, call2.id)).state
-  st.call.kurz = 'Kurz für die Liste'
-  st.call.ort = 'Am Bootshaus'
-  st.call.nachweis = ['foto']
+  st.call.summary = 'Kurz für die Liste'
+  st.call.place = 'Am Bootshaus'
+  st.call.proof = ['photo']
   await t.patch(A.token, call2.id, { state: st })
 
   let liste = await t.quest.near(A.token, { lat: ORT.lat, lon: ORT.lon, radius: 500 })
@@ -73,7 +73,7 @@ export async function run(t) {
   t.check('mit Kurztext', e?.kurz === 'Kurz für die Liste', 'kurz=' + e?.kurz)
   t.check('mit Aufgabentext', e?.task === 'Schon gemeldet', 'task=' + e?.task)
   t.check('mit Ortsangabe', e?.ort === 'Am Bootshaus')
-  t.check('mit Nachweis-Liste', (e?.nachweis || []).join() === 'foto', JSON.stringify(e?.nachweis))
+  t.check('mit Nachweis-Liste', (e?.proof || []).join() === 'photo', JSON.stringify(e?.proof))
   t.check('mit Belohnungsgattung',
     (e?.rewardParts || [])[0]?.was === 'QTest Aufgabelohn 2', JSON.stringify(e?.rewardParts))
   t.check('mit Anzahl je Gattung', (e?.rewardParts || [])[0]?.anzahl === 1)
@@ -103,7 +103,7 @@ export async function run(t) {
   await t.share(A.token, call3.id)
   await t.quest.publish(A.token, call3.id, { rewardItems: [lohn3.id], verify: 'crowd' })
   st = (await t.read(A.token, call3.id)).state
-  st.call.schwarmZahl = 2
+  st.call.crowdCount = 2
   await t.patch(A.token, call3.id, { state: st })
   await t.quest.accept(B.token, call3.id)
   await t.quest.complete(B.token, call3.id)

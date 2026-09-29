@@ -86,6 +86,76 @@ export function commandAllowed(evt, allow) {
   return liste.includes(String(evt?.source || ''))
 }
 
+const TRENNER = String.fromCharCode(10)
+
+/**
+ * Den vorhandenen Bestand einlesen — oder aufgeben.
+ *
+ * WARUM DAS EINE EIGENE FUNKTION IST, UND WARUM SIE HART AUFGIBT:
+ *
+ * Fast jeder Agent beginnt damit, seine eigenen Objekte wiederzuerkennen
+ * („adoptieren"): Schiffe an `state.mmsi`, Flugzeuge an `state.icao24`, Figuren
+ * an `state.figure_id`. Was er dabei NICHT findet, legt er gleich darauf neu an.
+ * Das ist richtig — solange die Liste die Wahrheit sagt.
+ *
+ * Am 17.09.2026 fiel `getFullList()` aus. Elf Agents hatten den Aufruf jeweils
+ * in ein eigenes `try/catch` gepackt, eine Warnung geloggt und **mit leerem
+ * Bestand weitergemacht**. Aus „ich konnte nicht fragen" wurde damit „es gibt
+ * nichts", und in 25 Minuten entstanden 281 Dubletten. Zwei Agents stürzten
+ * stattdessen ab — das war die freundlichere Variante, denn man sah es sofort.
+ *
+ * Deshalb gibt es hier keine dritte Möglichkeit: Entweder der Bestand ist
+ * gelesen, oder der Agent läuft nicht. Ein Prozessabbruch kostet einen Neustart
+ * durch pm2; eine stille Dublettenflut kostet einen Abend Aufräumen — und die
+ * Objekte, die dabei verlorengehen, gehören inzwischen Spielern.
+ *
+ * Vorher wird es mehrfach versucht: Ein Server, der gerade neu startet, ist
+ * kein Grund aufzugeben, und genau dieser Fall trifft beim gemeinsamen
+ * Hochfahren von Stack und Agents zuverlässig zu.
+ *
+ * @param {object} ajna         AjnaManager
+ * @param {object} [opts]
+ * @param {string} [opts.tag]       Log-Präfix
+ * @param {number} [opts.versuche]  wie oft insgesamt (Vorgabe 3)
+ * @param {number} [opts.pauseMs]   Wartezeit nach dem ersten Fehlversuch; sie
+ *                                  wächst mit jedem weiteren (Vorgabe 3000)
+ * @param {Function} [opts.aufgeben] nur für Tests — sonst `die`
+ * @returns {Promise<Array>} die Objekte, die der Agent sehen darf
+ */
+export async function ladeBestand(ajna, opts = {}) {
+  const { tag = 'ajna', aufgeben = die } = opts
+  const r = await mitWiederholung(
+    async () => { await ajna.refreshObjects(); return ajna.getObjects() },
+    { ...opts, tag, was: 'Bestand lesen' })
+  if (r.ok) return r.wert
+  return aufgeben([
+    `[${tag}] Bestand nicht lesbar (${opts.versuche ?? 3} Versuche): ${r.grund}`,
+    '  Ohne ihn wuerde dieser Agent alles neu anlegen, was es laengst gibt.',
+    '  Deshalb Abbruch statt Weiterlaufen — pm2 startet neu, sobald der Server antwortet.',
+  ].join(TRENNER))
+}
+
+/**
+ * Etwas mehrfach versuchen, bevor es als gescheitert gilt.
+ *
+ * Gibt `{ok: true, wert}` oder `{ok: false, grund}` zurück — NIE einen
+ * Ersatzwert. Wer einen Ausfall in einen leeren Wert übersetzt, baut genau die
+ * Falle, gegen die `ladeBestand` existiert.
+ */
+async function mitWiederholung(tun, opts = {}) {
+  const { tag = 'ajna', versuche = 3, pauseMs = 3000, warn = console.warn, was = 'Aufruf' } = opts
+  for (let versuch = 1; versuch <= versuche; versuch++) {
+    try {
+      return { ok: true, wert: await tun() }
+    } catch (err) {
+      const grund = err?.response?.data?.message || err?.message || String(err)
+      if (versuch >= versuche) return { ok: false, grund }
+      warn(`[${tag}] ${was} fehlgeschlagen (Versuch ${versuch}/${versuche}): ${grund}`)
+      await new Promise(r => setTimeout(r, pauseMs * versuch))
+    }
+  }
+}
+
 /** Agent-Manifest publishen — best effort (Fehler nur warnen, nie sterben). */
 export async function publishManifest(ajna, manifest, warn = console.warn) {
   try { await ajna.upsertAgentManifest(mitDelegierten(manifest)); return true }
@@ -203,7 +273,19 @@ export async function bootAgent(name, opts = {}) {
     }
   }
 
-  if (opts.connect) await ajna.connect()
+  // Verbinden heisst: Realtime abonnieren UND den Bestand einlesen. Faellt es
+  // aus, gilt dasselbe wie bei `ladeBestand` — ein Agent ohne Bestand legt
+  // alles ein zweites Mal an. Also mehrfach versuchen und sonst sterben, statt
+  // mit einer leeren Welt weiterzumachen.
+  if (opts.connect) {
+    const r = await mitWiederholung(() => ajna.connect(), { tag, warn, was: 'Verbinden' })
+    if (!r.ok) {
+      die([
+        `[${tag}] Verbindung zu ${url} fehlgeschlagen: ${r.grund}`,
+        '  Ohne Verbindung kennt dieser Agent seinen Bestand nicht und wuerde ihn neu anlegen.',
+      ].join(TRENNER))
+    }
+  }
 
   if (opts.sigint !== false) {
     process.on('SIGINT',  () => { console.log(`\n[${tag}] beende.`); process.exit(0) })

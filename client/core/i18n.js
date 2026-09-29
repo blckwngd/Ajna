@@ -142,6 +142,58 @@ export function t(text, werte = null) {
   return werte ? einsetzen(out, werte) : out
 }
 
+/**
+ * Server-Fehlercode → deutscher Satz.
+ *
+ * WARUM DIE TABELLE HIER STEHT UND NICHT IN DER SPRACHDATEI: Der Entwurf sah
+ * Einträge namens `fehler.<code>` im Katalog vor — das funktioniert für jede
+ * Sprache ausser der eigenen. Der deutsche Satz IST hier der Schlüssel; ein
+ * Katalog mit `'fehler.auth_locked'` hätte auf Deutsch nichts nachzuschlagen
+ * und der Spieler sähe „fehler.auth_locked" oder den englischen Server-Text.
+ *
+ * Also andersherum: Der Code wird hier zu einem deutschen Satz, und der geht
+ * durch `t()` wie jeder andere. Damit gilt wieder die Regel des Hauses — und
+ * die Übersetzung steht in `client/lang/en.js` an derselben Stelle wie alles
+ * andere.
+ */
+export const FEHLER_TEXT = {
+  auth_locked: 'Zu viele Fehlversuche. Warte einen Moment und versuch es erneut.',
+  reward_reduced: 'Jemand arbeitet an diesem Auftrag — die Belohnung darf erhöht, nicht gekürzt werden.',
+  proof_not_found: 'Diese Bilder wurden nicht gefunden.',
+  proof_foreign: 'Diese Bilder gehören jemand anderem.',
+  proof_other_call: 'Diese Bilder gehören zu einem anderen Auftrag.',
+  proof_empty: 'Es war kein Bild dabei.',
+}
+
+/**
+ * Einen Server-Fehler in einen Satz übersetzen.
+ *
+ * Der Server übersetzt nicht (docs/mehrsprachigkeit.md): Er benennt die Lage
+ * mit einem `code` und schickt einen englischen Text, der im Log lesbar sein
+ * soll. Diese Funktion ist die eine Stelle, die daraus einen Satz macht.
+ *
+ * PocketBase verpackt Fehlerdaten je nach Route verschieden — mal `data.code`,
+ * mal `data.<feld>.code`. Beides wird angesehen, weil der Aufrufer sonst wissen
+ * müsste, welche Route er gerade gerufen hat, und das ist nicht seine Sache.
+ *
+ * @param {any} err           Fehler aus dem SDK
+ * @param {string} rueckfall  was ohne erkennbaren Code angezeigt wird
+ */
+export function serverFehler(err, rueckfall = 'Da ist etwas schiefgegangen.') {
+  const daten = err?.response?.data ?? err?.data ?? null
+  let code = typeof daten?.code === 'string' ? daten.code : ''
+  if (!code && daten && typeof daten === 'object') {
+    for (const wert of Object.values(daten)) {
+      if (wert && typeof wert === 'object' && typeof wert.code === 'string'
+          && wert.code !== 'validation_invalid_value') { code = wert.code; break }
+    }
+  }
+  const satz = FEHLER_TEXT[code]
+  // Unbekannter Code: lieber die Meldung des Servers als ein Achselzucken. Sie
+  // ist englisch, aber sie sagt wenigstens etwas.
+  return satz ? t(satz) : (err?.message || t(rueckfall))
+}
+
 /** Platzhalter `{name}` ersetzen. Unbekannte bleiben stehen — sichtbarer Fehler. */
 export function einsetzen(vorlage, werte) {
   return String(vorlage).replace(/\{(\w+)\}/g, (ganz, name) =>

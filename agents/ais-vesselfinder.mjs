@@ -41,7 +41,7 @@
 //
 // Start:  node agents/ais-vesselfinder.mjs   bzw.   npm run ais-vf
 
-import { bootAgent, envNum, envInt, publishManifest } from './lib/agent-base.mjs'
+import { bootAgent, envNum, envInt, publishManifest, ladeBestand } from './lib/agent-base.mjs'
 import { bboxAroundKm, centerOf, flatDistKm } from '../client/core/geoMath.js'
 import { haversine, bearingRad } from '../client/core/StreetNav.js'
 import { watchInterestAreas } from '../client/core/interestAreas.js'
@@ -86,15 +86,12 @@ await publishManifest(ajna, {
 
 // ─── Bestand adoptieren (idempotent über state.mmsi) ───────────────────────
 const ships = new Map()   // mmsi → { objectId, name, lastSeenMs, inflight }
-try {
-  await ajna.refreshObjects()
-  for (const o of ajna.getObjects()) {
-    if (o?.type !== 'ship' || o?.state?.source !== SOURCE) continue
-    const mmsi = String(o.state.mmsi || '')
-    if (mmsi) ships.set(mmsi, { objectId: o.id, name: o.name, lastSeenMs: Date.now(), inflight: false })
-  }
-  console.log(`[ais-vf] ${ships.size} vorhandene Schiffe adoptiert`)
-} catch (err) { console.warn(`[ais-vf] Bestands-Listing: ${err?.message || err}`) }
+for (const o of await ladeBestand(ajna, { tag: 'ais-vf', warn: console.warn })) {
+  if (o?.type !== 'ship' || o?.state?.source !== SOURCE) continue
+  const mmsi = String(o.state.mmsi || '')
+  if (mmsi) ships.set(mmsi, { objectId: o.id, name: o.name, lastSeenMs: Date.now(), inflight: false })
+}
+console.log(`[ais-vf] ${ships.size} vorhandene Schiffe adoptiert`)
 
 // ─── Binär-Parser ──────────────────────────────────────────────────────────
 // Die Felder cog/sog (je int16) und die Maß-/Heading-Gruppe (5× int16) sind

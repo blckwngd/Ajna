@@ -55,7 +55,7 @@
 // Start:  node agents/world-director.mjs   bzw.   npm run director
 
 import { randomUUID } from 'node:crypto'
-import { bootAgent, die, envNum, envStr, commandAllowed, mitDelegierten } from './lib/agent-base.mjs'
+import { bootAgent, die, envNum, envStr, commandAllowed, mitDelegierten, ladeBestand } from './lib/agent-base.mjs'
 import { MODEL_PROFILES, profileFor, modelOf, profileAppearance } from './world-director.profiles.mjs'
 import { AjnaGeo } from '../client/core/AjnaGeo.js'
 import { findLandingSpot } from './lib/landing-spots.mjs'
@@ -64,11 +64,15 @@ import { animalNameFor } from '../client/core/animalNames.js'
 
 import { simpleSetup } from './lib/setup-wizard.mjs'
 import { Bewegungsplan, bewegungsUpdate } from './lib/bewegung.mjs'
+import { ladeFiguren, alsObjekt, unterschied, alsAuftragsObjekt, auftragsUnterschied,
+         auftragsBody, alsBelohnungsObjekt } from './lib/figuren.mjs'
 import { yawFuerKurs } from '../client/core/yaw.js'
 import { Kampf, hpVon, beuteObjekt } from './lib/kampf.mjs'
 import { Konfig } from './lib/konfig.mjs'
 import { npcParley } from './lib/dialogs.mjs'
 import { dialogNameFor, dialogVarsFor, talkSessionId } from '../client/core/Parley.js'
+import { Weltkontext, zelleFuer } from './lib/weltkontext.mjs'
+import { wetterAnbieter } from './lib/wetter.mjs'
 
 // Login + geschichtete .env (Env > agents/.env.director > Root-.env) + System-CA.
 // Die WD_*-Konstanten unten lesen process.env erst NACH diesem await — die
@@ -82,14 +86,14 @@ const { ajna } = await bootAgent('director', {
 //  Eigene Einstellungen
 // ─────────────────────────────────────────────────────────────────────────
 //
-// Der Director gehoert nicht dem Server, an dem er haengt. Er meldet sich dort
+// Der Director gehört nicht dem Server, an dem er haengt. Er meldet sich dort
 // an wie ein Spieler, kann an mehreren Servern haengen, und an einem Server
 // koennen mehrere Directors arbeiten. Seine Regler sind deshalb SEINE Sache und
 // liegen in `agent_settings`, nach Konto getrennt — nicht in den globalen
 // `settings` des Servers.
 //
 // Ein leerer Eintrag heisst: es gilt die `.env`. Welche Regler es gibt, steht
-// gesammelt am Ende der Datei unter „Was sich im Betrieb drehen laesst".
+// gesammelt am Ende der Datei unter „Was sich im Betrieb drehen lässt".
 const konf = await Konfig.eigene(ajna, {
   praefix: 'wd',
   log: (m) => console.log(`[director] Konfig: ${m}`),
@@ -98,8 +102,8 @@ const konf = await Konfig.eigene(ajna, {
 // Ein Intervall, dessen TAKT sich zur Laufzeit aendern darf.
 //
 // `setInterval` friert seinen Abstand beim Anlegen ein. Ein Regler fuer den
-// Takt waere also ein Knopf ohne Draht: Der Wert in der Datenbank aendert sich,
-// die Schleife laeuft weiter wie zuvor. Deshalb behalten wir den Griff und
+// Takt wäre also ein Knopf ohne Draht: Der Wert in der Datenbank aendert sich,
+// die Schleife läuft weiter wie zuvor. Deshalb behalten wir den Griff und
 // legen bei einer Aenderung neu an.
 const TAKTE = []
 function taktgeber(fn, msFn) {
@@ -120,7 +124,7 @@ function taktgeber(fn, msFn) {
 // Die Vorgaben stehen EINMAL hier: Env-Name, Wert ohne alles, Erklaerung.
 //
 // Sonst stuenden sie zweimal im Code — beim Start und beim Nachladen — und
-// liefen frueher oder spaeter auseinander. Ein Regler wuerde dann beim ersten
+// liefen frueher oder spaeter auseinander. Ein Regler würde dann beim ersten
 // Drehen einen anderen Wert nachziehen als den, mit dem der Prozess lief.
 // Aus derselben Tabelle entstehen unten auch die Eintraege in der Verwaltung.
 const R = {
@@ -136,7 +140,8 @@ const R = {
   'fly_area_m':      ['WD_FLY_AREA_M',       150, 'Radius des Flug-Areals um den Spawn, in Metern'],
   'roam_speed':      ['WD_ROAM_SPEED',       1.0, 'Streifgeschwindigkeit der Tiere in m/s'],
   'roam_area_m':     ['WD_ROAM_AREA_M',       80, 'Radius des Streif-Areals, in Metern'],
-  'kampf.halt_s':    ['WD_KAMPF_HALT_S',      30, 'Wie lange ein angegriffener Gegner seine Route ruhen laesst, in Sekunden'],
+  'kampf.halt_s':    ['WD_KAMPF_HALT_S',      30, 'Wie lange ein angegriffener Gegner seine Route ruhen lässt, in Sekunden'],
+  'gespraech.halt_s':['WD_TALK_HALT_S',       45, 'Wie lange eine angesprochene Figur stehen bleibt, in Sekunden'],
   'ruf.reichweite_m':['WD_CALL_RANGE_M',    1500, 'Weiter entfernte Rufe ignoriert der Drache, in Metern'],
   'reconcile_s':     ['WD_RECONCILE_S',       45, 'Abstand des Weltabgleichs (Spawn/Despawn), in Sekunden'],
 }
@@ -155,7 +160,7 @@ const AUTONOMY      = (process.env.WD_AUTONOMY || 'on').toLowerCase() !== 'off'
 let TICK_MS         = w('takt_ms')
 let PAUSE_MS        = w('pause_s') * 1000
 // Env-Sache: Der Wegegraph wird pro Zelle mit TTL zwischengespeichert. Ein
-// geaenderter Radius wuerde erst beim naechsten Ablauf greifen — ein Regler,
+// geaenderter Radius würde erst beim nächsten Ablauf greifen — ein Regler,
 // der scheinbar nichts tut, ist schlechter als gar keiner.
 const WAY_RADIUS_M  = parseFloat(process.env.WD_WAY_RADIUS_M  || '200')
 let NPC_SPEED       = w('npc_speed')     // m/s (~5 km/h)
@@ -298,10 +303,16 @@ let ROAM_AREA_M     = w('roam_area_m')  // Radius Streif-Areal
 // die exakte Position bleibt on-device). Also kein „dreht sich zum Spieler",
 // sondern Stehenbleiben + idle für ein paar Sekunden.
 const ATTEND_MS = parseFloat(process.env.WD_ATTEND_S || '6') * 1000
-// Wer angegriffen wird, laeuft nicht weiter seine Runde. Deutlich laenger als
+// Wer angegriffen wird, läuft nicht weiter seine Runde. Deutlich laenger als
 // ATTEND_MS: Ein Kampf ist kein kurzes Innehalten, und eine Figur, die dem
 // Angreifer nach zwei Sekunden davonspaziert, wirkt kaputt.
 let KAMPF_HALT_MS = w('kampf.halt_s') * 1000
+// Ein GESPRÄCH dauert länger als ein Blick. ATTEND_MS (6 s) passt für
+// „jemand hat mich untersucht"; wer angesprochen wird, muss stehen bleiben,
+// solange der Spieler liest — und Lesen ist langsamer als Weglaufen. Die Frist
+// wird bei JEDER Nachricht des Gesprächs neu gesetzt, das Gegenüber läuft also
+// nicht mitten im Satz davon.
+let TALK_HALT_MS = w('gespraech.halt_s') * 1000
 // „Getroffen" ist eine GESTE, kein Zustand. Bliebe sie stehen, liefe der
 // Getroffene beim Betrachter seine Geh-Animation auf der Stelle weiter — der
 // Client kehrt nach der Geste nicht von selbst zu „steht" zurück.
@@ -395,6 +406,11 @@ function randomPointNear(lat, lon, radiusM) {
 //  Prozedurale Namen & Texte (P0: Pools/Templates, kein LLM)
 // ─────────────────────────────────────────────────────────────────────────
 const NAME_POOLS = {
+  // Getrennt, seit es Modelle mit erkennbarem Geschlecht gibt: Eine Figur, die
+  // „Sara" heisst und das Königs-Modell trägt, fällt sofort auf. Dieselbe Regel
+  // wie bei den Tieren — der Name folgt dem Modell, nicht umgekehrt.
+  npcFirstW: ['Mara', 'Lena', 'Ada', 'Sara', 'Ida'],
+  npcFirstM: ['Tom', 'Jonas', 'Nik', 'Ben', 'Paul'],
   npcFirst: ['Mara', 'Tom', 'Lena', 'Jonas', 'Ada', 'Nik', 'Sara', 'Ben', 'Ida', 'Paul'],
   npcLast:  ['Berger', 'Falk', 'Kraus', 'Roth', 'Stein', 'Vogt', 'Wendt', 'Sommer'],
   enemyAdj: ['Schatten', 'Dorn', 'Nebel', 'Rost', 'Grimm', 'Blut', 'Frost', 'Sturm', 'Dunkel'],
@@ -430,7 +446,14 @@ const HINT_LINES = [
 ]
 
 const NAME_GEN = {
-  npc:    () => `${pick(NAME_POOLS.npcFirst)} ${pick(NAME_POOLS.npcLast)}`,
+  // `modell` ist optional: Ohne Hinweis (oder bei geschlechtslosen Modellen wie
+  // dem Roboter) bleibt es beim gemischten Vornamen-Vorrat.
+  npc:    (modell) => {
+    const vorrat = /(^|\/)quaternius_women\//.test(modell || '') ? NAME_POOLS.npcFirstW
+                 : /(^|\/)quaternius_men\//.test(modell || '')   ? NAME_POOLS.npcFirstM
+                 : NAME_POOLS.npcFirst
+    return `${pick(vorrat)} ${pick(NAME_POOLS.npcLast)}`
+  },
   enemy:  () => `${pick(NAME_POOLS.enemyAdj)}${pick(NAME_POOLS.enemyN)}`,
   animal: () => pick(NAME_POOLS.animal),
   dragon: () => `${pick(NAME_POOLS.dragonA)}${pick(NAME_POOLS.dragonB)}`,
@@ -504,9 +527,27 @@ const TRAGBAR = new Set(['item', 'diamond'])
 // (localhost / LAN-Alias / Public-Domain) ohne Agent-seitige Konfiguration.
 // Map zeigt unverändert das Typ-Emoji (kein gltf nötig); gltf greift nur in AR.
 const MODEL_BASE = '/models/'
+// Alltagsleute aus den Quaternius-Paketen (CC0). Der Unterordner gehört in
+// den Pfad; `modelOf` nimmt davon nur den Dateinamen, und genau darauf sind die
+// Profile geschluesselt.
+const QUAT_LEUTE = [
+    'quaternius_men/Adventurer.gltf', 'quaternius_men/Beach.gltf', 'quaternius_men/Casual_2.gltf', 'quaternius_men/Casual_Hoodie.gltf',
+    'quaternius_men/Farmer.gltf', 'quaternius_men/King.gltf', 'quaternius_men/Punk.gltf', 'quaternius_men/Spacesuit.gltf',
+    'quaternius_men/Suit.gltf', 'quaternius_men/Swat.gltf', 'quaternius_men/Worker.gltf',
+    'quaternius_women/Adventurer.gltf', 'quaternius_women/Casual.gltf', 'quaternius_women/Formal.gltf', 'quaternius_women/Medieval.gltf',
+    'quaternius_women/Punk.gltf', 'quaternius_women/SciFi.gltf', 'quaternius_women/Soldier.gltf', 'quaternius_women/Suit.gltf',
+    'quaternius_women/Witch.gltf', 'quaternius_women/Worker.gltf',
+]
+// Die Helden-Sammlung: Kutte, Kapuze, Ruestung. Auch als NPC — sie fallen auf,
+// und genau dafuer sind entworfene Figuren da (figuren/README.md).
+const QUAT_HELDEN = [
+    'quaternius_characters/Cleric.gltf', 'quaternius_characters/Monk.gltf', 'quaternius_characters/Ranger.gltf', 'quaternius_characters/Rogue.gltf',
+    'quaternius_characters/Warrior.gltf', 'quaternius_characters/Wizard.gltf',
+]
+
 const MODEL_POOL = {
-  npc:    ['CesiumMan.glb', 'Soldier.glb', 'RobotExpressive.glb'],
-  enemy:  ['MawGooey.glb', 'Slime.glb', 'Soldier.glb'],
+  npc:    ['CesiumMan.glb', 'Soldier.glb', 'RobotExpressive.glb', ...QUAT_LEUTE, ...QUAT_HELDEN],
+  enemy:  ['MawGooey.glb', 'Slime.glb', 'Soldier.glb', ...QUAT_HELDEN],
   animal: ['Fox.glb', 'Horse.glb', 'Flamingo.glb', 'Stork.glb', 'Parrot.glb'],
   dragon: ['Dragon.glb', 'wyvern.glb'],   // wyvern: Animationen „metarig|idol|flaping|flying|walk"
   item:   ['Sword.glb', 'TreasureChest.glb'],
@@ -521,7 +562,7 @@ const FLYING_MODELS = new Set(Object.keys(MODEL_PROFILES).filter(m => MODEL_PROF
 const IDLE_MODELS   = new Set(Object.keys(MODEL_PROFILES).filter(m => MODEL_PROFILES[m].idle))
 
 // Wird bei jedem Abgleich neu gefragt — ein geaenderter Soll-Bestand wirkt
-// deshalb beim naechsten Durchlauf, ohne dass hier etwas nachgezogen werden muss.
+// deshalb beim nächsten Durchlauf, ohne dass hier etwas nachgezogen werden muss.
 function targetCount(archetype) {
   const vorgabe = ARCHETYPES[archetype].count
   const n = konf.ganz(`count.${archetype}`, `WD_COUNT_${archetype.toUpperCase()}`, vorgabe)
@@ -555,7 +596,9 @@ function buildSpawn(archetype, center = { lat: CENTER_LAT, lon: CENTER_LON }, op
     name = a.name
     sizeScale = a.scale
   } else {
-    name = NAME_GEN[archetype]()
+    // Modell mitgeben: Der Namensgenerator des Archetyps darf sich danach
+    // richten (siehe NAME_GEN.npc).
+    name = NAME_GEN[archetype](model)
   }
 
   const state = {
@@ -601,6 +644,139 @@ function buildSpawn(archetype, center = { lat: CENTER_LAT, lon: CENTER_LON }, op
   }
   return spawn
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Fest entworfene Figuren (figuren/*.figur.json)
+//
+//  Der Gegenentwurf zur Zufallsbevölkerung: eine Handvoll Gestalten mit
+//  eigenem Ort, eigenem Dialog und eigener Aufgabe, die das Verlassen der
+//  Gegend überleben. Siehe lib/figuren.mjs.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Entworfene Figuren anlegen und nachziehen.
+ *
+ * LÄUFT BEI JEDEM START, nicht nur beim ersten: Wer eine Beschreibung ändert
+ * oder die Figur fünfzig Meter versetzt, soll das nach einem Neustart sehen.
+ * Wiedererkannt wird an `state.figure_id` — nicht am Namen, denn der darf sich
+ * ändern.
+ *
+ * WAS HIER NICHT PASSIERT: Löschen. Verschwindet eine Datei, bleibt die Figur
+ * in der Welt stehen. Das ist Absicht — an ihr können Aufträge, Karma und
+ * Gesprächsverläufe hängen, und sie still wegzuräumen, weil jemand eine Datei
+ * umbenannt hat, wäre der teuerste denkbare Tippfehler. Wer eine Figur
+ * loswerden will, löscht das Objekt — etwa mit `tools/ajna.mjs prune-objects`.
+ */
+async function pflegeFiguren() {
+  const { figuren, fehler } = ladeFiguren()
+  for (const f of fehler) console.warn(`[figuren] ${f}`)
+  if (!figuren.length) return
+
+  let angelegt = 0, angepasst = 0, unveraendert = 0
+  const bestand = new Map()
+  for (const o of ajna.getObjects()) {
+    const fid = o?.state?.figure_id ?? o?.state?.figur_id
+    if (fid) bestand.set(String(fid), o)
+  }
+
+  for (const figur of figuren) {
+    const da = bestand.get(figur.id)
+    try {
+      if (!da) {
+        const o = await ajna.createObject(alsObjekt(figur, MODEL_BASE))
+        angelegt++
+        console.log(`[figuren] + ${figur.name} (${figur.id}) → ${o.id}`)
+      } else {
+        const patch = unterschied(figur, da, MODEL_BASE)
+        if (!patch) unveraendert++
+        else {
+          await ajna.updateObject(da.id, patch)
+          angepasst++
+          console.log(`[figuren] ↻ ${figur.name} (${Object.keys(patch).join(', ')})`)
+        }
+      }
+      await pflegeAuftrag(figur)
+    } catch (err) {
+      console.warn(`[figuren] ${figur.id}: ${err?.response?.data?.message || err?.message || err}`)
+    }
+  }
+  console.log(`[figuren] ${figuren.length} entworfen — ${angelegt} neu, ${angepasst} angepasst, ${unveraendert} unverändert`)
+}
+
+/**
+ * Den Auftrag einer Figur ausschreiben — und danach in Ruhe lassen.
+ *
+ * WARUM DAS NICHT BEI JEDEM START NEU PASSIERT: `quest/publish` setzt den
+ * Lebenszyklus zurück — `status` auf „open", `claimedBy` weg. Ein Spieler, der
+ * gerade unterwegs ist, um die Aufgabe zu erfüllen, verlöre sie mit dem
+ * nächsten Agenten-Neustart. Geändert wird deshalb nur, was beschreibend ist
+ * (Text, Ort, Karma); ausgeschrieben wird einmal.
+ *
+ * BELOHNUNGEN WERDEN NIE ERZEUGT — das ist eine Serverregel, und sie ist
+ * richtig: Sonst könnte jeder Agent beliebig viel Wert in die Welt schütten.
+ * Der Director legt die Gegenstände deshalb als eigene Objekte an, nimmt sie
+ * ins eigene Inventar auf und hinterlegt sie dort treuhänderisch. Er gibt also
+ * etwas her, das ihm gehört.
+ *
+ * WIEDERBELEBUNG: Ist der Vorrat aufgebraucht (Auftrag „done"), wird nur ein
+ * `wiederholbar`-Auftrag neu bestückt. Ein einmaliger bleibt erledigt — sonst
+ * wäre „einmalig" nur eine Frage des nächsten Neustarts.
+ */
+async function pflegeAuftrag(figur) {
+  if (!figur.quest) return
+  const vorhanden = ajna.getObjects()
+    .find(o => (o?.state?.figure_quest ?? o?.state?.figur_auftrag) === figur.id)
+
+  let callId = vorhanden?.id
+  if (!callId) {
+    const neu = await ajna.createObject(alsAuftragsObjekt(figur))
+    callId = neu.id
+    console.log(`[figuren] + Auftrag „${figur.quest.summary}" (${figur.id}) → ${callId}`)
+  } else {
+    const patch = auftragsUnterschied(figur, vorhanden)
+    if (patch) {
+      await ajna.updateObject(callId, patch)
+      console.log(`[figuren] ↻ Auftrag „${figur.quest.summary}" (${Object.keys(patch).join(', ')})`)
+    }
+  }
+
+  const c = vorhanden?.state?.call || {}
+  if (Array.isArray(c.rewardItems) && c.rewardItems.length) return   // läuft bereits
+  if (c.status === 'done' && !figur.quest.repeatable) {
+    return   // einmalig und erledigt — das soll so bleiben
+  }
+
+  const ids = await belohnungBereitstellen(figur)
+  await ajna.publishQuest(callId, auftragsBody(figur, ids))
+  const b = figur.quest.reward
+  console.log(`[figuren] ⇧ ausgeschrieben: „${figur.quest.summary}" — ${ids.length}× ${b.name} hinterlegt`)
+}
+
+/**
+ * Die Belohnungs-Gegenstände bereitstellen (anlegen + ins eigene Inventar).
+ *
+ * Wiederverwendet wird, was von einem früheren Lauf noch im eigenen Inventar
+ * liegt: Ohne diese Prüfung haette jeder Neustart nach einem abgeschlossenen
+ * Auftrag einen weiteren Stapel erzeugt. Stücke, die längst ein Spieler
+ * trägt, zählen NICHT mit — sie gehören ihm, und der Server würde ein
+ * erneutes Hinterlegen zu Recht ablehnen.
+ */
+async function belohnungBereitstellen(figur) {
+  const meine = ajna.currentUser()?.id
+  const marke = `${figur.id}#`
+  const ids = ajna.getObjects()
+    .filter(o => String(o?.state?.figure_reward ?? o?.state?.figur_belohnung ?? '').startsWith(marke)
+              && o.carried_by === meine)
+    .map(o => o.id)
+
+  while (ids.length < figur.quest.reward.count) {
+    const item = await ajna.createObject(alsBelohnungsObjekt(figur, ids.length + 1))
+    await ajna.pickup(item.id)      // erst im Inventar lässt er sich hinterlegen
+    ids.push(item.id)
+  }
+  return ids.slice(0, figur.quest.reward.count)
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────
 //  Boot (Login lief bereits in bootAgent)
@@ -720,54 +896,61 @@ const existingByArch = {}
 for (const a of Object.keys(ARCHETYPES)) existingByArch[a] = 0
 const managed = []   // alle vom Director verwalteten Objekte (adoptiert + neu)
 let despawned = 0
-try {
-  await ajna.refreshObjects()
-  for (const obj of ajna.getObjects()) {
-    if (obj?.state?.director !== true) continue
-    const a = obj.state.archetype
-    if (!(a in existingByArch)) continue
-    // Bestand ans Soll angleichen: fehlendes state.source (Agent-Filter) und
-    // die profilverwalteten appearance-Felder (yaw/animSpeed/anim) — Profil-
-    // Korrekturen wirken so beim nächsten Boot auch auf bestehende Figuren.
-    // Merge, kein Ersatz: fremde appearance-Schlüssel (z. B. glow) bleiben.
-    {
-      const patch = {}
-      if (obj.state.source !== 'world-director') {
-        patch.state = { ...obj.state, source: 'world-director' }
-      }
-      const model = modelOf(obj)
-      if (model) {
-        const cur = (obj.appearance && typeof obj.appearance === 'object') ? obj.appearance : {}
-        const merged = { ...cur, ...profileAppearance(model, obj.state?.spawn_id || obj.id) }
-        if (JSON.stringify(merged) !== JSON.stringify(cur)) patch.appearance = merged
-      }
-      if (Object.keys(patch).length) {
-        try {
-          await ajna.updateObject(obj.id, patch)
-          if (patch.state) obj.state.source = 'world-director'
-          if (patch.appearance) obj.appearance = patch.appearance
-        } catch (err) { console.warn(`[director] Profil-Heilung ${obj.id}: ${err?.message || err}`) }
-      }
+for (const obj of await ladeBestand(ajna, { tag: 'director' })) {
+  if (obj?.state?.director !== true) continue
+  const a = obj.state.archetype
+  if (!(a in existingByArch)) continue
+  // Bestand ans Soll angleichen: fehlendes state.source (Agent-Filter) und
+  // die profilverwalteten appearance-Felder (yaw/animSpeed/anim) — Profil-
+  // Korrekturen wirken so beim nächsten Boot auch auf bestehende Figuren.
+  // Merge, kein Ersatz: fremde appearance-Schlüssel (z. B. glow) bleiben.
+  {
+    const patch = {}
+    if (obj.state.source !== 'world-director') {
+      patch.state = { ...obj.state, source: 'world-director' }
     }
-    // Auf Zuruf erzeugte Objekte stehen bewusst dort, wo jemand hingeklickt hat:
-    // NICHT wegen Entfernung despawnen und NICHT zur Soll-Population zählen —
-    // sonst spawnt der Director seine eigene Bevölkerung nicht mehr, sobald ein
-    // Spieler ein paar Monster gesetzt hat.
-    if (obj.state.on_demand === true) { managed.push(obj); continue }
-    const dist = haversine(CENTER_LAT, CENTER_LON, obj.lat, obj.lon)
-    // Im Interest-Area-Modus NICHT am fixen Zentrum despawnen — das macht
-    // reconcile() später relativ zu den aktiven Zentren (Spieler-Positionen).
-    if (!KEEP_OUTSIDE && !FOLLOW_AREAS && Number.isFinite(dist) && dist > DESPAWN_RADIUS_M) {
-      try { await ajna.deleteObject(obj.id); despawned++; continue }
-      catch (err) { console.warn(`[director] despawn ${obj.id} fehlgeschlagen: ${err?.message || err}`) }
+    const model = modelOf(obj)
+    if (model) {
+      const cur = (obj.appearance && typeof obj.appearance === 'object') ? obj.appearance : {}
+      const merged = { ...cur, ...profileAppearance(model, obj.state?.spawn_id || obj.id) }
+      if (JSON.stringify(merged) !== JSON.stringify(cur)) patch.appearance = merged
     }
-    existingByArch[a]++; managed.push(obj)
+    if (Object.keys(patch).length) {
+      try {
+        await ajna.updateObject(obj.id, patch)
+        if (patch.state) obj.state.source = 'world-director'
+        if (patch.appearance) obj.appearance = patch.appearance
+      } catch (err) { console.warn(`[director] Profil-Heilung ${obj.id}: ${err?.message || err}`) }
+    }
   }
-  const summary = Object.entries(existingByArch).map(([a, n]) => `${a}:${n}`).join(' ')
-  console.log(`[director] vorhanden — ${summary}${despawned ? ` · ${despawned} außerhalb despawnt` : ''}`)
-} catch (err) {
-  console.warn(`[director] initiales Objekt-Listing fehlgeschlagen: ${err?.message || err}`)
+  // Auf Zuruf erzeugte Objekte stehen bewusst dort, wo jemand hingeklickt hat:
+  // NICHT wegen Entfernung despawnen und NICHT zur Soll-Population zählen —
+  // sonst spawnt der Director seine eigene Bevölkerung nicht mehr, sobald ein
+  // Spieler ein paar Monster gesetzt hat.
+  // Auf Zuruf gesetzte Objekte: weder despawnen noch mitzählen — sonst hört
+  // der Director auf, eigene Bevölkerung zu spawnen, sobald ein Spieler ein
+  // paar Monster gesetzt hat.
+  if (obj.state.on_demand === true) { managed.push(obj); continue }
+  // Fest entworfene Figuren überleben alles: Sie stehen an einem gewählten Ort,
+  // tragen einen eigenen Dialog und sollen beim Wiederkommen noch da sein.
+  //
+  // ABER SIE ZÄHLEN MIT. Die Bevölkerungsdichte einer Gegend soll gleich
+  // bleiben; wer dort eine entworfene Gestalt hinstellt, bekommt eine
+  // zufällige weniger, nicht eine mehr. (Genau hier liegt der Unterschied zu
+  // `on_demand`: Das sind Zugaben, das hier ist Besetzung.) Dieselbe Regel
+  // wendet `reconcile()` je Zentrum an.
+  if (obj.state.persistent === true) { existingByArch[a]++; managed.push(obj); continue }
+  const dist = haversine(CENTER_LAT, CENTER_LON, obj.lat, obj.lon)
+  // Im Interest-Area-Modus NICHT am fixen Zentrum despawnen — das macht
+  // reconcile() später relativ zu den aktiven Zentren (Spieler-Positionen).
+  if (!KEEP_OUTSIDE && !FOLLOW_AREAS && Number.isFinite(dist) && dist > DESPAWN_RADIUS_M) {
+    try { await ajna.deleteObject(obj.id); despawned++; continue }
+    catch (err) { console.warn(`[director] despawn ${obj.id} fehlgeschlagen: ${err?.message || err}`) }
+  }
+  existingByArch[a]++; managed.push(obj)
 }
+const summary = Object.entries(existingByArch).map(([a, n]) => `${a}:${n}`).join(' ')
+console.log(`[director] vorhanden — ${summary}${despawned ? ` · ${despawned} außerhalb despawnt` : ''}`)
 
 // ─── Fehlende Objekte bis zum Soll-Bestand anlegen ───────────────────────
 async function spawnOne(archetype, center, opts = {}) {
@@ -1051,7 +1234,7 @@ async function advanceFor(c) {
     // Angesprochen? Stehenbleiben — der Weg bleibt erhalten und wird danach
     // fortgesetzt (kein Neuplanen, die Figur läuft einfach weiter).
     if (now < (c.attendUntil || 0)) {
-      if (now < (c.gestureUntil || 0)) return   // Geste aus einem Gespraech laeuft
+      if (now < (c.gestureUntil || 0)) return   // Geste aus einem Gespraech läuft
       setzeAnim(c, 'idle')
       await schreibeAnimFalls(c)
       return
@@ -1414,6 +1597,12 @@ function tick() {
 // Umherstreifen, Straßen-Archetyp (npc/enemy) → Wegenetz, sonst keiner (statisch:
 // item/hint/diamond). `mode` nur fürs Logging.
 function controllerFor(obj) {
+  // „Steht" heisst steht. Eine Marktfrau, die man an ihrem Stand trifft, darf
+  // nicht nach zehn Minuten zwei Strassen weiter sein — sonst ist der Ort, an
+  // dem man sie kennengelernt hat, keine Verabredung mehr wert.
+  // `steht` ist die alte Schreibweise (docs/key-rename.md).
+  const movement = obj.state?.movement ?? obj.state?.bewegung
+  if (movement === 'still' || movement === 'steht') return null
   if (isFlyer(obj)) return makeRoamer(obj, true)
   if (obj.state?.archetype === 'animal') return makeRoamer(obj, false)   // Fox/Horse: freies Streifen
   if (STREET_ARCHETYPES.has(obj.state?.archetype)) return makeController(obj)
@@ -1527,7 +1716,7 @@ async function verarbeiteAngriff(c, evt) {
     // Getroffen: Route abbrechen, den Angreifer ansehen, stehenbleiben. Wer
     // angegriffen wird, setzt seine Runde nicht einfach fort.
     await halteAn(c, { bis: Date.now() + KAMPF_HALT_MS, blickAuf: at, zusatz: { hp: r.hp }, anim: 'hit' })
-    console.log(`[director] ⚔ "${c.id}" getroffen — ${r.hp.ist}/${r.hp.max}, bleibt stehen`)
+    console.log(`[director] ⚔ "${c.id}" getroffen — ${r.hp.current}/${r.hp.max}, bleibt stehen`)
     setTimeout(() => {
       if (c.gefallen || c.tot) return
       setzeAnim(c, 'idle')
@@ -1596,8 +1785,9 @@ function attachInteractListener(c) {
 
     // Nicht nur intern innehalten: Ohne Halt-Plan liefe die Figur beim
     // Betrachter geradeaus weiter, während sie hier in Wahrheit steht.
-    halteAn(c, { bis: Date.now() + ATTEND_MS, blickAuf: evt?.payload?.at, wegBehalten: true })
-    console.log(`[director] 👂 "${c.id}" hält inne (${action})`)
+    const halt = action === 'talk' ? TALK_HALT_MS : ATTEND_MS
+    halteAn(c, { bis: Date.now() + halt, blickAuf: evt?.payload?.at, wegBehalten: true })
+    console.log(`[director] 👂 "${c.id}" hält inne (${action}, ${(halt / 1000) | 0} s)`)
   }).then(unsub => { c.unsubInteract = unsub })
     .catch(err => console.warn(`[director] interact-Abo (${c.id}): ${err?.message || err}`))
 }
@@ -1685,6 +1875,64 @@ async function fetchCenters() {
   return [{ lat: CENTER_LAT, lon: CENTER_LON }]
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+//  Welt-Kontext: Wetter, Tageszeit, Mond — als Sätze, nicht als Zahlen
+//
+//  Damit eine Figur auf mehr reagieren kann als auf ihre eigene Koordinate.
+//  Der Entwurf steht in docs/welt-kontext.md; drei Punkte daraus bestimmen,
+//  wie es hier eingehängt ist:
+//
+//  AUSLÖSER SIND DIE INTERESSENSGEBIETE, SCHLÜSSEL IST DIE ZELLE. Geholt wird
+//  nur, wo gerade jemand ist — abgelegt unter einer stabilen Zelle, weil ein
+//  Interessensgebiet nach drei Minuten verschwindet und sich verschiebt.
+//
+//  DIE MINIMALE MENGE: der Schnitt aus aktiven Gebieten und Zellen, in denen
+//  dieser Director eigene Figuren hat. Wo niemand steht, hört niemand zu; wo
+//  keine Figur steht, muss niemand etwas wissen.
+//
+//  DER NEUANKÖMMLING: Gebiete leben drei Minuten, der Takt schlägt alle
+//  fünfzehn. Wer eine leere Gegend betritt, träfe sonst bis zu fünfzehn
+//  Minuten lang auf ahnungslose Figuren. Deshalb frischt AUCH der
+//  Reconcile-Lauf auf, sobald ein Zentrum neu auftaucht — dieselbe Funktion,
+//  nur ein zweiter Anlass.
+// ─────────────────────────────────────────────────────────────────────────
+const KONTEXT_AN = envStr('WD_KONTEXT', 'on').toLowerCase() !== 'off'
+const KONTEXT_TTL_MS = envNum('WD_KONTEXT_TTL_S', 900) * 1000
+
+const weltkontext = KONTEXT_AN
+  ? new Weltkontext({ anbieter: [wetterAnbieter({ ttlMs: KONTEXT_TTL_MS })] })
+  : null
+
+/**
+ * Die Zellen, für die es sich lohnt: aktive Zentren, in deren Nähe dieser
+ * Director auch wirklich eine Figur verwaltet.
+ */
+function kontextZellen(centers) {
+  const zellen = new Set()
+  for (const c of centers) {
+    const hatFigur = managed.some(o =>
+      Number.isFinite(o?.lat) && haversine(c.lat, c.lon, o.lat, o.lon) <= DESPAWN_RADIUS_M)
+    if (hatFigur) zellen.add(zelleFuer(c.lat, c.lon))
+  }
+  return [...zellen]
+}
+
+/**
+ * KEIN EIGENER TAKT: Aufgefrischt wird auf dem Puls des Reconcile-Laufs
+ * (alle `WD_RECONCILE_S`, Vorgabe 45 s), und ob wirklich geholt wird,
+ * entscheidet die Gültigkeitsdauer des Anbieters — 15 Minuten fürs Wetter.
+ * Ein zweiter Zeitgeber daneben wäre ein zweiter Ort, an dem eine Zahl steht,
+ * und die beiden liefen früher oder später auseinander.
+ */
+async function kontextFrischen(centers) {
+  if (!weltkontext) return
+  const zellen = kontextZellen(centers)
+  if (!zellen.length) return
+  const geholt = await weltkontext.frischen(zellen)
+  weltkontext.aufraeumen()
+  if (geholt) console.log(`[kontext] ${geholt} Abfrage(n) für ${zellen.length} Zelle(n) · Vorrat: ${weltkontext.bestand}`)
+}
+
 let reconcileBusy = false
 let _lastCentersKey = null
 let _letzteZentren = null      // für den Sprung-Wächter (siehe unten)
@@ -1694,6 +1942,8 @@ async function reconcile() {
   try {
     const centers = await fetchCenters()
     _letzteZentren = centers
+    // Nicht awaiten: Der Reconcile-Lauf soll nicht am Wetterdienst hängen.
+    kontextFrischen(centers).catch(err => console.warn(`[kontext] ${err?.message || err}`))
     // Bereichs-Übergang protokollieren (nur bei Änderung — kein Spam).
     const centersKey = centers.map(c => `${c.lat.toFixed(4)},${c.lon.toFixed(4)}`).sort().join(' | ')
     if (centersKey !== _lastCentersKey) {
@@ -1710,7 +1960,8 @@ async function reconcile() {
         // ein Spieler hingeklickt hat — auch wenn das weit außerhalb der gerade
         // aktiven Interessensbereiche liegt. (Ohne diese Ausnahme löschte der
         // nächste Reconcile sie Sekunden nach dem Erzeugen wieder.)
-        if (obj.state?.on_demand === true) continue
+        // Persistente Figuren nie despawnen — das ist ihr ganzer Zweck.
+        if (obj.state?.persistent === true || obj.state?.on_demand === true) continue
         if (nearAny(obj.lat, obj.lon, centers, DESPAWN_RADIUS_M)) continue
         try {
           await ajna.deleteObject(obj.id)
@@ -1778,6 +2029,10 @@ if (FOLLOW_AREAS && AUTONOMY) {
   console.log(`[director] folgt Interest-Areas (Quelle "${WD_SOURCE || '*'}", alle ${(RECONCILE_MS / 1000) | 0} s`
     + `, Sprung-Wächter alle ${(AREA_WATCH_MS / 1000) | 0} s ab ${AREA_JUMP_M} m`
     + `; Fallback-Zentrum ${CENTER_LAT.toFixed(4)}, ${CENTER_LON.toFixed(4)})`)
+  // ERST die entworfenen Figuren, DANN der erste Abgleich: Sonst zählt
+  // reconcile() sie noch nicht zum Bestand und könnte an derselben Stelle eine
+  // zufällige Gestalt danebenstellen.
+  await pflegeFiguren().catch(err => console.warn(`[figuren] ${err?.message || err}`))
   reconcile()
   taktgeber(() => { reconcile() }, () => RECONCILE_MS)
   setInterval(async () => {
@@ -1935,7 +2190,11 @@ const controllerVon = (id) => controllers.find(c => c.id === id) || null
 // Eine Eingabe beantworten. `text` kommt vom Spieler; beim Gesprächsbeginn
 // setzt der Director selbst ein „hallo" ein, damit die Figur anfängt.
 async function sprich(userId, obj, text) {
-  const chat = parley.open(dialogNameFor(obj), talkSessionId(userId, obj.id), { vars: dialogVarsFor(obj) })
+  // Der Welt-Kontext kommt SYNCHRON dazu — was vorliegt, liegt vor; was fehlt,
+  // fehlt. Hier auf das Netz zu warten hiesse, einen Spieler warten zu lassen.
+  const umgebung = weltkontext ? weltkontext.varsFuer(obj.lat, obj.lon) : {}
+  const chat = parley.open(dialogNameFor(obj), talkSessionId(userId, obj.id),
+                           { vars: { ...dialogVarsFor(obj), ...umgebung } })
   const antwort = chat.say(text)
   if (!antwort.text) return
 
@@ -2000,8 +2259,10 @@ if (parley) {
         return
       }
 
+      // JEDE Nachricht schiebt die Frist neu — ein langes Gespräch hält die
+      // Figur da, ohne dass jemand die Frist hochdrehen muss.
       const c = controllerVon(obj.id)
-      if (c) c.attendUntil = Math.max(c.attendUntil || 0, jetzt + ATTEND_MS)
+      if (c) c.attendUntil = Math.max(c.attendUntil || 0, jetzt + TALK_HALT_MS)
 
       await sprich(von, obj, text)
     } catch (err) {
@@ -2023,7 +2284,7 @@ if (parley) {
 // ─── Heartbeat hält den Prozess am Leben (+ späterer Online-Status-Anker) ─
 taktgeber(() => { publishManifest() }, () => HEARTBEAT_MS)
 // ─────────────────────────────────────────────────────────────────────────
-//  Was sich im Betrieb drehen laesst
+//  Was sich im Betrieb drehen lässt
 // ─────────────────────────────────────────────────────────────────────────
 //
 // NUR WAS HIER STEHT, WIRKT OHNE NEUSTART. Das ist die eigentliche Regel
@@ -2034,10 +2295,10 @@ taktgeber(() => { publishManifest() }, () => HEARTBEAT_MS)
 // Was bewusst NICHT hier steht, und warum:
 //
 //   WD_AUTONOMY        entscheidet beim Start, ob die Bewegungsschleife
-//                      ueberhaupt anlaeuft. Live umzuschalten hiesse, Figuren
+//                      ueberhaupt anläuft. Live umzuschalten hiesse, Figuren
 //                      mitten im Schritt die Steuerung wegzunehmen.
 //   WD_ATTACK_RANGE_M  steht als `max_distance` IM Objekt-Datensatz. Ein neuer
-//                      Wert wuerde die vorhandenen Gegner nicht erreichen —
+//                      Wert würde die vorhandenen Gegner nicht erreichen —
 //                      halb wirksam ist schlechter als gar nicht.
 //   WD_WAY_RADIUS_M    der Wegegraph liegt mit TTL im Zwischenspeicher; eine
 //                      Aenderung griffe erst irgendwann von selbst.
@@ -2045,7 +2306,7 @@ taktgeber(() => { publishManifest() }, () => HEARTBEAT_MS)
 //                      Start, keine Stellschraube.
 //
 // Die Eintraege werden beim Start LEER angelegt. Leer heisst: es gilt die
-// `.env`. Wer in der Verwaltung etwas eintraegt, uebersteuert sie — sofort.
+// `.env`. Wer in der Verwaltung etwas einträgt, uebersteuert sie — sofort.
 await konf.saee([
   // Soll-Bestand je Archetyp. Die Vorgaben stehen in ARCHETYPES.
   ...Object.keys(ARCHETYPES).map(a => ({
@@ -2062,12 +2323,12 @@ await konf.saee([
  *
  * Gerufen bei JEDEM geaenderten Schluessel, nicht nur beim passenden — alles
  * neu zu lesen ist billiger als Buch darueber zu fuehren, was zu welchem
- * Schluessel gehoert, und kann nicht aus dem Tritt geraten.
+ * Schluessel gehört, und kann nicht aus dem Tritt geraten.
  *
  * WAS SOFORT WIRKT und was erst gleich: Zahlen, die bei jeder Benutzung frisch
  * gelesen werden (Soll-Bestand, Zentrum, Radius, Kampf-Ruhezeit, Ruf-Reichweite)
- * gelten ab dem naechsten Durchlauf. Geschwindigkeiten und Areal-Radien haengen
- * an der Figur und gelten fuer die NAECHSTE geplante Route — wer laeuft, laeuft
+ * gelten ab dem nächsten Durchlauf. Geschwindigkeiten und Areal-Radien haengen
+ * an der Figur und gelten fuer die NAECHSTE geplante Route — wer läuft, läuft
  * seinen Weg zu Ende. Das ist gewollt: Ein Sprung mitten im Schritt saehe aus
  * wie ein Fehler.
  */
@@ -2086,6 +2347,7 @@ function konfigUebernehmen() {
   ROAM_SPEED   = w('roam_speed')
   ROAM_AREA_M  = w('roam_area_m')
   KAMPF_HALT_MS = w('kampf.halt_s') * 1000
+  TALK_HALT_MS = w('gespraech.halt_s') * 1000
   CALL_MAX_RANGE_M = w('ruf.reichweite_m')
   RECONCILE_MS = w('reconcile_s') * 1000
   // Takte laufen sonst mit dem alten Abstand weiter.

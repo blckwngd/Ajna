@@ -897,8 +897,10 @@ routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
       c.verify = (v === "agent" || v === "issuer" || v === "crowd" || v === "group") ? v : "items"
       // Prüfgruppe nur bei verify:"group" — sonst stünde eine Gruppe im
       // Datensatz, die niemand auswertet.
-      if (c.verify === "group" && body.pruefgruppe) c.pruefgruppe = String(body.pruefgruppe)
-      else if (c.verify !== "group") delete c.pruefgruppe
+      // Übergangszeit: Eine ältere App schickt noch `pruefgruppe`.
+      const pruefgruppe = body.reviewGroup || body.pruefgruppe
+      if (c.verify === "group" && pruefgruppe) c.reviewGroup = String(pruefgruppe)
+      else if (c.verify !== "group") delete c.reviewGroup
       if (repeatable) { c.repeatable = true; c.rewardPerRun = perRun }
       else { delete c.repeatable; delete c.rewardPerRun }
       // Veröffentlichen heißt: der Aussteller bietet den Auftrag (neu) an →
@@ -911,7 +913,7 @@ routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
       // Anlegedatum des Objekts — bei einem wiederbelebten Auftrag also ein
       // Datum von vor Wochen.
       c.publishedAt = new Date().toISOString()
-      delete c.angeboten
+      delete c.offered
       delete c.claimedBy
       delete c.completedBy
       delete c.pendingBy
@@ -978,7 +980,7 @@ routerAdd("POST", "/api/objects/{id}/quest/accept", (e) => {
     // niemand sonst sieht ihn) oder mit Superuser-Recht. Sonst 403 — hier
     // beim Annehmen, damit niemand erst hinlaeuft und beim Melden scheitert.
     const eigenerAuftrag = String(call.get("owner") || "") === user.id
-    if (eigenerAuftrag && c.probelauf !== true) {
+    if (eigenerAuftrag && c.dryRun !== true) {
       const { istSuperuser } = require(`${__hooks}/superuser.js`)
       const { transitiveGroupsOf } = require(`${__hooks}/permissions.js`)
       const su = istSuperuser($app, user.id, transitiveGroupsOf)
@@ -1088,7 +1090,7 @@ routerAdd("POST", "/api/objects/{id}/quest/complete", (e) => {
     // DIE EIGENTLICHE GRENZE. Beim Annehmen steht dieselbe Regel, aber nur als
     // freundliche fruehe Absage — wer die Route direkt aufruft, kaeme daran
     // vorbei. Hier nicht.
-    if (String(call.get("owner") || "") === user.id && c.probelauf !== true) {
+    if (String(call.get("owner") || "") === user.id && c.dryRun !== true) {
       const { istSuperuser } = require(`${__hooks}/superuser.js`)
       const { transitiveGroupsOf } = require(`${__hooks}/permissions.js`)
       if (!istSuperuser($app, user.id, transitiveGroupsOf).ok) {
@@ -1417,7 +1419,7 @@ routerAdd("GET", "/api/quests/near", (e) => {
         // andere ohnehin nur eine Enttäuschung. Geprüft wird NACH den Rechten:
         // Wer den Auftrag gar nicht sehen darf, soll auch nicht erfahren, dass
         // es ihn gibt.
-        if (callDataOf(parseState(call)).probelauf === true) continue
+        if (callDataOf(parseState(call)).dryRun === true) continue
       }
 
       const cLat = Number(call.get("lat")), cLon = Number(call.get("lon"))
@@ -1436,17 +1438,17 @@ routerAdd("GET", "/api/quests/near", (e) => {
       if (istAbgelaufen(c) && markiereAbgelaufen(c)) geaendert = true
 
       // Wartezeit vorbei → zusätzlich listen, Zustand „angeboten".
-      const wartetStd = Number(c.anbietenNachH) || 0
+      const wartetStd = Number(c.listAfterHours) || 0
       let angeboten = false
       if (c.listed === false && wartetStd > 0 && c.status === "open") {
         const seit = Date.parse(c.publishedAt || call.get("created"))
         if (isFinite(seit) && (jetzt - seit) >= wartetStd * 3600000) {
           c.listed = true
-          c.angeboten = true
+          c.offered = true
           geaendert = true
         }
       }
-      angeboten = c.angeboten === true
+      angeboten = c.offered === true
 
       if (geaendert) {
         st.call = c
@@ -1492,9 +1494,11 @@ routerAdd("GET", "/api/quests/near", (e) => {
       raus.push({
         id: call.id,
         name: call.get("name"),
-        kurz: c.kurz || "",
+        summary: c.summary || "",
+        kurz: c.summary || "",                          // Übergang: alte App
         task: c.task || "",
-        ort: c.ort || "",
+        place: c.place || "",
+        ort: c.place || "",                             // Übergang: alte App
         lat: cLat, lon: cLon,
         distanceM: entfernung === null ? null : Math.round(entfernung),
         owner: call.get("owner"),
@@ -1505,29 +1509,37 @@ routerAdd("GET", "/api/quests/near", (e) => {
         // diesen Stempel sähe er wie ein offener Auftrag aus, für den nur
         // niemand die Treuhand gebunden hat.
         published: !!c.publishedAt,
-        angeboten: angeboten,
+        offered: angeboten,
+        angeboten: angeboten,                           // Übergang: alte App
         listed: c.listed !== false,
-        anbietenNachH: Number(c.anbietenNachH) || 0,
+        listAfterHours: Number(c.listAfterHours) || 0,
+        anbietenNachH: Number(c.listAfterHours) || 0,   // Übergang: alte App
         deadline: c.deadline || null,
         karmaRequired: noetigesKarma,
         karmaOk: meineStufe >= noetigesKarma,
         verify: verify,
-        pruefgruppe: c.pruefgruppe || null,
+        reviewGroup: c.reviewGroup || null,
+        pruefgruppe: c.reviewGroup || null,             // Übergang: alte App
         votesNeeded: verify === "crowd" ? noetigeStimmen(c) : null,
         votes: stimmen,
-        nachweis: Array.isArray(c.nachweis) ? c.nachweis : [],
+        proof: Array.isArray(c.proof) ? c.proof : [],
+        nachweis: Array.isArray(c.proof) ? c.proof : [],    // Übergang: alte App
         // Probelauf: nur fuer den Autor sichtbar, zahlt nichts aus.
-        probelauf: c.probelauf === true,
+        dryRun: c.dryRun === true,
+        probelauf: c.dryRun === true,                   // Übergang: alte App
         // 0 = überall annehmbar. Der Client entscheidet damit, ob er den Knopf
         // anbietet, und was er beim Annehmen über den Standort mitschickt.
-        annahmeRadiusM: Number(c.annahmeRadiusM) || 0,
+        acceptRadiusM: Number(c.acceptRadiusM) || 0,
+        annahmeRadiusM: Number(c.acceptRadiusM) || 0,   // Übergang: alte App
         // 0 = der Auftrag sagt nichts; dann gilt beim Melden VOR_ORT_RADIUS_M.
-        vorOrtRadiusM: Number(c.vorOrtRadiusM) || 0,
+        onSiteRadiusM: Number(c.onSiteRadiusM) || 0,
+        vorOrtRadiusM: Number(c.onSiteRadiusM) || 0,    // Übergang: alte App
         rewards: (c.rewardItems || []).length,
         rewardParts: belohnungText(c.rewardItems || []),
         repeatable: c.repeatable === true,
         rewardPerRun: Number(c.rewardPerRun) || 0,
-        steigt: Number(c.steigt) || 0,
+        rewardStep: Number(c.rewardStep) || 0,
+        steigt: Number(c.rewardStep) || 0,              // Übergang: alte App
         requires: Array.isArray(c.requires) ? c.requires.length : 0,
         // Die Gattungen selbst, damit der Auftrags-Editor sie beim Ändern
         // wieder anzeigen kann — mit der blossen Anzahl liesse sich ein Auftrag
@@ -1549,8 +1561,8 @@ routerAdd("GET", "/api/quests/near", (e) => {
         // Folge: Kaum angenommen, verschwanden ALLE Knoepfe — auch „Erledigt
         // melden". Der eigene Probelauf liess sich annehmen und danach nicht
         // mehr abschliessen.
-        canPlay: !meins || c.probelauf === true || superuser,
-        canAccept: (!meins || c.probelauf === true || superuser)
+        canPlay: !meins || c.dryRun === true || superuser,
+        canAccept: (!meins || c.dryRun === true || superuser)
           && frei && meineStufe >= noetigesKarma && !istAbgelaufen(c),
         canVerify: darfPruefen,
       })

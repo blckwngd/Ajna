@@ -42,7 +42,7 @@ export async function run(t) {
     'HTTP ' + r.status + ' ' + (r.data?.error || ''))
   let st = (await t.read(A.token, call.id)).state
   t.check('Abnahmeweg ist gespeichert', st.call.verify === 'group', 'verify=' + st.call.verify)
-  t.check('und die Gruppe steht dabei', st.call.pruefgruppe === gruppeId)
+  t.check('und die Gruppe steht dabei', st.call.reviewGroup === gruppeId)
 
   await t.quest.accept(B.token, call.id)
   r = await t.quest.complete(B.token, call.id)

@@ -19,13 +19,64 @@
 
 const STORAGE_KEY = 'ajna.layer_filters'
 
+// Layer-Schlüssel wurden am 23.09.2026 auf Englisch umgestellt
+// (docs/key-rename.md). Was ein Spieler vorher gewählt hat, steht in SEINEM
+// Browser — ohne diese Umschlüsselung stünden nach dem Update alle
+// Inhaltsfilter wieder auf Anfang, und zwar unbemerkt: Eine unbekannte
+// Auswahl ist kein Fehler, sie zeigt nur nichts mehr an.
+//
+// Darf stehen bleiben, bis niemand mehr eine alte Auswahl mit sich herumträgt.
+const LAYER_ALT_NEU = {
+  gastro: 'food', rast: 'rest', historisch: 'historic', natur: 'nature',
+  kultur: 'cultural', geschuetzt: 'protected', erloschen: 'revoked',
+}
+
+function umschluesseln(auswahl) {
+  const raus = {}
+  for (const [quelle, liste] of Object.entries(auswahl)) {
+    raus[quelle] = Array.isArray(liste)
+      ? [...new Set(liste.map(k => LAYER_ALT_NEU[k] || k))]
+      : liste
+  }
+  return raus
+}
+
 // AR-Render-Budget: maximale Anzahl gleichzeitig gerenderter Objekte JE AGENT
 // (Source). Begrenzt die Sichtweite indirekt — gerendert werden nur die X
 // kamera-nächsten Objekte einer Source. Dichte Agents (WiGLE) werden so stark
 // vereinfacht, dünne (AIS) bleiben komplett sichtbar (Liste < Budget = alle).
-// Pro Agent überschreibbar via Manifest-Feld `render_budget` (0/negativ =
-// unbegrenzt, z. B. ein Flugzeug-Tracker mit großer Reichweite).
+// Pro Agent überschreibbar via Manifest-Feld `render_budget` (NEGATIV =
+// unbegrenzt, z. B. ein Flugzeug-Tracker mit großer Reichweite; 0 heisst
+// „nicht gesetzt" — siehe `zahlOderNull`).
 const DEFAULT_RENDER_BUDGET = 50
+
+// Sichtweite JE QUELLE, in Metern. Der Regler „Objekte" in den Einstellungen
+// gilt fuer alles — und genau darin liegt ein Zielkonflikt: Ein Flugzeug in
+// 11 km Entfernung ist erwuenscht, ein Wegekreuz in 11 km ist Rauschen. Wer den
+// Regler so weit zudreht, dass die Denkmaeler ausduennen, verliert die
+// Flugzeuge mit.
+//
+// Deshalb darf eine Quelle ihre eigene, ENGERE Grenze nennen
+// (`render_range_m` im Manifest). Der Regler bleibt der Herr im Haus: Es gilt
+// immer der kleinere der beiden Werte, nie der groessere.
+const DEFAULT_RENDER_RANGE_M = Infinity
+
+/**
+ * Zahl aus einem Manifest-Feld — oder null, wenn nichts drinsteht.
+ *
+ * NULL UND 0 SIND BEIDE „NICHT GESETZT". Das ist keine Willkür: PocketBase legt
+ * eine neu hinzugefügte Zahlenspalte bei BESTEHENDEN Zeilen mit 0 an. Hätte 0
+ * weiterhin „unbegrenzt" bedeutet — so stand es ursprünglich in der Doku —,
+ * dann hätte allein das Hinzufügen der Spalte jedem Agenten sein Render-Budget
+ * aufgehoben, und WiGLE hätte statt 50 seine fuenfhundert Netze gezeichnet.
+ *
+ * „Unbegrenzt" sagt man deshalb mit einer NEGATIVEN Zahl.
+ */
+const zahlOderNull = (v) => {
+  if (v === null || v === undefined || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
 
 /**
  * Zeitpunkt, zu dem ein Manifest seinen Namen beansprucht hat.
@@ -167,7 +218,8 @@ export class AgentFilters {
           description: m.description || '',
           // Optional, abwärtskompatibel: erst gesetzt, wenn ein Agent das Feld
           // publisht. undefined → Client-Default (DEFAULT_RENDER_BUDGET).
-          render_budget: Number.isFinite(Number(m.render_budget)) ? Number(m.render_budget) : undefined,
+          render_budget: zahlOderNull(m.render_budget),
+          render_range_m: zahlOderNull(m.render_range_m),
           layers: []
         }
         ownerBySource[src] = {}
@@ -292,11 +344,26 @@ export class AgentFilters {
    * @returns {number}  positive Zahl oder Infinity
    */
   getRenderBudget(source) {
-    const manifest = this._layersBySource[source]
-    const override = manifest ? manifest.render_budget : undefined
-    if (Number.isFinite(override)) return override <= 0 ? Infinity : override
-    return DEFAULT_RENDER_BUDGET
+    const o = this._layersBySource[source]?.render_budget
+    if (o == null || o === 0) return DEFAULT_RENDER_BUDGET   // nicht gesetzt
+    return o < 0 ? Infinity : o                              // negativ = unbegrenzt
   }
+
+  /**
+   * Sichtweite einer Source in Metern — `render_range_m` aus dem Manifest.
+   *
+   * Ohne Angabe: unbegrenzt, also gilt allein der Regler. Mit Angabe gilt der
+   * KLEINERE von beiden; eine Quelle kann sich damit selbst zügeln, aber
+   * niemals weiter reichen, als der Spieler erlaubt hat.
+   * @param {string} source
+   * @returns {number}  Meter oder Infinity
+   */
+  getRenderRange(source) {
+    const o = this._layersBySource[source]?.render_range_m
+    if (o == null || o === 0) return DEFAULT_RENDER_RANGE_M  // nicht gesetzt
+    return o < 0 ? Infinity : o                              // negativ = unbegrenzt
+  }
+
 
   // ───────────────────────────────────────────────────────────────────
   //  Selektion (User-Setting)
@@ -381,7 +448,8 @@ export class AgentFilters {
       const raw = localStorage.getItem(STORAGE_KEY)
       if (!raw) return {}
       const parsed = JSON.parse(raw)
-      return (parsed && typeof parsed === 'object') ? parsed : {}
+      if (!parsed || typeof parsed !== 'object') return {}
+      return umschluesseln(parsed)
     } catch {
       return {}
     }
@@ -401,7 +469,21 @@ function matchesPredicate(record, predicate) {
   if (typeof predicate.field === 'string' && 'equals' in predicate) {
     return _getField(record, predicate.field) === predicate.equals
   }
-  // Platz für AND/OR/in/regex etc. — V1 nur equals.
+  // `oneOf`: mehrere Werte auf EINE Schicht. Ohne das bräuchte „Gastronomie"
+  // fünf Schalter (Café, Restaurant, Bar, Pub, Imbiss) — und der Filterdialog
+  // würde vor lauter Einzelposten unbenutzbar.
+  if (typeof predicate.field === 'string' && Array.isArray(predicate.oneOf)) {
+    return predicate.oneOf.includes(_getField(record, predicate.field))
+  }
+  // `exists`: „irgendein Wert steht in diesem Feld". Nötig für Schichten, die
+  // sich über die ANWESENHEIT eines Merkmals definieren — alles Historische
+  // trägt ein `historic`-Etikett, aber mit zwei Dutzend verschiedenen Werten.
+  if (typeof predicate.field === 'string' && 'exists' in predicate) {
+    const v = _getField(record, predicate.field)
+    const da = v !== undefined && v !== null && v !== ''
+    return predicate.exists ? da : !da
+  }
+  // Platz für AND/OR/regex etc.
   return false
 }
 

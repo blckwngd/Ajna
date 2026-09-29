@@ -110,6 +110,15 @@ export class MessageLogPanel {
     this.ajna.onAuthChanged?.(() => abo())
   }
 
+  /**
+   * Wann hat dieses Konto zuletzt etwas gesagt? (Zeitstempel, 0 = nie.)
+   *
+   * Daran erkennt der Aufrufer, ob ein Gespräch überhaupt zustande kam — ohne
+   * laufenden Agenten antwortet niemand, und dann darf der Spieler nicht vor
+   * einem stummen Bildschirm sitzen.
+   */
+  letzteAntwort(userId) { return this._letzteAntwort?.get(String(userId || '')) || 0 }
+
   _onChat(m) {
     const name = this._nameFor(m)
 
@@ -127,11 +136,24 @@ export class MessageLogPanel {
     // wird aber nie gespeichert und ist nach einem Neuladen fort. Ohne diese
     // Weitergabe landete JEDE Agent-Antwort in localStorage — genau das, was
     // eine Auskunft im Auftrag des Spielers nicht tun darf.
-    messageLog.push(`${name}: ${m.text}`, 'dialog', { ephemeral: m.ephemeral === true })
+    if (!this._letzteAntwort) this._letzteAntwort = new Map()
+    this._letzteAntwort.set(String(m.from || ''), Date.now())
+    messageLog.push(`${name}: ${m.text}`, 'dialog',
+      { ephemeral: m.ephemeral === true, partner: m.from })
     // `log: false` — die Zeile steht schon als Gespräch im Verlauf.
     // Antippen öffnet das Gespräch — der Toast ist der Weg hinein, nicht nur
     // eine Meldung. Das Fenster drängt sich dafür nicht mehr selbst auf.
-    try { this._toast?.show(m.text, { title: name, log: false, onClick: () => this.open() }) } catch {}
+    //
+    // DER HINWEIS GEHÖRT AN DIE ANTWORT, nicht davor: Als eigene Meldung erschien
+    // er, bevor es etwas zu beantworten gab — man las „Antippen zum Antworten"
+    // und erst danach, worauf.
+    try {
+      this._toast?.show(m.text, {
+        title: name, log: false,
+        hinweis: this._partner?.userId === m.from ? t('Antippen zum Antworten') : null,
+        onClick: () => this.oeffneGespraech(),
+      })
+    } catch {}
 
     // Auswahlantworten nur übernehmen, wenn sie vom aktuellen Partner kommen —
     // sonst überschriebe eine fremde Nachricht die Knöpfe des Gesprächs.
@@ -167,7 +189,22 @@ export class MessageLogPanel {
     this._launcher = this._overlay = null
   }
 
-  _visible(entry) { return this._filter === 'all' || CATS[entry.cat]?.player }
+  /**
+   * Welche Zeilen der aktuelle Reiter zeigt.
+   *
+   *   allgemein  alles Spielerrelevante (Dialoge, Aktionen, System)
+   *   alle       zusätzlich UWB und Debug — die Nachlese-Ansicht
+   *   gespraech  NUR dieses eine Gespräch
+   *
+   * Das Gespräch bleibt in den beiden anderen Reitern stehen: Wer es beendet,
+   * verliert es nicht, er räumt nur den Reiter weg.
+   */
+  _visible(entry) {
+    if (this._filter === 'gespraech') {
+      return !!this._partner && entry.partner === this._partner.userId
+    }
+    return this._filter === 'all' || CATS[entry.cat]?.player
+  }
 
   _onLog(entry) {
     // Leeren (auch aus dem Debug-Protokoll heraus, also evtl. bei geschlossenem
@@ -210,6 +247,41 @@ export class MessageLogPanel {
   // ── Fenster ──────────────────────────────────────────────────────────
   toggle() { this._open ? this.close() : this.open() }
 
+  /**
+   * Ins GESPRÄCH öffnen, nicht nur ins Fenster.
+   *
+   * `open()` zeigt, was zuletzt eingestellt war — stand der Filter auf „Alle",
+   * landet man in der Debug-Ansicht statt bei der Figur, die gerade geantwortet
+   * hat. Wer auf eine Antwort tippt, will die Antwort sehen und schreiben
+   * können.
+   */
+  oeffneGespraech() {
+    this._filter = this._partner ? 'gespraech' : 'player'
+    this.open()
+    this._syncCompose()
+    this._renderList()
+    this._scrollToBottom()
+    setTimeout(() => this._inputEl?.focus(), 50)
+  }
+
+  /**
+   * Gespräch beenden — der Reiter verschwindet, der Verlauf bleibt.
+   *
+   * Bewusst kein Löschen: Was gesagt wurde, steht weiter unter „Allgemein" und
+   * „Alle". Beendet wird die BEZIEHUNG, nicht die Erinnerung — wer nachlesen
+   * will, findet es dort.
+   */
+  beendeGespraech() {
+    const name = this._partner?.name
+    this._partner = null
+    this._choices = null
+    this._filter = 'player'
+    if (name) messageLog.push(`— Gespräch mit ${name} beendet —`, 'dialog')
+    this._syncCompose()
+    this._renderList()
+    this._scrollToBottom()
+  }
+
   open() {
     if (this._open) return
     this._open = true
@@ -222,8 +294,10 @@ export class MessageLogPanel {
         <header>
           <h3>Verlauf</h3>
           <div class="mlg-filter" role="group">
-            <button type="button" data-f="player" class="${this._filter === 'player' ? 'on' : ''}">Verlauf</button>
-            <button type="button" data-f="all" class="${this._filter === 'all' ? 'on' : ''}">Alle</button>
+            <button type="button" data-f="player" class="${this._filter === 'player' ? 'on' : ''}">${t('Allgemein')}</button>
+            <button type="button" data-f="all" class="${this._filter === 'all' ? 'on' : ''}">${t('Alle')}</button>
+            <button type="button" data-f="gespraech" data-role="tab-gespraech" hidden
+                    class="${this._filter === 'gespraech' ? 'on' : ''}"></button>
           </div>
           <button class="mlg-clear" type="button" title="${t('Verlauf leeren')}">${t('Leeren')}</button>
           <button class="mlg-close" type="button" aria-label="Schließen">×</button>
@@ -236,6 +310,8 @@ export class MessageLogPanel {
             <input type="text" data-role="input" autocomplete="off"
                    placeholder="${t('Nachricht …')}" maxlength="2000">
             <button type="submit" title="Senden">➤</button>
+            <button type="button" class="mlg-ende" data-role="ende" hidden
+                    title="${t('Gespräch beenden')}">${t('Beenden')}</button>
           </div>
         </form>
       </div>`
@@ -253,6 +329,7 @@ export class MessageLogPanel {
     this._inputEl = ov.querySelector('[data-role="input"]')
     this._choicesEl = ov.querySelector('[data-role="choices"]')
     this._hinweisEl = ov.querySelector('[data-role="hinweis"]')
+    ov.querySelector('[data-role="ende"]')?.addEventListener('click', () => this.beendeGespraech())
     this._composeEl.addEventListener('submit', (ev) => {
       ev.preventDefault()
       const text = this._inputEl.value.trim()
@@ -302,10 +379,13 @@ export class MessageLogPanel {
     // `open: false` für Gespräche, die von selbst anfangen (eine Figur meldet
     // sich): Fenster nicht aufreißen, der Toast und der Zähler am Auslöser
     // sagen es schon. Wer „Sprechen" antippt, will es dagegen sofort sehen.
-    if (partner && open) this.open()
+    // Wer ausdrücklich „Sprechen" gewählt hat, soll im Gespräch landen — nicht
+    // in der allgemeinen Liste, in der seine Figur eine Zeile unter vielen ist.
+    if (partner && open) { this._filter = 'gespraech'; this.open() }
     this._syncCompose()
     if (partner) {
-      messageLog.push(`— Gespräch mit ${partner.name || 'Unbekannt'} —`, 'dialog')
+      messageLog.push(`— Gespräch mit ${partner.name || 'Unbekannt'} —`, 'dialog',
+        { partner: partner.userId })
       if (open) setTimeout(() => this._inputEl?.focus(), 50)
     }
   }
@@ -329,9 +409,24 @@ export class MessageLogPanel {
   _syncCompose() {
     if (!this._composeEl) return
     const an = !!this._partner
-    this._composeEl.hidden = !an
-    const kopf = this._overlay?.querySelector('h3')
-    if (kopf) kopf.textContent = an ? (this._partner.name || 'Gespräch') : 'Verlauf'
+    // Geschrieben wird NUR im Gesprächs-Reiter. Vorher stand die Eingabezeile
+    // auch unter „Alle" — man tippte in ein Gespräch, dessen Verlauf gerade gar
+    // nicht zu sehen war.
+    this._composeEl.hidden = !(an && this._filter === 'gespraech')
+
+    // DER KOPF BEHÄLT SEINEN NAMEN. Früher trug er den des Gegenübers, und der
+    // blieb auch nach dem Schliessen stehen — das Fenster sah aus, als sei man
+    // dauerhaft in einem Gespräch gefangen. Der Name steht jetzt im Reiter, und
+    // der lässt sich schliessen.
+    const reiter = this._overlay?.querySelector('[data-role="tab-gespraech"]')
+    if (reiter) {
+      reiter.hidden = !an
+      reiter.textContent = an ? (this._partner.name || t('Gespräch')) : ''
+      reiter.classList.toggle('on', this._filter === 'gespraech')
+    }
+    for (const b of this._overlay?.querySelectorAll('.mlg-filter button') || []) {
+      b.classList.toggle('on', b.dataset.f === this._filter)
+    }
 
     // Auswahl statt Freitext: Knöpfe zeigen, Eingabezeile ausblenden.
     const zeile = this._composeEl.querySelector('.mlg-inputrow')
@@ -358,7 +453,14 @@ export class MessageLogPanel {
       this._choicesEl.textContent = ''
       if (zeile) zeile.hidden = false
     }
-    if (this._hinweisEl) this._hinweisEl.hidden = an
+    // Der Hinweis „eine Figur antippen" gehört überall dorthin, wo NICHT
+    // geschrieben werden kann — also auch in „Allgemein", solange ein Gespräch
+    // offen ist. Er sagt, wie man dorthin kommt.
+    if (this._hinweisEl) this._hinweisEl.hidden = !this._composeEl.hidden
+    // „Beenden" gehört ins Gespräch, nicht in die Kopfzeile: Dort steht es
+    // neben dem, was man beendet.
+    const endeKnopf = this._overlay?.querySelector('[data-role="ende"]')
+    if (endeKnopf) endeKnopf.hidden = !(an && this._filter === 'gespraech')
     // Knöpfe und Eingabezeile nehmen der Liste Höhe weg — was eben noch unten
     // stand, wäre sonst wieder aus dem Bild.
     this._scrollIfSticking()
@@ -370,7 +472,7 @@ export class MessageLogPanel {
     // Wer selbst schreibt, will die eigene Zeile sehen — auch wenn er vorher
     // hochgescrollt hatte.
     this._stickToBottom = true
-    messageLog.push(`Du: ${anzeige || text}`, 'dialog')
+    messageLog.push(`Du: ${anzeige || text}`, 'dialog', { partner: this._partner?.userId })
     try {
       const r = await this.ajna?.sendChat?.(p.userId, {
         text, object: p.objectId || null, serverId: p.serverId || null,
@@ -386,13 +488,22 @@ export class MessageLogPanel {
   }
 
   _setFilter(f, ov) {
-    this._filter = f === 'all' ? 'all' : 'player'
-    try { localStorage.setItem(FILTER_KEY, this._filter) } catch {}
+    // „gespraech" nur, solange es eines gibt — sonst zeigte der Reiter auf ein
+    // Gegenüber, das nicht mehr da ist.
+    this._filter = f === 'all' ? 'all'
+                 : (f === 'gespraech' && this._partner) ? 'gespraech'
+                 : 'player'
+    // Den Gesprächs-Reiter NICHT merken: Beim nächsten Öffnen gibt es das
+    // Gespräch vielleicht nicht mehr, und man sässe vor einer leeren Liste.
+    try { if (this._filter !== 'gespraech') localStorage.setItem(FILTER_KEY, this._filter) } catch {}
     ov.querySelectorAll('.mlg-filter button').forEach(b => b.classList.toggle('on', b.dataset.f === this._filter))
+    // Eingabezeile und „Beenden" hängen am Reiter, nicht am Gespräch allein.
+    this._syncCompose()
     // Umschalten baut die Liste neu auf — die alte Scrollposition passt danach
     // zu nichts mehr. Also ans Ende, wie beim Öffnen.
     this._stickToBottom = true
     this._renderList()
+    this._scrollToBottom()
   }
 
   _rowHtml(entry) {
@@ -504,6 +615,13 @@ export class MessageLogPanel {
     .ajna-msglog .mlg-filter{margin-left:auto;display:flex;border:1px solid #3a3a44;border-radius:8px;overflow:hidden}
     .ajna-msglog .mlg-filter button{background:none;border:none;color:#b8b8c0;font:12px system-ui,sans-serif;padding:4px 10px;cursor:pointer}
     .ajna-msglog .mlg-filter button.on{background:#33343e;color:#fff}
+    /* Der Gespraechs-Reiter traegt einen Namen und kann laenger sein als
+       „Allgemein" — begrenzen, damit die Kopfzeile nicht umbricht. */
+    .ajna-msglog .mlg-filter button[data-f="gespraech"]{max-width:10em;overflow:hidden;
+      text-overflow:ellipsis;white-space:nowrap;border-left:1px solid #3a3a44}
+    .ajna-msglog .mlg-ende{background:none;border:1px solid #7a3a3a;color:#f2b8b8;
+      border-radius:8px;font:12px system-ui,sans-serif;padding:4px 10px;cursor:pointer;margin-left:6px}
+    .ajna-msglog .mlg-ende:hover{background:rgba(122,58,58,.25)}
     .ajna-msglog .mlg-clear{background:none;border:1px solid #3a3a44;color:#c9c9d0;border-radius:8px;font:12px system-ui,sans-serif;padding:4px 10px;cursor:pointer}
     .ajna-msglog .mlg-close{background:none;border:none;color:#c9c9d0;font-size:22px;line-height:1;cursor:pointer;padding:0 4px}
     .ajna-msglog .mlg-list{overflow-y:auto;padding:8px 12px;flex:1;-webkit-overflow-scrolling:touch}

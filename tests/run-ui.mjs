@@ -642,8 +642,8 @@ check('Abnahmeverfahren sind vollständig beschrieben',
 check('Nachweisarten sind erklärt, nicht nur benannt',
   NACHWEIS.every(n => n.key && n.label && n.hinweis && n.hinweis.length > 30))
 check('„Anwesenheit" sagt, wer bestätigt und wie belastbar das ist',
-  /Bearbeiter/.test(NACHWEIS.find(n => n.key === 'vorOrt').hinweis) &&
-  /GPS/.test(NACHWEIS.find(n => n.key === 'vorOrt').hinweis))
+  /Bearbeiter/.test(NACHWEIS.find(n => n.key === 'onSite').hinweis) &&
+  /GPS/.test(NACHWEIS.find(n => n.key === 'onSite').hinweis))
 check('Sichtbarkeit reicht von privat bis Region',
   SICHTBARKEIT.map(v => v.key).join() === 'privat,gruppe,region')
 check('neuer Auftrag startet als Entwurf und gehört mir',
@@ -772,7 +772,7 @@ console.log('\n── questMapping: Zustände und Zuordnung')
   check('offener fremder Auftrag ist „offen"',
     qm.ansichtsStatus(rec(), ICH) === 'offen')
   check('nach Wartezeit gelistet heisst „angeboten"',
-    qm.ansichtsStatus(rec({ angeboten: true }), ICH) === 'angeboten')
+    qm.ansichtsStatus(rec({ offered: true }), ICH) === 'angeboten')
   check('von mir angenommen heisst „angenommen"',
     qm.ansichtsStatus(rec({ status: 'claimed', claimedBy: ICH }), ICH) === 'angenommen')
   check('eingereicht sieht der BEARBEITER als „wird geprüft"',
@@ -819,10 +819,10 @@ console.log('\n── questMapping: Zustände und Zuordnung')
 
   // ── Ganzer Datensatz ───────────────────────────────────────────────────
   const v = qm.zuAnsicht(rec({
-    kurz: 'Ein Sack reicht.', task: 'Uferweg säubern', ort: 'Bootshaus',
+    summary: 'Ein Sack reicht.', task: 'Uferweg säubern', place: 'Bootshaus',
     distanceM: 420, deadline: new Date(Date.now() + 3600_000).toISOString(),
     ownerName: 'Stadtreinigung', rewardParts: [{ was: 'Diamant', anzahl: 3 }],
-    steigt: 1, nachweis: ['foto'], karmaRequired: 2, karmaOk: false,
+    rewardStep: 1, proof: ['photo'], karmaRequired: 2, karmaOk: false,
   }), ICH)
   check('Titel kommt aus dem Objektnamen', v.titel === 'Ufer säubern')
   check('Kurztext und Aufgabe getrennt', v.kurz === 'Ein Sack reicht.' && v.text === 'Uferweg säubern')
@@ -851,23 +851,23 @@ console.log('\n── questMapping: Zustände und Zuordnung')
   check('Verfahren rückübersetzt', f.abnahme === 'uebergabe')
 
   const c = qm.callZustandAus({
-    text: 'Tun', kurz: 'kurz', ort: 'dort', karma: 3, nachweis: ['vorOrt'],
+    text: 'Tun', kurz: 'kurz', ort: 'dort', karma: 3, nachweis: ['onSite'],
     abnahme: 'schwarm', schwarmZahl: 12, fristMs: 3600_000, anbietenNachH: 6,
     belohnung: { steigt: 2 },
   }, { jetzt: 1_000_000 })
   check('Aufgabe landet in task', c.task === 'Tun')
   check('Frist wird zum Zeitpunkt', c.deadline === new Date(1_000_000 + 3600_000).toISOString())
-  check('Schwarmzahl bleibt im sinnvollen Bereich', c.schwarmZahl === 9)
-  check('Wartezeit heisst: zunächst nicht listen', c.listed === false && c.anbietenNachH === 6)
+  check('Schwarmzahl bleibt im sinnvollen Bereich', c.crowdCount === 9)
+  check('Wartezeit heisst: zunächst nicht listen', c.listed === false && c.listAfterHours === 6)
   check('ohne Wartezeit sofort gelistet', qm.callZustandAus({ anbietenNachH: 0 }).listed === true)
   check('ohne Frist keine Frist im Datensatz', qm.callZustandAus({ fristMs: 0 }).deadline === undefined)
   check('Schwarmzahl nur beim Schwarm',
-    qm.callZustandAus({ abnahme: 'stichprobe', schwarmZahl: 3 }).schwarmZahl === undefined)
+    qm.callZustandAus({ abnahme: 'stichprobe', schwarmZahl: 3 }).crowdCount === undefined)
   check('bestehende Felder bleiben erhalten',
     qm.callZustandAus({ text: 'neu' }, { vorher: { rewardItems: ['i1'] } }).rewardItems[0] === 'i1')
 
   const pl = qm.publishPayloadAus({ abnahme: 'pruefgruppe', pruefgruppe: 'g9' }, ['i1', 'i2'])
-  check('Prüfgruppe geht als group hinaus', pl.verify === 'group' && pl.pruefgruppe === 'g9')
+  check('Prüfgruppe geht als group hinaus', pl.verify === 'group' && pl.reviewGroup === 'g9')
   check('Belohnungen als Kennungen', pl.rewardItems.join() === 'i1,i2')
   check('ohne Gruppe keine Gruppe im Rumpf',
     qm.publishPayloadAus({ abnahme: 'schwarm' }, ['i1']).pruefgruppe === undefined)
@@ -973,7 +973,7 @@ console.log('\n── Foto-Beweis')
   check('Foto gilt nicht mehr als unfertig', !OHNE_FUNKTION.foto)
   check('die anderen Nachweisarten ebenfalls nicht',
     !OHNE_FUNKTION.vorOrt && !OHNE_FUNKTION.gegenstand)
-  const foto = NACHWEIS.find(n => n.key === 'foto')
+  const foto = NACHWEIS.find(n => n.key === 'photo')
   check('drei Bilder sind angesagt', /drei/.test(foto.hinweis))
   check('und „Vorher" ist ausdruecklich keine Pflicht', /nicht Pflicht/.test(foto.hinweis))
 
@@ -999,7 +999,7 @@ console.log('\n── Foto-Beweis')
   check('und sagt, dass Metadaten entfernt werden', /Aufnahmezeit werden vor dem Senden/.test(panel))
   // Ein Auftrag, der NUR ein Foto verlangt, sprang bisher am Formular vorbei.
   check('auch ein reiner Foto-Auftrag oeffnet das Formular',
-    /\(q\.roh\?\.nachweis \|\| \[\]\)\.length/.test(panel))
+    /\(q\.roh\?\.proof \|\| \[\]\)\.length/.test(panel))
   check('der Pruefer bekommt die Bilder zu sehen', /_zeigeBelege\(q\)/.test(panel))
 
   const m = readFileSync(new URL('../pocketbase/pb_hooks/main.pb.js', import.meta.url), 'utf8')
@@ -1302,17 +1302,17 @@ console.log('\n── Regionsliste: nie')
 
   const nie = qm.callZustandAus({ anbietenNachH: -1 })
   check('nie: nicht gelistet', nie.listed === false)
-  check('nie: keine Wartezeit, die das aendert', nie.anbietenNachH === undefined)
+  check('nie: keine Wartezeit, die das aendert', nie.listAfterHours === undefined)
 
   const spaeter = qm.callZustandAus({ anbietenNachH: 6 })
   check('spaeter: nicht gelistet, aber mit Wartezeit',
-    spaeter.listed === false && spaeter.anbietenNachH === 6)
+    spaeter.listed === false && spaeter.listAfterHours === 6)
   check('sofort: gelistet', qm.callZustandAus({ anbietenNachH: 0 }).listed === true)
 
   // Rueckweg: aus dem Serverzustand muss wieder „nie" werden.
   const zurueck = (roh) => qm.zuFormular({ roh }).anbietenNachH
   check('nie kommt als nie zurueck', zurueck({ listed: false }) === -1)
-  check('Wartezeit kommt als Wartezeit zurueck', zurueck({ listed: false, anbietenNachH: 6 }) === 6)
+  check('Wartezeit kommt als Wartezeit zurueck', zurueck({ listed: false, listAfterHours: 6 }) === 6)
   check('gelistet kommt als sofort zurueck', zurueck({ listed: true }) === 0)
 }
 
@@ -1684,18 +1684,45 @@ console.log('\n── Toast als Weg ins Gespräch')
   check('er oeffnet den Verlauf', /window\.ajnaLogPanel\?\.open\(\)/.test(t))
   check('ein eigener Klick-Haken geht vor', /onClick \? onClick\(\)/.test(t))
   check('als klickbar erkennbar', /klickbar \{ cursor: pointer/.test(t))
+  // DIE FALLE: Der Container ist `pointer-events: none`, damit eine Meldung
+  // nicht die halbe Szene blockiert. Ohne ein ausdrueckliches `auto` am
+  // klickbaren Toast landet der Klick in der Karte bzw. auf der Babylon-
+  // Leinwand darunter — der Zeiger zeigt eine Hand, und nichts passiert.
+  check('und empfaengt Klicks auch wirklich',
+    /klickbar \{[^}]*pointer-events: auto/.test(t))
+  check('der Container bleibt ansonsten durchlaessig',
+    /ajna-toast-container \{[\s\S]{0,900}pointer-events: none/.test(t))
 
   const shell = readFileSync(new URL('../client/core/MobileShell.js', import.meta.url), 'utf8')
   // „Sprechen" legte den Verlauf sofort ueber die Szene — genau dann, wenn man
   // die Figur ansieht. Jetzt kommt nur der Toast.
   check('„Sprechen" reisst das Fenster nicht mehr auf', /talkTo\(\{[\s\S]{0,220}\}, \{ open: false \}\)/.test(shell))
-  check('stattdessen ein Hinweis zum Antippen', /Antippen zum Antworten/.test(shell))
+  // DIE REIHENFOLGE: Der Hinweis stand frueher VOR der Antwort — man las
+  // „Antippen zum Antworten" und erst danach, worauf. Jetzt trägt ihn die
+  // Antwort selbst; die Shell meldet sich nur noch, wenn NIEMAND antwortet.
+  // Auf den AUFRUF pruefen, nicht auf die Wendung: Sie steht weiterhin im
+  // Kommentar daneben, der erklaert, warum sie dort nicht mehr gezeigt wird.
+  check('die Shell wirft keinen Hinweis mehr vorab',
+    !/_toast\?\.show\(t\('Antippen zum Antworten'\)/.test(shell))
+  check('sondern erst, wenn niemand antwortet',
+    /letzteAntwort\(rec\.owner\)[\s\S]{0,120}Niemand antwortet gerade/.test(shell))
+  check('und wartet dafuer eine Frist ab', /STILLE_MS/.test(shell))
   check('das Panel ist buendeluebergreifend erreichbar', /window\.ajnaLogPanel = this\._logPanel/.test(shell))
   check('und wird beim Abraeumen entfernt', /delete window\.ajnaLogPanel/.test(shell))
 
   const panel = readFileSync(new URL('../client/core/MessageLogPanel.js', import.meta.url), 'utf8')
-  check('Antworten der Figur fuehren ebenfalls ins Gespraech',
-    /onClick: \(\) => this\.open\(\)/.test(panel))
+  check('die Antwort selbst trägt den Hinweis',
+    /hinweis: this\._partner\?\.userId === m\.from/.test(panel))
+  // `open()` zeigt, was zuletzt eingestellt war — stand der Filter auf „Alle",
+  // landete man in der Debug-Ansicht statt beim Gespräch.
+  check('Antippen führt ins GESPRAECH, nicht nur ins Fenster',
+    /onClick: \(\) => this\.oeffneGespraech\(\)/.test(panel))
+  check('und schaltet dafuer auf den Gespraechs-Reiter',
+    /oeffneGespraech\(\) \{[\s\S]{0,160}this\._filter = this\._partner \? 'gespraech'/.test(panel))
+
+  const toast = readFileSync(new URL('../client/core/Toast.js', import.meta.url), 'utf8')
+  check('der Toast kann einen Hinweis unter der Nachricht zeigen',
+    /hinweis = null/.test(toast) && /toast-hinweis/.test(toast))
 }
 
 // ── Flüchtige Daten: anzeigen, aber niemals speichern ───────────────────
@@ -1758,7 +1785,7 @@ console.log('\n── Flüchtige Daten')
 
   const pan = readFileSync(new URL('../client/core/MessageLogPanel.js', import.meta.url), 'utf8')
   check('das Gesprächsfenster wertet es aus',
-    /\{ ephemeral: m\.ephemeral === true \}/.test(pan))
+    /ephemeral: m\.ephemeral === true/.test(pan))
 }
 
 // ── Adress-Marker: sichtbar, sammelnd, und nirgends gespeichert ──────────
@@ -1858,8 +1885,8 @@ console.log('\n── Adress-Marker')
 
   // Die Kette vom Agenten bis in die Ansicht.
   const agent = readFileSync(new URL('../agents/address-bridge.mjs', import.meta.url), 'utf8')
-  check('der Agent schickt die Struktur mit', /adressen: alsMarker\(erg\)/.test(agent))
-  check('und die vollständige Prüfliste fürs Protokoll', /geprueft: \(erg\.alle \|\| \[\]\)/.test(agent))
+  check('der Agent schickt die Struktur mit', /addresses: alsMarker\(erg\)/.test(agent))
+  check('und die vollständige Prüfliste fürs Protokoll', /checked: \(erg\.alle \|\| \[\]\)/.test(agent))
   check('und weiterhin als flüchtige Nachricht', /ephemeral: true,/.test(agent))
 
   for (const [datei, was] of [['../client/main.js', '3D'], ['../client/map.js', 'Karte']]) {
@@ -2195,6 +2222,142 @@ console.log('\n── Verweise im Verlauf')
     /if \(!felder\.some\(f => f\.link\)\)[\s\S]{0,200}wert: url/.test(agent))
 }
 
+// GESPRAECHS-REITER: eigener Platz, und wieder wegraeumbar
+// Ein Gespraech uebernahm bisher das ganze Fenster: Die Kopfzeile trug den
+// Namen des Gegenuebers, auch nach dem Schliessen, und zurueck in die
+// allgemeine Liste kam man nicht. Jetzt ist es ein Reiter neben "Allgemein".
+console.log('\n── Gespraechs-Reiter')
+{
+  const { messageLog } = await import('../client/core/MessageLog.js')
+  const { MessageLogPanel } = await import('../client/core/MessageLogPanel.js')
+
+  messageLog.clear()
+  const panel = Object.create(MessageLogPanel.prototype)
+  panel._filter = 'player'
+  panel._partner = null
+
+  messageLog.push('Ida: Guten Tag', 'dialog', { partner: 'u-ida' })
+  messageLog.push('Du: Hallo', 'dialog', { partner: 'u-ida' })
+  messageLog.push('Etwas ist passiert', 'system')
+  messageLog.push('interner Kram', 'debug')
+
+  const sichtbar = () => messageLog.entries(e => panel._visible(e)).length
+
+  check('"Allgemein" zeigt Spielerrelevantes, keine Debug-Zeilen', sichtbar() === 3, `${sichtbar()}`)
+  panel._filter = 'all'
+  check('"Alle" zeigt auch die Debug-Zeile', sichtbar() === 4, `${sichtbar()}`)
+
+  panel._partner = { userId: 'u-ida', name: 'Ida Stein' }
+  panel._filter = 'gespraech'
+  check('der Gespraechs-Reiter zeigt NUR dieses Gespraech', sichtbar() === 2, `${sichtbar()}`)
+
+  // DIE FALLE: Zwei Figuren koennen gleich heissen - getrennt wird nach Konto.
+  messageLog.push('Ida: von woanders', 'dialog', { partner: 'u-andere' })
+  check('ein gleichnamiges Gegenueber landet nicht im selben Reiter', sichtbar() === 2, `${sichtbar()}`)
+
+  panel._partner = null
+  check('ohne Gegenueber ist der Reiter leer', sichtbar() === 0, `${sichtbar()}`)
+
+  const src = readFileSync(new URL('../client/core/MessageLogPanel.js', import.meta.url), 'utf8')
+  check('Beenden loescht nichts',
+    /beendeGespraech[\s\S]{0,420}this._partner = null/.test(src)
+    && !/beendeGespraech[\s\S]{0,420}messageLog.clear/.test(src))
+  check('und schaltet zurueck auf Allgemein',
+    /beendeGespraech[\s\S]{0,420}this._filter = 'player'/.test(src))
+  check('geschrieben wird nur im Gespraechs-Reiter',
+    /this._composeEl.hidden = !\(an && this._filter === 'gespraech'\)/.test(src))
+  check('die Kopfzeile traegt nicht mehr den Namen des Gegenuebers',
+    !/kopf.textContent = an \?/.test(src))
+  check('der Reiter heisst wie die Figur',
+    /reiter.textContent = an \? \(this._partner.name/.test(src))
+  check('der Reiter wird NICHT gemerkt',
+    /if \(this._filter !== 'gespraech'\) localStorage.setItem/.test(src))
+
+  messageLog.clear()
+}
+
+// ── Sichtweite und Schichten je Quelle ──────────────────────────────────
+// Der Regler „Objekte" gehört dem Spieler und gilt für alles. Eine dichte,
+// ortsfeste Quelle darf sich zusätzlich selbst zügeln — aber niemals weiter
+// reichen, als erlaubt wurde.
+console.log('\n── Quellen: Sichtweite und Schichten')
+{
+  const { AgentFilters } = await import('../client/core/AgentFilters.js')
+  const f = new AgentFilters({ listAgentManifests: async () => [
+    { id: 'a', source: 'denkmal',  agent_name: 'Denkmäler', created: '2026-01-01',
+      render_range_m: 500, layers: [
+        { key: 'cultural', label: 'Kultur', predicate: { field: 'state.monument_kind', equals: 'cultural' } },
+        { key: 'historisch', label: 'Hist', predicate: { field: 'state.osm_tags.historic', exists: true } },
+        { key: 'gastro', label: 'Gastro', predicate: { field: 'state.osm_tags.amenity', oneOf: ['cafe', 'pub'] } },
+      ] },
+    { id: 'b', source: 'opensky', agent_name: 'Flugzeuge', created: '2026-01-01', layers: [] },
+  ] })
+  await f.refreshManifests()
+
+  check('eine Quelle mit eigener Grenze meldet sie', f.getRenderRange('denkmal') === 500,
+    `${f.getRenderRange('denkmal')}`)
+  // DIE FALLE, die das überhaupt nötig macht: Ein Flugzeug in 11 km ist
+  // erwünscht. Gäbe es nur den globalen Regler, müsste man ihn so weit
+  // zudrehen, dass die Denkmäler ausdünnen — und verlöre die Flugzeuge mit.
+  check('eine Quelle ohne Angabe bleibt unbegrenzt', f.getRenderRange('opensky') === Infinity)
+  check('eine unbekannte Quelle ebenso', f.getRenderRange('gibtsnicht') === Infinity)
+
+  // DIE FALLE BEIM HINZUFUEGEN DER SPALTE: PocketBase legt eine neue
+  // Zahlenspalte bei bestehenden Zeilen mit 0 an. Haette 0 „unbegrenzt"
+  // geheissen, haette allein die Migration jedem Agenten sein Budget
+  // aufgehoben — WiGLE haette statt 50 seine fuenfhundert Netze gezeichnet.
+  const g = new AgentFilters({ listAgentManifests: async () => [
+    { id: 'c', source: 'alt',      created: '2026-01-01', render_budget: 0,  render_range_m: 0,  layers: [] },
+    { id: 'd', source: 'flieger',  created: '2026-01-01', render_budget: -1, layers: [] },
+    { id: 'e', source: 'gezaehmt', created: '2026-01-01', render_budget: 12, render_range_m: 250, layers: [] },
+  ] })
+  await g.refreshManifests()
+  check('0 heisst „nicht gesetzt", nicht „unbegrenzt"',
+    g.getRenderBudget('alt') === 50 && g.getRenderRange('alt') === Infinity,
+    `${g.getRenderBudget('alt')} / ${g.getRenderRange('alt')}`)
+  check('unbegrenzt sagt man negativ', g.getRenderBudget('flieger') === Infinity)
+  check('und eine echte Zahl gilt', g.getRenderBudget('gezaehmt') === 12 && g.getRenderRange('gezaehmt') === 250)
+
+  // Die Werte muessen auch ANKOMMEN — sie fielen jahrelang in der Nutzlast weg.
+  const cl = readFileSync(new URL('../client/core/AjnaClient.js', import.meta.url), 'utf8')
+  check('der Client schickt die Render-Grenzen mit',
+    /payload\.render_budget = /.test(cl) && /payload\.render_range_m = /.test(cl))
+
+  // `oneOf` — dafür gibt es „Gastronomie" statt fünf Einzelschaltern.
+  f.setSelection('denkmal', ['gastro'])
+  check('oneOf trifft jeden der genannten Werte',
+    f.matches({ state: { source: 'denkmal', osm_tags: { amenity: 'pub' } } }) &&
+    f.matches({ state: { source: 'denkmal', osm_tags: { amenity: 'cafe' } } }))
+  // DAS OBJEKT MUSS AUF IRGENDEINE SCHICHT PASSEN, sonst greift die
+  // Nachzuegler-Regel und zeigt es trotzdem: Was zu keiner Schicht gehoert,
+  // konnte der Spieler nie abwaehlen, und stilles Verschwinden waere kein
+  // Filtern. Hier gehoert die Bank zur Schicht „kultur" — ausgewaehlt ist aber
+  // „gastro", also bleibt sie aus.
+  check('und keinen anderen',
+    !f.matches({ state: { source: 'denkmal', monument_kind: 'cultural', osm_tags: { amenity: 'bench' } } }))
+
+  // `exists` — alles Historische trägt ein `historic`-Etikett, aber mit zwei
+  // Dutzend verschiedenen Werten.
+  f.setSelection('denkmal', ['historisch'])
+  // Und die Nachzuegler-Regel selbst, weil sie hier zweimal dazwischenkam:
+  check('was auf KEINE Schicht passt, bleibt sichtbar — Absicht, kein Fehler',
+    f.matches({ state: { source: 'denkmal', osm_tags: { amenity: 'bench' } } }))
+
+  f.setSelection('denkmal', ['historisch'])
+  check('exists trifft jeden Wert',
+    f.matches({ state: { source: 'denkmal', osm_tags: { historic: 'ruins' } } }) &&
+    f.matches({ state: { source: 'denkmal', osm_tags: { historic: 'wayside_cross' } } }))
+  check('aber nicht das leere Feld',
+    !f.matches({ state: { source: 'denkmal', monument_kind: 'cultural', osm_tags: { historic: '' } } }))
+
+  // Der Regler in der Szene nimmt den KLEINEREN der beiden Werte.
+  const main = readFileSync(new URL('../client/main.js', import.meta.url), 'utf8')
+  check('die Szene bildet das Minimum aus Regler und Quellen-Grenze',
+    /Math\.min\(global2, r \* r\)/.test(main))
+  check('und reicht die Filter dafür durch',
+    /_capByObjectRange\([\s\S]{0,160}_agentFilters\)/.test(main))
+}
+
 // ── Inventar: was stapelt, und was nicht ────────────────────────────────
 // Ein Stapel ist keine neue Datenstruktur, sondern eine Ansicht auf mehrere
 // gleiche Datensätze. Die Frage ist deshalb allein: Wann sind zwei Stücke
@@ -2445,6 +2608,34 @@ console.log('\n── Kampf: Halt, Beute, Sichtbarkeit')
   check('Weg und Bewegung gehoeren nicht zur Identitaet der Figur',
     wd.includes('const { walk_path, motion, ...rest } = state || {}'))
 
+  // Ein Auftrag einer entworfenen Figur: angelegt und ausgeschrieben wird er
+  // EINMAL. Veroeffentlichen setzt den Lebenszyklus zurueck (`status` auf
+  // „open", `claimedBy` weg) — bei jedem Agenten-Start neu auszuschreiben
+  // zoege dem Spieler, der gerade unterwegs ist, den Auftrag unter den Fuessen
+  // weg.
+  check('ein laufender Auftrag wird nicht neu ausgeschrieben',
+    wd.includes('if (Array.isArray(c.rewardItems) && c.rewardItems.length) return'))
+  check('ein einmaliger Auftrag bleibt erledigt',
+    wd.includes("c.status === 'done' && !figur.quest.repeatable"))
+  // Belohnungen entstehen nie aus dem Nichts: Der Director legt echte Objekte
+  // an und nimmt sie ins eigene Inventar, bevor er sie hinterlegen kann.
+  check('Belohnungen liegen erst im Inventar, dann in der Treuhand',
+    wd.includes('await ajna.pickup(item.id)'))
+  check('was ein Spieler laengst traegt, wird nicht erneut hinterlegt',
+    wd.includes('o.carried_by === meine'))
+  // Der Auftrag ist ein eigenes Objekt, kein Director-Bewohner: sonst zaehlte
+  // er zur Soll-Bevoelkerung und wuerde beim Verlassen der Gegend despawnt.
+  {
+    const { pruefeFigur, alsAuftragsObjekt } = await import('../agents/lib/figuren.mjs')
+    const { figur } = pruefeFigur({
+      id: 'probe', name: 'Probe', lat: 50.4, lon: 7.5,
+      auftrag: { text: 'Sieh nach der Linde.', belohnung: { name: 'Blatt' } },
+    }, 'ui-test')
+    const a = alsAuftragsObjekt(figur)
+    check('der Auftrag ist ein call-Objekt an der Figur', a.type === 'call' && a.state.figure_quest === 'probe')
+    check('und zaehlt nicht zur Bevoelkerung', a.state.persistent === true && !('director' in a.state))
+  }
+
   check('Fundstuecke sind aufnehmbar', /TRAGBAR = new Set\(\['item', 'diamond'\]\)/.test(wd))
   check('auch die schon liegenden', /if \(tragbar\) next\.portable = true/.test(wd))
   check('und untersuchbar', /item:   \{ count: 2, actions: \[\{ key: 'examine'/.test(wd))
@@ -2543,7 +2734,7 @@ console.log('\n── Auftrag: Steigerung und Zusage')
 {
   const q = readFileSync(new URL('../pocketbase/pb_hooks/quests.js', import.meta.url), 'utf8')
   // Die Einstellung wurde gespeichert und angezeigt — und nie angewandt.
-  check('die Steigerung wirkt jetzt', /steigt \* gelaufen/.test(q))
+  check('die Steigerung wirkt jetzt', /rewardStep \* gelaufen/.test(q))
   check('sie zählt die abgeschlossenen Durchläufe', /Number\(callData\.completions\)/.test(q))
   // Sonst bliebe der Auftrag offen und der nächste Spieler liefe ins 409.
   check('der Status prüft den NÄCHSTEN Bedarf', /naechsterBedarf = swap\.perRun \+/.test(q))
@@ -2587,9 +2778,20 @@ console.log('\n── Sprachkatalog')
   check('Platzhalter überleben die Übersetzung', schief.length === 0, schief.join(' | '))
 
   // Server-Meldungen laufen über einen stabilen Code, nicht über ihren Wortlaut.
-  check('Server-Codes sind eingetragen',
-    schluessel.some(k => k.startsWith('fehler.')) &&
-    typeof texte['fehler.reward_reduced'] === 'string')
+  //
+  // Die Zuordnung steht im Client (`FEHLER_TEXT`), NICHT als `fehler.<code>` im
+  // Katalog: Der deutsche Satz ist hier der Schlüssel, ein Eintrag namens
+  // `fehler.auth_locked` hätte auf Deutsch nichts nachzuschlagen. Geprüft wird
+  // deshalb, dass jeder Code einen deutschen Satz hat und der übersetzt ist.
+  const { FEHLER_TEXT } = await import('../client/core/i18n.js')
+  const codes = Object.keys(FEHLER_TEXT)
+  check('jeder Server-Code hat einen deutschen Satz',
+    codes.length > 0 && codes.every(c => typeof FEHLER_TEXT[c] === 'string' && FEHLER_TEXT[c].length > 10))
+  const ohneUebersetzung = codes.filter(c => typeof texte[FEHLER_TEXT[c]] !== 'string')
+  check('und der steht im Katalog', ohneUebersetzung.length === 0, ohneUebersetzung.join(' | '))
+  check('keine alten fehler.*-Schlüssel mehr im Katalog',
+    !schluessel.some(k => k.startsWith('fehler.')),
+    schluessel.filter(k => k.startsWith('fehler.')).join(' '))
 }
 
 // ── t() ist nirgends Pflicht, aber der Weg ist vorbereitet ──────────────
@@ -2778,6 +2980,121 @@ console.log('\n── Delegation von Agent-Namen')
     /const erlaubt = Array\.isArray\(inhaberVon\?\.delegates\)[\s\S]{0,120}if \(erlaubt\.includes\(m\.owner\)\) continue/.test(af))
   // Eine Warnung ohne Ausweg laesst den Leser ratlos zurueck.
   check('und nennt sonst, was zu tun waere', /bei „delegates" des älteren Manifests ein/.test(af))
+}
+
+
+// ── Anmeldeversuche: Fehlversuche zählen, nicht Versuche ────────────────
+console.log('')
+console.log('── Anmelde-Drossel')
+{
+  const { readdirSync: hooksLesen } = await import('node:fs')
+  // Ein Hook in pb_hooks läuft NUR, wenn die Datei auf `.pb.js` endet. Die
+  // erste Fassung hiess `auth-throttle.js` und wurde nie ausgefuehrt — man
+  // sieht das an nichts, ausser dass die Drossel nicht drosselt.
+  const dateien = hooksLesen(new URL('../pocketbase/pb_hooks/', import.meta.url))
+  check('die Drossel ist ein Einstiegspunkt (.pb.js)', dateien.includes('auth-throttle.pb.js'))
+
+  const hk = readFileSync(new URL('../pocketbase/pb_hooks/auth-throttle.pb.js', import.meta.url), 'utf8')
+  // Der ganze Trick: Erfolg löscht den Zähler. Ohne diese Zeile sperrte sich
+  // jeder Agent nach ein paar Neustarts selbst aus.
+  check('eine erfolgreiche Anmeldung löscht den Zähler',
+    /if \(identity\) clearFailures\(e\.app, idKey\)/.test(hk))
+  check('gezählt wird nur bei falschen Zugangsdaten',
+    /status === 400 \|\| status === 401 \|\| status === 403/.test(hk))
+  check('die Sperre antwortet mit 429 und einem stabilen Code',
+    /new ApiError\(429/.test(hk) && /auth_locked/.test(hk))
+  // Der Modul-Scope ist zwischen Boot und Aufruf NICHT geteilt (goja-Pool).
+  check('der Helfer wird IM Callback geladen',
+    /require\(`\$\{__hooks\}\/auth-throttle\.js`\)/.test(hk))
+
+  const lib = readFileSync(new URL('../pocketbase/pb_hooks/auth-throttle.js', import.meta.url), 'utf8')
+  check('die Zähler liegen im geteilten Store, nicht im Modul',
+    /app\.store\(\)/.test(lib) && !/^const zaehler = new Map/m.test(lib))
+  check('die Adress-Sperre ist kürzer als die Konto-Sperre',
+    /auth\.lock_address_s", 120/.test(lib) && /auth\.lock_s", 900/.test(lib))
+  check('alle Grenzen sind ohne Code-Änderung einstellbar',
+    ['auth.max_failures_identity', 'auth.max_failures_address',
+     'auth.failure_window_s', 'auth.lock_s', 'auth.lock_address_s']
+      .every(k => lib.includes(k)))
+}
+
+// ── Welt-Kontext: Figuren wissen, wie das Wetter ist ─────────────────────
+console.log('')
+console.log('── Welt-Kontext')
+{
+  const wd = readFileSync(new URL('../agents/world-director.mjs', import.meta.url), 'utf8')
+  // Der Dialogpfad läuft, während ein Spieler auf Antwort wartet. Ein `await`
+  // auf den Wetterdienst wäre dort eine Wartezeit, die niemand erklären kann.
+  check('der Kontext kommt SYNCHRON in den Dialog',
+    wd.includes('const umgebung = weltkontext ? weltkontext.varsFuer(obj.lat, obj.lon) : {}'))
+  check('und wird zu den Figur-Variablen gemischt',
+    /vars: \{ \.\.\.dialogVarsFor\(obj\), \.\.\.umgebung \}/.test(wd))
+  // Geholt wird, wo jemand IST — und nur, wenn dort auch eine Figur steht.
+  check('geholt wird nur für Zellen mit eigenen Figuren', /function kontextZellen\(centers\)/.test(wd))
+  check('das Auffrischen hängt den Reconcile-Lauf nicht auf',
+    /kontextFrischen\(centers\)\.catch\(/.test(wd))
+
+  const wk = readFileSync(new URL('../agents/lib/weltkontext.mjs', import.meta.url), 'utf8')
+  // Ein Wetter von vor sechs Stunden ist schlechter als keines: Die Figur
+  // behauptet dann etwas, das der Spieler selbst widerlegen kann.
+  check('abgelaufen gilt als nicht vorhanden',
+    /if \(!e \|\| e\.bis <= this\.jetzt\(\)\) continue/.test(wk))
+  check('ein stummer Anbieter reisst den Dialogpfad nicht mit',
+    /catch \(err\) \{\s*this\.warn/.test(wk))
+
+  // Tageszeit und Mond ändern sich schneller als der Takt. Aus dem Vorrat
+  // bedient hiesse: Um 19:59 sagt die Figur „Nachmittag".
+  const wtr = readFileSync(new URL('../agents/lib/wetter.mjs', import.meta.url), 'utf8')
+  check('Tageszeit und Mond werden beim Sprechen gerechnet, nicht beim Holen',
+    /abgeleitet: \(werte\) => \(\{ himmel: himmelVars\(new Date\(\)/.test(wtr))
+
+  // REIHENFOLGE: Die engeren Regeln zuerst — sonst kommen sie nie dran.
+  // Genau dieser Fehler ist beim Schreiben passiert: `wetter_echt` stand vor
+  // `wetter_regen` und hätte Regen und Gewitter verdeckt.
+  const basis = JSON.parse(readFileSync(new URL('../dialogs/basis.parley.json', import.meta.url), 'utf8'))
+  const platz = (name) => basis.rules.findIndex(r => r.label === name)
+  const folge = ['wetter_gewitter', 'wetter_regen', 'wetter_echt', 'wetter']
+  let geordnet = true
+  for (let i = 1; i < folge.length; i++) {
+    if (!(platz(folge[i - 1]) >= 0 && platz(folge[i - 1]) < platz(folge[i]))) geordnet = false
+  }
+  check('die Wetter-Regeln stehen von eng nach weit', geordnet,
+    folge.map(n => `${n}@${platz(n)}`).join(' '))
+  check('ohne Kontext bleibt der allgemeine Spruch stehen', platz('wetter') >= 0)
+  check('die Kontext-Regeln greifen nur mit Kontext',
+    basis.rules.filter(r => /^(wetter_echt|zeit_echt|mond_)/.test(r.label || ''))
+      .every(r => r.if && Object.keys(r.if).length))
+}
+
+// ── Ein Ausfall ist keine leere Liste ───────────────────────────────────
+// Am 17.09.2026 fiel `getFullList()` aus. Elf Agents hatten den Aufruf in ein
+// eigenes try/catch gepackt, gewarnt und mit LEEREM Bestand weitergemacht —
+// 281 Dubletten in 25 Minuten. Die Entscheidung faellt jetzt an EINER Stelle,
+// und diese Pruefungen halten sie dort.
+console.log('')
+console.log('── Bestand: Ausfall ≠ Fehlanzeige')
+{
+  const basis = readFileSync(new URL('../agents/lib/agent-base.mjs', import.meta.url), 'utf8')
+  check('es gibt einen gemeinsamen Weg, den Bestand zu lesen',
+    /export async function ladeBestand\(/.test(basis))
+  check('ein Ausfall endet im Aufgeben, nicht in einer leeren Liste',
+    /Bestand nicht lesbar/.test(basis) && /aufgeben\(\[/.test(basis))
+  check('und wird vorher mehrfach versucht', /mitWiederholung\(/.test(basis))
+  // Ein Ersatzwert waere genau die Falle: Der Aufrufer koennte den Unterschied
+  // zwischen „nichts da" und „nicht gefragt" dann nicht mehr sehen.
+  check('die Wiederholung liefert nie einen Ersatzwert',
+    /return \{ ok: false, grund \}/.test(basis) && !/return \[\]/.test(basis))
+  check('auch das Verbinden beim Start geht denselben Weg',
+    /mitWiederholung\(\(\) => ajna\.connect\(\)/.test(basis))
+
+  // KEIN Agent darf am Helfer vorbei listen — sonst steht die Entscheidung
+  // wieder an zwoelf Stellen.
+  const { readdirSync: agentsLesen } = await import('node:fs')
+  const agentDateien = agentsLesen(new URL('../agents/', import.meta.url))
+    .filter(f => f.endsWith('.mjs'))
+  const vorbei = agentDateien.filter(f =>
+    /ajna\.refreshObjects\(\)/.test(readFileSync(new URL('../agents/' + f, import.meta.url), 'utf8')))
+  check('kein Agent listet am Helfer vorbei', vorbei.length === 0, vorbei.join(', '))
 }
 
 
@@ -3284,7 +3601,7 @@ console.log('\n── Auftrag nur vor Ort annehmen')
 
   // ── Was im Auftrag landet ──────────────────────────────────────────────
   const mitAuflage = qm.callZustandAus({ titel: 'x', annahmeRadiusM: 250 })
-  check('der Radius wandert in den Auftrag', mitAuflage.annahmeRadiusM === 250)
+  check('der Radius wandert in den Auftrag', mitAuflage.acceptRadiusM === 250)
   // Ein Auftrag ohne Auflage darf auch kein leeres Feld tragen — sonst stünde
   // im Datensatz eine Bedingung, die keine ist.
   const ohne = qm.callZustandAus({ titel: 'x', annahmeRadiusM: 0 }, { vorher: { annahmeRadiusM: 250 } })
@@ -3401,19 +3718,19 @@ console.log('\n── Nachweis „vor Ort": Radius und Vorwarnung')
     `Server ${serverVorgabe} / Client ${qs.VOR_ORT_VORGABE_M}`)
 
   // Der Radius gehört nur in den Auftrag, wenn der Nachweis ihn verlangt.
-  const mit = qm.callZustandAus({ titel: 'x', nachweis: ['vorOrt'], vorOrtRadiusM: 50 })
-  check('mit „vor Ort" wandert die Nähe in den Auftrag', mit.vorOrtRadiusM === 50)
-  const ohne = qm.callZustandAus({ titel: 'x', nachweis: ['foto'], vorOrtRadiusM: 50 },
+  const mit = qm.callZustandAus({ titel: 'x', nachweis: ['onSite'], vorOrtRadiusM: 50 })
+  check('mit „vor Ort" wandert die Nähe in den Auftrag', mit.onSiteRadiusM === 50)
+  const ohne = qm.callZustandAus({ titel: 'x', nachweis: ['photo'], vorOrtRadiusM: 50 },
     { vorher: { vorOrtRadiusM: 50 } })
   check('ohne „vor Ort" verschwindet sie wieder', !('vorOrtRadiusM' in ohne))
 
   const dienst = Object.create(qs.QuestService.prototype)
   dienst.ajna = { defaultClient: { id: 'srvM' } }
-  const frage = (stufe, radiusM, nachweis = ['vorOrt']) => {
+  const frage = (stufe, radiusM, nachweis = ['onSite']) => {
     privacy.setLevel('srvM', stufe)
-    return dienst.meldePruefung({ id: 'srvM:q1', roh: { nachweis, vorOrtRadiusM: radiusM } })
+    return dienst.meldePruefung({ id: 'srvM:q1', roh: { proof: nachweis, onSiteRadiusM: radiusM } })
   }
-  check('ohne „vor Ort" gibt es nichts vorzuwarnen', frage('off', 50, ['foto']).noetig === false)
+  check('ohne „vor Ort" gibt es nichts vorzuwarnen', frage('off', 50, ['photo']).noetig === false)
   // 50 m mit einer auf 100 m gerundeten Angabe zu bejahen hiesse raten.
   check('50 m bei Stufe „Gegend" wird vorher angesagt', frage('area', 50).ok === false)
   check('mit einem Text, der sagt was zu tun ist', /Nähe|Genau/.test(frage('area', 50).text))
@@ -3766,7 +4083,7 @@ console.log('\n── Auftrags-Formular: Wortwahl')
       /roh: \{[\s\S]{0,80}\.\.\.c,/.test(shell))
     const qm3 = await import('../client/core/questMapping.js')
     const f = qm3.zuFormular({ id: 'c1', titel: 'x',
-      roh: { verify: 'items', nachweis: [], probelauf: true, annahmeRadiusM: 250, vorOrtRadiusM: 50 } })
+      roh: { verify: 'items', proof: [], dryRun: true, acceptRadiusM: 250, onSiteRadiusM: 50 } })
     check('Probelauf überlebt Datensatz → Formular', f.probelauf === true)
     check('die Annahme-Nähe ebenso', f.annahmeRadiusM === 250, String(f.annahmeRadiusM))
     check('und die Melde-Nähe', f.vorOrtRadiusM === 50, String(f.vorOrtRadiusM))
@@ -3790,7 +4107,7 @@ console.log('\n── Auftrags-Formular: Wortwahl')
     check('ein gewöhnlicher Entwurf bleibt ein Entwurf',
       stand({ published: false }) === 'entwurf')
     check('ein Probelauf-Entwurf ist spielbar',
-      stand({ published: false, probelauf: true }) === 'probe')
+      stand({ published: false, dryRun: true }) === 'probe')
     check('und bietet das Annehmen an',
       (qpMod.QUEST_ACTIONS.probe || []).some(a => a.key === 'accept'))
     // Er bleibt unter „Meine" — dort sucht ihn, wer ihn geschrieben hat.
@@ -3821,7 +4138,7 @@ console.log('\n── Auftrags-Formular: Wortwahl')
       /out\.unshift\(\{ key: 'accept', label: 'Annehmen' \}\)/.test(oa))
     // Dieselbe Regel wie im Auftragsfenster: den eigenen nur als Probelauf.
     check('den eigenen Auftrag nur als Probelauf',
-      /const darfAnnehmen = offen && \(!meins \|\| c\.probelauf === true\)/.test(oa))
+      /const darfAnnehmen = offen && \(!meins \|\| c\.dryRun === true/.test(oa))
     // Ein vergebener Auftrag ist nicht mehr zu haben.
     check('und nur solange ihn niemand hat',
       /const offen = status === 'open' && !c\.claimedBy/.test(oa))

@@ -2476,15 +2476,32 @@ const CAP_RECOMPUTE_DIST2 = 15 * 15                 // 15 m (quadriert)
 let _objectRangeM = Infinity
 
 // Harte Distanzgrenze für Objekte — ergänzt das Agenten-Budget (Anzahl je
-// Source) um eine Grenze in Metern, die für ALLE Objekte gilt, auch für selbst
-// angelegte. HORIZONTAL gemessen: ein Flugzeug in 11 km Höhe direkt über dem
-// Kopf ist gefühlt „hier" und soll nicht an seiner Flughöhe scheitern.
-function _capByObjectRange(objects, geo, camera) {
-  if (!Number.isFinite(_objectRangeM)) return objects
+// Source) um eine Grenze in Metern. HORIZONTAL gemessen: ein Flugzeug in 11 km
+// Höhe direkt über dem Kopf ist gefühlt „hier" und soll nicht an seiner
+// Flughöhe scheitern.
+//
+// ZWEI GRENZEN, DIE KLEINERE GEWINNT. Der Regler „Objekte" gilt für alles und
+// gehört dem Spieler. Eine Quelle darf sich zusätzlich selbst zügeln
+// (`render_range_m` im Manifest) — nötig, weil dichte, ortsfeste Quellen wie
+// POIs oder Denkmäler eine ganz andere Reichweite brauchen als Flugzeuge.
+// Ohne diese Zweiteilung müsste man den Regler so weit zudrehen, dass die
+// Denkmäler ausdünnen — und hätte die Flugzeuge mit verloren.
+function _capByObjectRange(objects, geo, camera, filters) {
   const cam = camera?.globalPosition
   if (!cam) return objects
-  const r2 = _objectRangeM * _objectRangeM
+  const global2 = Number.isFinite(_objectRangeM) ? _objectRangeM * _objectRangeM : Infinity
+  const proQuelle = new Map()
+  const grenzeFuer = (src) => {
+    if (!src || !filters) return global2
+    if (proQuelle.has(src)) return proQuelle.get(src)
+    const r = filters.getRenderRange?.(src)
+    const q = Number.isFinite(r) ? Math.min(global2, r * r) : global2
+    proQuelle.set(src, q)
+    return q
+  }
   return objects.filter(o => {
+    const r2 = grenzeFuer(o?.state?.source)
+    if (!Number.isFinite(r2)) return true
     if (!Number.isFinite(o.lat) || !Number.isFinite(o.lon)) return true   // fängt der Reconcile ab
     const p = geo.toLocal(o.lat, o.lon, 0)
     const dx = p.x - cam.x, dz = p.z - cam.z
@@ -2583,7 +2600,7 @@ async function syncSceneObjects(scene, world, geo, objects) {
   // werden stark vereinfacht, dünne (AIS) bleiben komplett sichtbar.
   const visibleObjects = _capByObjectRange(
     _capByAgentBudget(filteredObjects, geo, scene.activeCamera, _agentFilters),
-    geo, scene.activeCamera)
+    geo, scene.activeCamera, _agentFilters)
 
   const incomingIds = new Set(visibleObjects.map(o => o.id))
 

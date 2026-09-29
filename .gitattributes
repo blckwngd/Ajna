@@ -2,3 +2,15 @@
 # Ein CRLF im Shebang bricht sonst den Interpreter ("bad interpreter: /bin/bash^M").
 *.sh   text eol=lf
 *.mjs  text eol=lf
+
+# Auch JS und JSON immer LF. Zwei Gruende, beide diese Woche aufgetreten:
+#
+#  * Die UI-Suite vergleicht QUELLTEXT und sucht dabei auch mehrzeilige
+#    Ausschnitte. Steht in der Arbeitskopie CRLF, findet sie nichts — auf einem
+#    frisch ausgecheckten Windows-Rechner waren das rund 25 Pruefungen, die nur
+#    dort rot sind.
+#  * Dateien mit Python zu schreiben macht unter Windows stillschweigend CRLF
+#    daraus. Mit `eol=lf` faellt das beim naechsten `git status` auf, statt
+#    Wochen spaeter in einem Test.
+*.js   text eol=lf
+*.json text eol=lf

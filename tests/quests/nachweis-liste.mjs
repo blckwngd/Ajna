@@ -21,7 +21,7 @@ export async function run(t) {
   await t.quest.publish(A.token, call.id, { rewardItems: [lohn.id], verify: 'items' })
 
   let st = (await t.read(A.token, call.id)).state
-  st.call.nachweis = ['foto', 'vorOrt']
+  st.call.proof = ['photo', 'onSite']
   await t.patch(A.token, call.id, { state: st })
   await t.quest.accept(B.token, call.id)
 
@@ -33,7 +33,7 @@ export async function run(t) {
   r = await t.quest.complete(B.token, call.id, { proof: { photos: ['foto-1'] } })
   t.check('halber Nachweis reicht nicht', r.status === 400)
   t.check('nur der fehlende Teil wird bemaengelt',
-    (r.data?.missing || []).length === 1 && /vorOrt/.test(r.data.missing[0]),
+    (r.data?.missing || []).length === 1 && /onSite/.test(r.data.missing[0]),
     JSON.stringify(r.data?.missing))
 
   r = await t.quest.complete(B.token, call.id, {
@@ -61,7 +61,7 @@ export async function run(t) {
   await t.share(A.token, call2.id)
   await t.quest.publish(A.token, call2.id, { rewardItems: [lohn2.id], verify: 'agent' })
   st = (await t.read(A.token, call2.id)).state
-  st.call.nachweis = ['foto']
+  st.call.proof = ['photo']
   await t.patch(A.token, call2.id, { state: st })
   await t.quest.accept(B.token, call2.id)
   r = await t.quest.complete(B.token, call2.id, { proof: { photos: ['bild-a'], note: 'Alle sechs.' } })
@@ -103,7 +103,7 @@ export async function run(t) {
   await t.quest.publish(A.token, beiFigur.id, { rewardItems: [lohn3.id], verify: 'items' })
   st = (await t.read(A.token, beiFigur.id)).state
   st.call.listed = false
-  st.call.anbietenNachH = 6
+  st.call.listAfterHours = 6
   await t.patch(A.token, beiFigur.id, { state: st })
 
   liste = await t.quest.near(B.token, { lat: ORT.lat, lon: ORT.lon, radius: 500 })
@@ -122,8 +122,8 @@ export async function run(t) {
 
   st = (await t.read(A.token, beiFigur.id)).state
   t.check('der Uebergang wird zurueckgeschrieben',
-    st.call.listed === true && st.call.angeboten === true,
-    JSON.stringify({ listed: st.call.listed, angeboten: st.call.angeboten }))
+    st.call.listed === true && st.call.offered === true,
+    JSON.stringify({ listed: st.call.listed, angeboten: st.call.offered }))
 
   // ── Karma-Bedingung in der Liste ───────────────────────────────────────
   st.call.karma = 4

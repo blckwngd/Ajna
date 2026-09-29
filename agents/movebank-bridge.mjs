@@ -38,7 +38,7 @@
 //
 // Start:  node agents/movebank-bridge.mjs   bzw.   npm run movebank
 
-import { bootAgent, envNum, envInt, envStr, publishManifest } from './lib/agent-base.mjs'
+import { bootAgent, envNum, envInt, envStr, publishManifest, ladeBestand } from './lib/agent-base.mjs'
 import { simpleSetup } from './lib/setup-wizard.mjs'
 import { Quellcache } from './lib/quellcache.mjs'
 import { flatDistKm } from '../client/core/geoMath.js'
@@ -273,14 +273,11 @@ await publishManifest(ajna, {
 })
 
 // Bestand adoptieren (idempotent über Studie/Individuum).
-try {
-  await ajna.refreshObjects()
-  for (const o of ajna.getObjects()) {
-    if (o?.state?.source !== SOURCE) continue
-    animals.set(`${o.state.movebank_study}/${o.state.individual}`, { objectId: o.id, name: o.name })
-  }
-  if (animals.size) log(`${animals.size} vorhandene Tiere adoptiert`)
-} catch (err) { warn(`Bestands-Listing: ${err?.message || err}`) }
+for (const o of await ladeBestand(ajna, { tag: 'movebank', warn })) {
+  if (o?.state?.source !== SOURCE) continue
+  animals.set(`${o.state.movebank_study}/${o.state.individual}`, { objectId: o.id, name: o.name })
+}
+if (animals.size) log(`${animals.size} vorhandene Tiere adoptiert`)
 
 log(`Entdeckungslauf startet (bis zu ${MAX_STUDIES} Live-Studien, ${REQ_DELAY_MS} ms Abstand) …`)
 await discover(log)

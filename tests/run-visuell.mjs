@@ -72,10 +72,22 @@ async function api(pfad, opts = {}) {
 async function konto() {
   const marke = Date.now().toString(36)
   const email = `vtest-${marke}@example.invalid`
-  await api('/api/collections/users/records', {
+  const neu = await api('/api/collections/users/records', {
     method: 'POST',
     body: { email, password: PW, passwordConfirm: PW, name: `Sichtprobe ${marke}` },
   })
+  // Das Ergebnis ANSEHEN. Sonst scheitert eine Zeile weiter der Login und die
+  // Meldung behauptet, das Passwort stimme nicht — dabei ist das Konto nie
+  // entstanden. `users:create` erlaubt 100 Konten je Stunde
+  // (1788000000_rate_limits.js); wer die Suiten mehrfach laufen laesst, ist
+  // schneller dort, als man denkt.
+  if (neu.status === 429) {
+    throw new Error('Konto anlegen gedrosselt — das Kontingent „users:create" '
+      + '(100/Stunde) ist erschoepft. Etwas warten, dann erneut.')
+  }
+  if (neu.status !== 200) {
+    throw new Error(`Konto anlegen fehlgeschlagen: ${JSON.stringify(neu.data)}`)
+  }
   const r = await api('/api/collections/users/auth-with-password', {
     method: 'POST', body: { identity: email, password: PW },
   })

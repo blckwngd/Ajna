@@ -24,7 +24,7 @@ export async function run(t) {
 
   // Zwei Ja-Stimmen sollen reichen.
   let st = (await t.read(A.token, call.id)).state
-  st.call.schwarmZahl = 2
+  st.call.crowdCount = 2
   await t.patch(A.token, call.id, { state: st })
 
   await t.quest.accept(B.token, call.id)
@@ -77,7 +77,7 @@ export async function run(t) {
   await t.share(A.token, call2.id)
   await t.quest.publish(A.token, call2.id, { rewardItems: [lohn2.id], verify: 'crowd' })
   st = (await t.read(A.token, call2.id)).state
-  st.call.schwarmZahl = 2
+  st.call.crowdCount = 2
   await t.patch(A.token, call2.id, { state: st })
   await t.quest.accept(B.token, call2.id)
   const e2 = await t.quest.complete(B.token, call2.id)

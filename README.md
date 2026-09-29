@@ -1,5 +1,7 @@
 # Ajna
 
+> 🇬🇧 **English:** [README.en.md](README.en.md)
+
 > **📖 Dokumentation:** [Wiki](wiki/Home.md) — Einstieg für Nutzer, Betreiber und Entwickler,
 > inklusive vollständiger Referenz von [Ajna-Library](wiki/Ajna-Library.md) und
 > [Agent-Library](wiki/Agent-Library.md).
@@ -62,6 +64,18 @@ Backend-Datenmodelle haben keinen direkten Zugriff auf Components — ein Mappin
 **Frontend:** BabylonJS · WebXR · Webpack · ES Modules · Leaflet · optional 3D-Tiles
 **Backend:** PocketBase · Express (`/ajnaapi/*`) · Caddy (HTTPS-Frontend + Reverse-Proxy)
 **Bibliothek:** [`AjnaManager`](client/core/AjnaManager.js) — eine API für Auth, Objekt-CRUD, Realtime, Interaktionen, Berechtigungen, Gruppen, Einladungen, **Multi-Server**
+
+### Sprache
+
+Code ist englisch, die Oberfläche deutsch. Die Grenze verläuft dort, wo ein
+Mensch den Text liest: Bezeichner, Schlüssel in Nutzdaten und neue Kommentare
+sind englisch; was in `t('…')` steht, ist deutsch — **der deutsche Satz IST der
+Übersetzungsschlüssel**. Regeln in [CLAUDE.md](CLAUDE.md), Begründung in
+[docs/mehrsprachigkeit.md](docs/mehrsprachigkeit.md), die Zuordnung der
+umbenannten Datenschlüssel in [docs/key-rename.md](docs/key-rename.md).
+
+Der Bestand ist noch gemischt und wird nicht auf einen Schlag umbenannt — wer
+eine Datei anfasst, benennt sie beim Verlassen um.
 
 ---
 

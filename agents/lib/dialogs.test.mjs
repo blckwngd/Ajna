@@ -17,13 +17,19 @@ const rng = (() => { let s = 4711; return () => (s = (1103515245 * s + 12345) & 
 // ── Laden ────────────────────────────────────────────────────────────────
 console.log('Dialogsätze laden:')
 const docs = loadDialogSets()
-gleich(docs.length, STANDARD_DIALOGS.length, `${STANDARD_DIALOGS.length} Sätze gefunden`)
+// NICHT auf Gleichheit prüfen: Neben den Archetyp-Sätzen dürfen Sätze für
+// einzelne Figuren liegen (`state.dialog_set`, siehe lib/figuren.mjs). Die
+// alte Gleichheit hätte jede entworfene Figur zum Testfehler gemacht — sie
+// prüfte „es gibt keine anderen", gemeint war „die Standards sind da".
+assert(docs.length >= STANDARD_DIALOGS.length, `mindestens ${STANDARD_DIALOGS.length} Sätze gefunden (${docs.length})`)
 for (const n of STANDARD_DIALOGS) assert(docs.some(d => d.name === n), `"${n}" ist dabei`)
 
 const parley = npcParley({ rng })
-for (const n of STANDARD_DIALOGS) {
-  try { parley.chain(n); assert(true, `"${n}" kompiliert`) }
-  catch (err) { assert(false, `"${n}" kompiliert — ${err.message}`) }
+// ALLE gefundenen Sätze kompilieren, nicht nur die Standards: Ein kaputtes
+// Figuren-Paket fällt sonst erst im Betrieb auf, wenn jemand die Figur anspricht.
+for (const d of docs) {
+  try { parley.chain(d.name); assert(true, `"${d.name}" kompiliert`) }
+  catch (err) { assert(false, `"${d.name}" kompiliert — ${err.message}`) }
 }
 
 // ── Zuordnung Objekt → Dialogsatz ────────────────────────────────────────

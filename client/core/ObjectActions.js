@@ -212,7 +212,7 @@ export class ObjectActions {
     // als Probelauf. Das Superuser-Recht kennt der Client hier nicht — wer es
     // hat, nimmt über das Auftragsfenster an, das den Serverbescheid mitbringt.
     const offen = status === 'open' && !c.claimedBy
-    const darfAnnehmen = offen && (!meins || c.probelauf === true)
+    const darfAnnehmen = offen && (!meins || c.dryRun === true || c.probelauf === true)
     if (darfAnnehmen && !out.some(a => /^(accept|annehmen)$/i.test(String(a?.key || '')))) {
       out.unshift({ key: 'accept', label: 'Annehmen' })
     }
@@ -238,7 +238,7 @@ export class ObjectActions {
    */
   async _acceptCall(record) {
     const c = record.state?.call || {}
-    const r = Number(c.annahmeRadiusM) || 0
+    const r = Number(c.acceptRadiusM ?? c.annahmeRadiusM) || 0
     const ort = r > 0
       ? { ich: this.getPosition?.() || null, ziel: { lat: record.lat, lon: record.lon }, radiusM: r }
       : null

@@ -62,18 +62,28 @@ export function createContext(prefix) {
       // Anlegen fiel erst eine Zeile später als „Login fehlgeschlagen" auf, und
       // die Meldung zeigte auf die falsche Stelle. Jetzt wird gewartet und
       // wiederholt — und ein echter Fehler beim Namen genannt.
+      let angelegt = false
       for (let versuch = 0; versuch < 4; versuch++) {
         const r = await req('/api/collections/users/records', {
           method: 'POST',
           body: { email, password: PW, passwordConfirm: PW, name: `${prefix}-${tag}` },
         })
-        if (r.status === 200) break
+        if (r.status === 200) { angelegt = true; break }
         // Schon vorhanden (Wiederholungslauf) ist in Ordnung.
-        if (r.status === 400 && /not_unique/.test(JSON.stringify(r.data || ''))) break
+        if (r.status === 400 && /not_unique/.test(JSON.stringify(r.data || ''))) { angelegt = true; break }
         if (r.status !== 429) {
           throw new Error(`Konto anlegen fehlgeschlagen (${email}): ${JSON.stringify(r.data)}`)
         }
         await new Promise(res => setTimeout(res, 1500 * (versuch + 1)))
+      }
+      // Auch nach vier Versuchen gedrosselt: Das MUSS hier auffallen. Sonst
+      // scheitert eine Zeile weiter der Login — und die Meldung behauptet, das
+      // Passwort stimme nicht, obwohl das Konto nie entstanden ist.
+      // `users:create` erlaubt 100 Konten je Stunde (1788000000_rate_limits.js);
+      // ein Lauf braucht etwa vierzig. Drei Läufe kurz hintereinander reichen.
+      if (!angelegt) {
+        throw new Error(`Konto anlegen gedrosselt (${email}) — das Kontingent `
+          + `„users:create" (100/Stunde) ist erschöpft. Etwas warten, dann erneut.`)
       }
       const r = await req('/api/collections/users/auth-with-password', {
         method: 'POST', body: { identity: email, password: PW },

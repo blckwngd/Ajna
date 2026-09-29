@@ -159,7 +159,10 @@ function istProbelauf(app, call) {
   try {
     const { jsonObject } = require(`${__hooks}/utf8.js`)
     const st = jsonObject(call.get("state"), {})
-    return !!(st && st.call && st.call.probelauf === true)
+    // `probelauf` ist die alte Schreibweise — sie darf verschwinden, sobald der
+    // Bestand migriert ist (docs/key-rename.md).
+    const c = (st && st.call) || {}
+    return c.dryRun === true || c.probelauf === true
   } catch (err) {
     return false
   }

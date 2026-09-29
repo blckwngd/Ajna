@@ -26,9 +26,9 @@
 // Fragen, um die es wirklich geht — WAS bringt der Bearbeiter mit, und WER
 // sagt Ja dazu.
 //
-// Die Code-Bezeichner heißen weiter ABNAHME/NACHWEIS und `state.call.nachweis`:
-// Sie stecken in Datensätzen und in der Server-Route. Umbenennen hieße eine
-// Migration für einen Wortwechsel — der Preis steht in keinem Verhältnis.
+// Die Nachweis-Kennungen heißen seit dem 23.09.2026 englisch (`photo`,
+// `onSite`, `item`) — sie stehen so in `state.call.proof` und in der
+// Server-Route. Die Migration dazu: docs/key-rename.md.
 //
 // Warum ein eigenes Fenster und nicht mehr Felder im Editor: Ein Auftrag ist ein
 // Vorgang mit Lebenslauf, kein Objekt mit ein paar Feldern mehr. Was man ändern
@@ -70,11 +70,11 @@ export const ABNAHME = [
  * dort bestätigt.
  */
 export const NACHWEIS = [
-  { key: 'foto', label: 'Foto-Beweis',
+  { key: 'photo', label: 'Foto-Beweis',
     hinweis: 'Bis zu drei Bilder. Ein Vorher-Bild hilft der Abnahme, ist aber nicht Pflicht.' },
-  { key: 'vorOrt', label: 'Anwesenheit am Einsatzort',
+  { key: 'onSite', label: 'Anwesenheit am Einsatzort',
     hinweis: 'Der Bearbeiter meldet sich am Ort. NFC-Marke oder Beacon machen das belastbar, GPS allein nicht.' },
-  { key: 'gegenstand', label: 'Geforderten Gegenstand dabeihaben',
+  { key: 'item', label: 'Geforderten Gegenstand dabeihaben',
     hinweis: 'Der Server prüft beim Abschluss das Inventar. Die Gattung legst du unten unter „Geforderte Gegenstände" fest.' },
 ]
 
@@ -444,7 +444,7 @@ export class QuestEditor {
           </span></label>`
         }).join('')}
       </div>
-      ${q.nachweis.includes('vorOrt') ? `
+      ${q.nachweis.includes('onSite') ? `
       <label>${esc(t('Wie nah beim Melden'))}
         <select data-f="vorOrtRadiusM"${aus('nachweis')}>
           ${VOR_ORT_NAEHE.map(v => `<option value="${v.m}"${v.m === Number(q.vorOrtRadiusM || 0) ? ' selected' : ''}>${esc(t(v.label))}</option>`).join('')}
@@ -464,7 +464,7 @@ export class QuestEditor {
         ${this._gruppenWahl('pruefgruppe', q.pruefgruppe, aus('abnahme'))}
       </label>` : ''}
 
-      ${q.nachweis.includes('gegenstand') || q.abnahme === 'uebergabe' ? `
+      ${q.nachweis.includes('item') || q.abnahme === 'uebergabe' ? `
       <div class="qe-feldname">${esc(t('Geforderte Gegenstände'))}</div>
       <div class="qe-fussnote">${esc(t('Gattung und Anzahl — der Server sucht sie beim Abschluss im Inventar des Bearbeiters. Leer heißt: nichts abgeben.'))}</div>
       <div class="qe-forderungen">

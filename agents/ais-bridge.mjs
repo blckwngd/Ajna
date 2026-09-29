@@ -40,7 +40,7 @@
 // Beenden: Ctrl+C.
 
 import WebSocket from 'ws'
-import { bootAgent, die, envNum, envInt, envStr, publishManifest } from './lib/agent-base.mjs'
+import { bootAgent, die, envNum, envInt, envStr, publishManifest, ladeBestand } from './lib/agent-base.mjs'
 import { bboxAroundKm } from '../client/core/geoMath.js'
 import { watchInterestAreas } from '../client/core/interestAreas.js'
 
@@ -111,26 +111,21 @@ const ships = new Map()
 // Restart drin war. AIS-Reports innerhalb der ersten STALE_TIMEOUT_S
 // halten die Records dann am Leben.
 const bootMs = Date.now()
-try {
-  await ajna.refreshObjects()
-  for (const obj of ajna.getObjects()) {
-    if (obj.type !== 'ship') continue
-    const mmsi = obj.state?.mmsi
-    if (!mmsi) continue
-    ships.set(String(mmsi), {
-      objectId: obj.id,                // composite ID, vom Manager geroutet
-      lastUpdateMs: 0,
-      lastSeenMs: bootMs,
-      name: obj.name || `MMSI ${mmsi}`,
-      lat: obj.lat,
-      lon: obj.lon,
-      inflight: false
-    })
-  }
-  console.log(`[ajna] ${ships.size} vorhandene Schiffe geladen`)
-} catch (err) {
-  console.warn(`[ajna] initiales Schiffs-Listing fehlgeschlagen: ${err?.message || err}`)
+for (const obj of await ladeBestand(ajna, { tag: 'ais', warn: console.warn })) {
+  if (obj.type !== 'ship') continue
+  const mmsi = obj.state?.mmsi
+  if (!mmsi) continue
+  ships.set(String(mmsi), {
+    objectId: obj.id,                // composite ID, vom Manager geroutet
+    lastUpdateMs: 0,
+    lastSeenMs: bootMs,
+    name: obj.name || `MMSI ${mmsi}`,
+    lat: obj.lat,
+    lon: obj.lon,
+    inflight: false
+  })
 }
+console.log(`[ajna] ${ships.size} vorhandene Schiffe geladen`)
 
 // ───────────────────────────────────────────────────────────────────────
 //  WebSocket-Verbindung mit Reconnect

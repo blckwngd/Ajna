@@ -63,10 +63,19 @@ class MessageLog {
    * @param {{ephemeral?: boolean}} [opts]
    * @returns {object|null} der Eintrag { t, text, cat, ephemeral? } oder null bei leer.
    */
-  push(text, cat = 'system', { ephemeral = false } = {}) {
+  /**
+   * @param {object} [opts]
+   * @param {boolean} [opts.ephemeral]  anzeigen, aber nie speichern
+   * @param {string}  [opts.partner]    Konto-ID des Gesprächspartners.
+   *   Ohne diese Angabe lässt sich ein Gespräch nicht von den übrigen Zeilen
+   *   trennen — im Verlauf steht nur „Name: Text", und zwei Figuren können
+   *   gleich heissen. Die Kennung ist eindeutig, der Name nicht.
+   */
+  push(text, cat = 'system', { ephemeral = false, partner = null } = {}) {
     if (text == null || text === '') return null
     const entry = { t: Date.now(), text: String(text), cat: CATS[cat] ? cat : 'system' }
     if (ephemeral) entry.ephemeral = true
+    if (partner) entry.partner = String(partner)
     const ziel = ephemeral ? this._fluechtig : this._entries
     ziel.push(entry)
     if (ziel.length > MAX) ziel.splice(0, ziel.length - MAX)

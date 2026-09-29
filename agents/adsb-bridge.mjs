@@ -50,7 +50,7 @@
 // Start:  node agents/adsb-bridge.mjs   bzw.   npm run adsb
 // Beenden: Ctrl+C.
 
-import { bootAgent, die, envNum, envInt, envStr, publishManifest } from './lib/agent-base.mjs'
+import { bootAgent, die, envNum, envInt, envStr, publishManifest, ladeBestand } from './lib/agent-base.mjs'
 import { bboxAroundKm, centerOf, flatDistKm, KM_PER_DEG_LAT } from '../client/core/geoMath.js'
 import { watchInterestAreas } from '../client/core/interestAreas.js'
 
@@ -112,7 +112,7 @@ if (await publishManifest(ajna, {
   // nächsten (DEFAULT_RENDER_BUDGET) und cullt den Rest per Distanz — bei
   // Flugzeugen ist aber gerade die Weitsicht der Punkt. Die Gesamtzahl deckelt
   // ohnehin ADSB_MAX_AIRCRAFT.
-  render_budget: 0,
+  render_budget: -1,   // unbegrenzt — Flugzeuge sind naturgemaess weit weg
   layers: [
     { key: 'all', label: 'Alle Flugzeuge', predicate: null },
     { key: 'mil', label: 'Militär', predicate: { field: 'state.mil', equals: true } },
@@ -122,17 +122,12 @@ if (await publishManifest(ajna, {
 // ─── In-Memory: icao24 → { objectId, name, lastSeenMs, inflight } ─────────
 const planes = new Map()
 const bootMs = Date.now()
-try {
-  await ajna.refreshObjects()
-  for (const obj of ajna.getObjects()) {
-    if (obj.type !== 'aircraft') continue
-    const icao = obj.state?.icao24
-    if (icao) planes.set(String(icao), { objectId: obj.id, name: obj.name, lastSeenMs: bootMs, inflight: false })
-  }
-  console.log(`[ajna] ${planes.size} vorhandene Flugzeuge geladen`)
-} catch (err) {
-  console.warn(`[ajna] initiales Listing fehlgeschlagen: ${err?.message || err}`)
+for (const obj of await ladeBestand(ajna, { tag: 'adsb', warn: console.warn })) {
+  if (obj.type !== 'aircraft') continue
+  const icao = obj.state?.icao24
+  if (icao) planes.set(String(icao), { objectId: obj.id, name: obj.name, lastSeenMs: bootMs, inflight: false })
 }
+console.log(`[ajna] ${planes.size} vorhandene Flugzeuge geladen`)
 
 // ─── OAuth2 (optional) ────────────────────────────────────────────────────
 // Client-Credentials-Flow; Token 30 min gültig → mit Puffer vorher erneuern.

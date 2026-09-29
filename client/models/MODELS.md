@@ -34,8 +34,8 @@ Externe Modelle brauchen keine Registrierung — im Editor „Externe URL…" w�
 
 | Archetyp | Modelle |
 |---|---|
-| `npc`    | CesiumMan, Soldier, RobotExpressive |
-| `enemy`  | MawGooey, Slime, Soldier |
+| `npc`    | CesiumMan, Soldier, RobotExpressive + **27 Quaternius-Figuren** (Alltagsleute und Helden) |
+| `enemy`  | MawGooey, Slime, Soldier + Quaternius-Helden (Cleric … Wizard) |
 | `animal` | Fox, Horse, Flamingo, Stork, Parrot (Vögel mit leichter Flughöhe) |
 | `dragon` | Dragon (hohe Flughöhe) |
 | `item`   | Sword, TreasureChest |
@@ -51,6 +51,9 @@ Externe Modelle brauchen keine Registrierung — im Editor „Externe URL…" w�
 | Datei | Kategorie | Animiert | Quelle |
 |---|---|---|---|
 | `AIMonster.glb` | enemy / monster | ? | vom Nutzer ergänzt — Quelle/Lizenz noch einzutragen |
+| `quaternius_men/*.gltf` (11) | npc | ✓ | [Quaternius](https://quaternius.com/) — **CC0** |
+| `quaternius_women/*.gltf` (10) | npc | ✓ | [Quaternius](https://quaternius.com/) — **CC0** |
+| `quaternius_characters/*.gltf` (6) | npc / enemy | ✓ | [Quaternius](https://quaternius.com/) — **CC0** |
 | `CesiumMan.glb` | npc | ✓ | Khronos glTF-Sample-Assets (CC-BY 4.0, © Cesium) |
 | `Soldier.glb` | npc / enemy | ✓ | three.js examples |
 | `RobotExpressive.glb` | device / npc | ✓ (viele) | three.js examples (CC0, Tomás Laulhé / Don McCurdy) |
@@ -89,3 +92,31 @@ Externe Modelle brauchen keine Registrierung — im Editor „Externe URL…" w�
   (4K-Texturen) → zu schwer für AR.
 - Frühere Modelle mit Lizenz-Problem (BrainStem = Poser-EULA, vanguard* =
   vermutlich Mixamo) bzw. defekten Rigs wurden entfernt.
+
+## Die Quaternius-Pakete
+
+27 animierte Figuren von [quaternius.com](https://quaternius.com/), **CC0** —
+gemeinfrei, keine Namensnennung nötig. Sie steht hier trotzdem: In zwei Jahren
+weiß sonst niemand mehr, woher sie stammen und ob man sie weitergeben darf.
+
+**Selbsttragende `.gltf`**, keine `.bin`- oder Texturdateien daneben — die
+Geometrie steckt als `data:`-URI in der Datei. Deshalb funktioniert der
+Unterordner ohne weiteres Zutun.
+
+Gemessen am 21.09.2026:
+
+| Paket | Modelle | Höhe im Modell | Clips |
+|---|---|---|---|
+| `quaternius_men` | 11 | 1,85–1,97 | 24 (u. a. Walk, Run, Idle, Wave, Interact, Death) |
+| `quaternius_women` | 10 | 1,83–2,05 | 24 (dieselben) |
+| `quaternius_characters` | 6 | 2,94–3,00 | 11–15 (Walk, Run, Idle, Spell, Staff_Attack, PickUp) |
+
+**Die Höhen der Pakete gehen auseinander** — ohne Normierung stünde ein Magier
+drei Meter hoch neben einem Bauern. Deshalb greift eine PFAD-Regel in
+`GameObject.js` (`zielHoeheFuerPfad`): alles unter `/quaternius_*` wird auf
+1,8 m normiert. Kein Eintrag je Datei, weil die Sammlungen wachsen — und weil
+es `Adventurer.gltf` zweimal gibt (Männer und Frauen), ein Dateiname hier also
+kein eindeutiger Schlüssel wäre.
+
+`Wave` und `Interact` haben nur die Alltagsleute; die Helden-Sammlung bringt
+dafür `Spell1/2`, `Staff_Attack` und `PickUp` mit.

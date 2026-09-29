@@ -49,9 +49,42 @@ export const VERIFY_ZU_ABNAHME = {
 
 /** Nachweis-Kennung → Klartext für die Detailansicht. */
 export const NACHWEIS_LABEL = {
-  foto: 'Vorher-/Nachher-Foto',
-  vorOrt: t('Anwesenheit am Einsatzort'),
-  gegenstand: t('Geforderten Gegenstand dabeihaben'),
+  photo:  'Vorher-/Nachher-Foto',
+  onSite: t('Anwesenheit am Einsatzort'),
+  item:   t('Geforderten Gegenstand dabeihaben'),
+}
+
+// Alte deutsche Feldnamen eines Auftrags → neue englische (docs/key-rename.md).
+//
+// WARUM EINE EIGENE STELLE: Der Client bekommt Aufträge auf zwei Wegen — aus
+// `/api/quests/near` und aus `state.call` am Objekt. Beide tragen dieselben
+// Namen, und beide können während der Übergangszeit noch die alten liefern:
+// Der Server schickt vorerst BEIDE Schreibweisen, und ein Objekt, das seit der
+// Migration niemand angefasst hat, trägt nur die alte.
+const CALL_ALT_NEU = {
+  kurz: 'summary', ort: 'place', nachweis: 'proof', steigt: 'rewardStep',
+  vorOrtRadiusM: 'onSiteRadiusM', annahmeRadiusM: 'acceptRadiusM',
+  anbietenNachH: 'listAfterHours', angeboten: 'offered', probelauf: 'dryRun',
+  pruefgruppe: 'reviewGroup', schwarmZahl: 'crowdCount',
+}
+const NACHWEIS_ALT_NEU = { foto: 'photo', vorOrt: 'onSite', gegenstand: 'item' }
+
+/**
+ * Auftragsdaten mit englischen Feldnamen — egal, welche Schreibweise ankam.
+ *
+ * Gibt eine KOPIE zurück: Der Aufrufer soll den Datensatz des Servers nicht
+ * unter der Hand verändern.
+ */
+export function callFelder(roh) {
+  if (!roh || typeof roh !== 'object') return {}
+  const c = { ...roh }
+  for (const [alt, neu] of Object.entries(CALL_ALT_NEU)) {
+    if (!(alt in c)) continue
+    if (c[neu] === undefined) c[neu] = c[alt]
+    delete c[alt]
+  }
+  if (Array.isArray(c.proof)) c.proof = c.proof.map(x => NACHWEIS_ALT_NEU[x] || x)
+  return c
 }
 
 /**
@@ -79,8 +112,8 @@ export function anforderungenAus(nachweis, anzahlGegenstaende = 0) {
     .filter(Boolean)
   // Geforderte Gegenstände stehen im Auftrag, auch wenn niemand den Haken
   // gesetzt hat — der Server prüft sie ohnehin beim Abschluss.
-  if (anzahlGegenstaende > 0 && !liste.includes(NACHWEIS_LABEL.gegenstand)) {
-    liste.push(NACHWEIS_LABEL.gegenstand)
+  if (anzahlGegenstaende > 0 && !liste.includes(NACHWEIS_LABEL.item)) {
+    liste.push(NACHWEIS_LABEL.item)
   }
   return liste
 }
@@ -126,9 +159,9 @@ export function ansichtsStatus(rec, meineId) {
   // wäre eine Hürde ohne Zweck; und ausgerechnet der Knopf „Veröffentlichen"
   // ist das Letzte, was man für etwas drückt, das nur einen selbst angeht.
   if (meins && rec?.published === false) {
-    return rec?.probelauf === true ? 'probe' : 'entwurf'
+    return rec?.dryRun === true ? 'probe' : 'entwurf'
   }
-  return rec?.angeboten === true ? 'angeboten' : 'offen'
+  return rec?.offered === true ? 'angeboten' : 'offen'
 }
 
 /**
@@ -167,7 +200,7 @@ function belohnungAus(rec) {
       was: erst ? erst.was : 'Belohnung',
       teile: erst ? [{ was: erst.was, anzahl: proLauf }] : [],
       vorrat: gesamt,
-      steigt: Number(rec?.steigt) || 0,
+      steigt: Number(rec?.rewardStep) || 0,
     }
   }
   return {
@@ -175,7 +208,7 @@ function belohnungAus(rec) {
     was: erst ? erst.was : 'Belohnung',
     teile,
     vorrat: gesamt,
-    steigt: Number(rec?.steigt) || 0,
+    steigt: Number(rec?.rewardStep) || 0,
   }
 }
 
@@ -186,8 +219,9 @@ function belohnungAus(rec) {
  * (Abnahmeweg, Stimmen, Einreichung), und ihn zweimal zu übersetzen wäre eine
  * zweite Stelle, die falsch werden kann.
  */
-export function zuAnsicht(rec, meineId) {
-  if (!rec || !rec.id) return null
+export function zuAnsicht(roheDaten, meineId) {
+  if (!roheDaten || !roheDaten.id) return null
+  const rec = callFelder(roheDaten)
   const ich = String(meineId || '')
   const meins = rec.mine === true || String(rec.owner || '') === ich
   const frist = rec.deadline ? Date.parse(rec.deadline) : NaN
@@ -196,18 +230,18 @@ export function zuAnsicht(rec, meineId) {
     titel: rec.name || '(ohne Titel)',
     status: ansichtsStatus(rec, ich),
     quelle: rec.ownerName || (meins ? 'ich' : 'unbekannt'),
-    kurz: rec.kurz || '',
+    kurz: rec.summary || '',
     text: rec.task || '',
-    ort: rec.ort || '',
+    ort: rec.place || '',
     distanzM: Number.isFinite(rec.distanceM) ? rec.distanceM : null,
     frist: Number.isFinite(frist) ? frist : null,
     belohnung: belohnungAus(rec),
     pruefung: pruefungText(rec),
-    anforderungen: anforderungenAus(rec.nachweis, Number(rec.requires) || 0),
+    anforderungen: anforderungenAus(rec.proof, Number(rec.requires) || 0),
     // 0 = überall annehmbar. Ob der Knopf angeboten wird, entscheidet der
     // Auftrags-Dienst — er kennt die Freigabe-Stufe und die eigene Position.
-    annahmeRadiusM: Number(rec.annahmeRadiusM) || 0,
-    probelauf: rec.probelauf === true,
+    annahmeRadiusM: Number(rec.acceptRadiusM) || 0,
+    probelauf: rec.dryRun === true,
     // Zwei Fragen, zwei Felder: `darfAnnehmen` gilt fuer DIESEN Moment,
     // `darfSpielen` fuer den ganzen Auftrag. Beides weiss nur der Server — er
     // kennt Probelauf und Superuser-Recht.
@@ -216,7 +250,7 @@ export function zuAnsicht(rec, meineId) {
     // Halte ich ihn gerade selbst? Entscheidet, unter welchem Reiter er steht:
     // woran ich ARBEITE, gehört unter „Aktiv" — auch mein eigener Probelauf.
     bearbeiteIch: !!ich && String(rec?.claimedBy || '') === ich,
-    vorOrtRadiusM: Number(rec.vorOrtRadiusM) || 0,
+    vorOrtRadiusM: Number(rec.onSiteRadiusM) || 0,
     karma: Number(rec.karmaRequired) || 0,
     karmaOk: rec.karmaOk !== false,
     meine: meins,
@@ -250,7 +284,7 @@ export function fristAus(fristMs, jetzt = Date.now()) {
  * die brauchbare Angabe, ein Datum von vorgestern nicht.
  */
 export function zuFormular(v, { jetzt = Date.now(), sichtbarkeit = 'region', sichtbarGruppe = '' } = {}) {
-  const roh = v?.roh || {}
+  const roh = callFelder(v?.roh)
   const restMs = v?.frist ? Math.max(0, v.frist - jetzt) : 0
   return {
     id: v?.id || null,
@@ -268,17 +302,17 @@ export function zuFormular(v, { jetzt = Date.now(), sichtbarkeit = 'region', sic
       steigt: Number(v?.belohnung?.steigt) || 0,
     },
     abnahme: VERIFY_ZU_ABNAHME[roh.verify] || 'stichprobe',
-    pruefgruppe: roh.pruefgruppe || '',
+    pruefgruppe: roh.reviewGroup || '',
     schwarmZahl: Number(roh.votesNeeded) || 3,
-    nachweis: Array.isArray(roh.nachweis) ? [...roh.nachweis] : [],
+    nachweis: Array.isArray(roh.proof) ? [...roh.proof] : [],
     karma: Number(v?.karma) || 0,
     // Jeweils erst der Anzeige-Auftrag, dann der Rohsatz: Der eine kommt aus
     // der Regionsliste, der andere aus dem Datensatz (Bearbeiten-Dialog).
     // Beide Wege muessen dasselbe Formular fuellen.
-    annahmeRadiusM: Number(v?.annahmeRadiusM ?? roh.annahmeRadiusM) || 0,
-    probelauf: v?.probelauf === true || roh.probelauf === true,
+    annahmeRadiusM: Number(v?.annahmeRadiusM ?? roh.acceptRadiusM) || 0,
+    probelauf: v?.probelauf === true || roh.dryRun === true,
     // 0 = der Auftrag sagt nichts; im Formular steht dann die Server-Vorgabe.
-    vorOrtRadiusM: Number(v?.vorOrtRadiusM ?? roh.vorOrtRadiusM) || 150,
+    vorOrtRadiusM: Number(v?.vorOrtRadiusM ?? roh.onSiteRadiusM) || 150,
     // Sichtbarkeit steht nicht im Auftrag, sondern in seinen Rechten — sie
     // kommt von aussen, weil dafür die ACEs gelesen werden müssen.
     sichtbarkeit,
@@ -286,8 +320,8 @@ export function zuFormular(v, { jetzt = Date.now(), sichtbarkeit = 'region', sic
     // „nie" wird als -1 geführt: `listed: false` ohne Wartezeit ist auf dem
     // Server derselbe Zustand wie „noch nicht so weit", im Formular aber eine
     // ganz andere Aussage.
-    anbietenNachH: roh.listed === false && !Number(roh.anbietenNachH)
-      ? -1 : (Number(roh.anbietenNachH) || 0),
+    anbietenNachH: roh.listed === false && !Number(roh.listAfterHours)
+      ? -1 : (Number(roh.listAfterHours) || 0),
     // „Belohnung" ist, was EINER bekommt (rewardPerRun); „Vorrat" ist, wie
     // viel insgesamt gebunden ist (die Zahl der Treuhand-Gegenstände).
     wiederholbar: roh.repeatable === true,
@@ -342,33 +376,35 @@ export function forderungenZu(zeilen) {
  */
 export function callZustandAus(formular, { jetzt = Date.now(), vorher = null } = {}) {
   const f = formular || {}
-  const c = { ...(vorher && typeof vorher === 'object' ? vorher : {}) }
+  // Der bisherige Stand kann noch die alten deutschen Namen tragen. Ohne
+  // Normalisierung stuenden danach beide Schreibweisen im Datensatz.
+  const c = callFelder(vorher && typeof vorher === 'object' ? vorher : {})
   c.task = String(f.text || '').trim()
-  c.kurz = String(f.kurz || '').trim()
-  c.ort = String(f.ort || '').trim()
+  c.summary = String(f.kurz || '').trim()
+  c.place = String(f.ort || '').trim()
   c.karma = Number(f.karma) || 0
-  c.nachweis = Array.isArray(f.nachweis) ? [...f.nachweis] : []
-  c.steigt = Number(f.belohnung?.steigt) || 0
+  c.proof = Array.isArray(f.nachweis) ? [...f.nachweis] : []
+  c.rewardStep = Number(f.belohnung?.steigt) || 0
 
   // „Nur vor Ort annehmen". 0 heißt überall — dann fällt das Feld ganz weg,
   // damit ein Auftrag ohne diese Auflage auch keine trägt.
   // Probelauf: nur fuer den Autor sichtbar, zahlt bei niemandem etwas aus.
-  if (f.probelauf) c.probelauf = true; else delete c.probelauf
+  if (f.probelauf) c.dryRun = true; else delete c.dryRun
 
   const annahme = Number(f.annahmeRadiusM) || 0
-  if (annahme > 0) c.annahmeRadiusM = annahme; else delete c.annahmeRadiusM
+  if (annahme > 0) c.acceptRadiusM = annahme; else delete c.acceptRadiusM
 
   // Melde-Nähe nur, wenn der Nachweis sie überhaupt verlangt — sonst stünde
   // eine Zahl im Auftrag, die nie jemand liest.
   const vorOrt = Number(f.vorOrtRadiusM) || 0
-  if (c.nachweis.includes('vorOrt') && vorOrt > 0) c.vorOrtRadiusM = vorOrt
-  else delete c.vorOrtRadiusM
+  if (c.proof.includes('onSite') && vorOrt > 0) c.onSiteRadiusM = vorOrt
+  else delete c.onSiteRadiusM
 
   const frist = fristAus(f.fristMs, jetzt)
   if (frist) c.deadline = frist; else delete c.deadline
 
-  if (f.abnahme === 'schwarm') c.schwarmZahl = Math.max(1, Math.min(9, Number(f.schwarmZahl) || 3))
-  else delete c.schwarmZahl
+  if (f.abnahme === 'schwarm') c.crowdCount = Math.max(1, Math.min(9, Number(f.schwarmZahl) || 3))
+  else delete c.crowdCount
 
   // Forderungen und Wiederholbarkeit setzt beim Ausschreiben der Server (er
   // prüft sie dort). Ein ENTWURF geht da nie durch — ohne diese Zeilen wäre
@@ -383,9 +419,9 @@ export function callZustandAus(formular, { jetzt = Date.now(), vorher = null } =
   // Nur bei der Figur anbieten: erst nach der Wartezeit zusätzlich listen.
   // `-1` heisst „nie" — nicht gelistet und keine Wartezeit, die das ändert.
   const wartet = Number(f.anbietenNachH) || 0
-  if (wartet < 0) { delete c.anbietenNachH; c.listed = false; delete c.angeboten }
-  else if (wartet > 0) { c.anbietenNachH = wartet; c.listed = false; delete c.angeboten }
-  else { delete c.anbietenNachH; c.listed = true }
+  if (wartet < 0) { delete c.listAfterHours; c.listed = false; delete c.offered }
+  else if (wartet > 0) { c.listAfterHours = wartet; c.listed = false; delete c.offered }
+  else { delete c.listAfterHours; c.listed = true }
 
   return c
 }
@@ -402,7 +438,7 @@ export function publishPayloadAus(formular, rewardItems) {
   const f = formular || {}
   const verify = ABNAHME_ZU_VERIFY[f.abnahme] || 'items'
   const body = { rewardItems: [...(rewardItems || [])], verify }
-  if (verify === 'group' && f.pruefgruppe) body.pruefgruppe = String(f.pruefgruppe)
+  if (verify === 'group' && f.pruefgruppe) body.reviewGroup = String(f.pruefgruppe)
   const forderungen = forderungenZu(f.forderungen)
   if (forderungen.length) body.requires = forderungen
   if (f.wiederholbar) {

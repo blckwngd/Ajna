@@ -8,6 +8,7 @@ Fehler, den man hinterher nicht mehr auseinanderbekommt.
 | **Oberfläche** | Knöpfe, Hinweise, Dialoge | `core/i18n.js` — Katalog im Client |
 | **Inhalte** | Objektbeschreibungen, POI-Namen, NPC-Dialoge | `core/Sprachwahl.js` — Sprachkarte am Datensatz |
 | **Von Menschen** | Auftragstexte, Objektnamen, Nachrichten | **nie übersetzen** |
+| **Der Code selbst** | Bezeichner, Schlüssel in Nutzdaten, Kommentare | **englisch** — siehe unten |
 
 ## Oberfläche: der deutsche Satz ist der Schlüssel
 
@@ -50,6 +51,36 @@ window.ajnaSprache('en')     // umstellen, ohne die Einstellungen zu öffnen
 Ein Extraktor, der den Quelltext liest, findet nur, was statisch dasteht. Diese
 Liste findet, was tatsächlich auf dem Bildschirm war.
 
+## Der Code selbst: englisch
+
+Die drei Arten oben handeln von Text, den jemand liest. Der Code ist die vierte
+Art, und für ihn gilt das Gegenteil: **Bezeichner, Schlüssel und neue Kommentare
+sind englisch.** Begründung ist dieselbe wie bei allem hier — die Stelle, an der
+Sprache wirklich weh tut, ist die, an der jemand Neues dazukommt.
+
+Das steht **nicht** im Widerspruch zum deutschen Satz als Übersetzungsschlüssel.
+Beides trennt sauber:
+
+```js
+function reportDone(quest) {          // Code: englisch
+  toast(t('Erledigt melden'))         // Oberfläche: deutscher Satz als Schlüssel
+}
+```
+
+Wer `t('quest.submit.label')` schriebe, hätte beides vermischt — genau der
+Fehler, den der Abschnitt oben beschreibt.
+
+**Schlüssel in Nutzdaten sind der harte Teil.** `state.figure_id`, ein
+Layer-Schlüssel `nature`, ein Nachweiswert `onSite` — die stehen in der Datenbank
+und im Browser-Speicher der Spieler. Sie umzubenennen kostet eine Migration und
+eine Übergangszeit, in der beide Schreibweisen gelesen werden. Neue sind deshalb
+ab sofort englisch, ohne Ausnahme; der Bestand wird in einem Zug umgestellt
+(`arbeitspakete.md`).
+
+Der vorhandene Code ist gemischt. Er wird **nicht** auf einen Schlag übersetzt:
+Wer eine Datei ohnehin anfasst, benennt sie beim Verlassen um. Die Regeln dazu
+stehen in `CLAUDE.md`.
+
 ## Inhalte: ein Text darf einfach ein Text sein
 
 ```js
@@ -82,10 +113,27 @@ Sprache des Lesers:
   "code": "reward_reduced" }
 ```
 
-Der englische Text bleibt als Rückfall stehen — er soll im Log lesbar sein. Die
-Zuordnung `code` → Satz steht in der Sprachdatei wie jeder andere Text
-(`'fehler.reward_reduced'`). Nebenwirkung, die den Aufwand allein rechtfertigt:
-**Fehler werden prüfbar.** Vorher hingen Tests an englischen Satzfragmenten.
+Der englische Text bleibt als Rückfall stehen — er soll im Log lesbar sein.
+Nebenwirkung, die den Aufwand allein rechtfertigt: **Fehler werden prüfbar.**
+Vorher hingen Tests an englischen Satzfragmenten.
+
+**Die Zuordnung steht im Client, nicht im Katalog** — `FEHLER_TEXT` in
+`core/i18n.js`, gelesen von `serverFehler(err, rueckfall)`:
+
+```js
+catch (err) { zeige(serverFehler(err, 'Anmeldung fehlgeschlagen')) }
+```
+
+Hier stand zuerst, die Zuordnung gehöre als `'fehler.<code>'` in die
+Sprachdatei. **Das geht für jede Sprache ausser der eigenen.** Der deutsche Satz
+ist hier der Schlüssel; ein Katalogeintrag `'fehler.auth_locked'` hätte auf
+Deutsch nichts nachzuschlagen, und der Spieler sähe entweder den Schlüssel oder
+den englischen Server-Text. Aufgefallen ist es erst, als die Anmeldedrossel den
+ersten Verbraucher bekam — die Einträge standen bis dahin unbenutzt im Katalog.
+
+Also: Code → deutscher Satz in `FEHLER_TEXT`, und der geht durch `t()` wie jeder
+andere Text. Ein unbekannter Code fällt auf die Server-Meldung zurück; die ist
+englisch, sagt aber wenigstens etwas.
 
 ## Reihenfolge der Arbeit
 

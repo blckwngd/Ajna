@@ -1059,6 +1059,15 @@ export class AjnaClient {
       layers: manifest.layers || [],
       owner: me.id
     }
+    // Render-Grenzen nur mitschicken, wenn der Agent sich dazu äussert — sonst
+    // überschriebe ein Agent, der sie nicht kennt, bei jedem Start die Werte
+    // eines anderen. (Dieselbe Regel wie bei `delegates` unten.)
+    //
+    // DIESE ZEILEN HABEN GEFEHLT: Der Client LAS beide Werte, aber die Nutzlast
+    // trug sie nie — `adsb-bridge` setzt seit jeher `render_budget: 0` und wurde
+    // trotzdem bei 50 gedeckelt. Siehe Migration 1788500000.
+    if (Number.isFinite(Number(manifest.render_budget))) payload.render_budget = Number(manifest.render_budget)
+    if (Number.isFinite(Number(manifest.render_range_m))) payload.render_range_m = Number(manifest.render_range_m)
     // Nur mitschreiben, wenn der Aufrufer sich dazu äußert — sonst löschte ein
     // Agent, der nichts von Delegation weiß, bei jedem Start die Liste.
     if (Array.isArray(manifest.delegates)) {

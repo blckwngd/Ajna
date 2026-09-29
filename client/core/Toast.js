@@ -56,7 +56,14 @@ export class Toast {
         transition: opacity 180ms ease-out, transform 180ms ease-out;
       }
       .ajna-toast.show { opacity: 1; transform: translateY(0); }
-      .ajna-toast.klickbar { cursor: pointer; }
+      /* DER CONTAINER IST DURCHLÄSSIG (pointer-events: none), damit eine
+         Meldung nicht die halbe Szene blockiert — sie liegt mittig über Karte
+         und 3D-Bild. Ein ANKLICKBARER Toast muss die Ereignisse aber bekommen,
+         sonst landet der Klick in der Karte bzw. auf der Babylon-Leinwand
+         darunter und der Toast ist nur zum Ansehen da.
+         Genau das war der Fall: klickbar setzte den Zeiger auf „Hand", aber
+         das Element konnte gar kein Klick-Ereignis empfangen. */
+      .ajna-toast.klickbar { cursor: pointer; pointer-events: auto; }
       .ajna-toast.klickbar:hover { filter: brightness(1.18); }
       .ajna-toast.klickbar:focus-visible { outline: 2px solid #4a9d5f; outline-offset: 2px; }
       .ajna-toast .toast-title {
@@ -65,6 +72,12 @@ export class Toast {
         letter-spacing: 0.05em;
         font-size: 10px;
         margin-right: 8px;
+      }
+      .ajna-toast .toast-hinweis {
+        display: block;
+        margin-top: 6px;
+        font-size: 11px;
+        opacity: 0.65;
       }
     `
     document.head.appendChild(style)
@@ -77,7 +90,7 @@ export class Toast {
    *   sonst stünde dieselbe Zeile zweimal im Fenster (einmal als Gespräch,
    *   einmal als System-Hinweis).
    */
-  show(text, { title, timeout = DEFAULT_TIMEOUT, log = true, onClick = null } = {}) {
+  show(text, { title, timeout = DEFAULT_TIMEOUT, log = true, onClick = null, hinweis = null } = {}) {
     // Kurzlebige Toasts zusätzlich in den persistenten Verlauf (Chat-/Debug-
     // Fenster), damit Hinweise/Fehler später nachvollziehbar bleiben.
     if (log) { try { window.ajnaLog?.push(title ? `${title}: ${text}` : text, 'system') } catch {} }
@@ -90,6 +103,15 @@ export class Toast {
       el.appendChild(t)
     }
     el.appendChild(document.createTextNode(text))
+    // Kleiner Hinweis UNTER der Nachricht — er sagt, was ein Tippen bewirkt.
+    // Als eigene Meldung VOR der Antwort stand er sonst da, bevor es etwas zu
+    // beantworten gab: Man las „Antippen zum Antworten" und erst danach, worauf.
+    if (hinweis) {
+      const h = document.createElement('span')
+      h.className = 'toast-hinweis'
+      h.textContent = hinweis
+      el.appendChild(h)
+    }
 
     // ANKLICKBAR: Der Toast führt in den Verlauf. Damit kann eine Figur etwas
     // sagen, OHNE dass sich sofort ein Fenster über die Szene legt — wer
