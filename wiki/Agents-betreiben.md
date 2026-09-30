@@ -67,13 +67,42 @@ Abgelehnte Kommandos landen mit Absender im Protokoll.
 
 ## Dauerbetrieb
 
-```bash
-pm2 start agents/world-director.mjs --name ajna-director
-pm2 start agents/poi-bridge.mjs     --name ajna-poi
-pm2 save
+Auf dem Server laufen die Agents unter pm2, und zwar **über `ecosystem.config.cjs`** — nicht über einzelne `pm2 start`-Aufrufe. Welche Agents laufen, steht dort in der Liste `AGENTS`:
+
+```js
+const AGENTS = [
+  'poi-bridge',
+  'world-director',
+  // 'cits-bridge',   // einschalten: Kommentarzeichen weg
+]
 ```
 
-Die Assistenten einiger Agents bieten die Registrierung bei pm2 direkt an.
+Die Datei ist eingecheckt. Ändere sie **im Repo, nicht auf dem Server** — `scripts/deploy.sh` zieht mit `git pull --ff-only`, und eine lokale Änderung auf dem Server lässt den nächsten Deploy auflaufen.
+
+Einen Agenten dazuzunehmen sind drei Schritte:
+
+1. **Konto anlegen** (siehe oben) und die Standard-Rechte setzen, sonst sieht niemand die Objekte.
+2. **Auf dem Server einrichten** — der Assistent schreibt `agents/.env.<name>` mit Rechten `0600`:
+   ```bash
+   node agents/cits-bridge.mjs --setup
+   ```
+3. **Ausrollen:** `npm run deploy` (zieht, baut, prüft die Migrations-Historie, lädt pm2 neu und speichert die Prozessliste).
+
+> **Der Name der .env-Datei ist nicht der Dateiname des Agenten.** Er kommt aus dem ersten Argument von `bootAgent(…)` und ist meist kürzer:
+>
+> | Agent | .env-Datei |
+> |---|---|
+> | `adsb-bridge` | `agents/.env.adsb` |
+> | `ais-bridge` | `agents/.env.ais` |
+> | `ais-vesselfinder` | `agents/.env.ais-vf` |
+> | `cits-bridge` | `agents/.env.cits` |
+> | `homeassistant-gateway` | `agents/.env.ha-gateway` |
+> | `movebank-bridge` | `agents/.env.movebank` |
+> | `poi-bridge` | `agents/.env.poi` |
+> | `wigle-bridge` | `agents/.env.wigle` |
+> | `world-director` | `agents/.env.director` |
+>
+> Wer `agents/.env.cits-bridge` anlegt, bekommt einen Agenten, der die Datei nie liest und mit „Fehlende Konfiguration" abbricht.
 
 Zum Ausprobieren startet `npm run stack:all` den Stack zusammen mit POI, AIS, WiGLE und World-Director in einem Terminal.
 

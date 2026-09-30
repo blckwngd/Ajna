@@ -23,13 +23,20 @@ const AGENTS = [
                            // der .env DIESER Umgebung — sonst fail-fast (exit 1)
                            // → pm2-Restart-Loop. .env ist nicht eingecheckt, also
                            // pro Server separat setzen (docs/homeassistant.md).
-  'address-bridge',  // Adress-Lupe. BEWUSST AUS: Der Agent trägt Angaben über
+  'address-bridge', // Adress-Lupe. BEWUSST AUS: Der Agent trägt Angaben über
   //                    // Adressen zusammen — im Modus `erweitert` auch über
   //                    // Privatpersonen. Wer ihn einschaltet, entscheidet als
   //                    // Betreiber über Zweck und Mittel; das gehört nicht in
   //                    // eine Vorgabe. Braucht `agents/.env.address-bridge`
   //                    // (npm run address:setup) und optional die Abzüge unter
   //                    // `.cache/`. Siehe docs/adress-anreicherung-quellen.md.
+  'cits-bridge',  // Straßenverkehr über opentrafficmap.org. Spiegelt in der
+  //                 // Vorgabe AUCH private Fahrzeuge (CITS_PRIVAT=off nimmt sie
+  //                 // aus). Braucht `agents/.env.cits` — Name des Agenten ist
+  //                 // `cits`, nicht `cits-bridge`.
+  'movebank-bridge',   // besenderte Wildtiere. Braucht Zugangsdaten.
+  'ais-vesselfinder',  // zweite Schiffsquelle. Braucht Zugangsdaten.
+  // 'uwb-anchors',       // UWB-Anker aus einer JSON-Datei. Braucht die Datei.
   // 'wand-agent',   // optional: Online-Teil der Zauberstab-Kette (legt ein
   //                  // Demo-Zielobjekt an, schaltet animation_state auf wand_*).
   //                  // Nur nötig, wenn du diese spezielle Wand-Demo willst.
