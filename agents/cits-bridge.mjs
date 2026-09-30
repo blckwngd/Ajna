@@ -106,6 +106,11 @@ const filter = () => ({
 
 let gesehen = 0, uebernommen = 0
 
+// Letzte Position je Sender, für den abgeleiteten Bewegungsvektor. Wächst mit
+// der Flotte, nicht mit der Laufzeit: was die Flotte fallen lässt, fliegt hier
+// mit raus (siehe punktWeg und den Aufräumlauf unten).
+const letzteOrte = new Map()
+
 async function punktGesehen(feature) {
   gesehen++
   const key = feature.properties?.mac || feature.id
@@ -116,13 +121,23 @@ async function punktGesehen(feature) {
   // hinge am Rand fest. Der Schalter soll sofort wirken.
   if (!relevant(feature, filter())) {
     if (fleet.has(key)) await fleet.drop(key)
+    letzteOrte.delete(key)
     return
   }
   // Obergrenze: Eine Autobahnkreuzung mit hundert Fahrzeugen soll die Welt
   // nicht fluten. Bekannte Objekte werden weiter gepflegt, neue abgelehnt.
   if (!fleet.has(key) && fleet.size >= MAX_OBJEKTE) return
   const vorher = fleet.size
-  await fleet.seen(key, alsSichtung(feature))
+  const sicht = alsSichtung(feature, letzteOrte.get(key))
+  // Die vorige Position MERKEN, nicht die aktuelle Sichtung: aus zwei Punkten
+  // entsteht der Bewegungsvektor für alles, was weder Tempo noch Kurs meldet
+  // (die Hälfte der Sender). Nur für Bewegliches — eine Ampel, die um zwei
+  // Meter „wandert", ist Ortungsrauschen und keine Fahrt.
+  if (sicht.state.moving) {
+    const t = Date.parse(feature.properties?.lastSeen || '')
+    letzteOrte.set(key, { lat: sicht.lat, lon: sicht.lon, t: Number.isFinite(t) ? t : Date.now() })
+  }
+  await fleet.seen(key, sicht)
   if (fleet.size > vorher) uebernommen++
 }
 
@@ -130,7 +145,7 @@ async function punktWeg(kennung) {
   // Der Dienst sagt ausdrücklich Bescheid, wenn etwas verschwindet — schöner
   // als jede Schätzung über Zeitabläufe.
   const key = typeof kennung === 'string' ? kennung : (kennung?.id || kennung?.mac)
-  if (key) await fleet.drop(key)
+  if (key) { await fleet.drop(key); letzteOrte.delete(key) }
 }
 
 // ─── Verbindung ───────────────────────────────────────────────────────────
@@ -188,6 +203,8 @@ verbinde()
 // Frische. Beides zusammen, weil Punkte auch einfach verstummen.
 setInterval(() => {
   fleet.sweep().catch(err => warn(`Aufräumen: ${err?.message || err}`))
+  // Was die Flotte nicht mehr kennt, braucht auch keine Vorgeschichte mehr.
+  for (const key of letzteOrte.keys()) if (!fleet.has(key)) letzteOrte.delete(key)
 }, 60_000)
 
 setInterval(() => {

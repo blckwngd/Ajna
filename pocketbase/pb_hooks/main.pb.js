@@ -86,11 +86,40 @@ function pruefeQuellenanspruch(e) {
       // Auf CREATE setzt der Owner-Hook oben bereits `owner`; als Netz der
       // Aufrufer, falls die Reihenfolge einmal wechselt.
       const owner = e.record.get("owner") || (e.auth ? e.auth.id : "")
+      // WER HAELT DEN NAMEN? Der AELTESTE Eintrag, nicht der erstbeste.
+      //
+      // `agent_manifests` ist eindeutig ueber (source, owner) — NICHT ueber
+      // source allein. Ein zweites Konto darf denselben Namen also anlegen, und
+      // sein Upsert meldet Erfolg. Ohne Sortierung entschied hier die Laune der
+      // Abfrage, welcher der beiden Ansprueche gilt; der Client sortiert nach
+      // `created` (AgentFilters.js) und kaeme dann zu einem anderen Ergebnis
+      // als der Server. Zwei Stellen, die dieselbe Frage verschieden
+      // beantworten, sind schlimmer als eine falsche Antwort.
       let inhaber = null
+      let delegates = []
       try {
-        const m = $app.findFirstRecordByFilter("agent_manifests", "source = {:s}", { s: src })
-        inhaber = m ? m.get("owner") : null
+        const treffer = $app.findRecordsByFilter(
+          "agent_manifests", "source = {:s}", "created", 50, 0, { s: src })
+        const m = treffer && treffer.length ? treffer[0] : null
+        if (m) {
+          inhaber = m.get("owner")
+          const roh = m.get("delegates")
+          // JSON-Felder kommen im JSVM als Objekt ODER als String an (dieselbe
+          // Falle wie bei `state` weiter oben).
+          const liste = typeof roh === "string" ? JSON.parse(roh || "[]") : roh
+          if (Array.isArray(liste)) delegates = liste
+        }
       } catch (err) { inhaber = null }   // 404 = niemand hat den Namen
+
+      // DELEGATION GILT AUCH HIER, NICHT NUR IN DER ANZEIGE.
+      //
+      // Der Client liess ein delegiertes Konto bereits als echt durchgehen und
+      // riet in seiner Warnung ausdruecklich dazu ("trage <id> bei delegates
+      // ein") — der Server wies dessen Objekte aber weiter ab. Die Funktion war
+      // damit auf halbem Weg stehengeblieben: sichtbar versprochen, nie
+      // durchgesetzt. Eintragen kann sie nur der Namensinhaber selbst
+      // (updateRule), die Vertrauenskette bleibt also beim Inhaber.
+      if (inhaber && inhaber !== owner && delegates.indexOf(owner) >= 0) { e.next(); return }
 
       if (inhaber && inhaber !== owner) {
         throw new ForbiddenError(

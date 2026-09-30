@@ -158,8 +158,76 @@ async function mitWiederholung(tun, opts = {}) {
 
 /** Agent-Manifest publishen — best effort (Fehler nur warnen, nie sterben). */
 export async function publishManifest(ajna, manifest, warn = console.warn) {
-  try { await ajna.upsertAgentManifest(mitDelegierten(manifest)); return true }
-  catch (err) { warn('Manifest-Upsert fehlgeschlagen:', err?.message || err); return false }
+  try {
+    await ajna.upsertAgentManifest(mitDelegierten(manifest))
+    // ERFOLG HEISST NICHT, DASS DER NAME UNS GEHÖRT.
+    //
+    // Der eindeutige Index steht auf (source, owner), nicht auf source allein:
+    // ein zweites Konto darf denselben Quellnamen anlegen, und der Upsert
+    // meldet brav Erfolg. Der Objekt-Hook nimmt dann aber den ÄLTEREN Eintrag,
+    // und jedes Objekt scheitert mit 403 — "Manifest veröffentlicht", gefolgt
+    // von einer endlosen Fehlerspalte. Genau so stand die C-ITS-Brücke am
+    // 30.09.2026 auf dem VPS.
+    await inhaberschaftPruefen(ajna, manifest, warn)
+    return true
+  }
+  catch (err) {
+    // Hier landet nur, was schon beim Schreiben scheiterte. Auch dann ist die
+    // Meldung des Servers unbrauchbar („Failed to create record"), also erst
+    // nachsehen, wem der Name gehört.
+    await inhaberschaftPruefen(ajna, manifest, warn)
+    warn('Manifest-Upsert fehlgeschlagen:', err?.message || err)
+    return false
+  }
+}
+
+/**
+ * Gehört uns der Quellname wirklich? Wenn nicht: abbrechen.
+ *
+ * Es gilt der ÄLTESTE Eintrag — dieselbe Regel, nach der `AgentFilters.js` im
+ * Client entscheidet, welches von zwei Manifesten zählt. Wer dort als
+ * `delegates` eingetragen ist, darf ebenfalls; das ist der vorgesehene Weg für
+ * einen Betreiber mit zwei Konten.
+ */
+async function inhaberschaftPruefen(ajna, manifest, warn = console.warn) {
+  const inhaber = await manifestInhaber(ajna, manifest?.source)
+  const ich = ajna.currentUser?.()?.id
+  if (!inhaber || !ich || !inhaber.owner || inhaber.owner === ich) return
+  const erlaubt = Array.isArray(inhaber.delegates) ? inhaber.delegates : []
+  if (erlaubt.includes(ich)) return
+
+  const wer = inhaber.owner_handle ? `@${inhaber.owner_handle} (${inhaber.owner})` : inhaber.owner
+  die(`Die Quelle "${manifest.source}" gehört auf diesem Server bereits ${wer}.\n`
+    + `  Dieses Konto (${ich}) kann damit KEINE Objekte anlegen — der Server weist jeden\n`
+    + `  Schreibversuch mit 403 ab ("gehört einem anderen Konto"). Dass das Manifest\n`
+    + `  eben angenommen wurde, ändert daran nichts: es gilt der ältere Eintrag.\n`
+    + `\n`
+    + `  Drei Wege:\n`
+    + `    1. Den Agenten mit dem Konto starten, dem der Name gehört.\n`
+    + `    2. Gehören beide Konten dir: ${ich} beim älteren Manifest unter\n`
+    + `       "delegates" eintragen (Sammlung agent_manifests).\n`
+    + `    3. Den älteren Eintrag löschen. ACHTUNG: dessen Objekte bleiben in\n`
+    + `       fremdem Besitz und werden danach unveränderlich — vorher aufräumen.`)
+}
+
+/**
+ * Wer hält einen Quellnamen auf diesem Server? `null`, wenn niemand.
+ *
+ * Der ÄLTESTE Eintrag gewinnt, nicht der erstbeste: bei zwei Ansprüchen hängt
+ * die Reihenfolge einer ungeordneten Liste sonst vom Zufall ab, und der Client
+ * entschiede anders als wir.
+ *
+ * Bewusst über die Liste statt über einen gefilterten Einzelabruf: Lesen darf
+ * jeder Angemeldete, und ein 404 aus einem Filter ließe sich nicht von einem
+ * Rechteproblem unterscheiden.
+ */
+async function manifestInhaber(ajna, source) {
+  if (!source) return null
+  try {
+    const alle = await ajna.listAgentManifests()
+    return alle.filter(m => m?.source === source)
+      .sort((a, b) => String(a.created || '').localeCompare(String(b.created || '')))[0] || null
+  } catch { return null }
 }
 
 /**
