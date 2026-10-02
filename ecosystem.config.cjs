@@ -34,6 +34,13 @@ const AGENTS = [
   //                 // Vorgabe AUCH private Fahrzeuge (CITS_PRIVAT=off nimmt sie
   //                 // aus). Braucht `agents/.env.cits` — Name des Agenten ist
   //                 // `cits`, nicht `cits-bridge`.
+  // 'aprs-bridge',  // Amateurfunk-Positionsbaken über APRS-IS. Braucht
+  //                 // `agents/.env.aprs` mit APRS_CALL (Kennung für die
+  //                 // Anmeldung; nur Empfang, Passcode -1 steht fest im Code).
+  //                 // Der Agent-Name ist `aprs`, nicht `aprs-bridge`.
+  //                 // ACHTUNG: Port 14580 muss ausgehend offen sein — in
+  //                 // manchen Netzen ist er gesperrt (npm run aprs:capture
+  //                 // sagt es dir in zwanzig Sekunden).
   'movebank-bridge',   // besenderte Wildtiere. Braucht Zugangsdaten.
   'ais-vesselfinder',  // zweite Schiffsquelle. Braucht Zugangsdaten.
   // 'uwb-anchors',       // UWB-Anker aus einer JSON-Datei. Braucht die Datei.

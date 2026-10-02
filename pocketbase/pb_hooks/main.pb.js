@@ -103,11 +103,12 @@ function pruefeQuellenanspruch(e) {
         const m = treffer && treffer.length ? treffer[0] : null
         if (m) {
           inhaber = m.get("owner")
-          const roh = m.get("delegates")
-          // JSON-Felder kommen im JSVM als Objekt ODER als String an (dieselbe
-          // Falle wie bei `state` weiter oben).
-          const liste = typeof roh === "string" ? JSON.parse(roh || "[]") : roh
-          if (Array.isArray(liste)) delegates = liste
+          // JSON-Felder kommen im JSVM als Objekt, als STRING oder als
+          // BYTE-ARRAY an. `jsonArray` deckt alle drei ab — selbst geparst
+          // hatte ich den dritten Fall vergessen, und die Delegation blieb
+          // wirkungslos, obwohl die Liste richtig gefuellt war.
+          const { jsonArray } = require(`${__hooks}/utf8.js`)
+          delegates = jsonArray(m.get("delegates"))
         }
       } catch (err) { inhaber = null }   // 404 = niemand hat den Namen
 

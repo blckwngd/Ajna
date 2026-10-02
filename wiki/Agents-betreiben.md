@@ -19,6 +19,7 @@ Agents sind normale Node-Prozesse, die sich als regulärer Benutzer anmelden und
 | **AIS-Bridge** | `npm run ais` | Schiffspositionen von aisstream.io. | API-Schlüssel |
 | **ADS-B-Bridge** | `npm run adsb` | Flugzeuge aus dem OpenSky-Network. | optional OAuth2 |
 | **C-ITS-Brücke** | `npm run cits` | Straßenverkehr aus C-ITS-Funksprüchen über opentrafficmap.org: Ampeln mit Signalphase, Straßenstationen, Straßenbahn und Bus mit Linie — und, wenn gewünscht, Fahrzeuge. Siehe unten. | — |
+| **APRS-Brücke** | `npm run aprs` | Amateurfunk-Positionsbaken über APRS-IS: Fahrzeuge, Wetterstationen, Digipeater, ausgerufene Objekte. **Nicht** über die aprs.fi-API — die kann nur einzelne Rufzeichen und verbietet Zwischenspeichern. Braucht einen ausgehend offenen Port 14580. | Kennung (`APRS_CALL`) |
 | **WiGLE-Bridge** | `npm run wigle` | WLAN-Netze aus WiGLE. | Zugangsdaten |
 | **Movebank-Bridge** | `npm run movebank` | Besenderte Wildtiere aus Movebank. | Zugangsdaten |
 | **Home-Assistant-Gateway** | `npm run ha-gateway` | Smart-Home-Geräte als Objekte, in beide Richtungen. Eigene Anleitung: [`docs/homeassistant.md`](https://github.com/blckwngd/Ajna/blob/main/docs/homeassistant.md) | HA-Instanz |

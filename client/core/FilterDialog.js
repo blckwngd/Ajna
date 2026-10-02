@@ -13,6 +13,49 @@ import { klickDaneben } from './klickDaneben.js'
 
 const STYLE_ID = 'ajnaFilterDialogStyles'
 
+/**
+ * Which layers are selected after clicking one checkbox?
+ *
+ * THE "EVERYTHING" BOX IS NOT A LAYER BESIDE THE OTHERS, it is their sum.
+ * `AgentFilters.matches()` returns "visible" the moment a selected layer has no
+ * predicate. So while that box stayed ticked, unticking a single layer changed
+ * the checkbox and changed NOTHING on screen. The other way round was just as
+ * confusing: "everything" unticked while every layer below it stayed ticked.
+ * Both directions are settled here:
+ *
+ *   everything on   → every layer on
+ *   everything off  → every layer off
+ *   one layer off   → "everything" drops with it
+ *   last layer back on → "everything" comes back
+ *
+ * The sum layer is recognised by its MISSING PREDICATE, not by its name — it is
+ * called "Alles", "Alle Schiffe" or "Adress-Lupe" depending on the agent. That
+ * is the same test `matches()` applies.
+ *
+ * @param {{key: string, predicate?: object|null}[]} layers  the section's layers
+ * @param {string[]|undefined} current  current selection; undefined = never
+ *                                      configured, which means everything shows
+ * @param {string} layerKey  the checkbox that was clicked
+ * @returns {string[]} the new selection
+ */
+export function nextSelection(layers, current, layerKey) {
+  const alle = Array.isArray(layers) ? layers : []
+  const allKeys = alle.map(l => l.key)
+  const summeKeys = alle.filter(l => !l.predicate).map(l => l.key)
+
+  // Noch nie konfiguriert heisst "alles sichtbar" — dann sind alle Haekchen
+  // gesetzt, und der Klick geht von diesem Zustand aus.
+  const aktiv = current === undefined ? allKeys : (current || [])
+  const warAn = aktiv.includes(layerKey)
+
+  if (summeKeys.includes(layerKey)) return warAn ? [] : [...allKeys]
+  if (warAn) return aktiv.filter(k => k !== layerKey && !summeKeys.includes(k))
+
+  const next = [...aktiv, layerKey]
+  const einzelne = allKeys.filter(k => !summeKeys.includes(k))
+  return einzelne.every(k => next.includes(k)) ? [...allKeys] : next
+}
+
 export class FilterDialog {
   /**
    * @param {{ajna: import('./AjnaManager.js').AjnaManager, filters: import('./AgentFilters.js').AgentFilters}} opts
@@ -170,22 +213,9 @@ export class FilterDialog {
     return card
   }
 
+  /** Ein Häkchen umlegen — Regeln siehe `nextSelection` oben. */
   _handleToggle(src, layerKey) {
-    const current = this.filters.getSelection(src.source)
-    const allKeys = (src.layers || []).map(l => l.key)
-
-    // Wenn noch nichts gesetzt war (selected === undefined), startet der
-    // User mit allen aktiv. Toggle = von "alle" auf "alle ohne diesen Key"
-    // umschalten, indem wir explizit die anderen Keys als Liste speichern.
-    let next
-    if (current === undefined) {
-      next = allKeys.filter(k => k !== layerKey)
-    } else if (current.includes(layerKey)) {
-      next = current.filter(k => k !== layerKey)
-    } else {
-      next = [...current, layerKey]
-    }
-
+    const next = nextSelection(src.layers, this.filters.getSelection(src.source), layerKey)
     this.filters.setSelection(src.source, next)
     // Card neu rendern (Reset-Button erscheint/verschwindet je nach Setzungs-Status).
     this._render()

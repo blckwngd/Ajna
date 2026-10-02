@@ -91,6 +91,14 @@ Commands:
                                      rights:       Array, view | edit | move | owner, z. B. ["view"]
                                      interact_actions: Array von Aktion-Keys (optional)
   list-permissions <objectId>      ACEs eines Objekts listen (braucht Besitz oder owner-Recht)
+  list-manifests [source]          Wem gehört welcher Quellname? Zeigt, wenn ZWEI
+                                   Konten denselben beanspruchen — dann kann der
+                                   Agent des jüngeren keine Objekte anlegen (403),
+                                   obwohl sein Manifest angenommen wurde.
+  prune-manifests <source> [--keep=<ownerId>] [--mit-objekten] [--loeschen]
+                                   Vergebliche Ansprüche auf einen Quellnamen
+                                   entfernen. Ohne --keep gilt der älteste
+                                   Eintrag. OHNE --loeschen nur Trockenlauf.
 
 Env (oder .env im CWD):
   AJNA_URL   Default: http://127.0.0.1:8090
@@ -377,6 +385,142 @@ async function cmdPruneObjects(pb, args) {
 //  Entry
 // ───────────────────────────────────────────────────────────────────────
 
+// ───────────────────────────────────────────────────────────────────────
+//  Agent-Manifeste: wem gehört ein Quellname?
+// ───────────────────────────────────────────────────────────────────────
+//
+// WOZU DAS DA IST. `agent_manifests` ist eindeutig über (source, owner), NICHT
+// über source allein. Ein zweites Konto darf denselben Quellnamen also
+// registrieren, und sein Upsert meldet Erfolg — es gilt aber der ältere
+// Eintrag. Der Agent des jüngeren Kontos läuft danach scheinbar normal und
+// scheitert an JEDEM Objekt mit 403 („Die Quelle … gehört einem anderen
+// Konto"). Genau so stand die C-ITS-Brücke am 30.09.2026.
+//
+// Hier sieht man den Zustand, und hier räumt man ihn auf.
+
+/** Die Objekte einer Quelle — mit Rückfallebene, falls der JSON-Filter streikt. */
+async function objekteZurQuelle(pb, source) {
+  try {
+    return await pb.collection('objects').getFullList({
+      filter: `state.source = "${String(source).replace(/"/g, '\\"')}"`, sort: '+created',
+    })
+  } catch {
+    // Ältere PocketBase-Stände können nicht in JSON hineinfiltern. Dann eben
+    // alles holen und selbst nachsehen — lieber langsam als falsch.
+    const alle = await pb.collection('objects').getFullList({ sort: '+created' })
+    return alle.filter(o => {
+      try { return (typeof o.state === 'string' ? JSON.parse(o.state) : o.state)?.source === source }
+      catch { return false }
+    })
+  }
+}
+
+async function cmdListManifests(pb, args) {
+  const nurQuelle = args.find(a => !a.startsWith('-')) || null
+  if (SU && SU_PASS) await loginSu(pb); else await login(pb)
+
+  const alle = await pb.collection('agent_manifests').getFullList({ sort: '+created' })
+  const liste = nurQuelle ? alle.filter(m => m.source === nurQuelle) : alle
+
+  // Nach Quelle gruppieren: nur so fällt auf, dass zwei Konten dieselbe
+  // beanspruchen. Eine flache Liste verbirgt genau den Fall, der weh tut.
+  const nachQuelle = {}
+  for (const m of liste) (nachQuelle[m.source] ||= []).push(m)
+
+  const bericht = []
+  for (const [source, ms] of Object.entries(nachQuelle).sort()) {
+    const inhaber = ms[0]                       // ältester gewinnt
+    const delegiert = Array.isArray(inhaber.delegates) ? inhaber.delegates : []
+    console.error(`\n${source}`)
+    for (const m of ms) {
+      const rolle = m === inhaber ? 'INHABER '
+        : delegiert.includes(m.owner) ? 'delegiert'
+        : 'VERWORFEN'
+      console.error(`  ${rolle}  ${m.owner}  ${m.owner_handle ? '@' + m.owner_handle : ''}`
+        + `  seit ${m.created || '?'}`)
+    }
+    if (ms.length > 1) {
+      const verworfen = ms.slice(1).filter(m => !delegiert.includes(m.owner))
+      if (verworfen.length) {
+        console.error(`  ⚠ ${verworfen.length} Konto/Konten beanspruchen den Namen vergeblich —`)
+        console.error(`    deren Agents können KEINE Objekte anlegen (403).`)
+        console.error(`    Aufräumen: node tools/ajna.mjs prune-manifests ${source} --keep=${inhaber.owner}`)
+      }
+    }
+    bericht.push({ source, inhaber: inhaber.owner, ansprueche: ms.length, delegates: delegiert })
+  }
+  if (!bericht.length) console.error('Keine Manifeste gefunden.')
+  console.log(JSON.stringify(bericht, null, 2))
+}
+
+async function cmdPruneManifests(pb, args) {
+  const echt = args.includes('--loeschen')
+  const mitObjekten = args.includes('--mit-objekten')
+  const keepArg = args.find(a => a.startsWith('--keep='))
+  const source = args.find(a => !a.startsWith('-'))
+  if (!source) die('Args: prune-manifests <source> [--keep=<ownerId>] [--mit-objekten] [--loeschen]\n'
+    + '  Ohne --keep gilt der älteste Eintrag als Inhaber.\n'
+    + '  --mit-objekten entfernt AUCH die Objekte der verworfenen Konten.')
+
+  // Fremde Manifeste und fremde Objekte sieht ein gewöhnliches Konto nicht,
+  // und löschen darf es sie erst recht nicht.
+  if (SU && SU_PASS) await loginSu(pb); else await login(pb)
+
+  const alle = await pb.collection('agent_manifests').getFullList({ sort: '+created' })
+  const ms = alle.filter(m => m.source === source)
+  if (!ms.length) die(`Keine Manifeste für die Quelle "${source}".`)
+
+  const keep = keepArg ? keepArg.slice('--keep='.length) : ms[0].owner
+  if (!ms.some(m => m.owner === keep)) {
+    die(`Kein Manifest von ${keep} für "${source}". Vorhanden: ${ms.map(m => m.owner).join(', ')}`)
+  }
+  const weg = ms.filter(m => m.owner !== keep)
+  if (!weg.length) {
+    console.error(`"${source}" gehört bereits allein ${keep} — nichts zu tun.`)
+    console.log(JSON.stringify({ quelle: source, inhaber: keep, geloescht: 0 }, null, 2))
+    return
+  }
+
+  // ZEIGEN, WAS GETROFFEN WIRD, bevor irgendetwas verschwindet.
+  const objekte = mitObjekten ? await objekteZurQuelle(pb, source) : []
+  const betroffen = objekte.filter(o => weg.some(m => m.owner === o.owner))
+  console.error(`Quelle "${source}" — Inhaber bleibt ${keep}`)
+  for (const m of weg) {
+    const n = objekte.filter(o => o.owner === m.owner).length
+    console.error(`  entfernen: Manifest ${m.id} von ${m.owner}`
+      + `${m.owner_handle ? ' (@' + m.owner_handle + ')' : ''}`
+      + (mitObjekten ? ` · ${n} Objekt(e)` : ''))
+  }
+  if (mitObjekten && betroffen.length) {
+    console.error(`  → ${betroffen.length} Objekt(e) werden mitgelöscht.`)
+    console.error('    Gespiegelte Agent-Objekte legt der Agent binnen Sekunden neu an;')
+    console.error('    von Hand erstellte NICHT. Die Aufstellung oben zeigt, was betroffen ist.')
+  }
+  if (!echt) {
+    console.error('\nProbelauf — nichts geändert. Mit --loeschen ausführen.')
+    console.log(JSON.stringify({ quelle: source, inhaber: keep,
+      manifeste: weg.length, objekte: betroffen.length, probelauf: true }, null, 2))
+    return
+  }
+
+  let objWeg = 0, manWeg = 0, fehler = 0
+  for (const o of betroffen) {
+    try { await pb.collection('objects').delete(o.id); objWeg++ }
+    catch (err) { fehler++; console.error(`  ✗ Objekt ${o.id}: ${describePbError(err)}`) }
+  }
+  // Manifeste ZULETZT: Solange das alte noch steht, weist der Server die
+  // Objekte des anderen Kontos ab — was uns hier gerade recht ist. Erst wenn
+  // die Altlast weg ist, soll der neue Anspruch greifen.
+  for (const m of weg) {
+    try { await pb.collection('agent_manifests').delete(m.id); manWeg++ }
+    catch (err) { fehler++; console.error(`  ✗ Manifest ${m.id}: ${describePbError(err)}`) }
+  }
+  console.error(`\nGelöscht: ${manWeg} Manifest(e), ${objWeg} Objekt(e)`
+    + (fehler ? `, ${fehler} fehlgeschlagen` : ''))
+  console.log(JSON.stringify({ quelle: source, inhaber: keep,
+    manifeste: manWeg, objekte: objWeg, fehler }, null, 2))
+}
+
 async function main() {
   const [, , cmd, ...rest] = process.argv
   if (!cmd || cmd === '-h' || cmd === '--help') usage()
@@ -393,6 +537,8 @@ async function main() {
     case 'add-permission': await cmdAddPermission(pb, rest);  break
     case 'list-permissions': await cmdListPermissions(pb, rest); break
     case 'debug-view':     await cmdDebugView(pb, rest);      break
+    case 'list-manifests': await cmdListManifests(pb, rest);  break
+    case 'prune-manifests': await cmdPruneManifests(pb, rest); break
     default:
       console.error(`Unbekanntes Subcommand: ${cmd}\n`)
       usage()
