@@ -48,7 +48,22 @@ const CENTER_LON = envNum('CITS_CENTER_LON', 7.4608)
 const RADIUS_KM = envNum('CITS_RADIUS_KM', 30)
 const PRIVAT = envBool('CITS_PRIVAT', true)
 const ARTEN = envStr('CITS_ARTEN', '').trim()
-const MAX_AGE_MS = envNum('CITS_MAX_AGE_S', 900) * 1000
+// Wie lange eine Meldung als „jetzt" gilt. GEMESSEN, nicht geschätzt: zwei
+// Minuten am Feed, 4193 Stationen, 63790 Meldeabstände.
+//
+//   eine LEBENDE Station meldet sich im Median alle 0,2 s (p99 3,3 s);
+//   99,9 % aller Abstände liegen unter 60 s.
+//   Im Schnappschuss sind aber nur 5,9 % der Punkte jünger als 15 s —
+//   und 22,6 % jünger als 15 min.
+//
+// Mit den früheren 900 s spiegelten wir also fast viermal so viele Objekte wie
+// gerade senden: drei Viertel waren verstummte Sender. Wer 60 s schweigt, ist
+// praktisch sicher weg. Zusammen mit dem 20-s-Aufräumtakt verschwindet ein
+// Geist nach höchstens 80 s — BEVOR die Vorausrechnung im Client ihre 150 s
+// ausschöpft (MAX_DR_MS in client/core/PositionSmoother.js). Sonst führe ein
+// Fahrzeug nach dem Verlassen der Empfangsreichweite noch zwei Kilometer
+// weiter und stünde dann minutenlang in der Landschaft.
+const MAX_AGE_MS = envNum('CITS_MAX_AGE_S', 60) * 1000
 const UPDATE_INTERVAL_MS = envNum('CITS_UPDATE_INTERVAL_S', 5) * 1000
 const MAX_OBJEKTE = envNum('CITS_MAX', 300)
 
@@ -58,7 +73,9 @@ const CENTER = { lat: CENTER_LAT, lon: CENTER_LON }
 log(`Zentrum ${CENTER_LAT.toFixed(4)}, ${CENTER_LON.toFixed(4)} · Radius ${RADIUS_KM} km`)
 log(`private Fahrzeuge: ${PRIVAT ? 'JA' : 'nein (nur Infrastruktur und ÖPNV)'}`)
 if (KIND_FILTER) log(`nur diese Arten: ${[...KIND_FILTER].join(', ')}`)
-log(`frisch heisst: jünger als ${Math.round(MAX_AGE_MS / 60000)} min`)
+log(`frisch heisst: jünger als ${MAX_AGE_MS < 120_000
+  ? Math.round(MAX_AGE_MS / 1000) + ' s'
+  : Math.round(MAX_AGE_MS / 60000) + ' min'}`)
 
 // ─── Inhaltsfilter ────────────────────────────────────────────────────────
 // Eine Ebene je Art, plus zwei nach Verhalten. Eine Kreuzung mit zwanzig
@@ -201,11 +218,16 @@ verbinde()
 
 // Aufräumen: Was der Dienst nicht ausdrücklich abmeldet, verschwindet über die
 // Frische. Beides zusammen, weil Punkte auch einfach verstummen.
+//
+// Der Takt gehört zur Verfallszeit: zusammen dürfen sie die 150 s nicht
+// erreichen, die der Client vorausrechnet — sonst bleibt ein Geist stehen,
+// nachdem die Extrapolation ihn schon abgesetzt hat.
+const AUFRAEUM_MS = envNum('CITS_SWEEP_S', 20) * 1000
 setInterval(() => {
   fleet.sweep().catch(err => warn(`Aufräumen: ${err?.message || err}`))
   // Was die Flotte nicht mehr kennt, braucht auch keine Vorgeschichte mehr.
   for (const key of letzteOrte.keys()) if (!fleet.has(key)) letzteOrte.delete(key)
-}, 60_000)
+}, AUFRAEUM_MS)
 
 setInterval(() => {
   log(`${fleet.size} Objekte · ${gesehen} Punkte gesehen · ${uebernommen} angelegt`)

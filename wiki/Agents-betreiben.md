@@ -150,7 +150,8 @@ Durchlauf entfernt, nicht bloss nicht mehr gepflegt.
 | `CITS_RADIUS_KM` | 30 | Umkreis; darüber hinaus wird nichts angelegt |
 | `CITS_PRIVAT` | an | private Fahrzeuge mitspiegeln |
 | `CITS_ARTEN` | alle | Komma-Liste, z. B. `traffic_light,tram,bus` |
-| `CITS_MAX_AGE_S` | 900 | älter gilt als verschwunden |
+| `CITS_MAX_AGE_S` | 60 | älter gilt als verschwunden. Gemessen: eine lebende Station meldet sich im Median alle 0,2 s, 99,9 % der Abstände liegen unter 60 s. Mit den früheren 900 s waren drei Viertel der gespiegelten Objekte verstummte Sender. |
+| `CITS_SWEEP_S` | 20 | Aufräumtakt. Zusammen mit der Verfallszeit muss er unter den 150 s bleiben, die der Client vorausrechnet — sonst steht ein Geist noch da, nachdem die Extrapolation ihn abgesetzt hat. |
 | `CITS_MAX` | 300 | Obergrenze, damit eine Kreuzung die Welt nicht flutet |
 | `CITS_RENDER_RANGE_M` | 1500 | Sichtweite je Quelle — eine Ampel in 20 km ist Rauschen |
 

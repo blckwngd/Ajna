@@ -25,6 +25,7 @@
     "aprs": "node agents/aprs-bridge.mjs",
     "aprs:setup": "node agents/aprs-bridge.mjs --setup",
     "aprs:capture": "node tools/aprs-capture.mjs",
+    "aprs:check": "node tools/aprs-check.mjs",
     "wigle": "node agents/wigle-bridge.mjs",
     "wand-agent": "node agents/wand-agent.mjs",
     "director": "node agents/world-director.mjs",
