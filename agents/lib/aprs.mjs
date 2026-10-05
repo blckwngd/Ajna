@@ -35,9 +35,16 @@ const MIN_MOVE_MPS = 0.5
  *
  * A symbol is TWO characters: the table (`/` primary, `\` alternate, or a
  * letter/digit as an overlay) and the code. Only the code is listed here,
- * because the alternate table rarely changes what a thing IS — a car stays a
+ * because the alternate table mostly leaves the meaning alone — a car stays a
  * car. Unknown symbols fall back to a radio mast, which is honest: all we then
  * know is that something transmitted.
+ *
+ * KNOWN LIMITATION, seen in the recording of 02.10.2026: one station sent the
+ * symbol `YY` — code `Y` with the overlay `Y` — and its comment named a Yaesu
+ * VX-8 handheld. Read from the primary table that is a sailing yacht, so the
+ * object shows a boat for somebody on foot. Fixing it properly means carrying
+ * the alternate table as well, which is worth doing once a recording shows it
+ * matters for more than one packet in two hundred.
  */
 export const SYMBOLS = {
   '>': { label: 'Fahrzeug', emoji: '🚗', moving: true },
@@ -66,8 +73,28 @@ export const SYMBOLS = {
   'r': { label: 'Relais', emoji: '📶', moving: false },
   '-': { label: 'Station', emoji: '🏠', moving: false },
   'I': { label: 'Station', emoji: '🖧', moving: false },
-  'y': { label: 'Station', emoji: '🏠', moving: false },
+  'y': { label: 'Station mit Richtantenne', emoji: '🏠', moving: false },
   'W': { label: 'Wetterdienst', emoji: '🌦️', moving: false },
+  // Nachgetragen aus dem Mitschnitt vom 02.10.2026: diese sechzehn Pakete
+  // liefen vorher als „APRS-Station" durch, obwohl die Symbole standardisiert
+  // sind. Welche Symbole ein Netz wirklich benutzt, sagt kein Standard — das
+  // sagt nur ein Mitschnitt.
+  '0': { label: 'Funkstation', emoji: '🔢', moving: false },
+  'A': { label: 'Sanitätsstation', emoji: '⛑️', moving: false },
+  'i': { label: 'Funkkiste', emoji: '📦', moving: false },
+  '?': { label: 'Dateiserver', emoji: '💾', moving: false },
+  'x': { label: 'Station (veraltetes Symbol)', emoji: '📻', moving: false },
+  'F': { label: 'Traktor', emoji: '🚜', moving: true },
+  '`': { label: 'Parabolantenne', emoji: '📡', moving: false },
+  '.': { label: 'Ort unbekannt', emoji: '❓', moving: false },
+  'h': { label: 'Krankenhaus', emoji: '🏥', moving: false },
+  ':': { label: 'Feuer', emoji: '🔥', moving: false },
+  'd': { label: 'Feuerwache', emoji: '🚒', moving: false },
+  'o': { label: 'Einsatzleitung', emoji: '🎛️', moving: false },
+  'l': { label: 'Rechner', emoji: '💻', moving: false },
+  'n': { label: 'Netzknoten', emoji: '🔌', moving: false },
+  'U': { label: 'Bus', emoji: '🚌', moving: true },
+  'e': { label: 'Pferd', emoji: '🐴', moving: true },
 }
 
 const UNBEKANNT = { label: 'APRS-Station', emoji: '📻', moving: false }
@@ -289,13 +316,7 @@ function parseMicE(payload, dstcall) {
   if (knoten >= 800) knoten -= 800
   if (kurs >= 400) kurs -= 400
 
-  const kommentar = payload.slice(9)
-  const hoehe = /^(.{3})\}/.exec(kommentar)
-  let altitude = null, rest = kommentar
-  if (hoehe) {
-    const v = base91(hoehe[1])
-    if (v !== null) { altitude = v - 10000; rest = kommentar.slice(4) }
-  }
+  const { altitude, rest } = micEKommentar(payload.slice(9))
 
   return {
     lat: lat.wert, lon, unscharf: lat.unscharf,
@@ -305,6 +326,46 @@ function parseMicE(payload, dstcall) {
     altitude, comment: rest,
   }
 }
+
+/**
+ * The MIC-E comment: pull out the altitude, drop the device decorations.
+ *
+ * THE ALTITUDE IS NOT AT THE FRONT. It is three base-91 characters followed by
+ * `}`, but a radio normally writes its own type byte before it:
+ *
+ *     `"5V}BDL1ASA Tom F02_4
+ *     │└┬┘│
+ *     │ │ └ Ende der Höhe
+ *     │ └── "5V → 154 m
+ *     └──── Gerätekennung
+ *
+ * Anchoring at position 0 — my first attempt — therefore found nothing in four
+ * of the six MIC-E packets in the recording of 02.10.2026, and every altitude
+ * was silently lost. So it is searched for instead, but only near the front: a
+ * `}` further inside the text belongs to the text.
+ *
+ * The trailing `_X` is a device code too (Yaesu writes `_%` for an FTM-400DR).
+ * Removing it is a judgement call — a comment really ending in `_4` would lose
+ * two characters. It only affects what is displayed, never a position.
+ */
+export function micEKommentar(kommentar) {
+  const text = String(kommentar || '')
+  const grenze = Math.min(text.length, 12)
+  for (let i = 3; i < grenze; i++) {
+    if (text[i] !== '}') continue
+    const v = base91(text.slice(i - 3, i))
+    if (v === null) continue
+    // Steht genau EIN Zeichen vor der Höhe, ist es die Gerätekennung und
+    // gehört nicht in den vorgelesenen Text.
+    const vorne = i - 3
+    const rest = (vorne <= 1 ? '' : text.slice(0, vorne)) + text.slice(i + 1)
+    return { altitude: v - 10000, rest: ohneGeraetekennung(rest) }
+  }
+  return { altitude: null, rest: ohneGeraetekennung(text) }
+}
+
+const ohneGeraetekennung = (text) =>
+  String(text).length > 3 ? String(text).replace(/_[\x20-\x7e]$/, '').trim() : String(text).trim()
 
 /**
  * Weather data appended to a report: `.../...g...t...r...p...P...h..b.....`

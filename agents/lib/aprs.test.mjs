@@ -10,16 +10,16 @@
 //            Prüft, dass De- und Kodierung zueinander passen — NICHT, dass ein
 //            echter Sender es genauso macht.
 //
-// Was hier FEHLT, ist ein Mitschnitt aus der Luft. Port 14580 ist von diesem
-// Rechner aus nicht erreichbar; `npm run aprs:capture` auf einem Rechner mit
-// freiem Netz erzeugt ihn, und `APRS_REPLAY` spielt ihn hier ein. Bis dahin ist
-// besonders MIC-E unbelegt.
+//  [ECHT]    aus einem Mitschnitt vom 02.10.2026 (150 km um Koblenz, erzeugt mit
+//            `node tools/aprs-capture.mjs`). Das sind die aussagekräftigsten:
+//            echte Sender halten sich nicht an die Beispiele der Spezifikation.
+//            Sie haben prompt einen Fehler aufgedeckt — siehe micEKommentar.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  parseFrame, parseCoord, base91, parsePacket, parseWeather,
-  alsSichtung, relevant, motionOf, symbolInfo, SYMBOLS,
+  parseFrame, parseCoord, base91, parsePacket, parseWeather, micEKommentar,
+  alsSichtung, relevant, motionOf, symbolInfo, abstandKm, SYMBOLS,
 } from './aprs.mjs'
 
 const nah = (a, b, eps = 1e-4) => Math.abs(a - b) < eps
@@ -324,4 +324,109 @@ test('was wir nicht einordnen können, wird verworfen statt geraten', () => {
   assert.equal(parsePacket('DL1ABC>APRS:T#005,199,000,255,073,123,01101001'), null)
   assert.equal(parsePacket('DL1ABC>APRS::DL2XYZ   :Nachricht'), null)
   assert.equal(parsePacket('DL1ABC>APRS:!kaputt'), null)
+})
+
+// ─── MIC-E gegen ECHTE Pakete ─────────────────────────────────────────────
+//
+// [ECHT] Mitschnitt vom 02.10.2026, 150 km um Koblenz, aufgenommen mit
+// `node tools/aprs-capture.mjs`. Die Bytes stehen hier wörtlich, inklusive der
+// nicht druckbaren (\x1c, \x1e, \x7f) — genau an denen wäre eine Verwechslung
+// sichtbar geworden.
+//
+// WARUM DIESE SIEBEN REICHEN, um die Dekodierung zu belegen: der Server hatte
+// den Mitschnitt schon auf einen Kreis gefiltert. Läge die Breite falsch — und
+// sie steckt im ZIEL-Rufzeichen, der unübersichtlichsten Stelle des Formats —,
+// landeten die Punkte irgendwo im Nordatlantik. Zwei Pakete derselben Station
+// (DL1VED-9) liegen zudem 230 m auseinander, was zu einem fahrenden Auto passt
+// und zu einem Dekodierfehler nicht.
+
+const ECHT = [
+  {
+    was: 'Auto bei Darmstadt, mit Höhe hinter der Gerätekennung',
+    zeile: 'DL1ASA-9>TY4VW6,qAO,DL0TRZ-10:`~BupSn>/`"5V}BDL1ASA Tom F02_4',
+    lat: 49.77933, lon: 8.64817, course: 182, kmh: 83, symbol: '/>', altitude: 154,
+  },
+  {
+    was: 'Auto bei Trier',
+    zeile: 'DL1VED-9>TY5SP7,WIDE1-1,WIDE2-1,qAR,DB0DTR-10:`|R\x7fm_N>/`"5*}RALPH DL1VED ON TOUR_%',
+    lat: 49.88450, lon: 6.91650, course: 350, kmh: 30, symbol: '/>',
+  },
+  {
+    was: 'dieselbe Station 230 m weiter — ein Auto, kein Dekodierfehler',
+    zeile: 'DL1VED-9>TY5SQ9,WIDE1-1,WIDE2-1,qAR,DO0NMD-10:`|S\x1en>@>/`"5"}RALPH DL1VED ON TOUR_%',
+    lat: 49.88650, lon: 6.91700, course: 36, kmh: 43, symbol: '/>',
+  },
+  {
+    was: 'feste Station im Vogelsberg, 458 m — die Höhe stimmt mit dem Gelände',
+    zeile: 'DL8UU>UPSRS9,qAR,DB0KT-2:`\x7f1Dm->y/`"8u}439.100MHz FTM - 400 XDE 10 WATT ANT X50 VY 73 KARLO DL8UU_%',
+    lat: 50.53983, lon: 9.35667, course: 334, kmh: 20, symbol: '/y', altitude: 458,
+  },
+  {
+    was: 'Handfunkgerät am Niederrhein, Tempo 0',
+    zeile: 'DL6LBT-15>UQPVP9,WIDE1-1,WIDE2-1,qAO,DO1EHS-10:`|Lbl"/YY`"4N}VX8E_',
+    lat: 51.10150, lon: 6.81167, course: 219, kmh: 0, symbol: 'YY', altitude: 55,
+  },
+  {
+    was: 'stehendes Auto — \\x1c mitten in der Nutzlast, nicht als Kennzeichen',
+    zeile: 'DL1ASA-9>TY4VS2,WIDE1-1,WIDE2-1,qAR,DB0FDA-10:`~Bjl"\x1c>/`"5@}BDL1ASA Tom F02_4',
+    lat: 49.77200, lon: 8.64633, course: 200, kmh: 0, symbol: '/>',
+  },
+  {
+    was: 'alte MIC-E-Form mit Hochkomma, Kurs 0 heisst „nicht gesagt"',
+    zeile: "DG1ID>T9QTW2,WIDE1-1,WIDE2-1,qAS,DB0ND-10:'~]gl \x1c-/>=",
+    lat: 49.24533, lon: 8.09583, course: null, kmh: 0, symbol: '/-',
+  },
+]
+
+for (const f of ECHT) {
+  test(`[ECHT] MIC-E: ${f.was}`, () => {
+    const p = parsePacket(f.zeile)
+    assert.ok(p, 'nicht erkannt')
+    assert.ok(nah(p.lat, f.lat, 1e-4), `Breite ${p.lat} statt ${f.lat}`)
+    assert.ok(nah(p.lon, f.lon, 1e-4), `Länge ${p.lon} statt ${f.lon}`)
+    assert.equal(p.course, f.course, 'Kurs')
+    assert.equal(Math.round(p.speed * 3.6), f.kmh, `Tempo ${p.speed} m/s`)
+    assert.equal(p.symbolTable + p.symbol, f.symbol)
+    if (f.altitude !== undefined) {
+      assert.ok(nah(p.altitude, f.altitude, 1), `Höhe ${p.altitude} statt ${f.altitude}`)
+    }
+  })
+}
+
+test('[ECHT] jede dekodierte Position liegt im Filterkreis', () => {
+  // DER PRÜFSATZ, DER OHNE REFERENZDATEN AUSKOMMT: APRS-IS hatte serverseitig
+  // auf 150 km um Koblenz gefiltert. Was draussen landet, ist ein Parser-Fehler.
+  for (const f of ECHT) {
+    const p = parsePacket(f.zeile)
+    const km = abstandKm(50.4297, 7.4608, p.lat, p.lon)
+    assert.ok(km <= 150, `${f.zeile.slice(0, 20)}… liegt ${km.toFixed(0)} km entfernt`)
+  }
+})
+
+test('[ECHT] die Höhe steht HINTER der Gerätekennung, nicht am Anfang', () => {
+  // DER FEHLER, DEN DIESER TEST FESTHÄLT: meine erste Fassung verlangte die
+  // Höhe unmittelbar am Kommentaranfang. Davor steht aber ein Byte, das das
+  // Funkgerät identifiziert — in vier von sechs MIC-E-Paketen des Mitschnitts.
+  // Jede Höhe fiel still durch.
+  assert.equal(micEKommentar('`"5V}BDL1ASA Tom F02_4').altitude, 154)
+  assert.equal(micEKommentar('`"5V}BDL1ASA Tom F02_4').rest, 'BDL1ASA Tom F02')
+  // Ohne Kennung muss es weiter gehen.
+  assert.equal(micEKommentar('"5V}Text').altitude, 154)
+  // Eine geschweifte Klammer tief im Text ist Text.
+  assert.equal(micEKommentar('Lager {Treffpunkt} am Hang').altitude, null)
+  assert.equal(micEKommentar('ohne alles').altitude, null)
+})
+
+test('[ECHT] Gerätekennungen verschwinden aus dem vorgelesenen Text', () => {
+  const p = parsePacket('DL1VED-9>TY5SP7,qAR,X:`|R\x7fm_N>/`"5*}RALPH DL1VED ON TOUR_%')
+  assert.equal(p.comment, 'RALPH DL1VED ON TOUR')
+  assert.ok(!p.comment.includes('_%'), 'das Yaesu-Gerätekürzel gehört nicht in den Satz')
+})
+
+test('[ECHT] die Symbole aus dem Mitschnitt sind alle benannt', () => {
+  // Diese sechzehn Pakete liefen vorher als „APRS-Station" durch. Welche
+  // Symbole ein Netz wirklich benutzt, sagt kein Standard — nur ein Mitschnitt.
+  for (const s of ['&', '#', '>', '[', '-', '_', '0', 'a', 'r', 'P', 'A', 'b', 'R', 'i', '.', 'I', 'y', '?', 'x', 'Y', 'F', 's', '`']) {
+    assert.notEqual(symbolInfo(s).label, 'APRS-Station', `Symbol ${JSON.stringify(s)} unbenannt`)
+  }
 })
