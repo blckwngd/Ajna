@@ -256,9 +256,24 @@ export class UwbManager {
     return this._nodes.get(role)
   }
 
+  /**
+   * Native status event.
+   *
+   * ONLY A REAL CHANGE IS A CHANGE. The native layer repeats the status — every
+   * failed auto-reconnect attempt arrives as another "not connected". Passed
+   * straight through, that filled the shared log with "UWB getrennt" over and
+   * over, minute after minute, while nothing had happened. `onStatusChange` is
+   * named for edges, so it fires on edges; whoever wants the current state asks
+   * `isConnected(role)`.
+   *
+   * The address counts as part of the state: reconnecting to a DIFFERENT tag is
+   * a change worth hearing about even though `connected` stayed true.
+   */
   _onStatus(e) {
     const role = e?.role || 'viewer'
     const node = this._node(role)
+    const vorherVerbunden = node.connected
+    const vorherAdresse = node.address
     node.connected = !!e?.connected
     node.address = e?.address || null
     // Persist the tag on a successful connect so it reconnects on its own next
@@ -267,6 +282,8 @@ export class UwbManager {
       const nm = e?.name || this._pendingConnect?.get(role)?.name || null
       this._rememberDevice(role, node.address, nm)
     }
+    if (node.connected === vorherVerbunden && node.address === vorherAdresse) return
+
     this.notify(node.connected ? `UWB „${role}" verbunden` : `UWB „${role}" getrennt`)
     this._statusCbs.forEach(cb => { try { cb(node.connected, node.address, role) } catch {} })
   }

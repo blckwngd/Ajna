@@ -96,12 +96,26 @@ export class MessageLogPanel {
    */
   async _subscribeChat() {
     if (!this.ajna?.onChat) return
+
+    // JEDER LAUF BEKOMMT EINE NUMMER — sonst stehen Dialoge doppelt im Verlauf.
+    //
+    // `onAuthChanged` hängt an `authStore.onChange` und feuert NICHT nur beim
+    // Login, sondern auch bei jeder Token-Erneuerung. Lief dann noch das
+    // `await` des vorigen Abos, war `_chatOff` bereits auf null gesetzt: der
+    // neue Lauf fand nichts zum Abbestellen, und beide Abos blieben am Thema
+    // hängen. PocketBase ruft je Abo einmal zurück — jede eingehende Zeile
+    // wurde also zweimal ins Protokoll geschrieben. Die eigene („Du: …") nicht,
+    // die kommt nicht über das Abo; genau daran war es im Verlauf zu sehen.
+    let lauf = 0
     const abo = async () => {
+      const meiner = ++lauf
       try { this._chatOff?.() } catch {}
       this._chatOff = null
       if (!this.ajna.isLoggedIn?.()) return
       try {
-        this._chatOff = await this.ajna.onChat((m) => this._onChat(m))
+        const off = await this.ajna.onChat((m) => this._onChat(m))
+        if (meiner !== lauf) { try { off() } catch {}; return }   // überholt worden
+        this._chatOff = off
       } catch (err) { console.warn('[chat] Abo fehlgeschlagen:', err?.message || err) }
     }
     abo()
