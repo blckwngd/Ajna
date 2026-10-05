@@ -179,3 +179,126 @@ test('der Kurs wird in die Blickrichtung der Szene umgerechnet', async () => {
 test('Fleet ohne Pflichtangaben wird gar nicht erst gebaut', () => {
   assert.throws(() => new Fleet({}, { type: 'ship' }), /type, source and keyField/)
 })
+
+// ─── FALLE 4: Waisen ──────────────────────────────────────────────────────
+//
+// GEMESSEN AM 05.10.2026: In der Entwicklungsdatenbank lagen 2549 tote
+// C-ITS-Objekte — 79 % der ganzen Welt —, obwohl der Agent auf 300 gedeckelt
+// war. Ein Objekt, das die Flotte vergisst, löscht niemand mehr; und weil der
+// frei gewordene Platz sofort ein neues zuliess, vermehrte sich der Fehler
+// selbst. Beide Wege dorthin stehen unten.
+//
+// Diese Fälle brauchen ein Doppel mit BREMSE: Sie treten auf, WÄHREND ein
+// createObject unterwegs ist. `ajnaDoppel` oben antwortet sofort.
+
+/** Wie ajnaDoppel, aber der Zeitpunkt der Antwort ist steuerbar. */
+function ajnaMitBremse() {
+  let nr = 0
+  const objekte = new Map()
+  const offen = []
+  const loeschFehler = { an: false }
+  return {
+    objekte, loeschFehler,
+    createFertig: () => { const f = offen.shift(); if (f) f(); return !!f },
+    createObject: (data) => new Promise((res) => offen.push(() => {
+      const id = 'obj' + (++nr)
+      objekte.set(id, data)
+      res({ id, ...data })
+    })),
+    async updateObject(id, patch) { return { id, ...patch } },
+    async deleteObject(id) {
+      if (loeschFehler.an) throw new Error('Serverfehler beim Löschen')
+      if (!objekte.has(id)) throw new Error('not found')
+      objekte.delete(id)
+    },
+  }
+}
+
+const bauBremse = (ajna, opts = {}) => new Fleet(ajna, {
+  type: 'cits', source: 'cits', keyField: 'mac',
+  updateIntervalMs: 0, staleMs: 10_000,
+  log: () => {}, warn: () => {}, ...opts,
+})
+const SICHT4 = { name: 'Flüchtig', lat: 50.4, lon: 7.5 }
+const tick = () => new Promise(r => setTimeout(r, 0))
+
+test('FALLE 4: Abmeldung während des Anlegens hinterlässt keine Waise', async () => {
+  // Der Fehler: `drop()` warf den Slot weg, solange `objectId` noch null war.
+  // Das Anlegen lief durch und schrieb die ID auf einen Slot, den die Map
+  // nicht mehr kannte — kein `sweep()` fand das Objekt je wieder.
+  const ajna = ajnaMitBremse()
+  const f = bauBremse(ajna)
+
+  const p = f.seen('aa', SICHT4)
+  await tick()
+  assert.equal(f.size, 1, 'Platz ist reserviert')
+  await f.drop('aa')                 // Abmeldung mitten im Anlegen
+  ajna.createFertig()
+  assert.equal(await p, 'dropped')
+  await tick()
+
+  assert.equal(ajna.objekte.size, 0, `${ajna.objekte.size} Objekt(e) verwaist auf dem Server`)
+  assert.equal(f.size, 0)
+})
+
+test('nach so einer Abmeldung lässt sich derselbe Schlüssel neu anlegen', async () => {
+  const ajna = ajnaMitBremse()
+  const f = bauBremse(ajna)
+  const p = f.seen('aa', SICHT4)
+  await tick(); await f.drop('aa'); ajna.createFertig(); await p; await tick()
+
+  const p2 = f.seen('aa', { ...SICHT4, name: 'Wieder da' })
+  ajna.createFertig()
+  assert.equal(await p2, 'created')
+  assert.equal(ajna.objekte.size, 1)
+})
+
+test('FALLE 4: ein fehlgeschlagenes Löschen gilt NICHT als erledigt', async () => {
+  // Der zweite Weg zur Waise: Der Slot verschwand auch dann, wenn der Server
+  // abgelehnt hatte. Das Objekt blieb liegen, der Agent vergass es.
+  const ajna = ajnaMitBremse()
+  const f = bauBremse(ajna)
+  const p = f.seen('aa', SICHT4); ajna.createFertig(); await p
+
+  ajna.loeschFehler.an = true
+  assert.equal(await f.drop('aa'), false)
+  assert.equal(f.size, 1, 'der Agent muss es weiter kennen')
+  assert.equal(ajna.objekte.size, 1)
+
+  ajna.loeschFehler.an = false
+  assert.equal(await f.drop('aa'), true)
+  assert.equal(f.size, 0)
+  assert.equal(ajna.objekte.size, 0)
+})
+
+test('der Aufräumlauf holt nach, was beim Löschen scheiterte', async () => {
+  const ajna = ajnaMitBremse()
+  const f = bauBremse(ajna, { staleMs: 1000 })
+  const p = f.seen('aa', SICHT4, 0); ajna.createFertig(); await p
+
+  ajna.loeschFehler.an = true
+  assert.equal(await f.sweep(5000), 0, 'nichts entfernt, weil der Server streikte')
+  assert.equal(f.size, 1, 'aber weiterhin bekannt')
+
+  ajna.loeschFehler.an = false
+  assert.equal(await f.sweep(6000), 1)
+  assert.equal(ajna.objekte.size, 0)
+})
+
+test('eine Obergrenze bleibt eine Obergrenze — auch über viele Zyklen', async () => {
+  // DAS SCHADENSBILD IM KLEINEN: Jede Waise gab ihren Platz frei. Bei 300
+  // erlaubten Objekten entstanden so über 2500. Zwanzig Runden mit je einer
+  // Abmeldung mitten im Anlegen dürfen null Objekte hinterlassen.
+  const ajna = ajnaMitBremse()
+  const f = bauBremse(ajna)
+  for (let i = 0; i < 20; i++) {
+    const p = f.seen('k' + i, SICHT4)
+    await tick()
+    await f.drop('k' + i)
+    ajna.createFertig()
+    await p
+  }
+  await tick()
+  assert.equal(ajna.objekte.size, 0, `${ajna.objekte.size} Waisen nach 20 Runden`)
+  assert.equal(f.size, 0)
+})

@@ -143,6 +143,15 @@ export class Fleet {
           ...body,
         })
         neu.objectId = obj.id
+        // WURDE WÄHREND DES ANLEGENS ABGEMELDET? Dann ist dieses Objekt schon
+        // bei der Geburt überflüssig — und niemand würde es je wiederfinden,
+        // weil kein Slot mehr darauf zeigt. Also sofort wieder weg.
+        if (neu.cancelled) {
+          this.slots.delete(id)
+          try { await this.ajna.deleteObject(obj.id) }
+          catch (err) { this.warn(`verwaist ${id}: ${err?.message || err}`) }
+          return 'dropped'
+        }
         this.log(`+ ${neu.name} (${id}) → ${obj.id}`)
         return 'created'
       } catch (err) {
@@ -182,19 +191,49 @@ export class Fleet {
   }
 
   /** Remove one object — for sources that say goodbye explicitly. */
+  /**
+   * Remove an object, and make sure it really goes.
+   *
+   * TRAP 3, AND THE MOST EXPENSIVE ONE: an object the fleet forgets about is an
+   * object nobody will ever delete. The first version dropped the slot first and
+   * only then asked the server, which orphaned a record on two paths —
+   *
+   *   • the create was still in flight (`objectId` still null), so there was
+   *     nothing to delete yet; `seen()` then wrote the new id onto a slot that
+   *     was no longer in the map;
+   *   • the delete failed for any reason other than 404.
+   *
+   * Both leave a record on the server that no `sweep()` can ever reach again.
+   * Worse, the freed slot lets `MAX_OBJEKTE`-style caps admit a replacement, so
+   * the leak compounds: 2549 dead C-ITS objects from runs that were capped at
+   * 300 (measured 05.10.2026).
+   *
+   * Now the slot only goes once the record is gone. A create still in flight is
+   * marked `cancelled`, and `seen()` deletes the record the moment it arrives.
+   */
   async drop(key) {
     const id = String(key)
     const slot = this.slots.get(id)
     if (!slot) return false
-    this.slots.delete(id)
-    if (!slot.objectId) return false
+
+    if (!slot.objectId) {
+      // Anlegen läuft noch — der Slot BLEIBT, mit einer Notiz für `seen()`.
+      if (slot.inflight) { slot.cancelled = true; return false }
+      this.slots.delete(id)
+      return false
+    }
+
     try {
       await this.ajna.deleteObject(slot.objectId)
+      this.slots.delete(id)
       return true
     } catch (err) {
       // Already gone on the server is the normal case after a manual cleanup.
       const msg = err?.response?.data?.message || err?.message || ''
-      if (!/not found|404/i.test(String(msg))) this.warn(`loeschen ${id}: ${msg}`)
+      if (/not found|404/i.test(String(msg))) { this.slots.delete(id); return false }
+      // ALLES ANDERE BEHALTEN. Ein fehlgeschlagenes Löschen ist kein erledigtes
+      // Löschen; der nächste `sweep()` versucht es erneut.
+      this.warn(`loeschen ${id}: ${msg}`)
       return false
     }
   }
