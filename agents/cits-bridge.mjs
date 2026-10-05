@@ -34,6 +34,7 @@
 import WebSocket from 'ws'
 import { bootAgent, envNum, envStr, envBool, publishManifest, ladeBestand } from './lib/agent-base.mjs'
 import { Fleet } from './lib/fleet.mjs'
+import { InterestAreas } from './lib/interest-areas.mjs'
 import { alsSichtung, relevant, KINDS, PRIVATE_KINDS } from './lib/cits.mjs'
 import { simpleSetup } from './lib/setup-wizard.mjs'
 
@@ -68,9 +69,33 @@ const UPDATE_INTERVAL_MS = envNum('CITS_UPDATE_INTERVAL_S', 5) * 1000
 const MAX_OBJEKTE = envNum('CITS_MAX', 300)
 
 const KIND_FILTER = ARTEN ? new Set(ARTEN.split(',').map(s => s.trim()).filter(Boolean)) : null
-const CENTER = { lat: CENTER_LAT, lon: CENTER_LON }
 
-log(`Zentrum ${CENTER_LAT.toFixed(4)}, ${CENTER_LON.toFixed(4)} · Radius ${RADIUS_KM} km`)
+// WO GESPIEGELT WIRD, BESTIMMEN DIE SPIELER — nicht die .env.
+//
+// Vorher stand hier ein festes Zentrum. Stand es falsch (bei mir auf Graz), legte
+// der Agent munter Objekte 675 km entfernt an: am 05.10.2026 waren das 2549
+// Stück und damit 79 % der ganzen Welt. Jetzt kommen die Bereiche aus
+// `/ajnaapi/interest-areas` — anonymisiert, gerastert, 3 Minuten haltbar.
+//
+// `CITS_CENTER_LAT/LON` + `CITS_RADIUS_KM` bleiben erhalten, wirken aber nur
+// noch als ZUSÄTZLICHES festes Gebiet, wenn `CITS_FIXED_AREA=on` gesetzt ist —
+// für einen Betreiber, der eine Kreuzung dauerhaft bestückt haben will.
+const FESTES_GEBIET = envBool('CITS_FIXED_AREA', false)
+const festeGebiete = FESTES_GEBIET ? [{
+  latMin: CENTER_LAT - RADIUS_KM / 111.32,
+  latMax: CENTER_LAT + RADIUS_KM / 111.32,
+  lonMin: CENTER_LON - RADIUS_KM / (111.32 * Math.cos(CENTER_LAT * Math.PI / 180)),
+  lonMax: CENTER_LON + RADIUS_KM / (111.32 * Math.cos(CENTER_LAT * Math.PI / 180)),
+}] : []
+
+const gebiete = new InterestAreas(ajna, {
+  bufferM: envNum('CITS_AREA_BUFFER_M', 800),
+  always: festeGebiete,
+  log, warn,
+})
+
+if (FESTES_GEBIET) log(`festes Gebiet: ${CENTER_LAT.toFixed(4)}, ${CENTER_LON.toFixed(4)} · ${RADIUS_KM} km`)
+else log('folgt den Interessensgebieten der Spieler (kein festes Zentrum)')
 log(`private Fahrzeuge: ${PRIVAT ? 'JA' : 'nein (nur Infrastruktur und ÖPNV)'}`)
 if (KIND_FILTER) log(`nur diese Arten: ${[...KIND_FILTER].join(', ')}`)
 log(`frisch heisst: jünger als ${MAX_AGE_MS < 120_000
@@ -118,7 +143,7 @@ log(`${fleet.size} vorhandene Objekte übernommen`)
 
 const filter = () => ({
   kinds: KIND_FILTER, includePrivate: PRIVAT, maxAgeMs: MAX_AGE_MS,
-  center: CENTER, radiusKm: RADIUS_KM, now: Date.now(),
+  now: Date.now(),   // Ort wird getrennt geprüft, siehe `gebiete`
 })
 
 let gesehen = 0, uebernommen = 0
@@ -136,7 +161,21 @@ async function punktGesehen(feature) {
   // Sonst blieben nach `CITS_PRIVAT=off` alle bereits angelegten PKW stehen,
   // bis sie von selbst veralten, und ein Fahrzeug, das den Umkreis verlässt,
   // hinge am Rand fest. Der Schalter soll sofort wirken.
-  if (!relevant(feature, filter())) {
+  // SOLANGE WIR DIE BEREICHE NICHT KENNEN, WIRD NICHTS ANGEFASST.
+  //
+  // Eine gescheiterte Abfrage ist nicht „niemand da". Würde sie so gelesen,
+  // räumte der Agent bei der ersten Netzstörung alles ab, was er gerade pflegt.
+  // Also: nichts anlegen, nichts löschen, den Zustand lassen.
+  if (!gebiete.known) return
+
+  const c = feature?.geometry?.coordinates
+  const imGebiet = Array.isArray(c) && gebiete.contains(Number(c[1]), Number(c[0]))
+
+  // WAS NICHT MEHR PASST, MUSS WEG — nicht bloss aufhören, gepflegt zu werden.
+  // Sonst blieben nach `CITS_PRIVAT=off` alle bereits angelegten PKW stehen,
+  // bis sie von selbst veralten, und ein Fahrzeug, das den Bereich verlässt,
+  // hinge am Rand fest. Der Schalter soll sofort wirken.
+  if (!imGebiet || !relevant(feature, filter())) {
     if (fleet.has(key)) await fleet.drop(key)
     letzteOrte.delete(key)
     return
@@ -150,10 +189,12 @@ async function punktGesehen(feature) {
   // entsteht der Bewegungsvektor für alles, was weder Tempo noch Kurs meldet
   // (die Hälfte der Sender). Nur für Bewegliches — eine Ampel, die um zwei
   // Meter „wandert", ist Ortungsrauschen und keine Fahrt.
-  if (sicht.state.moving) {
-    const t = Date.parse(feature.properties?.lastSeen || '')
-    letzteOrte.set(key, { lat: sicht.lat, lon: sicht.lon, t: Number.isFinite(t) ? t : Date.now() })
-  }
+  // Die Position JEDES Objekts merken — sie dient zwei Zwecken: dem abgeleiteten
+  // Bewegungsvektor (nur für Bewegliches, `motionOf` prüft das selbst) und dem
+  // Aufräumen nach Bereich weiter unten. Ohne den zweiten Zweck bliebe eine
+  // Ampel stehen, nachdem der Spieler die Gegend verlassen hat.
+  const t = Date.parse(feature.properties?.lastSeen || '')
+  letzteOrte.set(key, { lat: sicht.lat, lon: sicht.lon, t: Number.isFinite(t) ? t : Date.now() })
   await fleet.seen(key, sicht)
   if (fleet.size > vorher) uebernommen++
 }
@@ -214,6 +255,12 @@ function verbinde() {
   })
 }
 
+// Bereiche holen, BEVOR das erste Paket kommt — sonst wirft der Agent den
+// ganzen Schnappschuss weg, weil er noch nichts weiss.
+await gebiete.refresh()
+setInterval(() => { gebiete.refresh().catch(() => {}) },
+  envNum('CITS_AREA_REFRESH_S', 45) * 1000)
+
 verbinde()
 
 // Aufräumen: Was der Dienst nicht ausdrücklich abmeldet, verschwindet über die
@@ -225,6 +272,19 @@ verbinde()
 const AUFRAEUM_MS = envNum('CITS_SWEEP_S', 20) * 1000
 setInterval(() => {
   fleet.sweep().catch(err => warn(`Aufräumen: ${err?.message || err}`))
+  // Objekte, die inzwischen ausserhalb ALLER Bereiche liegen: Der Spieler ist
+  // weitergegangen, sein Bereich verfallen. Ohne diesen Durchgang blieben sie
+  // bis zur Verfallszeit stehen — und wenn gar niemand mehr da ist, für immer.
+  if (gebiete.known) {
+    for (const [key, slot] of [...fleet.slots]) {
+      if (!slot.objectId || slot.inflight) continue
+      const ort = letzteOrte.get(key)
+      if (ort && !gebiete.contains(ort.lat, ort.lon)) {
+        fleet.drop(key).catch(() => {})
+        letzteOrte.delete(key)
+      }
+    }
+  }
   // Was die Flotte nicht mehr kennt, braucht auch keine Vorgeschichte mehr.
   for (const key of letzteOrte.keys()) if (!fleet.has(key)) letzteOrte.delete(key)
 }, AUFRAEUM_MS)

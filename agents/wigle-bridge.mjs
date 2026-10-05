@@ -67,6 +67,8 @@ const API_TOKEN  = envStr('WIGLE_API_TOKEN') || envStr('API_TOKEN')
 const CENTER_LAT = envNum('WIGLE_CENTER_LAT', 50.3569)
 const CENTER_LON = envNum('WIGLE_CENTER_LON', 7.5890)
 const RADIUS_M   = envNum('WIGLE_RADIUS_M', 1000)   // Abfrage-Radius je Ziel
+// Festes Zentrum nur auf ausdrücklichen Wunsch — siehe centersFrom().
+const FIXED_AREA = envBool('WIGLE_FIXED_AREA', false)
 const MAX_NETS   = envInt('WIGLE_MAX', 300)         // Gesamt-Cap je Areal (über Seiten)
 const MAX_PAGES  = envInt('WIGLE_MAX_PAGES', 3)     // Seiten je Areal (je 100, Quota-Schutz)
 const INTERVAL_MS = envNum('WIGLE_INTERVAL_S', 3600) * 1000  // Re-Query bei Stillstand
@@ -117,7 +119,9 @@ if (!API_NAME || !API_TOKEN) die('WIGLE_API_NAME und WIGLE_API_TOKEN fehlen (wig
 const WIGLE_URL = 'https://api.wigle.net/api/v2/network/search'
 const AUTH = 'Basic ' + Buffer.from(`${API_NAME}:${API_TOKEN}`).toString('base64')
 
-console.log(`[wigle] Zentrum: ${CENTER_LAT.toFixed(4)}, ${CENTER_LON.toFixed(4)} · Radius ${RADIUS_M} m · max ${MAX_NETS}`)
+console.log(FIXED_AREA
+  ? `[wigle] festes Zentrum: ${CENTER_LAT.toFixed(4)}, ${CENTER_LON.toFixed(4)} · Radius ${RADIUS_M} m · max ${MAX_NETS}`
+  : `[wigle] folgt den Interessensgebieten · Radius ${RADIUS_M} m je Ziel · max ${MAX_NETS}`)
 console.log(`[wigle] Sync-Intervall: ${(INTERVAL_MS / 1000).toFixed(0)} s · Reichweite-Basis (2,4 GHz): ${COVERAGE_M} m, 5 GHz ${Math.round(COVERAGE_M * 0.6)} m, 6 GHz ${Math.round(COVERAGE_M * 0.45)} m`)
 console.log(DETAIL_ON
   ? `[wigle] Empfangsradius: EMPIRISCH aus Sichtungen (network/detail, max ${DETAIL_MAX} Abfragen/Sync, p${Math.round(DETAIL_PCTL * 100)}, Deckel ${DETAIL_CAP_M} m), Band als Fallback`
@@ -313,9 +317,22 @@ async function fetchNetworksRoh(bbox) {
 // Zuletzt aktive Zentren — vom WLAN-Tick gesetzt, vom Mast-Sync mitgenutzt.
 let lastCenters = []
 
+/**
+ * Wohin wird abgefragt?
+ *
+ * OHNE BEREICH WIRD NICHT ABGEFRAGT. Das feste Zentrum war früher die
+ * Rückfallebene — und weil es auf Koblenz stand, während gespielt wurde,
+ * entstanden 143 WLAN-Netze im Median 3,8 km entfernt, alle ausserhalb der
+ * Reichweite (gemessen 05.10.2026). Niemand hat sie je gesehen, und WiGLEs
+ * Tageskontingent haben sie trotzdem gekostet.
+ *
+ * Wer eine Gegend dauerhaft bestückt haben will, setzt `WIGLE_FIXED_AREA=on`.
+ * Das ist dann eine Entscheidung des Betreibers, keine stille Vorgabe.
+ */
 function centersFrom(areas) {
-  if (!areas.length) return { centers: [{ lat: CENTER_LAT, lon: CENTER_LON }], fromAreas: false }
-  return { centers: areas.map(centerOf), fromAreas: true }
+  if (areas.length) return { centers: areas.map(centerOf), fromAreas: true }
+  if (FIXED_AREA) return { centers: [{ lat: CENTER_LAT, lon: CENTER_LON }], fromAreas: false }
+  return { centers: [], fromAreas: false }
 }
 
 // WiGLE pro Ziel abfragen (RADIUS_M um den Mittelpunkt), Union, Bestand abgleichen.
@@ -525,7 +542,9 @@ if (MASTS_ON) {
   }
 
   async function syncMasts() {
-    const centers = lastCenters.length ? lastCenters : [{ lat: CENTER_LAT, lon: CENTER_LON }]
+    const centers = lastCenters.length ? lastCenters
+      : (FIXED_AREA ? [{ lat: CENTER_LAT, lon: CENTER_LON }] : [])
+    if (!centers.length) return   // niemand da → nichts zu holen
     const byId = new Map()
     for (const c of centers.slice(0, MAX_AREAS)) {
       try {
