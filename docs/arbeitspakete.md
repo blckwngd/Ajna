@@ -146,9 +146,142 @@ weg, für die später der Empfänger aufgestellt wird.
 
 ---
 
+### 6 · Teilautonomes Gerät in der echten Welt (Rover)
+
+**Festgehalten am 09.10.2026, Umsetzung offen.** Ein kleiner Rover mit
+Smartphone als GPS, Sensorplattform und Ajna-Schnittstelle, der als Spielobjekt
+auf einem **gesicherten Gelände** fährt. Für eine Vorführung der stärkste
+denkbare Beleg dafür, wofür Ajna gebaut ist: Die Grenze zwischen Spielwelt und
+Wirklichkeit ist der Punkt, an dem es interessant wird.
+
+**Öffentliche Sicherheit wird ausdrücklich NICHT systemseitig garantiert**
+(Zusammenstöße mit Fahrzeugen, Personenschutz). Das Gerät fährt auf
+abgestecktem Gelände unter Aufsicht. Diese Entscheidung macht das Vorhaben
+überhaupt erst klein — ohne sie wäre es ein anderes Projekt.
+
+**a) Stufe 0 kostet nichts und kommt zuerst** (~1 Tag). Ein Agent
+veröffentlicht das **Telefon in der Hosentasche** als Objekt vom Typ `rover`,
+mit Aktionen „hierher kommen" und „Bericht" sowie `max_distance: 30`. Damit
+lässt sich die ganze Interaktion durchspielen — Rechte, Reichweite, Dialog,
+Auftragsanbindung —, bevor eine Schraube gekauft ist. Fühlt es sich gut an,
+lohnt die Hardware; fühlt es sich nicht gut an, war die Erkenntnis umsonst zu
+haben. **Diese Stufe ist auch dann nützlich, wenn nie ein Rover gebaut wird.**
+
+**b) Drei Schichten, und die Reihenfolge ist nicht verhandelbar.**
+
+```
+Ajna-Server      Objekt, Rechte, Weltdaten, Aufträge
+     │  (Sekunden, Internet)
+Telefon          Ajna-Agent: Wegpunkte abfahren, Position melden
+     │  (Millisekunden, BLE)
+Mikrocontroller  Motoren, Odometrie — UND DIE NOTBREMSE
+```
+
+Die unterste Schicht muss **ohne die oberen auskommen**. Ein Totmannschalter in
+der Firmware: kommt 300 ms kein frisches Kommando vom Telefon, bleibt der Rover
+stehen. Das gilt bei Funkloch, bei App-Absturz, bei einem Fehler in der
+Spiellogik und bei einem abgestürzten PocketBase. Dazu ein Bumper-Schalter und
+ein physischer Not-Aus, der die Motorversorgung trennt — **nicht über
+Software**. Die Notbremse darf dumm sein; sie muss nur unter allem liegen.
+
+**c) Der Agent läuft als Betriebsart der Ajna-App**, nicht als Node-Prozess in
+Termux — Android räumt das weg. Der Client ist ohnehin JavaScript, der
+Capacitor-Wrapper mit Vordergrunddienst steht auf dem Plan
+(`ajna-mobile-background`), und BLE sprechen wir für Zauberstab und UWB
+bereits. Damit zahlt die Mobil-Arbeit diesen Teil gleich mit.
+
+**Was dafür schon steht** — der eigentliche Grund, warum das machbar ist:
+
+| Braucht | Gibt es als |
+|---|---|
+| Gerät als Spielobjekt, Befehle zurück | `ajna.subscribeInteract(objId, cb)` — durchgestochen im HomeAssistant-Gateway, beide Richtungen gegen echte Hardware |
+| Flüssige Position trotz seltener Meldungen | `state.motion` → `client/core/PositionSmoother.js` |
+| Wer darf steuern | ACE-Rechte mit `interact_actions` |
+| Nur aus der Nähe | `max_distance` an der Aktion (`client/core/aktionsReichweite.js`) |
+| Bewegungspläne im Figuren-Format | `agents/lib/bewegung.mjs` |
+
+Letzteres ist der elegante Teil: Hält sich der Rover an dasselbe
+`state.motion`-Format wie die Figuren des World-Directors, zeichnet der Client
+ihn **genau wie eine Figur** — eine Mechanik für Virtuelles und Echtes.
+
+**d) Die zwei harten Stellen.**
+
+**Position.** Handy-GPS liegt 3–5 m daneben, zwischen Gebäuden schlechter; ein
+Rover, der sich um vier Meter irrt, fährt in die Hecke. Auf einem gesicherten
+Gelände ist die Antwort **UWB** — Zentimeter statt Meter, und die Kern-Pipeline
+steht bereits (`docs/uwb.md`). RTK-GPS (ab ~200 € je Empfänger plus
+Korrekturdaten) erst, wenn das Gelände größer wird als die Ankerreichweite.
+
+**Blickrichtung.** Die unterschätzte Hälfte: GPS liefert einen Kurs nur in
+Fahrt, und ein Magnetometer neben Motoren lügt. Praktikabel sind **zwei
+UWB-Tags** am Rover (vorne/hinten) — Richtung direkt aus der vorhandenen
+Multilateration, ohne neue Mathematik.
+
+**e) Wegpunkte, nicht Joystick.** Die Schreibtakte (500 ms beim Director, 5 s
+bei den Flotten) sind für Teleoperation zu langsam, für Zielvorgaben völlig
+ausreichend. Der Spieler sagt „fahr zum Brunnen", der Rover plant und fährt
+selbst. Das ist nicht nur die technisch ehrliche Lösung, sondern das bessere
+Spiel: Der Rover wirkt wie eine Figur mit eigenem Willen statt wie ein
+Modellauto — und passt damit zu dem, was unter NPC-Lebendigkeit ohnehin
+vorgesehen ist.
+
+Anschluss an den Rest ohne neue Mechanik: Parley gibt ihm eine Stimme („ich
+stehe vor einem Zaun"), `carried_by` lässt ihn Beute transportieren, und die
+Kamera speist Fotos in die Auftrags-Nachweise (`quest_proofs`). Der Rover als
+Bote, Kundschafter und Auftraggeber.
+
+**f) Hardware, rund 150–350 €.**
+
+| | |
+|---|---|
+| Fahrgestell aus gebrauchtem Hoverboard | 30–80 € — Nabenmotoren, Räder, Akku |
+| …oder RC-Auto 1:10 | 80–150 € |
+| ESP32 + Motortreiber | ~20 € |
+| Altes Android-Telefon | 0–100 € |
+| Akku, Halterung, Kleinkram | 40–80 € |
+
+Das Hoverboard ist der Geheimtipp: gebraucht spottbillig, und die Motoren
+tragen auch auf Wiese und Schotter. **Kleine Räder sterben im Gras** — der
+häufigste Grund, warum solche Projekte im Rasen liegenbleiben.
+
+**Firmware für das Hoverboard.** Es gibt kein empfehlenswertes *Modell* —
+Hoverboards sind namenlose Ware, bei der zählt, welches Mainboard verbaut ist,
+und das sieht man erst nach dem Öffnen. Zwei Wege:
+
+* **`hoverboard-firmware-hack-FOC`** (Emanuel Feru, GPL) ist der Standard der
+  Szene: feldorientierte Regelung, leiser und drehmomentstärker bei niedriger
+  Drehzahl als die ältere Fassung von Niklas Fauth, aus der sie hervorging.
+  Zielt auf Mainboards mit **STM32F103** (GD32-Nachbauten laufen meist auch).
+  Die Variante `VARIANT_USART` bietet genau das, was hier gebraucht wird: ein
+  schlichtes serielles Protokoll für Tempo und Lenkung, das ein ESP32 bedient.
+  Zum Flashen genügt ein ST-Link-V2-Nachbau (~3 €) an den SWD-Pads; die Boards
+  sind oft auslesegeschützt und müssen zuerst entsperrt werden.
+  **Kaufrat:** defekte Hoverboards „Akku tot" für 20–40 € nehmen, Motoren und
+  Board sind in der Regel heil. Mehrere kaufen ist billiger als das falsche.
+* **Weniger Überraschungen, mehr Geld: Hoverboard-Motoren an einem VESC.** Die
+  Nabenmotoren sind gewöhnliche BLDC mit Hall-Sensoren. Ein VESC (Benjamin
+  Vedder, offen) kostet je nach Nachbau 50–120 €, man braucht zwei oder einen
+  Doppel-VESC. Dafür entfällt das Raten über das Mainboard, und es gibt eine
+  saubere UART/CAN-Schnittstelle samt großer Gemeinde.
+
+Für eine Vorführung, bei der die Software im Mittelpunkt steht, ist der VESC
+das ruhigere Nervenkostüm; für den Bastelspaß und das kleinste Budget die
+FOC-Firmware.
+
+**g) Drohne: später und von jemand anderem verantwortet.** Nicht wegen der
+Technik, wegen der Vorschriften. Nach EU-VO 2019/947 braucht jede Drohne mit
+Kamera eine Betreiberregistrierung, und **autonomer Wegpunktflug fällt nicht in
+die offene Kategorie** — dort muss ein Fernpilot auf Sicht jederzeit eingreifen
+können. Eingezäuntes Privatgelände ändert daran weniger, als man hofft. Dazu:
+Ein Absturz kostet die Drohne, ein umgefahrener Rover eine Schramme. Wer das
+angeht, braucht jemanden, der den Flugbetrieb verantwortet — nicht einen
+Seitenzweig dieses Pakets.
+
+---
+
 ## Kleiner, wartet auf eine Entscheidung
 
-### 6 · Kommentar-Bestand übersetzen
+### 7 · Kommentar-Bestand übersetzen
 
 Neue Kommentare sind englisch (`CLAUDE.md`), der Bestand ist deutsch: 10.790 von
 17.577 Kommentarzeilen, gemessen am 22.09.2026. **Der größte Block der ganzen
@@ -159,7 +292,7 @@ Sprachumstellung** — und der heikelste, weil diese Kommentare durchgehend das
 Vorgemerkt auf Wunsch des Owners. Sinnvoll in Dateigruppen statt am Stück, und
 am besten dort zuerst, wo ohnehin gearbeitet wird.
 
-### 7 · ADS-B und AIS auf `lib/fleet.mjs` umstellen
+### 8 · ADS-B und AIS auf `lib/fleet.mjs` umstellen
 
 Die C-ITS-Brücke benutzt die gemeinsame Flotten-Bibliothek; `adsb-bridge` und
 `ais-bridge` tragen ihre eigene Kopie derselben hundert Zeilen weiter. Das ist
@@ -175,7 +308,7 @@ Zugangsdaten, eigenes Kontingent, eigenes Konto, eigenes Manifest — und ein
 Parser-Fehler in einer Quelle darf die anderen beiden nicht mitreissen. Die
 Wiederholung war das Problem, nicht die Trennung.
 
-### 8 · `npm audit`: sechs Schwachstellen im Bestand
+### 9 · `npm audit`: sechs Schwachstellen im Bestand
 
 Beim Hinzufügen von `markdown-it` aufgefallen, **nicht davon verursacht** (das
 Paket taucht in keinem Pfad auf): 1 niedrig, 2 mittel, 3 hoch. Der Großteil sind
@@ -187,13 +320,13 @@ Zwei betreffen aber Laufzeit-Abhängigkeiten und verdienen einen Blick:
 sie hereinkommen und ob ein `npm audit fix` ohne Bruch durchgeht — blind
 aktualisieren heißt hier, die Bündel neu zu bauen und zu hoffen.
 
-### 9 · Telefonbuch-Parser gegen die echte Seite prüfen
+### 10 · Telefonbuch-Parser gegen die echte Seite prüfen
 
 Bisher nur gegen erfundenes Markup getestet. Vor einem echten Einsatz des Modus
 `erweitert` nötig. Der Parser hängt an `nasort`-Attributen — jedes Redesign der
 Seite bricht ihn.
 
-### 10 · Weitere Lupen für weitere Spieler
+### 11 · Weitere Lupen für weitere Spieler
 
 **Entschieden:** Die Lupe wechselt den Besitzer. Sie ist `portable`, und
 Aufnehmen überträgt in Ajna den Besitz („Loot: Eigentum übergeht auf den
@@ -209,7 +342,7 @@ zugleich das Recht bekommt, seine zu benutzen.
 Zu klären, wenn es soweit ist: Auslöser (Kommando? Aktion an einer vorhandenen
 Lupe?), Obergrenze je Spieler, und was mit herrenlosen Lupen geschieht.
 
-### 11 · Wo soll die Adress-Lupe liegen?
+### 12 · Wo soll die Adress-Lupe liegen?
 
 Steht derzeit auf **Moselring 11, 56073 Koblenz** (50.356717, 7.588443) — dorthin
 verschoben, damit der erste Test etwas zeigt; an der ursprünglichen

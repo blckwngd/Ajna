@@ -67,7 +67,7 @@ Text und Bedingungen funktionierten bereits — der Einbau hat das bestätigt.
 Wetter, UV, Luft, Ort. Ein Blitzeinschlag ist das Gegenteil: ein Punkt mit
 Zeitstempel, der etwas auslöst. Er gehört NICHT in eine 10-km-Zelle mit
 15-Minuten-Takt, sonst ist die Ortsgenauigkeit weg. Siehe `arbeitspakete.md`,
-Paket 6 — derselbe Agent darf beides bedienen, aber über zwei Ausgänge.
+Paket 5 — derselbe Agent darf beides bedienen, aber über zwei Ausgänge.
 
 ## Der Gedanke
 
