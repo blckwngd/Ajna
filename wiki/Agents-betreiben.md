@@ -23,6 +23,7 @@ Agents sind normale Node-Prozesse, die sich als regulärer Benutzer anmelden und
 | **WiGLE-Bridge** | `npm run wigle` | WLAN-Netze aus WiGLE. | Zugangsdaten |
 | **Movebank-Bridge** | `npm run movebank` | Besenderte Wildtiere aus Movebank. | Zugangsdaten |
 | **Home-Assistant-Gateway** | `npm run ha-gateway` | Smart-Home-Geräte als Objekte, in beide Richtungen. Eigene Anleitung: [`docs/homeassistant.md`](https://github.com/blckwngd/Ajna/blob/main/docs/homeassistant.md) | HA-Instanz |
+| **Roboter** | `npm run robot` | Betreibt ein teilautonomes Gerät (Rover, Hexapod) als Spielobjekt: Wegpunkte, Spielaktionen, Telemetrie. Mit `ROBOT_DRIVER=sim` **ohne jede Hardware** ausprobierbar — Agent, Navigation und Ajna-Objekt sind echt, nur die Räder nicht. Einen eigenen Antrieb anschliessen: siehe `agents/lib/robot-driver.mjs`. | — (Simulation) |
 | **UWB-Anker** | `npm run uwb-anchors` | Legt UWB-Anker aus einer JSON-Datei als Objekte an. Siehe [`docs/uwb.md`](https://github.com/blckwngd/Ajna/blob/main/docs/uwb.md) | Ankerdatei |
 | **Wand-Agent** | `npm run wand-agent` | Gegenstück zum Zeigegerät. Siehe [`docs/wand-slice.md`](https://github.com/blckwngd/Ajna/blob/main/docs/wand-slice.md) | Zauberstab |
 

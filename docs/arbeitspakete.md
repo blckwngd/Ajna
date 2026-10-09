@@ -159,7 +159,15 @@ Wirklichkeit ist der Punkt, an dem es interessant wird.
 abgestecktem Gelände unter Aufsicht. Diese Entscheidung macht das Vorhaben
 überhaupt erst klein — ohne sie wäre es ein anderes Projekt.
 
-**a) Stufe 0 kostet nichts und kommt zuerst** (~1 Tag). Ein Agent
+**a) Stufe 0 ist gebaut (09.10.2026).** `npm run robot` betreibt einen Rover
+mit Simulationstreiber: Agent, Navigation, Spielaktionen und Ajna-Objekt sind
+echt, nur die Räder nicht. Live geprüft — auf `goto` dreht er auf die richtige
+Peilung, fährt mit 1 m/s, bremst ab vier Metern ab und hält innerhalb der
+Toleranz. Der Kern liegt in `agents/lib/robot.mjs` (ohne DOM und Capacitor,
+läuft also headless unter Node), der Vertrag für eigene Antriebe in
+`agents/lib/robot-driver.mjs`.
+
+Ursprünglich so geplant und weiterhin gültig: Ein Agent
 veröffentlicht das **Telefon in der Hosentasche** als Objekt vom Typ `rover`,
 mit Aktionen „hierher kommen" und „Bericht" sowie `max_distance: 30`. Damit
 lässt sich die ganze Interaktion durchspielen — Rechte, Reichweite, Dialog,
