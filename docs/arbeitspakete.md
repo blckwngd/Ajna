@@ -268,6 +268,42 @@ Für eine Vorführung, bei der die Software im Mittelpunkt steht, ist der VESC
 das ruhigere Nervenkostüm; für den Bastelspaß und das kleinste Budget die
 FOC-Firmware.
 
+**h) Der Antriebs-Treiber ist austauschbar.** Die App führt einen
+**Agenten-Kern** aus — nicht die Hardware-Anbindung. Darunter sitzt je
+Plattform ein Treiber:
+
+```
+Ajna-Objekt  <->  Agenten-Kern         (einmal, für alle Plattformen)
+                  Wegpunkte, Spielaktionen, Telemetrie, Totmann-Takt
+                       |   fahre({ v, omega })   halt()
+                       |   zustand()        -> Odometrie, Akku, Fehler
+                       |   faehigkeiten()
+                  Antriebs-Treiber      (Hoverboard | Hexapod | …)
+```
+
+**Der Schnitt liegt bei Geschwindigkeit und Drehrate**, nicht bei Motoren und
+nicht bei Wegpunkten. Dieselbe Grenze zieht ROS seit Jahren als `cmd_vel`, und
+sie hat sich quer über Räder, Ketten und Beine bewährt: Der Kern rechnet „zum
+Brunnen" in „vorwärts 0,8 m/s, Drehrate 0,2 rad/s" um, der Treiber macht daraus
+zwei Raddrehzahlen oder einen Gangzyklus. **Die Gangart ist Sache des Hexapods,
+nicht des Spiels.**
+
+Zwei Pflichten hat der Treiber zusätzlich:
+
+* **Fähigkeiten melden.** Ein Hexapod kann sich hinsetzen und über eine Stufe
+  steigen, ein Hoverboard nicht. Daraus leitet der Kern sogar die **Aktionen am
+  Ajna-Objekt** ab — ohne dass die Spiellogik die Plattformen kennt.
+* **Den Totmann-Takt bedienen.** Die Notbremse bleibt in der Firmware, egal
+  welcher Treiber. Der Treiber verpflichtet sich nur auf das Lebenszeichen, und
+  `halt()` ist das eine, was immer funktionieren muss.
+
+Hält sich der Kern von DOM und Capacitor fern und bekommt `ajna` und `treiber`
+hereingereicht, läuft derselbe Code später auch unter Node auf einem Raspberry
+Pi — falls eine Plattform ohne Telefon auskommt. Das kostet jetzt nichts und
+spart später den Neubau.
+
+Der Agent ist zugleich eines der Funktionsmodule aus Paket 7.
+
 **g) Drohne: später und von jemand anderem verantwortet.** Nicht wegen der
 Technik, wegen der Vorschriften. Nach EU-VO 2019/947 braucht jede Drohne mit
 Kamera eine Betreiberregistrierung, und **autonomer Wegpunktflug fällt nicht in
@@ -279,9 +315,83 @@ Seitenzweig dieses Pakets.
 
 ---
 
+### 7 · Zusatzfunktionen als Module (Stufen 2–4)
+
+**Stufe 1 ist erledigt (09.10.2026):** „Geräte" und „Debug" liegen hinter einem
+Schalter in den Einstellungen, Vorgabe aus (`client/core/advancedMode.js`). Das
+löst das gemeldete Problem — neue Nutzer sehen nicht mehr „UWB-Ortung" und
+„Zauberstab", bevor sie die Karte gesehen haben.
+
+**Was „Plugin" NICHT heissen soll.** Keine Registry für Dritte, keine
+versionierte Erweiterungsschnittstelle, nichts Nachinstallierbares. Das wäre
+ein eigenes Projekt und löst ein Problem, das wir nicht haben. Gewollt sind
+**Funktionsmodule mit einem Schalter** — mehr nicht.
+
+Drei Ebenen stecken dahinter, und nur die erste ist erledigt:
+
+| | Löst | Stand |
+|---|---|---|
+| Menüpunkte verstecken | Verwirrung | **fertig** |
+| Code nicht laden | Startzeit, Speicher | offen |
+| Berechtigungen nicht anfragen | Vertrauen beim Installieren | offen |
+
+**Die dritte Ebene wird übersehen.** Das Manifest fordert heute 14
+Berechtigungen, darunter `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT`, `RECORD_AUDIO`,
+`CAMERA`, `ACCESS_FINE_LOCATION`. Ein verstecktes Menü ändert daran nichts: Die
+Laufzeit-Abfrage bleibt zwar aus, solange der Code nicht läuft, aber im
+Store-Eintrag steht weiterhin „Bluetooth, Mikrofon, Kamera". Für eine Geo-App
+ist das der Moment, in dem jemand abbricht. Dagegen hilft nur eine zweite
+Build-Variante, kein Schalter zur Laufzeit.
+
+**Stufe 2 — `AccessoryHub` entflechten (~1 Tag).** Der eigentliche Aufwand,
+gemessen am 09.10.2026:
+
+```
+Zugriffe auf uwb/wand:  MobileShell.js  50
+                        map.js           9
+                        main.js          6
+                        EditorUI.js      6
+                        … insgesamt ~90 Stellen
+```
+
+Und der Hub baut heute alles beim Start und verdrahtet es sofort:
+
+```js
+const positionSource = new FusedPositionSource(gps, uwb.roleSource('viewer'))
+```
+
+Die Positionsquelle bekommt UWB **im Konstruktor**. Ohne UWB muss sie trotzdem
+laufen und das Gerät später annehmen können — das ist der Umbau. Nicht die
+Schalter sind die Arbeit.
+
+**Stufe 3 — dynamische Importe (~½ Tag).** Erst danach schrumpft das Bundle.
+Ein Modul beschreibt sich selbst:
+
+```js
+{ key: 'uwb', label: 'UWB-Ortung', braucht: ['bluetooth'],
+  abschnitt: () => import('./features/uwb.js') }
+```
+
+Die ausgelagerten `_renderGeraeteSektion()` / `_renderDebugSektion()` aus Stufe
+1 sind bereits die Form, in der ein Modul seinen Abschnitt beisteuert.
+
+**Stufe 4 — Build-Varianten.** Gradle product flavours: `basic` ohne BLE und
+Mikrofon im Manifest, `full` mit. Erst das löst die Berechtigungsfrage
+wirklich.
+
+**Reihenfolge ist nicht beliebig.** Stufe 3 ohne Stufe 2 geht nicht (der Hub
+baut alles eifrig), Stufe 4 ohne Stufe 3 bringt wenig (der Code läge ja
+trotzdem bei). Jede Stufe ist aber für sich nützlich und darf liegenbleiben.
+
+**Der Roboter-Agent (Paket 6) ist die Probe aufs Exempel.** Er entstünde von
+Anfang an als Modul — und ist damit der erste ehrliche Test, ob der Mechanismus
+taugt oder ob er nur für die zwei Dinge passt, für die er gebaut wurde.
+
+---
+
 ## Kleiner, wartet auf eine Entscheidung
 
-### 7 · Kommentar-Bestand übersetzen
+### 8 · Kommentar-Bestand übersetzen
 
 Neue Kommentare sind englisch (`CLAUDE.md`), der Bestand ist deutsch: 10.790 von
 17.577 Kommentarzeilen, gemessen am 22.09.2026. **Der größte Block der ganzen
@@ -292,7 +402,7 @@ Sprachumstellung** — und der heikelste, weil diese Kommentare durchgehend das
 Vorgemerkt auf Wunsch des Owners. Sinnvoll in Dateigruppen statt am Stück, und
 am besten dort zuerst, wo ohnehin gearbeitet wird.
 
-### 8 · ADS-B und AIS auf `lib/fleet.mjs` umstellen
+### 9 · ADS-B und AIS auf `lib/fleet.mjs` umstellen
 
 Die C-ITS-Brücke benutzt die gemeinsame Flotten-Bibliothek; `adsb-bridge` und
 `ais-bridge` tragen ihre eigene Kopie derselben hundert Zeilen weiter. Das ist
@@ -308,7 +418,7 @@ Zugangsdaten, eigenes Kontingent, eigenes Konto, eigenes Manifest — und ein
 Parser-Fehler in einer Quelle darf die anderen beiden nicht mitreissen. Die
 Wiederholung war das Problem, nicht die Trennung.
 
-### 9 · `npm audit`: sechs Schwachstellen im Bestand
+### 10 · `npm audit`: sechs Schwachstellen im Bestand
 
 Beim Hinzufügen von `markdown-it` aufgefallen, **nicht davon verursacht** (das
 Paket taucht in keinem Pfad auf): 1 niedrig, 2 mittel, 3 hoch. Der Großteil sind
@@ -320,13 +430,13 @@ Zwei betreffen aber Laufzeit-Abhängigkeiten und verdienen einen Blick:
 sie hereinkommen und ob ein `npm audit fix` ohne Bruch durchgeht — blind
 aktualisieren heißt hier, die Bündel neu zu bauen und zu hoffen.
 
-### 10 · Telefonbuch-Parser gegen die echte Seite prüfen
+### 11 · Telefonbuch-Parser gegen die echte Seite prüfen
 
 Bisher nur gegen erfundenes Markup getestet. Vor einem echten Einsatz des Modus
 `erweitert` nötig. Der Parser hängt an `nasort`-Attributen — jedes Redesign der
 Seite bricht ihn.
 
-### 11 · Weitere Lupen für weitere Spieler
+### 12 · Weitere Lupen für weitere Spieler
 
 **Entschieden:** Die Lupe wechselt den Besitzer. Sie ist `portable`, und
 Aufnehmen überträgt in Ajna den Besitz („Loot: Eigentum übergeht auf den
@@ -342,7 +452,7 @@ zugleich das Recht bekommt, seine zu benutzen.
 Zu klären, wenn es soweit ist: Auslöser (Kommando? Aktion an einer vorhandenen
 Lupe?), Obergrenze je Spieler, und was mit herrenlosen Lupen geschieht.
 
-### 12 · Wo soll die Adress-Lupe liegen?
+### 13 · Wo soll die Adress-Lupe liegen?
 
 Steht derzeit auf **Moselring 11, 56073 Koblenz** (50.356717, 7.588443) — dorthin
 verschoben, damit der erste Test etwas zeigt; an der ursprünglichen

@@ -38,6 +38,7 @@ import { callFelder } from './questMapping.js'
 import { isMultiServer, serverLabelFor } from './ServerBadge.js'
 import { RANGE_DEFS, RANGE_EVENT, readRange, writeRange, valueFromSlider, sliderFromValue, formatRange }
   from './renderRange.js'
+import { isAdvanced, setAdvanced } from './advancedMode.js'
 
 // Wie lange auf eine Antwort gewartet wird, bevor der Hinweis doch erscheint.
 // Vier Sekunden: lang genug, dass ein laufender Agent zuerst da ist (gemessen
@@ -1031,7 +1032,94 @@ export class MobileShell {
     }
   }
 
+  /**
+   * Abschnitt „Geräte" — Zauberstab und UWB.
+   *
+   * Ausgelagert, weil er nur im erweiterten Modus erscheint: Wer eine Geo-App
+   * installiert hat, soll nicht erst entscheiden müssen, was „UWB-Ortung"
+   * bedeutet. Als eigene Methode ist er ausserdem die Form, in der später ein
+   * Funktionsmodul seinen Abschnitt beisteuert (docs/arbeitspakete.md, Paket 7).
+   */
+  _renderGeraeteSektion() {
+    return `
+      <!-- Geräte: nur Verbinden + Status + Tür zu den geräte-spezifischen
+           Einstellungen (alles, was nur mit verbundenem Gerät sinnvoll ist,
+           liegt im jeweiligen Modal). -->
+      <section class="settings-section">
+        <h3>Geräte</h3>
+        <div class="settings-row">
+          <div class="label">
+            <div>Zauberstab</div>
+            <div class="meta" data-role="wand-status">${this.wandConnected ? 'verbunden' : 'nicht verbunden'}</div>
+          </div>
+          <button class="settings-btn-inline" data-action="wand-settings">Einstellungen</button>
+        </div>
+        <button class="settings-btn secondary" data-action="wand" style="margin-top:8px">
+          ${this.wandConnected ? t('Zauberstab trennen') : t('Zauberstab verbinden')}
+        </button>
+
+        <div class="settings-row" style="margin-top:14px">
+          <div class="label">
+            <div>UWB</div>
+            <div class="meta" data-role="uwb-status">${this.uwbConnected ? 'verbunden' : 'nicht verbunden'}</div>
+          </div>
+          <button class="settings-btn-inline" data-action="uwb-settings">Einstellungen</button>
+        </div>
+        <label class="meta" style="display:flex;align-items:center;gap:10px;margin-top:8px">
+          <span style="white-space:nowrap">UWB-Tag</span>
+          <input class="settings-input" data-field="uwb-tag-name" type="text"
+            value="${uwbTagName}" placeholder="z. B. DW1924 oder 1924"
+            style="width:130px;margin:0;padding:6px 10px">
+        </label>
+        <div class="meta" style="margin-top:4px">
+          Gerätename des EIGENEN Tags (DW + letzte 4 Hex der Node-ID). Leer = erster
+          gefundener DW-Knoten — bei mehreren Nutzern/Ankern mit BLE nicht eindeutig!
+        </div>
+        <button class="settings-btn secondary" data-action="uwb" style="margin-top:8px">
+          ${this.uwbConnected ? t('UWB trennen') : t('UWB verbinden')}
+        </button>
+      </section>
+`
+  }
+
+  /** Abschnitt „Debug" samt Ereignis-Protokoll — ebenfalls nur erweitert. */
+  _renderDebugSektion() {
+    return `
+      <section class="settings-section">
+        <h3>Debug</h3>
+        <div class="settings-row">
+          <div class="label">GPS</div>
+          <div class="meta" data-role="debug-gps">—</div>
+        </div>
+        <div class="settings-row">
+          <div class="label">Server</div>
+          <div class="meta" data-role="debug-backend">—</div>
+        </div>
+        <div class="settings-row">
+          <div class="label">Objekte</div>
+          <div class="meta" data-role="debug-objects">—</div>
+        </div>
+        <div class="settings-row">
+          <div class="label">UWB</div>
+          <div class="meta" data-role="debug-uwb">—</div>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <details>
+          <summary>Debug-Log (Events)</summary>
+          <div style="display:flex;justify-content:flex-end;margin:6px 0">
+            <button class="settings-btn secondary" data-action="debug-log-clear" style="width:auto;padding:2px 10px">Leeren</button>
+          </div>
+          <pre data-role="debug-log" style="max-height:240px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:11px ui-monospace,Menlo,Consolas,monospace;background:rgba(0,0,0,0.25);padding:8px;border-radius:6px;margin:0">${escapeHtml(this._debugLogText())}</pre>
+        </details>
+      </section>
+`
+  }
+
   _renderSettings() {
+    // Zusatzfunktionen nur auf Wunsch — siehe core/advancedMode.js.
+    const erweitert = isAdvanced()
     const root = document.getElementById('mobileSettings')
     if (!root) return
     const user = this.ajna.currentUser()
@@ -1248,43 +1336,7 @@ export class MobileShell {
         </div>
       </section>
 
-      <!-- Geräte: nur Verbinden + Status + Tür zu den geräte-spezifischen
-           Einstellungen (alles, was nur mit verbundenem Gerät sinnvoll ist,
-           liegt im jeweiligen Modal). -->
-      <section class="settings-section">
-        <h3>Geräte</h3>
-        <div class="settings-row">
-          <div class="label">
-            <div>Zauberstab</div>
-            <div class="meta" data-role="wand-status">${this.wandConnected ? 'verbunden' : 'nicht verbunden'}</div>
-          </div>
-          <button class="settings-btn-inline" data-action="wand-settings">Einstellungen</button>
-        </div>
-        <button class="settings-btn secondary" data-action="wand" style="margin-top:8px">
-          ${this.wandConnected ? t('Zauberstab trennen') : t('Zauberstab verbinden')}
-        </button>
-
-        <div class="settings-row" style="margin-top:14px">
-          <div class="label">
-            <div>UWB</div>
-            <div class="meta" data-role="uwb-status">${this.uwbConnected ? 'verbunden' : 'nicht verbunden'}</div>
-          </div>
-          <button class="settings-btn-inline" data-action="uwb-settings">Einstellungen</button>
-        </div>
-        <label class="meta" style="display:flex;align-items:center;gap:10px;margin-top:8px">
-          <span style="white-space:nowrap">UWB-Tag</span>
-          <input class="settings-input" data-field="uwb-tag-name" type="text"
-            value="${uwbTagName}" placeholder="z. B. DW1924 oder 1924"
-            style="width:130px;margin:0;padding:6px 10px">
-        </label>
-        <div class="meta" style="margin-top:4px">
-          Gerätename des EIGENEN Tags (DW + letzte 4 Hex der Node-ID). Leer = erster
-          gefundener DW-Knoten — bei mehreren Nutzern/Ankern mit BLE nicht eindeutig!
-        </div>
-        <button class="settings-btn secondary" data-action="uwb" style="margin-top:8px">
-          ${this.uwbConnected ? t('UWB trennen') : t('UWB verbinden')}
-        </button>
-      </section>
+      ${erweitert ? this._renderGeraeteSektion() : ''}
 
       <section class="settings-section">
         <h3>Hintergrund</h3>
@@ -1307,34 +1359,17 @@ export class MobileShell {
         </label>
       </section>
 
-      <section class="settings-section">
-        <h3>Debug</h3>
-        <div class="settings-row">
-          <div class="label">GPS</div>
-          <div class="meta" data-role="debug-gps">—</div>
-        </div>
-        <div class="settings-row">
-          <div class="label">Server</div>
-          <div class="meta" data-role="debug-backend">—</div>
-        </div>
-        <div class="settings-row">
-          <div class="label">Objekte</div>
-          <div class="meta" data-role="debug-objects">—</div>
-        </div>
-        <div class="settings-row">
-          <div class="label">UWB</div>
-          <div class="meta" data-role="debug-uwb">—</div>
-        </div>
-      </section>
+      ${erweitert ? this._renderDebugSektion() : ''}
 
       <section class="settings-section">
-        <details>
-          <summary>Debug-Log (Events)</summary>
-          <div style="display:flex;justify-content:flex-end;margin:6px 0">
-            <button class="settings-btn secondary" data-action="debug-log-clear" style="width:auto;padding:2px 10px">Leeren</button>
+        <h3>${t('Erweitert')}</h3>
+        <label class="settings-row" style="cursor:pointer">
+          <div class="label">
+            <div>${t('Erweiterte Funktionen')}</div>
+            <div class="meta">${t('Zauberstab, UWB-Ortung und Debug-Anzeigen einblenden')}</div>
           </div>
-          <pre data-role="debug-log" style="max-height:240px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:11px ui-monospace,Menlo,Consolas,monospace;background:rgba(0,0,0,0.25);padding:8px;border-radius:6px;margin:0">${escapeHtml(this._debugLogText())}</pre>
-        </details>
+          <input type="checkbox" data-action="advanced-toggle" ${erweitert ? 'checked' : ''}>
+        </label>
       </section>
 
       <section class="settings-section">
@@ -1573,6 +1608,14 @@ export class MobileShell {
     const action = sel => root.querySelector(`[data-action="${sel}"]`)
 
     action('debug-log-clear')?.addEventListener('click', () => messageLog.clear())
+
+    // Erweiterte Funktionen ein- und ausblenden. Neu rendern, nicht nur die
+    // Abschnitte zeigen: Beim Einschalten müssen auch deren Ereignis-Draht und
+    // Statuszeilen entstehen, und die hängen an diesem Durchlauf.
+    action('advanced-toggle')?.addEventListener('change', (e) => {
+      setAdvanced(e.target.checked)
+      this._renderSettings()
+    })
 
     action('login')?.addEventListener('click', async () => {
       const email = root.querySelector('[data-field="email"]')?.value?.trim() || ''

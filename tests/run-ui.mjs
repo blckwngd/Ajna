@@ -4265,6 +4265,46 @@ console.log('\n── Auftrags-Formular: Wortwahl')
 
 const failed = results.filter(r => !r.ok)
 console.log(`\n${'═'.repeat(60)}`)
+
+// ── Erweiterte Funktionen: was ein neuer Nutzer NICHT sieht ─────────────
+// Die App traegt Dinge, die die meisten nie brauchen: Zauberstab koppeln,
+// UWB-Tags verbinden, Debug-Anzeigen. Jede davon ist ein Abschnitt in den
+// Einstellungen und eine Frage in jemandes Kopf. Sie liegen deshalb hinter
+// EINEM Schalter, und der ist aus.
+console.log('\n── Erweiterte Funktionen')
+{
+  const shell = readFileSync(new URL('../client/core/MobileShell.js', import.meta.url), 'utf8')
+  const mode = readFileSync(new URL('../client/core/advancedMode.js', import.meta.url), 'utf8')
+
+  check('die Vorgabe ist aus — kein Zweig, der ohne Eintrag „an" liefert',
+    /getItem\(KEY\) === '1'/.test(mode) && !/!== *'0'/.test(mode))
+
+  check('der Geräte-Abschnitt haengt am Schalter',
+    /\$\{erweitert \? this\._renderGeraeteSektion\(\) : ''\}/.test(shell))
+  check('der Debug-Abschnitt haengt am Schalter',
+    /\$\{erweitert \? this\._renderDebugSektion\(\) : ''\}/.test(shell))
+
+  // Zauberstab und UWB duerfen NUR noch in der ausgelagerten Methode stehen —
+  // sonst waere ein Rest im Hauptteil des Templates haengengeblieben.
+  const vorMethoden = shell.slice(0, shell.indexOf('_renderGeraeteSektion()'))
+  const template = shell.slice(shell.indexOf('_renderSettings() {'))
+  const hauptTeil = template.slice(0, template.indexOf("${erweitert ? this._renderGeraeteSektion()"))
+  check('kein Zauberstab-Knopf im immer sichtbaren Teil',
+    !/data-action="wand"/.test(hauptTeil))
+  check('kein UWB-Knopf im immer sichtbaren Teil',
+    !/data-action="uwb"/.test(hauptTeil))
+  check('keine Debug-Anzeige im immer sichtbaren Teil',
+    !/data-role="debug-gps"/.test(hauptTeil))
+
+  check('der Schalter selbst ist immer sichtbar',
+    /data-action="advanced-toggle"/.test(shell))
+  check('das Umlegen rendert neu, statt nur einzublenden',
+    /advanced-toggle[\s\S]{0,300}setAdvanced\(e\.target\.checked\)[\s\S]{0,120}_renderSettings\(\)/.test(shell))
+  check('advancedMode wird importiert, nicht nachgebaut',
+    /import \{ isAdvanced, setAdvanced \} from '\.\/advancedMode\.js'/.test(shell))
+}
+
+
 console.log(`UI: ${results.length - failed.length} bestanden, ${failed.length} fehlgeschlagen`)
 if (failed.length) {
   console.log('\nFehlgeschlagen:')
