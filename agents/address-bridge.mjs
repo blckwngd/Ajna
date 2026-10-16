@@ -56,6 +56,7 @@ import { Konfig } from './lib/konfig.mjs'
 import { Quellcache, istAbgeriegelt } from './lib/quellcache.mjs'
 import dns from 'node:dns/promises'
 import { networkTrace, ownerFromRdap } from './lib/network-trace.mjs'
+import * as places from './lib/places.mjs'
 import { readAgentEnv, writeAgentEnv } from './lib/env.mjs'
 import { makeRl, ask, confirm, banner, header, hint, ok, warnLine, infoLine, C } from './lib/setup-wizard.mjs'
 import * as kataster from './lib/hauskoordinaten.mjs'
@@ -196,6 +197,11 @@ const R = {
   // hält — die Regel steckt in `lib/network-trace.mjs`, nicht hier. Ohne
   // Schlüssel bleibt das Feld einfach weg.
   shodan_key: ['SHODAN_API_KEY', '', 'text', 'Shodan-Schlüssel: zeigt erreichbare Dienste bei EIGENEN Netzbereichen'],
+  // Ortsabzug (Overture o. a.): füllt Lücken, wo OSM nichts führt — auf dem
+  // Land ist das die Regel, nicht die Ausnahme. Leer = an den üblichen Orten
+  // unter .cache/ suchen. Fehlt er, bleibt es bei OSM.
+  orte_db:    ['ADR_ORTE_DB',    '',  'text', 'Pfad zum Ortsabzug (leer = .cache/ durchsuchen)'],
+  orte_guete: ['ADR_ORTE_GUETE', 0.5, 'zahl', 'Mindest-Konfidenz eines Eintrags im Abzug (0–1)'],
 }
 
 const konf = await Konfig.eigene(ajna, {
@@ -742,6 +748,60 @@ async function nominatimRueckfall(lat, lon) {
  * traegt (ein POI-Punkt ohne addr:*), entscheidet die Naehe. 20 Meter, weil
  * ein Ladeneingang nicht im Gebaeudemittelpunkt liegt.
  */
+// ─── Schicht B: Ortsabzug (Overture o. a.) ────────────────────────────────
+//
+// OSM ist in Städten dicht und auf dem Land löchrig. Dort bekommt die Lupe
+// leere Listen — nicht weil nichts da wäre, sondern weil es niemand eingetragen
+// hat. Der Abzug FÜLLT LÜCKEN; wo OSM etwas sagt, geht OSM vor (dort war
+// jemand).
+//
+// Fehlt der Abzug, ist das kein Fehler, sondern eine Quelle, die schweigt.
+
+const ORTE_ORTE = [
+  join(HIER, '..', '.cache', 'orte.db'),
+  join(HIER, '..', '.cache', 'overture', 'orte.db'),
+]
+let _orteDb = null
+let _orteVersucht = false
+
+function orteDb() {
+  if (_orteVersucht) return _orteDb
+  _orteVersucht = true
+  const gewaehlt = w('orte_db').trim()
+  const { db, pfad, grund, anzahl } = places.oeffne(gewaehlt ? [gewaehlt] : ORTE_ORTE)
+  if (!db) { log(`Ortsabzug: ${grund} — es bleibt bei OpenStreetMap`); return null }
+  _orteDb = db
+  log(`Ortsabzug geöffnet: ${pfad} (${(anzahl ?? 0).toLocaleString('de-DE')} Orte)`)
+  return _orteDb
+}
+
+/**
+ * Betriebe aus dem Abzug, die OSM nicht kennt.
+ *
+ * Gibt die FORM der OSM-Treffer zurück, damit `gewerbeAnhaengen` sie ohne
+ * Sonderfall weiterverarbeitet.
+ */
+function ausAbzug(lat, lon, radiusM, osmListe) {
+  const db = orteDb()
+  if (!db) return []
+  const treffer = places.orteImUmkreis(db, lat, lon, radiusM, {
+    max: 60, minGuete: w('orte_guete'),
+  })
+  if (!treffer.length) return []
+  // Nur, was OSM NICHT schon führt — Dubletten stünden sichtbar nebeneinander.
+  const { liste } = places.ergaenze([], treffer, { schluessel: (x) => places.normName(x.name) })
+  const bekannt = new Set((osmListe || []).flatMap(a =>
+    (a.gewerbe || []).filter(f => f.feld === 'Name').map(f => places.normName(f.wert))))
+  return liste
+    .filter(t => !bekannt.has(places.normName(t.name)))
+    .map(t => ({
+      lat: t.lat, lon: t.lon,
+      strasse: t.strasse || '', hausnummer: t.hausnummer || '', ort: t.ort || '',
+      plz: t.plz || '',
+      gewerbe: places.alsFelder(t),
+    }))
+}
+
 function gewerbeAnhaengen(adressen, osm) {
   const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, '')
   for (const o of osm) {
@@ -797,14 +857,20 @@ async function auskunft(lat, lon) {
   }
   const kartenquelleAus = osm === null && !adressen.length
 
+  // Der Abzug kommt VOR dem Anhängen dazu, damit seine Treffer denselben Weg
+  // nehmen wie die aus OSM — eine Zuordnung, nicht zwei.
+  const ergaenzung = ausAbzug(lat, lon, radius, osm)
+  if (ergaenzung.length) log(`Ortsabzug ergänzt ${ergaenzung.length} Betrieb(e), die OSM nicht führt`)
+  const gewerbeQuellen = [...(osm || []), ...ergaenzung]
+
   if (adressen.length) {
-    if (osm?.length) gewerbeAnhaengen(adressen, osm)
+    if (gewerbeQuellen.length) gewerbeAnhaengen(adressen, gewerbeQuellen)
     // Die Datei fuehrt keine Postleitzahl; die Telefonbuch-Suche braucht eine.
     // Sie ist ortsteilweit gleich — also EINE Abfrage fuer alle.
     const plz = await plzFuer(lat, lon)
     if (plz) for (const a of adressen) if (!a.plz) a.plz = plz
   } else {
-    adressen = (osm && osm.length) ? osm : await nominatimRueckfall(lat, lon)
+    adressen = gewerbeQuellen.length ? gewerbeQuellen : await nominatimRueckfall(lat, lon)
     // Alle stumm: Das ist ein Ausfall, keine Fehlanzeige.
     if (!adressen.length) return { adressen: [], radius, quelleAus: kartenquelleAus }
   }

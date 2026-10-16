@@ -41,6 +41,7 @@
     "deploy": "bash scripts/deploy.sh",
     "migrations": "node tools/migrations-check.mjs",
     "world:cleanup": "node tools/world-cleanup.mjs",
+    "places:import": "node tools/places-import.mjs",
     "test:unit": "node tests/run-unit.mjs",
     "test:quests": "node tests/run-quests.mjs",
     "test:privacy": "node tests/run-privacy.mjs",

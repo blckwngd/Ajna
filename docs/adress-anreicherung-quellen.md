@@ -103,6 +103,58 @@ Angabe ohne Datum ist schlimmer als keine.
 > aber eben personenbezogen. Für die Objektregel unten heißt das: Diese Namen
 > gehören nicht in ein Weltobjekt.
 
+## Schicht B1 — Ortsabzug (Overture), wo OSM schweigt
+
+OpenStreetMap ist in Städten dicht und auf dem Land löchrig. Dort liefert die
+Lupe leere Listen — nicht weil nichts da wäre, sondern weil es niemand
+eingetragen hat.
+
+**Overture Maps Places** schliesst die Lücke: rund 81 Millionen Orte (Stand
+September 2026), global, mit Name, Kategorie, Adresse, **Webseite**, Telefon,
+E-Mail und einem **Konfidenzwert** je Eintrag. Lizenz CDLA-Permissive 2.0 bzw.
+Apache 2.0 — es enthält **keine** OSM-Daten und trägt deshalb keine
+Share-alike-Pflicht. Bezug als Parquet über S3 oder Azure, **ohne Schlüssel und
+ohne Kontingent**, monatlich neu.
+
+### Der Weg dorthin
+
+Wie beim Kataster und beim Handelsregister: **einmal umwandeln, dann offline
+lesen.** Ein Parquet-Leser wäre eine Laufzeit-Abhängigkeit für etwas, das je
+Abzug genau einmal läuft — stattdessen zieht DuckDB den Auszug als zeilenweises
+JSON, und `tools/places-import.mjs` macht daraus die SQLite-Datei unter
+`.cache/orte.db`. Der DuckDB-Befehl steht im Kopf dieses Werkzeugs.
+
+Fehlt der Abzug, ist das **kein Fehler**, sondern eine Quelle, die schweigt —
+dann bleibt es bei OSM.
+
+### OSM geht vor
+
+Der Abzug **füllt Lücken, er überschreibt nichts.** Wo beide etwas sagen, gilt
+OSM: Dort hat jemand eingetragen, der da war; ein Abzug ist breiter, aber
+anonym zusammengetragen.
+
+Beim Abgleich fällt `und` mit aus dem Namen — OSM führt „Weber & Sohn", der
+Abzug „Weber und Sohn". Ohne diese Regel stünde derselbe Betrieb zweimal in
+der Liste, sichtbar nebeneinander.
+
+Jedes Feld trägt „Ortsabzug (overture-…)" als Herkunft. Wer das liest, weiss:
+Hier war kein Ortskundiger.
+
+### Bewusst quellenunabhängig
+
+`agents/lib/places.mjs` heisst nicht `overture.mjs`. Das Schema nimmt jeden
+Abzug auf, der Name, Ort und ein paar Felder führt; `quelle` steht an jeder
+Zeile, damit sich Abzüge mischen lassen, ohne sich zu verwechseln. Der
+POI-Agent kann dieselbe Datei benutzen — die Abfrage kennt Kategorien und einen
+Mindest-Konfidenzwert.
+
+### Regler
+
+| | |
+|---|---|
+| `ADR_ORTE_DB` | Pfad zum Abzug (leer = `.cache/` durchsuchen) |
+| `ADR_ORTE_GUETE` | Mindest-Konfidenz, Vorgabe 0,5 |
+
 ## Schicht B2 — Webseite → Netz (`ADR_NETZSPUR`, Vorgabe an)
 
 Die Anschlussfrage an die Webseite eines Betriebs: **Wo läuft sie, und wem
@@ -159,7 +211,11 @@ nicht hat — und dabei Privatanschlüsse zu treffen.
 Shodan bliebe sinnvoll für **genau einen** Fall: eine IP, die über die Kette
 oben als *eigener* Netzbereich einer Organisation feststeht, mit
 `/shodan/host/{ip}` anzureichern. Das braucht keine Suchfilter und kommt daher
-mit einem kostenlosen Schlüssel aus. Noch nicht gebaut.
+mit einem kostenlosen Schlüssel aus. **Gebaut** (`SHODAN_API_KEY`); die Regel
+„nur bei eigenem Netzbereich" steht in `lib/network-trace.mjs`, nicht beim
+Aufrufer. Die Schwachstellenliste (`vulns`) bleibt bewusst draussen: Offene
+Ports und erkannte Dienste zeigen vollständig, wie viel offen herumliegt — eine
+CVE-Liste fügt dem nichts hinzu und macht aus einer Vorführung eine Zielliste.
 
 ### Zwischenspeicher
 
