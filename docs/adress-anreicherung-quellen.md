@@ -217,6 +217,33 @@ Aufrufer. Die Schwachstellenliste (`vulns`) bleibt bewusst draussen: Offene
 Ports und erkannte Dienste zeigen vollständig, wie viel offen herumliegt — eine
 CVE-Liste fügt dem nichts hinzu und macht aus einer Vorführung eine Zielliste.
 
+### Die Gegenrichtung: Organisation → eigene Netzbereiche
+
+Die Kette Webseite → DNS → IP endet beim Hoster. Hält ein Unternehmen einen
+**eigenen** Netzbereich, lässt seine Webseite aber woanders laufen, sieht sie
+diesen Bereich nie.
+
+Die RIPE-Datenbank lässt sich rückwärts befragen, zweistufig: erst das
+`organisation`-Objekt zum Namen, dann die `inetnum`-Objekte über
+`inverse-attribute=org`. Der Umweg über das ORG-Handle ist Genauigkeit, nicht
+Umständlichkeit — eine Freitextsuche nach „Müller GmbH" trifft halb Deutschland.
+
+**OHNE ORTSBEZUG WIRD NICHTS BEHAUPTET**, und das ist keine Vorsicht auf
+Verdacht. Gemessen am 16.10.2026: Die Suche nach „Heise Medien" lieferte
+`heise & dumrath medien geschaeftsfuehrung gmbh` — eine *andere* Firma, die
+zufällig zwei Wörter teilt. Ein besserer Namensvergleich hätte den Fehler
+**bestärkt**, nicht behoben: Der falsche Treffer teilt mehr Wörter als der
+richtige. Was ihn ausschliesst, ist die Anschrift, an der die Lupe gerade
+steht.
+
+Passen **mehrere** Organisationen auf Name und Anschrift, wird enthalten. Bei
+Heise sitzen zwei Gesellschaften an derselben Adresse; eine davon auszuwählen
+wäre geraten — und zwar unsichtbar.
+
+Der Registername steht immer mit im Ergebnis. Der Abgleich zwischen „Autohaus
+Weber" aus der Karte und „Weber Automobile GmbH" im Register ist eine
+Ähnlichkeit, keine Gewissheit; wer beides nebeneinander liest, urteilt selbst.
+
 ### Zwischenspeicher
 
 RDAP-Antworten liegen im Agenten-Cache (`adresse-netz`, 7 Tage) — ein
@@ -227,6 +254,37 @@ Ajna-Instanz**: Was ein Spieler gefragt hat, bleibt flüchtig; was im
 DNS bekommt bewusst **keinen** eigenen Cache — der Auflöser des Systems hat
 schon einen, er hält sich an die TTL der Zone, und ein zweiter davor würde nur
 veralten.
+
+## handelsregister.de live — geprüft, nicht gebaut
+
+**Der Abzug ist so aktuell, wie er sein kann.** Die öffentlichen
+OffeneRegister-Dateien tragen `last-modified: 05.02.2019`; der lokale Abzug
+reicht ausweislich seiner eigenen Daten bis **01.08.2022** und ist damit
+**neuer als alles, was offeneregister.de heute anbietet**. Ein „Auffrischen"
+gibt es nicht.
+
+Damit hätte eine tagesaktuelle Live-Abfrage echten Wert. Vier Anfragen gegen
+das Portal haben aber ergeben, dass es **keinen Abfrageweg gibt, der sich
+verantworten lässt**:
+
+* `handelsregister.de` ist eine JSF-Anwendung. Jeder Aufruf trägt eine
+  `jsessionid` und einen `javax.faces.ViewState`; die Element-Bezeichner sind
+  generiert (`formID:j_idt163`) und ändern sich mit jeder Portal-Fassung.
+* Ein direkter `GET` auf `normalesuche.xhtml` antwortet mit **HTTP 400**
+  („ungültige oder unvollständige Daten übermittelt"), auch mit Sitzung im
+  Pfad. Die Suche ist nur über die Navigation des Formulars erreichbar —
+  mehrere POSTs je Abfrage.
+* Eine dokumentierte Schnittstelle existiert nicht (`information.xhtml` → 404).
+
+Das Reverse Engineering dieses Ablaufs hätte zwanzig bis dreissig weitere
+Anfragen gekostet — gegen einen Server, dessen Bedingungen automatisierten
+Abruf untersagen. Das ist der Punkt, an dem „serverschonend und ohne Umgehung"
+nicht mehr einzuhalten ist, und deshalb steht hier nichts.
+
+**Was stattdessen ginge**, wenn Tagesaktualität gebraucht wird:
+OpenCorporates hat eine echte Schnittstelle, deckt das deutsche
+Handelsregister ab und hat eine freie Stufe für nicht-kommerzielle Nutzung mit
+Namensnennung. Das wäre ein Abruf mit Erlaubnis statt gegen eine.
 
 ## Schicht C — Adresse → Person (Modus `erweitert`)
 

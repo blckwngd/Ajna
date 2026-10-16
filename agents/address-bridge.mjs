@@ -55,7 +55,7 @@ import { bootAgent, publishManifest } from './lib/agent-base.mjs'
 import { Konfig } from './lib/konfig.mjs'
 import { Quellcache, istAbgeriegelt } from './lib/quellcache.mjs'
 import dns from 'node:dns/promises'
-import { networkTrace, ownerFromRdap } from './lib/network-trace.mjs'
+import { networkTrace, ownerFromRdap, ownRanges } from './lib/network-trace.mjs'
 import * as places from './lib/places.mjs'
 import { readAgentEnv, writeAgentEnv } from './lib/env.mjs'
 import { makeRl, ask, confirm, banner, header, hint, ok, warnLine, infoLine, C } from './lib/setup-wizard.mjs'
@@ -681,6 +681,50 @@ async function shodanDienste(ip) {
   }, { ttlMs: 3 * 24 * 3600_000 })
 }
 
+/**
+ * RIPE-Suche — eine Zeile, zwei Verwendungen (Organisation und Netzbereiche).
+ *
+ * Gecacht wie alle Registerdaten: Ein Netzbereich zieht so selten um wie ein
+ * Haus, und die RIPE-Datenbank hat weiche Grenzen, die man nicht ausreizen muss.
+ */
+async function ripeSuche(schluessel, params) {
+  const url = `https://rest.db.ripe.net/search.json?${params}`
+  return await netz.hole(`ripe-${schluessel}`, async () => {
+    const r = await fetch(url, {
+      headers: { Accept: 'application/json', 'User-Agent': USER_AGENT() },
+      signal: AbortSignal.timeout(10000),
+    })
+    // 404 heisst „nichts gefunden" und ist eine Antwort, kein Fehler.
+    if (r.status === 404) return { objects: { object: [] } }
+    if (!r.ok) throw new Error(`RIPE ${r.status}`)
+    return await r.json()
+  })
+}
+
+/**
+ * Netzbereiche, die der Betrieb SELBST hält — unabhängig davon, wo seine
+ * Webseite läuft. Schliesst die Lücke der Kette Webseite → DNS → IP.
+ */
+async function eigeneNetze(firmenname, plz, ort) {
+  if (!w('netzspur') || !firmenname) return []
+  // OHNE ORTSBEZUG GAR NICHT ERST FRAGEN — die Bibliothek enthielte sich
+  // ohnehin, und eine Abfrage ohne Aussicht auf ein Ergebnis kostet nur
+  // fremdes Kontingent.
+  if (!plz && !ort) return []
+  try {
+    return await ownRanges(firmenname, {
+      plz: plz || null, ort: ort || null,
+      findOrgs: (name) => ripeSuche(`org-${name.toLowerCase()}`,
+        `query-string=${encodeURIComponent(name)}&type-filter=organisation&flags=no-filtering`),
+      findInetnums: (handle) => ripeSuche(`netze-${handle}`,
+        `query-string=${encodeURIComponent(handle)}&inverse-attribute=org&type-filter=inetnum&flags=no-filtering`),
+    })
+  } catch (err) {
+    log(`RIPE-Suche fehlgeschlagen: ${err?.message || err}`)
+    return []
+  }
+}
+
 async function netzspur(webseite, firmenname) {
   if (!w('netzspur')) return []
   try {
@@ -884,6 +928,8 @@ async function auskunft(lat, lon) {
     // Nach dem Handelsregister, weil der Firmenname erst dort sicher feststeht —
     // er entscheidet, ob ein Netzbereich als EIGENER gilt.
     if (web) felder.push(...await netzspur(web, firma))
+    // Unabhängig von der Webseite: Hält der Betrieb selbst einen Netzbereich?
+    if (firma) felder.push(...await eigeneNetze(firma, a.plz, a.ort))
     felder.push(...await telefonbuch(a))
     a.felder = felder
   }

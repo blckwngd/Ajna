@@ -223,6 +223,104 @@ export function shodanServices(rec) {
   }
 }
 
+// ─── Die Gegenrichtung: Organisation → eigene Netzbereiche ───────────────
+//
+// DIE LÜCKE, DIE DAS SCHLIESST: Hält ein Unternehmen einen eigenen Netzbereich,
+// lässt seine Webseite aber bei einem Hoster laufen, sieht die Kette oben
+// diesen Bereich NIE — sie geht Webseite → DNS → IP und endet beim Hoster.
+//
+// Die RIPE-Datenbank lässt sich rückwärts befragen, und zwar in zwei Schritten:
+// erst das `organisation`-Objekt zum Namen, dann die `inetnum`-Objekte, die auf
+// dessen Handle zeigen (`inverse-attribute=org`). Der Umweg über das Handle ist
+// nicht Umständlichkeit, sondern Genauigkeit: Eine Freitextsuche nach „Müller
+// GmbH" trifft halb Deutschland, ein ORG-Handle genau eine Organisation.
+
+/** `organisation`-Objekte aus einer RIPE-Suchantwort. */
+export function orgHandles(ripeJson) {
+  const raus = []
+  for (const o of ripeJson?.objects?.object || []) {
+    const a = Array.isArray(o?.attributes?.attribute) ? o.attributes.attribute : []
+    const hol = (k) => a.find(x => x?.name === k)?.value || null
+    const handle = hol('organisation')
+    if (!handle) continue
+    // Die Anschrift steht als MEHRERE `address`-Zeilen da — alle einsammeln.
+    const anschrift = a.filter(x => x?.name === 'address').map(x => x.value).join(', ')
+    raus.push({ handle, name: hol('org-name') || handle, address: anschrift || null })
+  }
+  return raus
+}
+
+/** `inetnum`-Objekte aus einer RIPE-Suchantwort. */
+export function inetnumsFrom(ripeJson) {
+  const raus = []
+  for (const o of ripeJson?.objects?.object || []) {
+    const a = Array.isArray(o?.attributes?.attribute) ? o.attributes.attribute : []
+    const hol = (k) => a.find(x => x?.name === k)?.value || null
+    const bereich = hol('inetnum') || hol('inet6num')
+    if (bereich) raus.push({ bereich, netname: hol('netname') || null, status: hol('status') || null })
+  }
+  return raus
+}
+
+/**
+ * Netzbereiche, die eine Organisation selbst hält — als Feld mit Herkunft.
+ *
+ * DER REGISTERNAME WIRD IMMER MITGEZEIGT. Der Abgleich zwischen dem Namen aus
+ * der Karte („Autohaus Weber") und dem im Register („Weber Automobile GmbH")
+ * ist eine Ähnlichkeit, keine Gewissheit. Wer beides nebeneinander liest, kann
+ * selbst urteilen; wer nur das Ergebnis sähe, müsste glauben.
+ *
+ * @param {string} orgName
+ * @param {object} io
+ * @param {(name:string) => Promise<object|null>} io.findOrgs       RIPE-Suche, type-filter=organisation
+ * @param {(handle:string) => Promise<object|null>} io.findInetnums RIPE-Suche, inverse-attribute=org
+ * @param {string} [io.plz]      Postleitzahl der Anschrift, an der wir stehen
+ * @param {string} [io.ort]      Ortsname, ersatzweise
+ * @param {number} [io.max=6]   wie viele Bereiche genannt werden
+ */
+export async function ownRanges(orgName, io = {}) {
+  const { findOrgs, findInetnums, plz = null, ort = null, max = 6 } = io
+  if (!orgName || typeof findOrgs !== 'function' || typeof findInetnums !== 'function') return []
+  // OHNE ORTSBEZUG WIRD NICHTS BEHAUPTET. Der Namensabgleich allein reicht
+  // nicht — gemessen am 16.10.2026: „Heise Medien" traf `heise & dumrath
+  // medien geschaeftsfuehrung gmbh`, weil beide zwei Wörter teilen. Ein
+  // besserer Namensvergleich hätte den Fehler sogar bestärkt; was ihn
+  // ausschliesst, ist die Anschrift, an der die Lupe gerade steht.
+  if (!plz && !ort) return []
+
+  let orgs
+  try { orgs = orgHandles(await findOrgs(orgName)) } catch { return [] }
+  const passtOrt = (o) => {
+    const adr = String(o.address || '').toLowerCase()
+    if (!adr) return false
+    if (plz && adr.includes(String(plz).toLowerCase())) return true
+    if (ort && adr.includes(String(ort).toLowerCase())) return true
+    return false
+  }
+  const kandidaten = orgs.filter(o => aehnlich(o.name, orgName) && passtOrt(o))
+  // MEHRERE PASSEN HEISST: NICHT ZUZUORDNEN. Schwestergesellschaften teilen
+  // sich ein Haus (bei Heise sitzen zwei an derselben Anschrift). Eine davon
+  // auszuwählen wäre geraten, und zwar unsichtbar.
+  if (kandidaten.length !== 1) return []
+  const treffer = kandidaten[0]
+
+  let bereiche
+  try { bereiche = inetnumsFrom(await findInetnums(treffer.handle)) } catch { return [] }
+  // Nur, was die Organisation wirklich zugeteilt bekommen hat.
+  const eigene = bereiche.filter(b => EIGEN_TYPEN.test(b.status || ''))
+  if (!eigene.length) return []
+
+  const liste = eigene.slice(0, max)
+    .map(b => `${b.bereich}${b.netname ? ` (${b.netname})` : ''}`)
+    .join(', ')
+  const rest = eigene.length > liste.split(', ').length ? ` … insgesamt ${eigene.length}` : ''
+  return [{
+    feld: 'Eigene Netzbereiche',
+    wert: `${liste}${rest}`,
+    herkunft: `RIPE-Datenbank, eingetragen auf „${treffer.name}" (${treffer.handle})`,
+  }]
+}
+
 /** Eine Registeranschrift in eine Zeile bringen. */
 export const anschriftZeile = (adr) =>
   String(adr || '').split('\n').map(s => s.trim()).filter(Boolean).join(', ')

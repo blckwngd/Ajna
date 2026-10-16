@@ -9,6 +9,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   networkTrace, ownerFromRdap, detectCdn, classify, hostFromUrl, aehnlich, anschriftZeile, shodanServices,
+  ownRanges, orgHandles, inetnumsFrom,
 } from './network-trace.mjs'
 
 // ─── ECHTE RDAP-Antwort: heise.de ────────────────────────────────────────
@@ -304,4 +305,109 @@ test('ein Fehler bei Shodan kippt die Spur nicht', async () => {
     shodanOf: async () => { throw new Error('403 Membership required') },
   })
   assert.ok(f.find(x => x.feld === 'Eigener Netzbereich'), 'der Rest muss bleiben')
+})
+
+// ─── Gegenrichtung: Organisation → eigene Netzbereiche ──────────────────
+//
+// [ECHT] Aufbau einer RIPE-Suchantwort, am 16.10.2026 geholt und gekürzt.
+
+const RIPE_ORGS = { objects: { object: [
+  { attributes: { attribute: [
+    { name: 'organisation', value: 'ORG-HGGC1-RIPE' },
+    { name: 'org-name', value: 'Heise Gruppe GmbH & Co. KG' },
+    { name: 'address', value: 'Karl-Wiechert-Allee 10' },
+    { name: 'address', value: '30625 Hannover' }] } },
+  { attributes: { attribute: [
+    { name: 'organisation', value: 'ORG-XY1-RIPE' },
+    { name: 'org-name', value: 'Ganz andere Firma AG' },
+    { name: 'address', value: '10115 Berlin' }] } },
+] } }
+
+const RIPE_NETZE = { objects: { object: [
+  { attributes: { attribute: [
+    { name: 'inetnum', value: '192.109.227.0 - 192.109.227.255' },
+    { name: 'netname', value: 'HEISE-LAN' }, { name: 'status', value: 'ASSIGNED PI' }] } },
+  { attributes: { attribute: [
+    { name: 'inetnum', value: '192.54.43.0 - 192.54.43.255' },
+    { name: 'netname', value: 'IX-LAN' }, { name: 'status', value: 'ASSIGNED PI' }] } },
+  { attributes: { attribute: [
+    { name: 'inetnum', value: '10.0.0.0 - 10.0.0.255' },
+    { name: 'netname', value: 'FREMD' }, { name: 'status', value: 'ASSIGNED PA' }] } },
+] } }
+
+const ripeIo = (orgs = RIPE_ORGS, netze = RIPE_NETZE) => ({
+  findOrgs: async () => orgs,
+  findInetnums: async () => netze,
+})
+
+test('[ECHT] eigene Netzbereiche werden über das ORG-Handle gefunden', async () => {
+  // DIE LÜCKE, DIE DAS SCHLIESST: Läuft die Webseite bei einem Hoster, sieht
+  // die Kette Webseite → DNS → IP den eigenen Bereich nie.
+  const f = await ownRanges('Heise Medien', { ...ripeIo(), plz: '30625' })
+  assert.equal(f.length, 1)
+  assert.match(f[0].wert, /192\.109\.227\.0/)
+  assert.match(f[0].wert, /HEISE-LAN/)
+  assert.ok(!f[0].wert.includes('10.0.0.0'), 'ASSIGNED PA ist keine eigene Zuteilung')
+})
+
+test('[ECHT] der Registername steht immer dabei', async () => {
+  // Der Abgleich „Autohaus Weber" gegen „Weber Automobile GmbH" ist eine
+  // Ähnlichkeit, keine Gewissheit. Wer beides liest, kann selbst urteilen.
+  const f = await ownRanges('Heise Medien', { ...ripeIo(), ort: 'Hannover' })
+  assert.match(f[0].herkunft, /Heise Gruppe GmbH & Co\. KG/)
+  assert.match(f[0].herkunft, /ORG-HGGC1-RIPE/)
+})
+
+test('ein unpassender Name bekommt keine fremden Netze zugeschrieben', async () => {
+  // Ohne diesen Filter bekäme eine Bäckerei die Bereiche eines gleichnamigen
+  // Konzerns — die Freitextsuche liefert alles, was den Namen irgendwo führt.
+  assert.deepEqual(await ownRanges('Bäckerei Schmitt', { ...ripeIo(), plz: '30625' }), [])
+})
+
+test('ohne Treffer, ohne Namen oder ohne Nachschlagewege passiert nichts', async () => {
+  assert.deepEqual(await ownRanges('', { ...ripeIo(), plz: '30625' }), [])
+  assert.deepEqual(await ownRanges('Heise', { plz: '30625' }), [])
+  assert.deepEqual(await ownRanges('Heise Medien', { ...ripeIo({ objects: { object: [] } }), plz: '30625' }), [])
+  assert.deepEqual(await ownRanges('Heise Medien', { ...ripeIo(RIPE_ORGS, { objects: { object: [] } }), plz: '30625' }), [])
+})
+
+test('ein Fehler in der RIPE-Suche kippt nichts um', async () => {
+  assert.deepEqual(await ownRanges('Heise Medien', { plz: '30625',
+    findOrgs: async () => { throw new Error('503') }, findInetnums: async () => RIPE_NETZE }), [])
+  assert.deepEqual(await ownRanges('Heise Medien', { plz: '30625',
+    findOrgs: async () => RIPE_ORGS, findInetnums: async () => { throw new Error('503') } }), [])
+})
+
+test('kaputte Antwortformen werden still übergangen', () => {
+  assert.deepEqual(orgHandles(null), [])
+  assert.deepEqual(orgHandles({ objects: { object: [{ attributes: 'müll' }] } }), [])
+  assert.deepEqual(inetnumsFrom({ objects: { object: [{ attributes: { attribute: [] } }] } }), [])
+})
+
+test('[ECHT] OHNE ORTSBEZUG wird nichts behauptet', async () => {
+  // GEMESSEN AM 16.10.2026: „Heise Medien" traf live `heise & dumrath medien
+  // geschaeftsfuehrung gmbh` — eine ANDERE Firma, die zufällig zwei Wörter
+  // teilt. Ein besserer Namensvergleich hätte den Fehler bestärkt, nicht
+  // behoben. Ohne Anschrift gibt es deshalb gar keine Aussage.
+  assert.deepEqual(await ownRanges('Heise Medien', ripeIo()), [])
+})
+
+test('[ECHT] eine falsche Gegend schliesst den Treffer aus', async () => {
+  // Der gefährliche Fall: Eine Koblenzer Bäckerei bekäme die Netzbereiche
+  // einer gleichnamigen Hannoveraner Firma zugeschrieben.
+  assert.deepEqual(await ownRanges('Heise Medien', { ...ripeIo(), plz: '56068' }), [])
+  assert.deepEqual(await ownRanges('Heise Medien', { ...ripeIo(), ort: 'Koblenz' }), [])
+})
+
+test('[ECHT] mehrere Organisationen an derselben Anschrift: nicht zuzuordnen', async () => {
+  // Bei Heise sitzen zwei Gesellschaften an Karl-Wiechert-Allee 10. Eine davon
+  // auszuwählen wäre geraten — und zwar unsichtbar.
+  const zwei = { objects: { object: [
+    ...RIPE_ORGS.objects.object.slice(0, 1),
+    { attributes: { attribute: [
+      { name: 'organisation', value: 'ORG-DFKC1-RIPE' },
+      { name: 'org-name', value: 'heise & dumrath medien geschaeftsfuehrung gmbh' },
+      { name: 'address', value: 'Karl-Wiechert-Allee 10, 30625 Hannover' }] } },
+  ] } }
+  assert.deepEqual(await ownRanges('Heise Medien', { ...ripeIo(zwei), plz: '30625' }), [])
 })
