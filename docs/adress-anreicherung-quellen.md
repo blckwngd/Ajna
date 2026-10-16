@@ -103,6 +103,75 @@ Angabe ohne Datum ist schlimmer als keine.
 > aber eben personenbezogen. Für die Objektregel unten heißt das: Diese Namen
 > gehören nicht in ein Weltobjekt.
 
+## Schicht B2 — Webseite → Netz (`ADR_NETZSPUR`, Vorgabe an)
+
+Die Anschlussfrage an die Webseite eines Betriebs: **Wo läuft sie, und wem
+gehört die Maschine?** Drei Nachschlagewege, alle öffentlich und kostenlos —
+DNS, RDAP beim RIPE-Register, und der Zuteilungstyp des Netzbereichs.
+
+**Die Richtung ist entscheidend**, und sie ist umgekehrt zu dem, was man
+zuerst versucht. Nicht „welche Geräte sind an diesen Koordinaten erreichbar"
+(das beantwortet nur GeoIP, auf Stadtebene, und trifft dabei Privatanschlüsse),
+sondern „dieser Betrieb nennt diese Domain, wohin zeigt sie".
+
+Der Unterschied ist kein Geschmack: Die Kette beginnt bei etwas
+**Veröffentlichtem** — einem OSM-Eintrag und einer eigenen Domain. Wer keine
+hat, kommt gar nicht erst vor. **Private Anschlüsse fallen strukturell heraus,
+statt gefiltert zu werden.**
+
+### Drei Fälle, die nicht vermischt werden dürfen
+
+| Fall | Was gilt | Beispiel (gemessen 16.10.2026) |
+|---|---|---|
+| **eigen** | Die Organisation hält den Bereich selbst. Dann IST die Registeranschrift ihre Anschrift. | `HEISE-NET` → Heise Gruppe GmbH, Karl-Wiechert-Allee 10, Hannover |
+| **gehostet** | Der Normalfall. Die IP gehört dem Hoster — wahr über ihn, nichts über den Betrieb. | Bäckerei in Koblenz → Strato GmbH, Berlin |
+| **hinter einem CDN** | Die Adresse ist ein Netzknoten; ihr Ort bedeutet nichts. | Restaurant in Koblenz → „hinter Cloudflare" |
+
+Wer die drei gleich darstellt, behauptet dreimal dasselbe und hat zweimal
+unrecht. Beim CDN wird deshalb **keine Anschrift gezeigt** — sonst stünde ein
+Koblenzer Restaurant in San Francisco.
+
+### Zwei Fallen im Register, beide an echten Datensätzen aufgefallen
+
+**Wartungs-Handles sind keine Inhaber.** Bei `193.99.144.0/24` tragen vier
+Einträge die Rolle `registrant`, drei davon heissen `IPH-MNT`, `PLUSLINE-MNT`,
+`RIPE-NCC-END-MNT` — Maintainer-Objekte ohne Anschrift. Wer den ersten nimmt,
+schreibt „eingetragen auf IPH-MNT" und hat nichts gesagt.
+
+**Der administrative Kontakt ist ein Mensch.** Im selben Datensatz steht
+`kind: "individual"`, ein bürgerlicher Name, mit vollständiger Anschrift. Diese
+Person steht im Register, weil jemand erreichbar sein muss — nicht, damit ein
+Spiel sie anzeigt.
+
+Daher die harte Regel in `lib/network-trace.mjs`: **nur `kind: "org"`**. Findet
+sich keine Organisation, bleibt der Inhaber leer und nur der Netzname steht da.
+Eine ehrliche Lücke ist besser als ein Name, der dort nicht hingehört.
+
+### Warum nicht Shodan
+
+Naheliegend wäre gewesen, `maps.shodan.io` abzufragen. Dagegen sprach: Shodans
+Koordinaten stammen **ausschliesslich** aus GeoIP (das `location`-Objekt führt
+kein Genauigkeitsfeld), sie liegen auf Stadtebene, und ein Filter auf
+„adressgenau" existiert nicht, weil das Merkmal nicht existiert. Objekte an
+diese Punkte zu setzen hiesse, eine Genauigkeit zu behaupten, die die Quelle
+nicht hat — und dabei Privatanschlüsse zu treffen.
+
+Shodan bliebe sinnvoll für **genau einen** Fall: eine IP, die über die Kette
+oben als *eigener* Netzbereich einer Organisation feststeht, mit
+`/shodan/host/{ip}` anzureichern. Das braucht keine Suchfilter und kommt daher
+mit einem kostenlosen Schlüssel aus. Noch nicht gebaut.
+
+### Zwischenspeicher
+
+RDAP-Antworten liegen im Agenten-Cache (`adresse-netz`, 7 Tage) — ein
+Netzbereich zieht so selten um wie ein Haus. **Nie in der zentralen
+Ajna-Instanz**: Was ein Spieler gefragt hat, bleibt flüchtig; was im
+öffentlichen Register steht, darf beim Agenten liegen.
+
+DNS bekommt bewusst **keinen** eigenen Cache — der Auflöser des Systems hat
+schon einen, er hält sich an die TTL der Zone, und ein zweiter davor würde nur
+veralten.
+
 ## Schicht C — Adresse → Person (Modus `erweitert`)
 
 ### Rückwärtssuche bei Das Telefonbuch

@@ -54,6 +54,8 @@
 import { bootAgent, publishManifest } from './lib/agent-base.mjs'
 import { Konfig } from './lib/konfig.mjs'
 import { Quellcache, istAbgeriegelt } from './lib/quellcache.mjs'
+import dns from 'node:dns/promises'
+import { networkTrace, ownerFromRdap } from './lib/network-trace.mjs'
 import { readAgentEnv, writeAgentEnv } from './lib/env.mjs'
 import { makeRl, ask, confirm, banner, header, hint, ok, warnLine, infoLine, C } from './lib/setup-wizard.mjs'
 import * as kataster from './lib/hauskoordinaten.mjs'
@@ -185,6 +187,11 @@ const R = {
   // Sonst besteht eine Auskunft ueberwiegend aus „kein Eintrag" — Rauschen, das
   // die wenigen echten Treffer zudeckt.
   nur_mit_eintrag: ['ADR_NUR_MIT_EINTRAG', true, 'jaNein', 'erweitert: nur Adressen MIT Telefonbucheintrag zeigen'],
+  // Netzspur: Wo läuft die Webseite eines Betriebs, und wem gehört die
+  // Maschine? Drei Nachschlagewege (DNS, RDAP, Registertyp) — alle öffentlich,
+  // keiner kostenpflichtig. Privatanschlüsse kommen dabei strukturell nicht
+  // vor: Die Kette beginnt bei einer veröffentlichten Domain.
+  netzspur: ['ADR_NETZSPUR', true, 'jaNein', 'Zu jeder Webseite nachschlagen, wo sie läuft (DNS + IP-Register)'],
 }
 
 const konf = await Konfig.eigene(ajna, {
@@ -255,6 +262,17 @@ const geokod = new Quellcache('adresse-geokodierung', {
   minAbstandMs: 1100,
   maxDateien: 2000,
   log: (m) => log(`Geokodierung: ${m}`),
+})
+
+// Netz-Nachschlagewege: Registerdaten zu IP-Bereichen. ORTSDATEN im Sinne der
+// Regel oben — ein Netzbereich zieht so selten um wie ein Haus. Der Cache liegt
+// beim AGENTEN, nie in der zentralen Ajna-Instanz: Was ein Spieler gefragt hat,
+// bleibt flüchtig; was im öffentlichen Register steht, darf hier liegen.
+const netz = new Quellcache('adresse-netz', {
+  ttlMs: 7 * 24 * 3600_000,
+  minAbstandMs: 300,          // RDAP hat weiche Grenzen, aber Höflichkeit kostet nichts
+  maxDateien: 4000,
+  log: (m) => log(`Netzcache: ${m}`),
 })
 
 const register = new Quellcache('adresse-register', {
@@ -610,6 +628,48 @@ async function telefonbuch(adresse) {
   }
 }
 
+// ─── Schicht B: Netzspur ──────────────────────────────────────────────────
+//
+// Die Anschlussfrage an die Webseite: Wo läuft sie, und wem gehört die
+// Maschine? Die Übersetzung liegt in `lib/network-trace.mjs` und ist ohne Netz
+// prüfbar; hier stehen nur die Nachschlagewege und ihr Zwischenspeicher.
+
+/** RDAP-Inhaber einer IP — über den Cache, damit dieselbe IP einmal kostet. */
+async function rdapInhaber(ip) {
+  if (!/^[0-9.]{7,15}$/.test(String(ip))) return null
+  const roh = await netz.hole(`rdap-${ip}`, async () => {
+    const r = await fetch(`https://rdap.db.ripe.net/ip/${ip}`, {
+      headers: { Accept: 'application/json', 'User-Agent': USER_AGENT() },
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!r.ok) throw new Error(`RDAP ${r.status}`)
+    return await r.json()
+  })
+  return roh ? ownerFromRdap(roh) : null
+}
+
+/**
+ * Die Netzspur einer Webseite.
+ *
+ * DNS bekommt KEINEN eigenen Cache: Der Auflöser des Systems hat schon einen,
+ * er hält sich an die TTL der Zone, und ein zweiter davor würde nur veralten.
+ */
+async function netzspur(webseite, firmenname) {
+  if (!w('netzspur')) return []
+  try {
+    return await networkTrace(webseite, {
+      resolve4: (h) => dns.resolve4(h),
+      resolveMx: (h) => dns.resolveMx(h.replace(/^www\./, '')),
+      resolveCname: (h) => dns.resolveCname(h),
+      rdapOf: rdapInhaber,
+      orgName: firmenname || null,
+    })
+  } catch (err) {
+    log(`Netzspur fehlgeschlagen: ${err?.message || err}`)
+    return []
+  }
+}
+
 // ─── Auskunft zusammenstellen ─────────────────────────────────────────────
 
 // ─── Rückfall: Nominatim, wenn OSM nichts hergibt ─────────────────────────
@@ -733,6 +793,9 @@ async function auskunft(lat, lon) {
     if (web) felder.push(...await impressum(web))
     const firma = felder.find(f => f.feld === 'Name')?.wert
     if (firma) felder.push(...await handelsregister(firma, a.plz))
+    // Nach dem Handelsregister, weil der Firmenname erst dort sicher feststeht —
+    // er entscheidet, ob ein Netzbereich als EIGENER gilt.
+    if (web) felder.push(...await netzspur(web, firma))
     felder.push(...await telefonbuch(a))
     a.felder = felder
   }
