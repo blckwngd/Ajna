@@ -192,6 +192,10 @@ const R = {
   // keiner kostenpflichtig. Privatanschlüsse kommen dabei strukturell nicht
   // vor: Die Kette beginnt bei einer veröffentlichten Domain.
   netzspur: ['ADR_NETZSPUR', true, 'jaNein', 'Zu jeder Webseite nachschlagen, wo sie läuft (DNS + IP-Register)'],
+  // Nur wirksam, wo die Organisation ihren Netzbereich NACHWEISLICH selbst
+  // hält — die Regel steckt in `lib/network-trace.mjs`, nicht hier. Ohne
+  // Schlüssel bleibt das Feld einfach weg.
+  shodan_key: ['SHODAN_API_KEY', '', 'text', 'Shodan-Schlüssel: zeigt erreichbare Dienste bei EIGENEN Netzbereichen'],
 }
 
 const konf = await Konfig.eigene(ajna, {
@@ -654,6 +658,23 @@ async function rdapInhaber(ip) {
  * DNS bekommt KEINEN eigenen Cache: Der Auflöser des Systems hat schon einen,
  * er hält sich an die TTL der Zone, und ein zweiter davor würde nur veralten.
  */
+async function shodanDienste(ip) {
+  const key = w('shodan_key')
+  if (!key || !/^[0-9.]{7,15}$/.test(String(ip))) return null
+  // GECACHT WIE REGISTERDATEN: Ein Portscan ändert sich nicht im Minutentakt,
+  // und Shodans Kontingent ist knapp. Der Cache liegt beim Agenten.
+  return await netz.hole(`shodan-${ip}`, async () => {
+    const r = await fetch(`https://api.shodan.io/shodan/host/${ip}?key=${encodeURIComponent(key)}`, {
+      headers: { Accept: 'application/json', 'User-Agent': USER_AGENT() },
+      signal: AbortSignal.timeout(10000),
+    })
+    // 404 heisst „nichts bekannt" und ist eine Antwort, kein Fehler.
+    if (r.status === 404) return { ports: [] }
+    if (!r.ok) throw new Error(`Shodan ${r.status}`)
+    return await r.json()
+  }, { ttlMs: 3 * 24 * 3600_000 })
+}
+
 async function netzspur(webseite, firmenname) {
   if (!w('netzspur')) return []
   try {
@@ -662,6 +683,7 @@ async function netzspur(webseite, firmenname) {
       resolveMx: (h) => dns.resolveMx(h.replace(/^www\./, '')),
       resolveCname: (h) => dns.resolveCname(h),
       rdapOf: rdapInhaber,
+      shodanOf: shodanDienste,
       orgName: firmenname || null,
     })
   } catch (err) {

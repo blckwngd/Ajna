@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  networkTrace, ownerFromRdap, detectCdn, classify, hostFromUrl, aehnlich, anschriftZeile,
+  networkTrace, ownerFromRdap, detectCdn, classify, hostFromUrl, aehnlich, anschriftZeile, shodanServices,
 } from './network-trace.mjs'
 
 // ─── ECHTE RDAP-Antwort: heise.de ────────────────────────────────────────
@@ -227,4 +227,81 @@ test('ein Hostname muss wie ein Name aussehen', () => {
   assert.equal(hostFromUrl('https://www.beispiel.de/pfad?x=1'), 'www.beispiel.de')
   assert.equal(hostFromUrl('beispiel.de'), 'beispiel.de')
   assert.equal(hostFromUrl('WWW.Beispiel.DE.'), 'www.beispiel.de', 'kleingeschrieben, Punkt weg')
+})
+
+// ─── Shodan: Dienste, aber nur wo es die eigene Maschine ist ─────────────
+
+// Aufbau einer echten /shodan/host/{ip}-Antwort, gekürzt.
+const SHODAN = {
+  ip_str: '193.99.144.85', ports: [80, 443, 22],
+  data: [
+    { port: 443, transport: 'tcp', product: 'nginx', version: '1.24.0', timestamp: '2026-10-02T11:04:12.000' },
+    { port: 443, transport: 'tcp', timestamp: '2026-09-28T08:00:00.000' },   // zweite Aufnahme, ohne Produkt
+    { port: 80, transport: 'tcp', product: 'nginx', timestamp: '2026-10-01T06:12:00.000' },
+  ],
+  vulns: ['CVE-2023-44487', 'CVE-2024-1234'],
+}
+
+test('Dienste werden je Port verdichtet, der beste Eintrag gewinnt', () => {
+  const d = shodanServices(SHODAN)
+  assert.equal(d.text, '22, 80 (nginx), 443 (nginx 1.24.0)')
+  assert.equal(d.anzahl, 3, 'Port 22 steht nur in `ports`, nicht in `data`')
+  assert.equal(d.stand, '2026-10-02')
+})
+
+test('die Schwachstellenliste bleibt draussen', () => {
+  // BEWUSSTE ENTSCHEIDUNG: Offene Ports und erkannte Dienste zeigen
+  // vollständig, wie viel offen herumliegt. Eine CVE-Liste fügt dieser
+  // Einsicht nichts hinzu und macht aus einer Vorführung eine Zielliste.
+  const d = shodanServices(SHODAN)
+  assert.ok(!JSON.stringify(d).includes('CVE'), JSON.stringify(d))
+})
+
+test('ohne Dienste gibt es kein Feld', () => {
+  assert.equal(shodanServices({ ip_str: 'x' }), null)
+  assert.equal(shodanServices(null), null)
+  assert.equal(shodanServices({ data: [{ port: 'keine Zahl' }] }), null)
+})
+
+test('[Regel] Shodan wird NUR bei eigenem Netzbereich gefragt', async () => {
+  // Die wichtigste Zeile dieser Datei. Bei einem gehosteten Auftritt beschriebe
+  // das Ergebnis die Maschine des Hosters, auf der tausend andere Kunden
+  // liegen — eine Aussage über Unbeteiligte. Beim CDN wäre es ein Netzknoten.
+  const gefragt = []
+  const mitShodan = (opts) => ({ ...io(opts), shodanOf: async (ip) => { gefragt.push(ip); return SHODAN } })
+
+  await networkTrace('www.ding-dong.com', mitShodan({
+    a: ['81.169.145.149'], rdap: RDAP_STRATO, orgName: 'Adria Balkan Bäckerei' }))
+  assert.deepEqual(gefragt, [], 'gehostet: nicht fragen')
+
+  await networkTrace('www.bangkokthairestaurantkoblenz.de', mitShodan({
+    a: ['162.159.128.70'], rdap: RDAP_CLOUDFLARE, orgName: 'Bangkok' }))
+  assert.deepEqual(gefragt, [], 'CDN: nicht fragen')
+
+  await networkTrace('x.de', mitShodan({
+    a: ['1.2.3.4'], rdap: { name: 'DTAG-DIAL21', entities: [] }, orgName: 'Irgendwer' }))
+  assert.deepEqual(gefragt, [], 'Zugangsnetz: nicht fragen')
+
+  const f = await networkTrace('www.heise.de', mitShodan({
+    a: ['193.99.144.85'], rdap: RDAP_HEISE, orgName: 'Heise Medien' }))
+  assert.deepEqual(gefragt, ['193.99.144.85'], 'eigen: fragen')
+  const dienste = f.find(x => x.feld === 'Erreichbare Dienste')
+  assert.ok(dienste, JSON.stringify(f))
+  assert.match(dienste.wert, /443 \(nginx 1\.24\.0\)/)
+  assert.match(dienste.herkunft, /^Shodan, Stand 2026-10-02$/)
+})
+
+test('ohne Shodan-Zugang läuft die Spur trotzdem durch', async () => {
+  const f = await networkTrace('www.heise.de', io({
+    a: ['193.99.144.85'], rdap: RDAP_HEISE, orgName: 'Heise Medien' }))
+  assert.ok(f.find(x => x.feld === 'Eigener Netzbereich'))
+  assert.ok(!f.find(x => x.feld === 'Erreichbare Dienste'))
+})
+
+test('ein Fehler bei Shodan kippt die Spur nicht', async () => {
+  const f = await networkTrace('www.heise.de', {
+    ...io({ a: ['193.99.144.85'], rdap: RDAP_HEISE, orgName: 'Heise Medien' }),
+    shodanOf: async () => { throw new Error('403 Membership required') },
+  })
+  assert.ok(f.find(x => x.feld === 'Eigener Netzbereich'), 'der Rest muss bleiben')
 })

@@ -23,13 +23,17 @@ const AGENTS = [
                            // der .env DIESER Umgebung — sonst fail-fast (exit 1)
                            // → pm2-Restart-Loop. .env ist nicht eingecheckt, also
                            // pro Server separat setzen (docs/homeassistant.md).
-  'address-bridge', // Adress-Lupe. BEWUSST AUS: Der Agent trägt Angaben über
-  //                    // Adressen zusammen — im Modus `erweitert` auch über
-  //                    // Privatpersonen. Wer ihn einschaltet, entscheidet als
-  //                    // Betreiber über Zweck und Mittel; das gehört nicht in
-  //                    // eine Vorgabe. Braucht `agents/.env.address-bridge`
-  //                    // (npm run address:setup) und optional die Abzüge unter
-  //                    // `.cache/`. Siehe docs/adress-anreicherung-quellen.md.
+  // Adress-Lupe. AN, SOLANGE DIE INSTANZ NICHT ÖFFENTLICH IST (Testphase,
+  // bestätigt 16.10.2026). Der Kommentar hier sagte zuvor „BEWUSST AUS",
+  // während die Zeile aktiv war — ein Widerspruch, der niemandem hilft.
+  //
+  // VOR DER ÖFFNUNG ENTSCHEIDEN: Der Agent trägt Angaben über Adressen
+  // zusammen, im Modus `erweitert` auch über Privatpersonen, und die Netzspur
+  // nennt Hoster und Registerinhaber. Wer ihn öffentlich anbietet, entscheidet
+  // als Betreiber über Zweck und Mittel. Braucht `agents/.env.address-bridge`
+  // (npm run address:setup) und optional die Abzüge unter `.cache/`.
+  // Siehe docs/adress-anreicherung-quellen.md.
+  'address-bridge',
   'cits-bridge',  // Straßenverkehr über opentrafficmap.org. Spiegelt in der
   //                 // Vorgabe AUCH private Fahrzeuge (CITS_PRIVAT=off nimmt sie
   //                 // aus). Braucht `agents/.env.cits` — Name des Agenten ist

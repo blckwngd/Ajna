@@ -187,6 +187,42 @@ export function aehnlich(a, b) {
   return false
 }
 
+/**
+ * Erreichbare Dienste aus einer Shodan-Host-Antwort.
+ *
+ * WAS HIER BEWUSST FEHLT: die Schwachstellenliste (`vulns`). Der Zweck dieser
+ * Lupe ist zu zeigen, WIE VIEL offen herumliegt — das leisten offene Ports und
+ * erkannte Dienste vollständig. Eine CVE-Liste fügt dieser Einsicht nichts
+ * hinzu und macht aus einer Vorführung eine Zielliste. Wer sie trotzdem will,
+ * trifft diese Entscheidung bewusst und ändert diese Stelle.
+ *
+ * Aufgerufen wird das NUR für den Fall „eigen" — siehe `networkTrace`.
+ */
+export function shodanServices(rec) {
+  const daten = Array.isArray(rec?.data) ? rec.data : []
+  const ports = new Map()
+  for (const d of daten) {
+    const p = Number(d?.port)
+    if (!Number.isFinite(p)) continue
+    const dienst = [d?.product, d?.version].filter(Boolean).join(' ').trim()
+    // Den aussagekräftigsten Eintrag je Port behalten: Shodan liefert für
+    // denselben Port mehrere Aufnahmen, manche ohne erkanntes Produkt.
+    if (!ports.has(p) || (!ports.get(p) && dienst)) ports.set(p, dienst)
+  }
+  for (const p of (Array.isArray(rec?.ports) ? rec.ports : [])) {
+    if (Number.isFinite(Number(p)) && !ports.has(Number(p))) ports.set(Number(p), '')
+  }
+  if (!ports.size) return null
+
+  const zeit = daten.map(d => d?.timestamp).filter(Boolean).sort().pop()
+  return {
+    text: [...ports.entries()].sort((a, b) => a[0] - b[0])
+      .map(([p, d]) => (d ? `${p} (${d})` : String(p))).join(', '),
+    anzahl: ports.size,
+    stand: zeit ? String(zeit).slice(0, 10) : null,
+  }
+}
+
 /** Eine Registeranschrift in eine Zeile bringen. */
 export const anschriftZeile = (adr) =>
   String(adr || '').split('\n').map(s => s.trim()).filter(Boolean).join(', ')
@@ -206,12 +242,19 @@ export const anschriftZeile = (adr) =>
  * @param {(ip:string) => Promise<{name?:string, netname?:string, type?:string,
  *          handle?:string, address?:string}|null>} io.rdapOf
  * @param {string} [io.orgName]  Name des Betriebs — für den Fall „eigen"
+ * @param {(ip:string) => Promise<object|null>} [io.shodanOf]
+ *        Dienste-Abfrage. WIRD NUR IM FALL „EIGEN" AUFGERUFEN, und diese Regel
+ *        steht absichtlich HIER und nicht beim Aufrufer: Bei einem gehosteten
+ *        Auftritt beschriebe das Ergebnis die Maschine des Hosters, auf der
+ *        tausend andere Kunden liegen — eine Aussage über Unbeteiligte. Beim
+ *        CDN wäre es ein Netzknoten. Nur wenn die Organisation den Bereich
+ *        nachweislich selbst hält, ist die Frage „was läuft dort" eine über sie.
  * @returns {Promise<{feld:string, wert:string, herkunft:string}[]>}
  */
 export async function networkTrace(webseite, io = {}) {
   const host = hostFromUrl(webseite)
   if (!host) return []
-  const { resolve4, resolveMx, resolveCname, rdapOf, orgName = null } = io
+  const { resolve4, resolveMx, resolveCname, rdapOf, shodanOf = null, orgName = null } = io
   if (typeof resolve4 !== 'function' || typeof rdapOf !== 'function') return []
 
   const felder = []
@@ -244,6 +287,16 @@ export async function networkTrace(webseite, io = {}) {
         + ` — eingetragen auf ${owner.name}${wo ? `, ${wo}` : ''}`,
       herkunft: 'RIPE-Register (RDAP)',
     })
+    // Nur hier: Die Maschine gehört nachweislich dieser Organisation.
+    if (typeof shodanOf === 'function') {
+      const dienste = shodanServices(await still(shodanOf, ips[0]))
+      if (dienste) {
+        felder.push({
+          feld: 'Erreichbare Dienste', wert: dienste.text,
+          herkunft: `Shodan${dienste.stand ? `, Stand ${dienste.stand}` : ''}`,
+        })
+      }
+    }
   } else if (fall === 'verbraucher') {
     // Nicht verschweigen, aber auch nicht verorten: Die Registeranschrift wäre
     // hier die Konzernzentrale des Anbieters.
