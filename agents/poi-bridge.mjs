@@ -121,7 +121,7 @@ const KVM_RADIUS   = envNum('POI_KVM_RADIUS_KM', 5)
 const KVM_MAX      = envInt('POI_KVM_MAX', 60)
 const KVM_MIN_BEW  = envNum('POI_KVM_MIN_RATING', 0)
 // Veranstaltungen brauchen eine Lebensdauer, die es noch nicht gibt
-// (docs/arbeitspakete.md, Paket 5a) — siehe `brauchbar()` in lib/kvm.mjs.
+// (docs/arbeitspakete.md, Paket 5a) — siehe `usable()` in lib/kvm.mjs.
 const KVM_EVENTS   = envBool('POI_KVM_EVENTS', false)
 // Diese Listen ändern sich im Jahresrhythmus, nicht im Stundentakt — eine
 // Woche Haltbarkeit ist grosszuegig und trotzdem sparsam.
@@ -940,11 +940,11 @@ async function syncKvm() {
   // `visible` liegt in der BBOX, `invisible` daneben. Nur das Erste zählt.
   const roh = Array.isArray(antwort?.visible) ? antwort.visible : []
   const treffer = roh
-    .filter(e => kvm.brauchbar(e, {
+    .filter(e => kvm.usable(e, {
       minBewertung: KVM_MIN_BEW, mitVeranstaltungen: KVM_EVENTS,
     }))
     // Die BBOX ist ein Rechteck; gewollt war ein Kreis.
-    .filter(e => kvm.abstandKm(mitte.lat, mitte.lon, Number(e.lat), Number(e.lng)) <= KVM_RADIUS)
+    .filter(e => kvm.distanceKm(mitte.lat, mitte.lon, Number(e.lat), Number(e.lng)) <= KVM_RADIUS)
     .slice(0, KVM_MAX)
 
   let neu = 0, da = 0, weg = 0, fehler = 0
@@ -981,7 +981,7 @@ async function syncKvm() {
       // Die Bewertungen stehen NUR im Suchtreffer (im Detail sind es blosse
       // Kennungen) — also beides zusammenführen.
       const voll = details.get(id)
-      const s = kvm.alsSichtung(voll ? { ...voll, ratings: e.ratings } : e)
+      const s = kvm.asSighting(voll ? { ...voll, ratings: e.ratings } : e)
       const obj = await ajna.createObject({
         name: s.name, type: 'poi', description: s.description,
         lat: s.lat, lon: s.lon, altitude: 0,

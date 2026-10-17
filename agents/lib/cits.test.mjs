@@ -6,8 +6,8 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { alsSichtung, relevant, signalPhase, phaseEndsInS, motionOf, kursGrad,
-         abstandKm, KINDS, PRIVATE_KINDS, STATION_TYPES, LIGHT_LABELS } from './cits.mjs'
+import { asSighting, relevant, signalPhase, phaseEndsInS, motionOf, bearingDeg,
+         distanceKm, KINDS, PRIVATE_KINDS, STATION_TYPES, LIGHT_LABELS } from './cits.mjs'
 
 const JETZT = Date.parse('2026-09-29T10:41:00Z')
 const FRISCH = '2026-09-29T10:40:30Z'
@@ -46,7 +46,7 @@ const pkw = {
 // ─── Übersetzung ──────────────────────────────────────────────────────────
 
 test('eine Straßenbahn wird zu etwas, das man vorlesen kann', () => {
-  const s = alsSichtung(tram)
+  const s = asSighting(tram)
   assert.equal(s.name, 'Straßenbahn 4 00:01:d8')
   assert.match(s.description, /Linie 4 → Liebenau Murpark/)
   assert.match(s.description, /28 km\/h/)
@@ -60,14 +60,14 @@ test('eine Straßenbahn wird zu etwas, das man vorlesen kann', () => {
 
 test('der Name bleibt in den 32 Zeichen, die objects.name fasst', () => {
   const lang = { ...tram, properties: { ...tram.properties, transitLineDisplay: 'S-Bahn-Ersatzverkehr 47' } }
-  assert.ok(alsSichtung(lang).name.length <= 32)
+  assert.ok(asSighting(lang).name.length <= 32)
 })
 
 test('ein eigener Name wird nicht mitten in der Adresse abgeschnitten', () => {
   // Echt erlebt: „20001_E_Reuter_Hardenberg 12:39:" — die Kurz-MAC hatte den
   // Namen über die Grenze geschoben und wurde selbst zerhackt.
   const benannt = { ...ampel, properties: { ...ampel.properties, trafficLightName: '20001_E_Reuter_Hardenberg' } }
-  const name = alsSichtung(benannt).name
+  const name = asSighting(benannt).name
   assert.equal(name, '20001_E_Reuter_Hardenberg')
   assert.ok(!name.endsWith(':'), 'kein angeschnittenes Anhängsel')
 })
@@ -76,14 +76,14 @@ test('die Platzhalter-Linie „0" gilt als keine Linie', () => {
   // Das Quellsystem setzt sie, wenn nichts bekannt ist. Vorgelesen wäre sie
   // eine Behauptung über einen Fahrplan.
   const ohne = { ...tram, properties: { ...tram.properties, transitLineDisplay: '0' } }
-  const s = alsSichtung(ohne)
+  const s = asSighting(ohne)
   assert.equal(s.state.transit_line, null)
   assert.ok(!s.name.includes(' 0 '), s.name)
   assert.ok(!s.description.includes('Linie 0'), s.description)
 })
 
 test('eine Ampel sagt ihre Phase in Worten', () => {
-  const s = alsSichtung(ampel)
+  const s = asSighting(ampel)
   assert.equal(s.state.signal_phase, 'grün · 3 von 4 Gruppen grün')
   assert.equal(s.state.signal_green, 3)
   assert.equal(s.state.signal_groups, 4)
@@ -98,12 +98,12 @@ test('eine einzelne Signalgruppe wird nicht aufgezählt', () => {
 test('ohne Phasendaten wird keine erfunden', () => {
   assert.equal(signalPhase(null), null)
   assert.equal(signalPhase({ groups: [] }), null)
-  assert.equal(alsSichtung(pkw).state.signal_phase, null)
+  assert.equal(asSighting(pkw).state.signal_phase, null)
 })
 
 test('ein unbekannter Stationstyp bricht nichts', () => {
   const fremd = { ...pkw, properties: { ...pkw.properties, kind: 'zeppelin', typeLabel: 'Zeppelin', emoji: '🛸' } }
-  const s = alsSichtung(fremd)
+  const s = asSighting(fremd)
   assert.equal(s.state.kind, 'zeppelin')
   assert.match(s.name, /Zeppelin/)
   assert.equal(s.appearance.emoji, '🛸')
@@ -113,7 +113,7 @@ test('das Kennzeichen wird NICHT übernommen', () => {
   // Der Dienst liefert es zwar als Feld, füllt es aber nicht (0 von 3985 im
   // Test). Käme es doch einmal, hätte es in unserer Datenbank nichts zu suchen.
   const mitSchild = { ...pkw, properties: { ...pkw.properties, licensePlate: 'KO-AB 123' } }
-  const s = alsSichtung(mitSchild)
+  const s = asSighting(mitSchild)
   assert.ok(!JSON.stringify(s).includes('KO-AB'), 'kein Kennzeichen im Objekt')
 })
 
@@ -173,7 +173,7 @@ test('jede bekannte Art hat Etikett und Sinnbild', () => {
 
 test('Entfernung stimmt gegen eine bekannte Strecke', () => {
   // Neuwied → Koblenz, Luftlinie rund 10 km.
-  const km = abstandKm(50.4297, 7.4608, 50.3569, 7.5890)
+  const km = distanceKm(50.4297, 7.4608, 50.3569, 7.5890)
   assert.ok(km > 9 && km < 13, `${km.toFixed(1)} km`)
 })
 
@@ -268,9 +268,9 @@ test('ein Datensprung wird nicht zur Überschallfahrt', () => {
 })
 
 test('der Kurs stimmt gegen bekannte Richtungen', () => {
-  assert.ok(Math.abs(kursGrad(50, 7, 51, 7) - 0) < 0.5, 'Nord')
-  assert.ok(Math.abs(kursGrad(50, 7, 50, 8) - 90) < 0.5, 'Ost')
-  assert.ok(Math.abs(kursGrad(50, 7, 49, 7) - 180) < 0.5, 'Süd')
+  assert.ok(Math.abs(bearingDeg(50, 7, 51, 7) - 0) < 0.5, 'Nord')
+  assert.ok(Math.abs(bearingDeg(50, 7, 50, 8) - 90) < 0.5, 'Ost')
+  assert.ok(Math.abs(bearingDeg(50, 7, 49, 7) - 180) < 0.5, 'Süd')
 })
 
 // ─── Untersuchen: die Langfassung ─────────────────────────────────────────
@@ -293,12 +293,12 @@ const reich = {
 test('die erste Zeile bleibt kurz genug zum Vorlesen', () => {
   // Der Announcer kürzt auf 100 Zeichen. Was dort abgeschnitten wird, hat
   // der Spieler nie gehört.
-  const erste = alsSichtung(reich).description.split('\n')[0]
+  const erste = asSighting(reich).description.split('\n')[0]
   assert.ok(erste.length <= 100, `${erste.length} Zeichen: ${erste}`)
 })
 
 test('untersuchen verrät Maße, Licht und Fahrzustand', () => {
-  const d = alsSichtung(reich).description
+  const d = asSighting(reich).description
   assert.match(d, /Fahrzeug: 7\.0 × 2\.0 m · Wagen 501/)
   assert.match(d, /Licht: Abblendlicht, Blinker rechts/)
   assert.ok(!/Nebelscheinwerfer/.test(d), 'ausgeschaltete Lampen werden nicht aufgezählt')
@@ -307,7 +307,7 @@ test('untersuchen verrät Maße, Licht und Fahrzustand', () => {
 })
 
 test('untersuchen nennt Gefahr, Betrieb und Stationstyp', () => {
-  const d = alsSichtung(reich).description
+  const d = asSighting(reich).description
   assert.match(d, /Gefahrenmeldung: Baustelle/, 'messageKind wird übersetzt')
   assert.match(d, /Verkehrsbetrieb: Graz/)
   assert.match(d, /Stationstyp laut Sender: Straßenbahn \(11\)/)
@@ -317,12 +317,12 @@ test('untersuchen sagt, wie belastbar der Funkspruch ist', () => {
   // Für dieses Projekt ist Herkunft Inhalt, nicht Beiwerk: ob die Signatur
   // aufgeht und über wie viele fremde Empfänger die Meldung lief, entscheidet,
   // wie ernst man sie nehmen darf.
-  const d = alsSichtung(reich).description
+  const d = asSighting(reich).description
   assert.match(d, /Funk: signiert · Signatur gültig · Kette nicht prüfbar · über 1 Zwischenstation · 41 Pakete/)
 })
 
 test('ein karger Punkt bekommt keine Langfassung mit leeren Zeilen', () => {
-  const d = alsSichtung(pkw).description
+  const d = asSighting(pkw).description
   assert.ok(!d.includes('\n\n\n'), d)
   assert.ok(!/: *$/m.test(d), 'keine Zeile endet mit einem leeren Doppelpunkt')
 })
@@ -333,7 +333,7 @@ test('Stationsfotos werden NICHT gespiegelt', () => {
   // kopiert wären sie von genau dieser Prüfung abgeschnitten.
   const mitFotos = { ...reich, properties: { ...reich.properties,
     stationPhotos: [{ url: '/api/station-photo-proxy/abc', uploadedBy: 'jo-ei', reviewedForPrivacy: false }] } }
-  const s = JSON.stringify(alsSichtung(mitFotos))
+  const s = JSON.stringify(asSighting(mitFotos))
   assert.ok(!s.includes('station-photo-proxy'), 'keine Foto-Adresse im Objekt')
   assert.ok(!s.includes('jo-ei'), 'kein Handle im Objekt')
 })
@@ -348,13 +348,13 @@ test('ein PKW bekommt keinen Verkehrsbetrieb angedichtet', () => {
   // Stadt, gegen deren Fahrplan der Dienst abgleicht. "Verkehrsbetrieb: Graz"
   // an einem PKW ist schlicht falsch.
   const auto = { ...pkw, properties: { ...pkw.properties, transitCity: 'Graz' } }
-  assert.ok(!alsSichtung(auto).description.includes('Verkehrsbetrieb'), alsSichtung(auto).description)
-  assert.match(alsSichtung(reich).description, /Verkehrsbetrieb: Graz/, 'bei einer Linie schon')
+  assert.ok(!asSighting(auto).description.includes('Verkehrsbetrieb'), asSighting(auto).description)
+  assert.match(asSighting(reich).description, /Verkehrsbetrieb: Graz/, 'bei einer Linie schon')
 })
 
 test('die Ampelphase steht nicht zweimal wortgleich da', () => {
   // Ohne Restzeit und ohne Kreuzungsangabe sagt die Detailzeile nichts Neues.
   const nackt = { ...ampel, properties: { ...ampel.properties, trafficLightName: '' } }
-  const d = alsSichtung(nackt).description
+  const d = asSighting(nackt).description
   assert.equal(d.split('grün · 3 von 4 Gruppen grün').length - 1, 1, d)
 })

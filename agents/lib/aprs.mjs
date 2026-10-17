@@ -316,7 +316,7 @@ function parseMicE(payload, dstcall) {
   if (knoten >= 800) knoten -= 800
   if (kurs >= 400) kurs -= 400
 
-  const { altitude, rest } = micEKommentar(payload.slice(9))
+  const { altitude, rest } = micEComment(payload.slice(9))
 
   return {
     lat: lat.wert, lon, unscharf: lat.unscharf,
@@ -348,7 +348,7 @@ function parseMicE(payload, dstcall) {
  * Removing it is a judgement call — a comment really ending in `_4` would lose
  * two characters. It only affects what is displayed, never a position.
  */
-export function micEKommentar(kommentar) {
+export function micEComment(kommentar) {
   const text = String(kommentar || '')
   const grenze = Math.min(text.length, 12)
   for (let i = 3; i < grenze; i++) {
@@ -471,7 +471,7 @@ function positionsRumpf(text) {
 // ─── Filter ───────────────────────────────────────────────────────────────
 
 /** Great-circle distance in km. */
-export function abstandKm(lat1, lon1, lat2, lon2) {
+export function distanceKm(lat1, lon1, lat2, lon2) {
   const r = (d) => (d * Math.PI) / 180
   const dLat = r(lat2 - lat1), dLon = r(lon2 - lon1)
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(r(lat1)) * Math.cos(r(lat2)) * Math.sin(dLon / 2) ** 2
@@ -494,7 +494,7 @@ export function relevant(parsed, opts = {}) {
   // Punkt in der Welt behauptet das eine Genauigkeit, die es nicht gibt.
   if (parsed.unscharf > maxUnscharf) return false
   if (symbols && !symbols.has(parsed.symbol)) return false
-  if (center && radiusKm > 0 && abstandKm(center.lat, center.lon, parsed.lat, parsed.lon) > radiusKm) return false
+  if (center && radiusKm > 0 && distanceKm(center.lat, center.lon, parsed.lat, parsed.lon) > radiusKm) return false
   return true
 }
 
@@ -506,7 +506,7 @@ export function relevant(parsed, opts = {}) {
  * The first line of the description is what gets spoken (the announcer cuts at
  * 100 characters), everything else is for reading — same rule as in `cits.mjs`.
  */
-export function alsSichtung(parsed, now = Date.now()) {
+export function asSighting(parsed, now = Date.now()) {
   const info = symbolInfo(parsed.symbol)
   const name = String(parsed.name || parsed.srccall).slice(0, 32)
   const tempo = Number.isFinite(parsed.speed) ? parsed.speed : null

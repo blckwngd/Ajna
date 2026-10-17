@@ -164,7 +164,7 @@ export function classify({ cdn = null, owner = null, orgName = null } = {}) {
   // „Eigen" heisst: Der Registerinhaber IST der Betrieb — nicht nur ein
   // Netzbereich mit passendem Typ. Ohne Namensabgleich wäre jeder
   // Hosting-Block „eigen", und die Anschrift wäre die des Hosters.
-  if (orgName && owner?.name && EIGEN_TYPEN.test(owner.type || '') && aehnlich(owner.name, orgName)) {
+  if (orgName && owner?.name && EIGEN_TYPEN.test(owner.type || '') && namesMatch(owner.name, orgName)) {
     return 'eigen'
   }
   return 'gehostet'
@@ -177,7 +177,7 @@ export function classify({ cdn = null, owner = null, orgName = null } = {}) {
  * genug, um nicht jeden Hoster passend zu finden: Es muss ein unterscheidendes
  * Wort übereinstimmen, und Rechtsformen zählen nicht als solches.
  */
-export function aehnlich(a, b) {
+export function namesMatch(a, b) {
   const woerter = (s) => String(s || '').toLowerCase()
     .replace(/[^a-zäöüß0-9 ]+/g, ' ')
     .split(/\s+/)
@@ -297,7 +297,7 @@ export async function ownRanges(orgName, io = {}) {
     if (ort && adr.includes(String(ort).toLowerCase())) return true
     return false
   }
-  const kandidaten = orgs.filter(o => aehnlich(o.name, orgName) && passtOrt(o))
+  const kandidaten = orgs.filter(o => namesMatch(o.name, orgName) && passtOrt(o))
   // MEHRERE PASSEN HEISST: NICHT ZUZUORDNEN. Schwestergesellschaften teilen
   // sich ein Haus (bei Heise sitzen zwei an derselben Anschrift). Eine davon
   // auszuwählen wäre geraten, und zwar unsichtbar.
@@ -322,7 +322,7 @@ export async function ownRanges(orgName, io = {}) {
 }
 
 /** Eine Registeranschrift in eine Zeile bringen. */
-export const anschriftZeile = (adr) =>
+export const addressLine = (adr) =>
   String(adr || '').split('\n').map(s => s.trim()).filter(Boolean).join(', ')
 
 /**
@@ -378,7 +378,7 @@ export async function networkTrace(webseite, io = {}) {
       herkunft: `DNS (${cdn.grund})`,
     })
   } else if (fall === 'eigen') {
-    const wo = anschriftZeile(owner.address)
+    const wo = addressLine(owner.address)
     felder.push({
       feld: 'Eigener Netzbereich',
       wert: `${owner.handle || ips[0]}${owner.netname ? ` (${owner.netname})` : ''}`
@@ -403,7 +403,7 @@ export async function networkTrace(webseite, io = {}) {
       herkunft: 'DNS + RIPE-Register',
     })
   } else {
-    const wo = anschriftZeile(owner?.address)
+    const wo = addressLine(owner?.address)
     felder.push({
       feld: 'Webserver', wert: `${host} → ${ips[0]} · ${owner?.name || owner?.netname || 'Inhaber unbekannt'}`
         + (wo ? ` (${wo})` : ''),

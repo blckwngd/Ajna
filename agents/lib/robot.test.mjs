@@ -6,7 +6,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Robot, zielAus } from './robot.mjs'
+import { Robot, targetFrom } from './robot.mjs'
 import { SimDriver } from './robot-driver.mjs'
 
 const HIER = { lat: 50.4514, lon: 7.5363 }
@@ -233,11 +233,11 @@ test('„Herkommen" ohne Position fährt nirgendwohin', async () => {
 })
 
 test('das Ziel kommt aus der Nutzlast oder vom Aufrufer', () => {
-  assert.deepEqual(zielAus({ payload: { lat: 1, lon: 2 } }), { lat: 1, lon: 2 })
-  assert.deepEqual(zielAus({ position: { lat: 3, lon: 4 } }), { lat: 3, lon: 4 })
-  assert.equal(zielAus({ payload: { lat: 'x' } }), null)
-  assert.equal(zielAus({}), null)
-  assert.equal(zielAus(null), null)
+  assert.deepEqual(targetFrom({ payload: { lat: 1, lon: 2 } }), { lat: 1, lon: 2 })
+  assert.deepEqual(targetFrom({ position: { lat: 3, lon: 4 } }), { lat: 3, lon: 4 })
+  assert.equal(targetFrom({ payload: { lat: 'x' } }), null)
+  assert.equal(targetFrom({}), null)
+  assert.equal(targetFrom(null), null)
 })
 
 // ─── Melden ───────────────────────────────────────────────────────────────

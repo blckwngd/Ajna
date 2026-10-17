@@ -171,7 +171,7 @@ export function relevant(feature, opts = {}) {
 
   const lon = Number(c[0]), lat = Number(c[1])
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false
-  if (center && radiusKm > 0 && abstandKm(center.lat, center.lon, lat, lon) > radiusKm) return false
+  if (center && radiusKm > 0 && distanceKm(center.lat, center.lon, lat, lon) > radiusKm) return false
   return true
 }
 
@@ -227,10 +227,10 @@ export function motionOf(feature, prev = null) {
   if (prev && Number.isFinite(prev.lat) && Number.isFinite(prev.t)) {
     const dt = (tMs - prev.t) / 1000
     if (dt >= 2 && dt <= 120) {
-      const v = (abstandKm(prev.lat, prev.lon, lat, lon) * 1000) / dt
+      const v = (distanceKm(prev.lat, prev.lon, lat, lon) * 1000) / dt
       if (Number.isFinite(v) && v <= MAX_ROAD_MPS) {
         if (v < MIN_MOVE_MPS) return { ...base, v: 0, trk: 0 }
-        return { ...base, v, trk: kursGrad(prev.lat, prev.lon, lat, lon) }
+        return { ...base, v, trk: bearingDeg(prev.lat, prev.lon, lat, lon) }
       }
     }
   }
@@ -238,7 +238,7 @@ export function motionOf(feature, prev = null) {
 }
 
 /** Compass bearing in degrees (CW from north) from one point to the next. */
-export function kursGrad(lat1, lon1, lat2, lon2) {
+export function bearingDeg(lat1, lon1, lat2, lon2) {
   const r = (d) => (d * Math.PI) / 180
   const dLon = r(lon2 - lon1)
   const y = Math.sin(dLon) * Math.cos(r(lat2))
@@ -247,7 +247,7 @@ export function kursGrad(lat1, lon1, lat2, lon2) {
 }
 
 /** Great-circle distance in km — small and local, no import for three lines. */
-export function abstandKm(lat1, lon1, lat2, lon2) {
+export function distanceKm(lat1, lon1, lat2, lon2) {
   const r = (d) => (d * Math.PI) / 180
   const dLat = r(lat2 - lat1), dLon = r(lon2 - lon1)
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(r(lat1)) * Math.cos(r(lat2)) * Math.sin(dLon / 2) ** 2
@@ -261,7 +261,7 @@ export function abstandKm(lat1, lon1, lat2, lon2) {
  * "🚋 00:01:d8". The short MAC stays as a suffix so two trams on the same line
  * can be told apart.
  */
-export function alsSichtung(feature, prev = null) {
+export function asSighting(feature, prev = null) {
   const p = feature.properties || {}
   const [lon, lat] = feature.geometry.coordinates
   const kind = String(p.kind || 'unknown')

@@ -13,13 +13,13 @@
 //  [ECHT]    aus einem Mitschnitt vom 02.10.2026 (150 km um Koblenz, erzeugt mit
 //            `node tools/aprs-capture.mjs`). Das sind die aussagekräftigsten:
 //            echte Sender halten sich nicht an die Beispiele der Spezifikation.
-//            Sie haben prompt einen Fehler aufgedeckt — siehe micEKommentar.
+//            Sie haben prompt einen Fehler aufgedeckt — siehe micEComment.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  parseFrame, parseCoord, base91, parsePacket, parseWeather, micEKommentar,
-  alsSichtung, relevant, motionOf, symbolInfo, abstandKm, SYMBOLS,
+  parseFrame, parseCoord, base91, parsePacket, parseWeather, micEComment,
+  asSighting, relevant, motionOf, symbolInfo, distanceKm, SYMBOLS,
 } from './aprs.mjs'
 
 const nah = (a, b, eps = 1e-4) => Math.abs(a - b) < eps
@@ -259,7 +259,7 @@ test('eine zu grob angegebene Position wird nicht als Punkt behauptet', () => {
 // ─── Übersetzung ──────────────────────────────────────────────────────────
 
 test('ein fahrendes Auto wird zu etwas, das man vorlesen kann', () => {
-  const s = alsSichtung(auto)
+  const s = asSighting(auto)
   assert.match(s.description.split('\n')[0], /^Fahrzeug · 22 km\/h · Unterwegs/)
   assert.ok(s.description.split('\n')[0].length <= 100)
   assert.equal(s.appearance.emoji, '🚗')
@@ -279,9 +279,9 @@ test('der Bewegungsvektor entsteht aus Kurs und Tempo', () => {
 test('eine Wetterstation bekommt keinen Bewegungsvektor', () => {
   const wx = parsePacket('DL1ABC>APRS:!4903.50N/07201.75W_220/004t077h50b09900')
   assert.equal(motionOf(wx), null)
-  assert.equal(alsSichtung(wx).state.motion, undefined)
-  assert.match(alsSichtung(wx).description, /25 °C/)
-  assert.match(alsSichtung(wx).description, /Wetter: Wind 2 m\/s aus 220°/)
+  assert.equal(asSighting(wx).state.motion, undefined)
+  assert.match(asSighting(wx).description, /25 °C/)
+  assert.match(asSighting(wx).description, /Wetter: Wind 2 m\/s aus 220°/)
 })
 
 test('ohne Kursangabe entsteht kein Vektor — Schweigen ist kein Stillstand', () => {
@@ -293,19 +293,19 @@ test('ohne Kursangabe entsteht kein Vektor — Schweigen ist kein Stillstand', (
 
 test('der Weg über die Digipeater steht in der Langfassung', () => {
   const p = parsePacket('DL1ABC-9>APRS,DB0ZB*,WIDE2-1,qAR,DB0XY:!5021.50N/00735.40W>088/012')
-  const d = alsSichtung(p).description
+  const d = asSighting(p).description
   assert.match(d, /Weg: DB0ZB\* → WIDE2-1 → DB0XY/)
   assert.ok(!d.includes('qAR'), 'die q-Konstrukte des Netzes gehören nicht dazu')
 })
 
 test('bei einem Objekt wird der Absender genannt', () => {
   const p = parsePacket('DL1ABC>APRS:;Fieldday *092345z4903.50N/07201.75W-Zeltlager')
-  assert.match(alsSichtung(p).description, /Gesendet von: DL1ABC/)
+  assert.match(asSighting(p).description, /Gesendet von: DL1ABC/)
 })
 
 test('der Name bleibt in den 32 Zeichen, die objects.name fasst', () => {
   const p = parsePacket('DL1ABC>APRS:;Sehr langes Objekt*092345z4903.50N/07201.75W-')
-  assert.ok(alsSichtung(p).name.length <= 32)
+  assert.ok(asSighting(p).name.length <= 32)
 })
 
 test('jedes Symbol hat Beschriftung, Sinnbild und Beweglichkeit', () => {
@@ -398,7 +398,7 @@ test('[ECHT] jede dekodierte Position liegt im Filterkreis', () => {
   // auf 150 km um Koblenz gefiltert. Was draussen landet, ist ein Parser-Fehler.
   for (const f of ECHT) {
     const p = parsePacket(f.zeile)
-    const km = abstandKm(50.4297, 7.4608, p.lat, p.lon)
+    const km = distanceKm(50.4297, 7.4608, p.lat, p.lon)
     assert.ok(km <= 150, `${f.zeile.slice(0, 20)}… liegt ${km.toFixed(0)} km entfernt`)
   }
 })
@@ -408,13 +408,13 @@ test('[ECHT] die Höhe steht HINTER der Gerätekennung, nicht am Anfang', () => 
   // Höhe unmittelbar am Kommentaranfang. Davor steht aber ein Byte, das das
   // Funkgerät identifiziert — in vier von sechs MIC-E-Paketen des Mitschnitts.
   // Jede Höhe fiel still durch.
-  assert.equal(micEKommentar('`"5V}BDL1ASA Tom F02_4').altitude, 154)
-  assert.equal(micEKommentar('`"5V}BDL1ASA Tom F02_4').rest, 'BDL1ASA Tom F02')
+  assert.equal(micEComment('`"5V}BDL1ASA Tom F02_4').altitude, 154)
+  assert.equal(micEComment('`"5V}BDL1ASA Tom F02_4').rest, 'BDL1ASA Tom F02')
   // Ohne Kennung muss es weiter gehen.
-  assert.equal(micEKommentar('"5V}Text').altitude, 154)
+  assert.equal(micEComment('"5V}Text').altitude, 154)
   // Eine geschweifte Klammer tief im Text ist Text.
-  assert.equal(micEKommentar('Lager {Treffpunkt} am Hang').altitude, null)
-  assert.equal(micEKommentar('ohne alles').altitude, null)
+  assert.equal(micEComment('Lager {Treffpunkt} am Hang').altitude, null)
+  assert.equal(micEComment('ohne alles').altitude, null)
 })
 
 test('[ECHT] Gerätekennungen verschwinden aus dem vorgelesenen Text', () => {

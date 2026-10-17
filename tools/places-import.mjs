@@ -31,7 +31,7 @@ import path from 'node:path'
 import readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
-import { SCHEMA, INDEX, zelle } from '../agents/lib/places.mjs'
+import { SCHEMA, INDEX, cell } from '../agents/lib/places.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const arg = (name, fallback) => {
@@ -132,7 +132,7 @@ async function main() {
     const o = zuOrt(roh, QUELLE)
     if (!o) { verworfen++; continue }
     if (MIN_GUETE > 0 && Number(o.guete ?? 1) < MIN_GUETE) { verworfen++; continue }
-    ein.run(o.id, o.quelle, o.name, o.kategorie, o.lat, o.lon, zelle(o.lat), zelle(o.lon),
+    ein.run(o.id, o.quelle, o.name, o.kategorie, o.lat, o.lon, cell(o.lat), cell(o.lon),
             o.webseite, o.telefon, o.email, o.strasse, o.hausnummer, o.plz, o.ort, o.guete)
     if (++genommen % 100000 === 0) { db.exec('COMMIT'); db.exec('BEGIN'); console.error(`  … ${genommen.toLocaleString('de-DE')}`) }
   }

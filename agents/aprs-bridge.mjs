@@ -21,7 +21,7 @@ import net from 'node:net'
 import fs from 'node:fs'
 import { bootAgent, envNum, envStr, envBool, publishManifest, ladeBestand } from './lib/agent-base.mjs'
 import { Fleet } from './lib/fleet.mjs'
-import { parsePacket, relevant, alsSichtung, SYMBOLS, symbolInfo } from './lib/aprs.mjs'
+import { parsePacket, relevant, asSighting, SYMBOLS, symbolInfo } from './lib/aprs.mjs'
 import { simpleSetup } from './lib/setup-wizard.mjs'
 
 const { ajna, log, warn } = await bootAgent('aprs', {
@@ -127,7 +127,7 @@ async function paketGesehen(zeile) {
   if (!fleet.has(key) && fleet.size >= MAX_OBJEKTE) return
 
   const vorher = fleet.size
-  await fleet.seen(key, alsSichtung(p))
+  await fleet.seen(key, asSighting(p))
   if (fleet.size > vorher) uebernommen++
 }
 

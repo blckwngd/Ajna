@@ -297,7 +297,7 @@ export class Robot {
       return
     }
     if (aktion === 'come' || aktion === 'herkommen') {
-      const ziel = zielAus(evt)
+      const ziel = targetFrom(evt)
       if (!ziel) { this.warn('„Herkommen" ohne Position im Aufruf'); return }
       const n = this.fahreZu(ziel)
       this.log(`fahre zu ${ziel.lat.toFixed(5)}, ${ziel.lon.toFixed(5)} (${n} Wegpunkt(e))`)
@@ -365,7 +365,7 @@ export class Robot {
  * Beides kommt vor: Ein Skript schickt Koordinaten mit, ein Spieler tippt nur
  * „Herkommen" — dann ist sein eigener Standort gemeint.
  */
-export function zielAus(evt) {
+export function targetFrom(evt) {
   const p = evt?.payload
   if (p && Number.isFinite(p.lat) && Number.isFinite(p.lon)) return { lat: p.lat, lon: p.lon }
   const q = evt?.position || evt?.from

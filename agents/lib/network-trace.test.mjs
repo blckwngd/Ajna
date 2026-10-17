@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  networkTrace, ownerFromRdap, detectCdn, classify, hostFromUrl, aehnlich, anschriftZeile, shodanServices,
+  networkTrace, ownerFromRdap, detectCdn, classify, hostFromUrl, namesMatch, addressLine, shodanServices,
   ownRanges, orgHandles, inetnumsFrom,
 } from './network-trace.mjs'
 
@@ -133,10 +133,10 @@ test('Zugangsnetze werden am Netznamen erkannt und nicht verortet', () => {
 })
 
 test('Namensabgleich ignoriert Rechtsformen und Allerweltswörter', () => {
-  assert.equal(aehnlich('Heise Gruppe GmbH & Co. KG', 'Heise Medien'), true)
-  assert.equal(aehnlich('Müller GmbH', 'Schmitt GmbH'), false, 'GmbH allein zählt nicht')
-  assert.equal(aehnlich('Stadtwerke Koblenz GmbH', 'Stadtwerke Koblenz'), true)
-  assert.equal(aehnlich('', 'Heise'), false)
+  assert.equal(namesMatch('Heise Gruppe GmbH & Co. KG', 'Heise Medien'), true)
+  assert.equal(namesMatch('Müller GmbH', 'Schmitt GmbH'), false, 'GmbH allein zählt nicht')
+  assert.equal(namesMatch('Stadtwerke Koblenz GmbH', 'Stadtwerke Koblenz'), true)
+  assert.equal(namesMatch('', 'Heise'), false)
 })
 
 // ─── Ganze Spur ──────────────────────────────────────────────────────────
@@ -214,8 +214,8 @@ test('jedes Feld trägt seine Herkunft', async () => {
 })
 
 test('Anschriften werden zu einer Zeile, ohne leere Stücke', () => {
-  assert.equal(anschriftZeile('A\n\nB\n C '), 'A, B, C')
-  assert.equal(anschriftZeile(null), '')
+  assert.equal(addressLine('A\n\nB\n C '), 'A, B, C')
+  assert.equal(addressLine(null), '')
 })
 
 test('ein Hostname muss wie ein Name aussehen', () => {

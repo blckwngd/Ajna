@@ -20,7 +20,7 @@
 //   node tools/aprs-check.mjs /tmp/aprs.txt --lat=50.4297 --lon=7.4608 --radius=150
 
 import fs from 'node:fs'
-import { parseFrame, parsePacket, abstandKm, symbolInfo } from '../agents/lib/aprs.mjs'
+import { parseFrame, parsePacket, distanceKm, symbolInfo } from '../agents/lib/aprs.mjs'
 
 const arg = (name, fallback) => {
   const hit = process.argv.find(a => a.startsWith(`--${name}=`))
@@ -67,7 +67,7 @@ for (const z of zeilen) {
   if (p.deleted) { a.ok++; continue }
   a.ok++
 
-  const km = abstandKm(LAT, LON, p.lat, p.lon)
+  const km = distanceKm(LAT, LON, p.lat, p.lon)
   if (km > RADIUS) {
     a.weit++
     if (a.proben.length < ZEIGE) a.proben.push({ z, p, km })

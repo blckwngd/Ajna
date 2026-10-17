@@ -22,14 +22,14 @@
 // bei `cits.mjs` und `aprs.mjs`.
 
 /** Die drei Kategorien, die openfairdb kennt (per /v0/categories geprüft). */
-export const KATEGORIEN = {
+export const CATEGORIES = {
   '2cd00bebec0c48ba9db761da48678134': { key: 'initiative', label: 'Initiative', emoji: '🌱' },
   '77b3c33a92554bcf8e8c2c86cedd6f6f': { key: 'business', label: 'Unternehmen', emoji: '🤝' },
   'c2dc278a2d6a4b9b8a50cb606fc017ed': { key: 'event', label: 'Veranstaltung', emoji: '📅' },
 }
 
 /** Die Bewertungsachsen, in der Reihenfolge, in der sie jemand vorlesen würde. */
-export const ACHSEN = {
+export const RATING_AXES = {
   solidarity: 'Solidarität',
   fairness: 'Fairness',
   humanity: 'Menschlichkeit',
@@ -39,9 +39,9 @@ export const ACHSEN = {
 }
 
 /** Welche Art ist das? Mehrere Kategorien kommen vor; die erste bekannte zählt. */
-export function artVon(eintrag) {
+export function kindOf(eintrag) {
   for (const id of eintrag?.categories || []) {
-    if (KATEGORIEN[id]) return KATEGORIEN[id]
+    if (CATEGORIES[id]) return CATEGORIES[id]
   }
   return { key: 'other', label: 'Eintrag', emoji: '📍' }
 }
@@ -54,7 +54,7 @@ export function artVon(eintrag) {
  * nicht von selbst verschwindet, ist in einem Monat Müll — und in einem Jahr
  * eine Lüge über etwas, das längst vorbei ist.
  */
-export function brauchbar(eintrag, opts = {}) {
+export function usable(eintrag, opts = {}) {
   const { arten = null, minBewertung = 0, mitVeranstaltungen = false } = opts
   if (!eintrag?.title) return false
   // `Number(null)` IST 0, NICHT NaN. Ein Eintrag ohne Breitengrad käme damit
@@ -67,7 +67,7 @@ export function brauchbar(eintrag, opts = {}) {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false
   if (lat === 0 && lon === 0) return false
 
-  const art = artVon(eintrag)
+  const art = kindOf(eintrag)
   if (art.key === 'event' && !mitVeranstaltungen) return false
   if (arten?.length && !arten.includes(art.key)) return false
   if (minBewertung > 0 && Number(eintrag.ratings?.total ?? 0) < minBewertung) return false
@@ -75,10 +75,10 @@ export function brauchbar(eintrag, opts = {}) {
 }
 
 /** Die Bewertungen, die überhaupt etwas sagen — null heisst „keine". */
-export function bewertungen(roh) {
+export function ratingsOf(roh) {
   if (!roh || typeof roh !== 'object') return null
   const raus = []
-  for (const [k, label] of Object.entries(ACHSEN)) {
+  for (const [k, label] of Object.entries(RATING_AXES)) {
     const v = Number(roh[k])
     if (Number.isFinite(v) && v > 0) raus.push({ key: k, label, wert: Math.round(v * 10) / 10 })
   }
@@ -98,8 +98,8 @@ const kurz = (s, n) => {
  * ERSTE ZEILE = WAS VORGELESEN WIRD (der Announcer kappt bei 100 Zeichen).
  * Darunter steht, was man liest: Beschreibung, Kontakt, Schlagworte, Herkunft.
  */
-export function alsSichtung(e) {
-  const art = artVon(e)
+export function asSighting(e) {
+  const art = kindOf(e)
   const lat = Number(e.lat), lon = Number(e.lng ?? e.lon)
   const name = kurz(e.title, 32)
 
@@ -119,7 +119,7 @@ export function alsSichtung(e) {
 
   // AUSDRÜCKLICH ALS MEINUNG. „Solidarität 2,0" als Eigenschaft eines Betriebs
   // zu behaupten wäre eine Tatsachenaussage, die diese Zahlen nicht tragen.
-  const b = bewertungen(e.ratings)
+  const b = ratingsOf(e.ratings)
   if (b) {
     detail.push(`Von Besuchern bewertet: ${b.slice(0, 3).map(x => `${x.label} ${x.wert}`).join(' · ')}`)
   }
@@ -170,7 +170,7 @@ export function bbox(lat, lon, radiusKm) {
 }
 
 /** Entfernung in km — für die Nachmessung nach der BBOX-Abfrage. */
-export function abstandKm(lat1, lon1, lat2, lon2) {
+export function distanceKm(lat1, lon1, lat2, lon2) {
   const r = (d) => (d * Math.PI) / 180
   const dLat = r(lat2 - lat1), dLon = r(lon2 - lon1)
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(r(lat1)) * Math.cos(r(lat2)) * Math.sin(dLon / 2) ** 2

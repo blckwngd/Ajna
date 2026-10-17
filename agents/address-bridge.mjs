@@ -812,7 +812,7 @@ function orteDb() {
   if (_orteVersucht) return _orteDb
   _orteVersucht = true
   const gewaehlt = w('orte_db').trim()
-  const { db, pfad, grund, anzahl } = places.oeffne(gewaehlt ? [gewaehlt] : ORTE_ORTE)
+  const { db, pfad, grund, anzahl } = places.openPlaces(gewaehlt ? [gewaehlt] : ORTE_ORTE)
   if (!db) { log(`Ortsabzug: ${grund} — es bleibt bei OpenStreetMap`); return null }
   _orteDb = db
   log(`Ortsabzug geöffnet: ${pfad} (${(anzahl ?? 0).toLocaleString('de-DE')} Orte)`)
@@ -828,21 +828,21 @@ function orteDb() {
 function ausAbzug(lat, lon, radiusM, osmListe) {
   const db = orteDb()
   if (!db) return []
-  const treffer = places.orteImUmkreis(db, lat, lon, radiusM, {
+  const treffer = places.placesNearby(db, lat, lon, radiusM, {
     max: 60, minGuete: w('orte_guete'),
   })
   if (!treffer.length) return []
   // Nur, was OSM NICHT schon führt — Dubletten stünden sichtbar nebeneinander.
-  const { liste } = places.ergaenze([], treffer, { schluessel: (x) => places.normName(x.name) })
+  const { liste } = places.mergeByName([], treffer, { schluessel: (x) => places.normaliseName(x.name) })
   const bekannt = new Set((osmListe || []).flatMap(a =>
-    (a.gewerbe || []).filter(f => f.feld === 'Name').map(f => places.normName(f.wert))))
+    (a.gewerbe || []).filter(f => f.feld === 'Name').map(f => places.normaliseName(f.wert))))
   return liste
-    .filter(t => !bekannt.has(places.normName(t.name)))
+    .filter(t => !bekannt.has(places.normaliseName(t.name)))
     .map(t => ({
       lat: t.lat, lon: t.lon,
       strasse: t.strasse || '', hausnummer: t.hausnummer || '', ort: t.ort || '',
       plz: t.plz || '',
-      gewerbe: places.alsFelder(t),
+      gewerbe: places.asFields(t),
     }))
 }
 

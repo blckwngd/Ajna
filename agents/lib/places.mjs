@@ -24,10 +24,10 @@ import { existsSync } from 'node:fs'
 
 /** Rasterweite des Suchindex in Grad — rund 1,1 km in der Breite. */
 const ZELLE = 0.01
-export const zelle = (grad) => Math.round(grad / ZELLE)
+export const cell = (grad) => Math.round(grad / ZELLE)
 
 /** Äquirektangulare Näherung; auf diesen Entfernungen genau genug. */
-export function abstandM(lat1, lon1, lat2, lon2) {
+export function distanceM(lat1, lon1, lat2, lon2) {
   const r = Math.PI / 180
   const dLat = (lat2 - lat1) * r
   const dLon = (lon2 - lon1) * r * Math.cos(((lat1 + lat2) / 2) * r)
@@ -62,7 +62,7 @@ export const INDEX = 'CREATE INDEX IF NOT EXISTS idx_orte_zelle ON orte (zlat, z
  *
  * @returns {{db: object|null, pfad: string|null, grund: string}}
  */
-export function oeffne(kandidaten) {
+export function openPlaces(kandidaten) {
   const liste = (Array.isArray(kandidaten) ? kandidaten : [kandidaten]).filter(Boolean)
   const pfad = liste.find(p => existsSync(p))
   if (!pfad) return { db: null, pfad: null, grund: `kein Abzug gefunden (gesucht: ${liste.join(', ')})` }
@@ -94,11 +94,11 @@ export function oeffne(kandidaten) {
  * @param {string[]} [opts.kategorien]   nur diese (Präfix-Vergleich)
  * @param {boolean}  [opts.nurMitWebseite=false]
  */
-export function orteImUmkreis(db, lat, lon, radiusM, opts = {}) {
+export function placesNearby(db, lat, lon, radiusM, opts = {}) {
   if (!db || !Number.isFinite(lat) || !Number.isFinite(lon)) return []
   const { max = 50, minGuete = 0, kategorien = null, nurMitWebseite = false } = opts
   const spanne = Math.max(1, Math.ceil(radiusM / 700))
-  const zl = zelle(lat), zo = zelle(lon)
+  const zl = cell(lat), zo = cell(lon)
 
   let zeilen
   try {
@@ -114,11 +114,11 @@ export function orteImUmkreis(db, lat, lon, radiusM, opts = {}) {
     if (nurMitWebseite && !z.webseite) continue
     if (minGuete > 0 && Number(z.guete ?? 1) < minGuete) continue
     if (kategorien?.length && !kategorien.some(k => String(z.kategorie || '').startsWith(k))) continue
-    const d = abstandM(lat, lon, z.lat, z.lon)
+    const d = distanceM(lat, lon, z.lat, z.lon)
     if (d > radiusM) continue
-    raus.push({ ...z, abstandM: Math.round(d) })
+    raus.push({ ...z, distanceM: Math.round(d) })
   }
-  raus.sort((a, b) => a.abstandM - b.abstandM)
+  raus.sort((a, b) => a.distanceM - b.distanceM)
   return raus.slice(0, max)
 }
 
@@ -129,7 +129,7 @@ export function orteImUmkreis(db, lat, lon, radiusM, opts = {}) {
  * an der Zeile, nicht in einer Fussnote: Wer „Overture" liest, weiss, dass
  * dieser Eintrag nicht von einem Ortskundigen stammt.
  */
-export function alsFelder(ort, quellName = null) {
+export function asFields(ort, quellName = null) {
   if (!ort?.name) return []
   const q = quellName || `Ortsabzug (${ort.quelle || 'unbekannt'})`
   const f = [{ feld: 'Name', wert: ort.name, herkunft: q }]
@@ -148,7 +148,7 @@ export function alsFelder(ort, quellName = null) {
  * aber anonym zusammengetragen; wo beide etwas sagen, ist die ortskundige
  * Angabe die bessere. Der Abzug FÜLLT LÜCKEN, er überschreibt nichts.
  */
-export function ergaenze(osm, abzug, { schluessel = (x) => normName(x.name) } = {}) {
+export function mergeByName(osm, abzug, { schluessel = (x) => normaliseName(x.name) } = {}) {
   const bekannt = new Set((osm || []).map(schluessel).filter(Boolean))
   const dazu = (abzug || []).filter(x => {
     const k = schluessel(x)
@@ -165,7 +165,7 @@ export function ergaenze(osm, abzug, { schluessel = (x) => normName(x.name) } = 
  * nur Sonderzeichen entfernt. Beim Zusammenführen ist eine Dublette schlimmer
  * als eine etwas zu grosszügige Ähnlichkeit: Sie steht sichtbar nebeneinander.
  */
-export function normName(name) {
+export function normaliseName(name) {
   return String(name || '').toLowerCase()
     .replace(/\b(gmbh|mbh|ag|kg|ohg|gbr|ug|e\.?\s?k\.?|e\.?\s?v\.?|co\.?|und)\b/g, ' ')
     .replace(/[^a-zäöüß0-9]+/g, '')

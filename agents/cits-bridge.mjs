@@ -35,7 +35,7 @@ import WebSocket from 'ws'
 import { bootAgent, envNum, envStr, envBool, publishManifest, ladeBestand } from './lib/agent-base.mjs'
 import { Fleet } from './lib/fleet.mjs'
 import { InterestAreas } from './lib/interest-areas.mjs'
-import { alsSichtung, relevant, KINDS, PRIVATE_KINDS } from './lib/cits.mjs'
+import { asSighting, relevant, KINDS, PRIVATE_KINDS } from './lib/cits.mjs'
 import { simpleSetup } from './lib/setup-wizard.mjs'
 
 const { ajna, log, warn } = await bootAgent('cits', {
@@ -184,7 +184,7 @@ async function punktGesehen(feature) {
   // nicht fluten. Bekannte Objekte werden weiter gepflegt, neue abgelehnt.
   if (!fleet.has(key) && fleet.size >= MAX_OBJEKTE) return
   const vorher = fleet.size
-  const sicht = alsSichtung(feature, letzteOrte.get(key))
+  const sicht = asSighting(feature, letzteOrte.get(key))
   // Die vorige Position MERKEN, nicht die aktuelle Sichtung: aus zwei Punkten
   // entsteht der Bewegungsvektor für alles, was weder Tempo noch Kurs meldet
   // (die Hälfte der Sender). Nur für Bewegliches — eine Ampel, die um zwei
