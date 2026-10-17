@@ -44,6 +44,38 @@ const REFRESH_DEDUP_WINDOW_MS   = 5 * 1000        // 5s
  *   obj._origin      // → "srv-home"
  *   obj.owner        // → roh, z. B. "xyz789"  (FK auf users im selben Server)
  */
+/**
+ * Sagt, WELCHES FELD der Server abgelehnt hat.
+ *
+ * PocketBase antwortet auf eine Feldverletzung mit „Failed to create record."
+ * — ohne Feld, ohne Grund. Die Einzelheiten stehen in `response.data`, werden
+ * aber von niemandem gelesen, weil die Meldung oben so endgültig klingt.
+ *
+ * GEMESSEN AM 17.10.2026: Ein Agent, der Figuren neben fremde Objekte setzt,
+ * scheiterte an drei von acht — `objects.name` fasst 32 Zeichen, seine Namen
+ * waren 33 lang. Aus „Failed to create record." lässt sich das nicht
+ * erschliessen; aus „name: muss höchstens 32 Zeichen lang sein" schon.
+ *
+ * Der ursprüngliche Fehler bleibt als `cause` erhalten, damit niemand Daten
+ * verliert, die er auswerten wollte.
+ */
+async function mitFeldfehler(tun, was) {
+  try {
+    return await tun()
+  } catch (err) {
+    const felder = err?.response?.data
+    if (!felder || typeof felder !== 'object') throw err
+    const zeilen = Object.entries(felder)
+      .map(([feld, d]) => `${feld}: ${d?.message || d?.code || 'abgelehnt'}`)
+    if (!zeilen.length) throw err
+    const neu = new Error(`Objekt ${was} abgelehnt — ${zeilen.join('; ')}`, { cause: err })
+    neu.status = err?.status
+    neu.response = err?.response
+    throw neu
+  }
+}
+
+
 export class AjnaClient {
   /**
    * @param {object} opts
@@ -322,7 +354,8 @@ export class AjnaClient {
   // ===================================================================
 
   async createObject(data) {
-    const obj = this._rewriteRecord(await this.pb.collection('objects').create(data))
+    const obj = this._rewriteRecord(
+      await mitFeldfehler(() => this.pb.collection('objects').create(data), 'anlegen'))
     this.objectMap.set(obj.id, obj)
     this._emitObjectsChanged()
     return obj
@@ -330,7 +363,8 @@ export class AjnaClient {
 
   async updateObject(id, data) {
     const raw = this._toRaw(id)
-    const obj = this._rewriteRecord(await this.pb.collection('objects').update(raw, data))
+    const obj = this._rewriteRecord(
+      await mitFeldfehler(() => this.pb.collection('objects').update(raw, data), 'ändern'))
     this.objectMap.set(obj.id, obj)
     this._emitObjectsChanged()
     return obj

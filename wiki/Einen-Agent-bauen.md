@@ -252,7 +252,56 @@ Und optional in `package.json`:
 
 ---
 
+## Schritt 11 — Auf die Objekte ANDERER Agenten reagieren
+
+Ein Agent muss nicht alles selbst erzeugen. Er kann sich an eine fremde Quelle
+hängen — etwa Figuren neben die Einträge der Karte von Morgen setzen, die der
+POI-Agent pflegt.
+
+Alles dafür liegt bereit: `bootAgent(..., { connect: true })` lädt den
+sichtbaren Objektbestand und hängt das Realtime-Abo ein, `getObjects()` gibt
+ihn als Liste, und `onObjectEvent()` meldet jede Änderung mit Aktion.
+
+```js
+const { ajna, log } = await bootAgent('fuehrer', { tag: 'fuehrer', connect: true })
+
+const istQuelle = (o) => o?.state?.source === 'kartevonmorgen'
+
+// 1. Was schon da ist
+for (const ort of ajna.getObjects().filter(istQuelle)) await setzeFigur(ort)
+
+// 2. Was dazukommt oder verschwindet
+ajna.onObjectEvent(async (rec, action) => {
+  if (!istQuelle(rec)) return
+  if (action === 'create') await setzeFigur(rec)
+  if (action === 'delete') await entferneFigur(rec)
+})
+```
+
+**BEIDE TEILE SIND NÖTIG.** `onObjectEvent` feuert ausdrücklich **nicht** für
+den Erstbestand — der kommt über `getObjects()`. Wer nur das Abo schreibt,
+bekommt eine Welt, die erst beim nächsten Neustart der fremden Quelle
+bevölkert wird, und sucht den Fehler tagelang bei sich.
+
+**Die fremden Objekte bleiben fremd.** Wer Felder an einem Objekt ändern will,
+das einer anderen Quelle gehört, bekommt **403** — der Server prüft den
+Quellnamen gegen den Eigentümer (siehe [Objektmodell](Objektmodell.md)). Das
+ist kein Hindernis, sondern die Arbeitsteilung: Die eigene Figur ist ein
+eigenes Objekt mit eigener `state.source`, das auf die fremde Kennung zeigt.
+
+```js
+state: { source: 'fuehrer', erklaert: ort.state.kvm_id }
+```
+
 ## Fallen, die Zeit kosten
+
+**`objects.name` fasst 32 Zeichen.** Mehr lehnt der Server ab — früher mit
+nacktem „Failed to create record.", ohne Feld und ohne Grund. Seit 17.10.2026
+nennt `createObject()` das Feld und die Regel („name: Must be no more than 32
+character(s)."), aber die Grenze bleibt: Wer Namen zusammensetzt
+(`Botschafter: ${ort.name}`), kürzt besser VORHER. Bei acht Einträgen aus der
+Karte von Morgen rissen drei die Grenze um genau ein Zeichen.
+
 
 | Symptom | Ursache |
 |---|---|
