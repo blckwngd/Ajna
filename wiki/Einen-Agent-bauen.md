@@ -263,25 +263,33 @@ sichtbaren Objektbestand und hängt das Realtime-Abo ein, `getObjects()` gibt
 ihn als Liste, und `onObjectEvent()` meldet jede Änderung mit Aktion.
 
 ```js
+import { followSource } from './lib/follow-source.mjs'
+
 const { ajna, log } = await bootAgent('fuehrer', { tag: 'fuehrer', connect: true })
 
-const istQuelle = (o) => o?.state?.source === 'kartevonmorgen'
-
-// 1. Was schon da ist
-for (const ort of ajna.getObjects().filter(istQuelle)) await setzeFigur(ort)
-
-// 2. Was dazukommt oder verschwindet
-ajna.onObjectEvent(async (rec, action) => {
-  if (!istQuelle(rec)) return
-  if (action === 'create') await setzeFigur(rec)
-  if (action === 'delete') await entferneFigur(rec)
+const stop = followSource(ajna, 'kartevonmorgen', {
+  onAdd:    (ort) => setzeFigur(ort),     // auch für alles, was schon da ist
+  onRemove: (ort) => entferneFigur(ort),
+  center: { lat, lon }, radiusKm: 5,      // optional
 })
 ```
 
-**BEIDE TEILE SIND NÖTIG.** `onObjectEvent` feuert ausdrücklich **nicht** für
-den Erstbestand — der kommt über `getObjects()`. Wer nur das Abo schreibt,
-bekommt eine Welt, die erst beim nächsten Neustart der fremden Quelle
-bevölkert wird, und sucht den Fehler tagelang bei sich.
+`followSource` spielt den **Erstbestand als `onAdd` nach** und hängt danach
+das Abo ein. Das ist der Grund, warum es diesen Helfer gibt: `onObjectEvent`
+feuert ausdrücklich **nicht** für das, was schon da ist — der Bestand kommt
+über `getObjects()`. Wer nur das Abo schreibt, bekommt eine Welt, die sich
+erst beim nächsten Neustart der **fremden** Quelle füllt, und sucht den Fehler
+tagelang bei sich.
+
+Mit `radiusKm` gilt auch die Umkehrung: Wandert ein Objekt aus dem Umkreis
+heraus, kommt `onRemove` — sonst könnte ein Radius nur wachsen.
+
+Wer es von Hand schreiben will, braucht beide Teile:
+
+```js
+for (const o of ajna.getObjects().filter(istQuelle)) await setzeFigur(o)
+ajna.onObjectEvent((rec, action) => { /* create | update | delete */ })
+```
 
 **Die fremden Objekte bleiben fremd.** Wer Felder an einem Objekt ändern will,
 das einer anderen Quelle gehört, bekommt **403** — der Server prüft den
