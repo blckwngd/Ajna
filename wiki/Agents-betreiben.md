@@ -16,6 +16,7 @@ Agents sind normale Node-Prozesse, die sich als regulärer Benutzer anmelden und
 |---|---|---|---|
 | **World-Director** | `npm run director` | Belebt die Welt: setzt Figuren, plant Wege über das Straßennetz, lässt Vögel und Drachen fliegen. Folgt den Interessensbereichen der Spieler. | — |
 | **POI-Bridge** | `npm run poi` | Legt Punkte von Interesse aus OpenStreetMap an (Bänke, Cafés, Brunnen), dazu Wikipedia-Artikel, Commons-Fotos und **Denkmäler** (Natur-, Kultur-, Stolpersteine) — drei getrennt schaltbare Quellen. | — |
+| **Karte von Morgen** | Teil von `npm run poi` | Initiativen, Projekte und Unternehmen, die Unterstützung verdienen (kartevonmorgen.org). Eigene Quelle `kartevonmorgen` mit eigenem Schalter — `POI_KVM=0` schaltet sie ab. Veranstaltungen bleiben draussen, bis Objekte eine Lebensdauer haben. | — |
 | **AIS-Bridge** | `npm run ais` | Schiffspositionen von aisstream.io. | API-Schlüssel |
 | **ADS-B-Bridge** | `npm run adsb` | Flugzeuge aus dem OpenSky-Network. | optional OAuth2 |
 | **C-ITS-Brücke** | `npm run cits` | Straßenverkehr aus C-ITS-Funksprüchen über opentrafficmap.org: Ampeln mit Signalphase, Straßenstationen, Straßenbahn und Bus mit Linie — und, wenn gewünscht, Fahrzeuge. Siehe unten. | — |

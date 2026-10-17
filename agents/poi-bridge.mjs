@@ -52,6 +52,7 @@
 //   npm run poi
 
 import { bootAgent, die, envNum, envInt, envBool, envStr, publishManifest, ladeBestand } from './lib/agent-base.mjs'
+import * as kvm from './lib/kvm.mjs'
 import { AjnaGeo } from '../client/core/AjnaGeo.js'
 
 import { simpleSetup } from './lib/setup-wizard.mjs'
@@ -111,6 +112,17 @@ const WIKI_UA       = `ajna-poi-bridge/1.0 (+${ajnaUrl})`
 // Die findet nur Artikel mit eigenen Koordinaten, und Naturdenkmale sind
 // Zeilen in Gemeindelisten. Begründung und Messwerte in lib/denkmale.mjs.
 const ND_ON        = envBool('POI_NATURDENKMAL', true)
+
+// Karte von Morgen: Initiativen, Projekte und Unternehmen, die Unterstützung
+// verdienen. Eigene Quelle, eigener Schalter — wie Wikipedia und Denkmäler.
+const KVM_ON       = envBool('POI_KVM', true)
+const KVM_API      = envStr('POI_KVM_API', 'https://api.ofdb.io/v0')
+const KVM_RADIUS   = envNum('POI_KVM_RADIUS_KM', 5)
+const KVM_MAX      = envInt('POI_KVM_MAX', 60)
+const KVM_MIN_BEW  = envNum('POI_KVM_MIN_RATING', 0)
+// Veranstaltungen brauchen eine Lebensdauer, die es noch nicht gibt
+// (docs/arbeitspakete.md, Paket 5a) — siehe `brauchbar()` in lib/kvm.mjs.
+const KVM_EVENTS   = envBool('POI_KVM_EVENTS', false)
 // Diese Listen ändern sich im Jahresrhythmus, nicht im Stundentakt — eine
 // Woche Haltbarkeit ist grosszuegig und trotzdem sparsam.
 const ND_CACHE_MS  = envNum('POI_ND_CACHE_H', 168) * 3600_000
@@ -213,6 +225,24 @@ if (ND_ON && await publishManifest(ajna, {
   ]
 })) console.log('[ajna] denkmal-manifest aktualisiert')
 
+// Viertes Manifest: KARTE VON MORGEN. Eigene Quelle, weil es keine Kartierung
+// ist, sondern eine Empfehlung — wer POIs sehen will, will nicht zwingend
+// Initiativen sehen, und umgekehrt.
+if (KVM_ON && await publishManifest(ajna, {
+  source: 'kartevonmorgen',
+  agent_name: 'Karte von Morgen',
+  description: 'Initiativen, Projekte und Unternehmen, die Unterstützung verdienen (kartevonmorgen.org)',
+  // Weiter als POIs: Für ein Repair-Café lohnt sich ein Umweg, für eine
+  // Parkbank nicht.
+  render_range_m: envNum('POI_KVM_RANGE_M', 1200),
+  layers: [
+    { key: 'all',        label: 'Alles',        predicate: null },
+    { key: 'initiative', label: 'Initiativen',  predicate: { field: 'state.kvm_kind', equals: 'initiative' } },
+    { key: 'business',   label: 'Unternehmen',  predicate: { field: 'state.kvm_kind', equals: 'business' } },
+    { key: 'event',      label: 'Veranstaltungen', predicate: { field: 'state.kvm_kind', equals: 'event' } },
+  ]
+})) console.log('[ajna] kartevonmorgen-manifest aktualisiert')
+
 /**
  * In-Memory-Map: osm_id (z. B. "node/123") → { objectId, name }.
  * Wird beim Boot aus PB gefüllt — Idempotenz garantiert beim Re-Run.
@@ -224,6 +254,8 @@ const wikis = new Map()
 const photos = new Map()
 /** Denkmal-Schlüssel → { objectId, name }. */
 const denkmale = new Map()
+/** Einträge der Karte von Morgen, nach ihrer KVM-Kennung. */
+const kvmOrte = new Map()
 /** Objekte der Vorgaenger-Quelle `naturdenkmal` — einmalig wegzuraeumen. */
 const altlasten = []
 
@@ -238,6 +270,8 @@ for (const obj of await ladeBestand(ajna, { tag: 'poi', warn: console.warn })) {
     photos.set(String(obj.state.commons_id), { objectId: obj.id, name: obj.name })
   } else if (obj.state?.source === 'wikipedia' && obj.state?.wiki_id != null) {
     wikis.set(String(obj.state.wiki_id), { objectId: obj.id, name: obj.name })
+  } else if (obj.state?.source === 'kartevonmorgen' && obj.state?.kvm_id) {
+    kvmOrte.set(String(obj.state.kvm_id), { objectId: obj.id, name: obj.name })
   } else if (obj.state?.source === 'denkmal' && (obj.state?.monument_key || obj.state?.dm_key)) {
     // `dm_*` ist die alte Schreibweise (docs/key-rename.md).
     denkmale.set(String(obj.state.monument_key ?? obj.state.dm_key), { objectId: obj.id, name: obj.name })
@@ -875,6 +909,105 @@ async function syncNaturdenkmale() {
 
 
 // ───────────────────────────────────────────────────────────────────────
+//  Karte von Morgen
+// ───────────────────────────────────────────────────────────────────────
+//
+// EINE EMPFEHLUNG, KEINE KARTIERUNG. Die anderen Quellen sagen, was wo ist;
+// diese sagt, was jemand für unterstützenswert hält. Deshalb eigene Quelle,
+// eigener Schalter, eigene Sichtweite — und Bewertungen, die als Meinung
+// gekennzeichnet sind (siehe lib/kvm.mjs).
+
+async function syncKvm() {
+  if (!KVM_ON) return
+  const mitte = { lat: CENTER_LAT, lon: CENTER_LON }
+  const url = `${KVM_API}/search?bbox=${kvm.bbox(mitte.lat, mitte.lon, KVM_RADIUS)}&limit=${KVM_MAX * 2}`
+
+  let antwort
+  try {
+    const r = await fetch(url, {
+      headers: { Accept: 'application/json', 'User-Agent': 'ajna-poi-bridge/1.0 (+https://github.com/blckwngd)' },
+      signal: AbortSignal.timeout(15000),
+    })
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    antwort = await r.json()
+  } catch (err) {
+    // EIN FEHLER IST AUCH „KONNTE NICHT FRAGEN". Nichts wegräumen, nur melden —
+    // sonst verschwänden bei jeder Netzstörung alle Einträge aus der Welt.
+    console.warn(`[kvm] Abfrage fehlgeschlagen: ${err?.message || err} — Bestand bleibt`)
+    return
+  }
+
+  // `visible` liegt in der BBOX, `invisible` daneben. Nur das Erste zählt.
+  const roh = Array.isArray(antwort?.visible) ? antwort.visible : []
+  const treffer = roh
+    .filter(e => kvm.brauchbar(e, {
+      minBewertung: KVM_MIN_BEW, mitVeranstaltungen: KVM_EVENTS,
+    }))
+    // Die BBOX ist ein Rechteck; gewollt war ein Kreis.
+    .filter(e => kvm.abstandKm(mitte.lat, mitte.lon, Number(e.lat), Number(e.lng)) <= KVM_RADIUS)
+    .slice(0, KVM_MAX)
+
+  let neu = 0, da = 0, weg = 0, fehler = 0
+  const gesehen = new Set(treffer.map(e => String(e.id || '')).filter(Boolean))
+
+  // DETAILS NUR FÜR NEUE. `/search` liefert einen schlanken Satz ohne
+  // Anschrift, Kontakt und — wichtig — ohne die LIZENZ des Eintrags. Die
+  // stecken in `/entries/{id}`, das mehrere Kennungen auf einmal nimmt. Ein
+  // Objekt entsteht einmal, also wird auch einmal nachgeschlagen; beim
+  // nächsten Durchgang kostet derselbe Eintrag nichts mehr.
+  const neueIds = [...gesehen].filter(id => !kvmOrte.has(id))
+  const details = new Map()
+  for (let i = 0; i < neueIds.length; i += 20) {
+    const teil = neueIds.slice(i, i + 20)
+    try {
+      const r = await fetch(`${KVM_API}/entries/${teil.join(',')}`, {
+        headers: { Accept: 'application/json', 'User-Agent': 'ajna-poi-bridge/1.0 (+https://github.com/blckwngd)' },
+        signal: AbortSignal.timeout(15000),
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      for (const e of await r.json()) if (e?.id) details.set(String(e.id), e)
+    } catch (err) {
+      // Kein Grund abzubrechen: Ohne Details entsteht das Objekt eben aus dem
+      // Suchtreffer — weniger Inhalt, aber nichts Falsches.
+      console.warn(`[kvm] Details fehlgeschlagen (${teil.length} Einträge): ${err?.message || err}`)
+    }
+  }
+
+  for (const e of treffer) {
+    const id = String(e.id || '')
+    if (!id) continue
+    if (kvmOrte.has(id)) { da++; continue }
+    try {
+      // Die Bewertungen stehen NUR im Suchtreffer (im Detail sind es blosse
+      // Kennungen) — also beides zusammenführen.
+      const voll = details.get(id)
+      const s = kvm.alsSichtung(voll ? { ...voll, ratings: e.ratings } : e)
+      const obj = await ajna.createObject({
+        name: s.name, type: 'poi', description: s.description,
+        lat: s.lat, lon: s.lon, altitude: 0,
+        appearance: s.appearance, state: s.state,
+      })
+      kvmOrte.set(id, { objectId: obj.id, name: s.name })
+      neu++
+      console.log(`[kvm] + ${s.name} → ${obj.id}`)
+    } catch (err) {
+      fehler++
+      console.warn(`[kvm] anlegen ${id} fehlgeschlagen: ${err?.response?.data?.message || err?.message || err}`)
+    }
+  }
+
+  // Was die Quelle nicht mehr führt, verschwindet — aber nur, wenn die Abfrage
+  // ÜBERHAUPT etwas geliefert hat (oben abgefangen).
+  for (const [id, eintrag] of [...kvmOrte]) {
+    if (gesehen.has(id)) continue
+    try { await ajna.deleteObject(eintrag.objectId); kvmOrte.delete(id); weg++ }
+    catch (err) { console.warn(`[kvm] löschen ${id}: ${err?.message || err}`) }
+  }
+  console.log(`[kvm] ${neu} neu, ${da} vorhanden, ${weg} entfernt${fehler ? `, ${fehler} Fehler` : ''}`
+    + ` — Bestand: ${kvmOrte.size}`)
+}
+
+// ───────────────────────────────────────────────────────────────────────
 //  Start
 // ───────────────────────────────────────────────────────────────────────
 
@@ -882,6 +1015,7 @@ await syncPois()
 await syncWikipedia()
 await syncCommons()
 await syncNaturdenkmale()
+await syncKvm()
 
 if (REFRESH_MS > 0) {
   console.log(`[poi] refresh: alle ${(REFRESH_MS / 1000).toFixed(0)} s`)
@@ -890,6 +1024,7 @@ if (REFRESH_MS > 0) {
     syncWikipedia().catch(err => console.warn(`[wiki] refresh error: ${err?.message || err}`))
     syncCommons().catch(err => console.warn(`[fotos] refresh error: ${err?.message || err}`))
     syncNaturdenkmale().catch(err => console.warn(`[nd] refresh error: ${err?.message || err}`))
+    syncKvm().catch(err => console.warn(`[kvm] refresh error: ${err?.message || err}`))
   }, REFRESH_MS)
   // SIGINT/SIGTERM übernimmt bootAgent.
 } else {
