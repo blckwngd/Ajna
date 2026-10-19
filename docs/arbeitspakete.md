@@ -497,6 +497,64 @@ Damit es nicht zweimal gedacht wird:
 
 ## Erledigt (jüngste zuerst)
 
+* **Speicher auf einer kleinen Maschine** (19.10.) — der 2-GB-Server hat
+  mehrfach PocketBase verloren und hing dann, bis er neu startete. Gemessen
+  statt geraten, und zwei Vermutungen dabei verworfen:
+
+  * **`--hooksPool` ist nicht der Punkt.** Die Vorgabe 15 klingt nach viel,
+    kostet aber gegenüber 1 ganze **4 MB** (52,4 → 56,3 MB) — goja compiliert
+    faul, füllt den Pool nicht vor. Hook-Nebenläufigkeit dafür zu opfern wäre
+    ein schlechtes Geschäft. PocketBase liegt stabil bei 66–71 MB und ist
+    nicht der Verbraucher.
+  * **Der System-CA-Re-Exec ist nicht teuer.** Die Agents starten sich für
+    `--use-system-ca` selbst neu, der Elternprozess bleibt in `spawnSync`
+    stehen — aber Windows lagert ihn auf 2–3 MB aus, nicht auf 40. Der
+    Doppelstart entfällt jetzt trotzdem (`NODE_OPTIONS` wird erkannt,
+    `agent-wrapped.sh` gibt das Flag direkt mit); er war nur nie das Problem.
+
+  Gefunden wurde zweierlei. **Der `graphCache` im world-director kannte nur
+  `set`** — die TTL entschied, ob ein Eintrag benutzt wird, entfernt hat sie
+  nie etwas. 45 Zellen in 20 Minuten, rund 1 MB je Wegegraph (1600–2300 Knoten,
+  ~500 Byte je Knoten), für die Lebensdauer des Prozesses. Dafür gibt es jetzt
+  `agents/lib/bounded-cache.mjs`: **eine TTL ist kein Budget** — sie begrenzt,
+  wie *alt* ein Eintrag sein darf, nicht wie *viele* es sind, und wandernde
+  Spieler erzeugen Zellen schneller als alte verfallen. Nur eine harte Zahl
+  ergibt eine Obergrenze, mit der man rechnen kann. Verdrängt wird der am
+  längsten *unbenutzte*, nicht der älteste, damit die Heimatzelle einen Ausflug
+  übersteht. 21 Tests.
+
+  **Und der Rest war nirgends begrenzt.** `--max-old-space-size` allein
+  genügt nicht: es deckelt nur den alten Bereich, die junge Fläche legt V8 dazu.
+  Gemessen mit Node 25.8 — ohne Flags 4288 MB Grenze, mit `=96` noch **288 MB**,
+  erst mit `--max-semi-space-size=8` die erwarteten 120 MB. Beides steht jetzt
+  in `scripts/agent-wrapped.sh`, je Agent übersteuerbar.
+
+  Das Ergebnis, nachgemessen: `cits-bridge` 177 → **99 MB**, der Director
+  203 → **107 MB**, alle übrigen 33–56 MB. Neun Agents zusammen rund 510 MB.
+
+  Die unbequeme Zahl: **ein frischer Node kostet 49 MB, bevor er etwas tut.**
+  `ecosystem.config.cjs` rechnet beim Start nach und warnt — wobei die Warnung
+  *Obergrenzen* addiert, nicht den Normalbetrieb: gemessen passen alle Agents
+  bequem (625 MB mit PocketBase und Caddy), aber wenn mehrere gleichzeitig
+  ihre Marke erreichen, ist die 2-GB-VM überbucht, und dann greift der
+  OOM-Killer vor pm2. Genau für diesen Fall soll Swap da sein — er tauscht
+  Überbuchung gegen Langsamkeit statt gegen einen Ausfall.
+  `docs/deployment.md` hat die vier Schichten samt `oom_score_adj` und
+  `earlyoom`; der Kernel wählt sein Opfer nach Grösse, und das ist hier die
+  Datenbank.
+
+  Damit das nicht wieder unsichtbar passiert, meldet **jeder** Agent über
+  `agents/lib/memory-report.mjs` seinen Speicher (Vorgabe alle 10 min) mit
+  Zuwachs seit der letzten Meldung und seit dem Start, und warnt **einmal** je
+  Überschreitung der Marke — eine Warnung, die sich alle zehn Minuten
+  wiederholt, wird weggefiltert und warnt dann niemanden. 14 Tests, inklusive
+  Gegenprobe, dass der Takt den Prozess wirklich nicht wach hält.
+
+  Nebenbei aufgefallen, nicht behoben: **der Migrationssatz kann keine leere
+  Datenbank aufbauen** — `1773779228_updated_objects.js` scheitert mit „no rows
+  in result set", weil die anlegende Migration fehlt. Betrifft nur einen
+  Neuaufbau von Null, nicht den Betrieb.
+
 * **Handbuch als Webseite** (29.09.) — `tools/manual.mjs` baut aus `wiki/`
   und `docs/` statische Seiten nach `client/manual/`. Statisch, weil das drei
   Dinge auf einmal löst: kein Markdown-Parser im Browser-Bündel und keiner im

@@ -59,6 +59,7 @@ import { bootAgent, die, envNum, envStr, commandAllowed, mitDelegierten, ladeBes
 import { MODEL_PROFILES, profileFor, modelOf, profileAppearance } from './world-director.profiles.mjs'
 import { AjnaGeo } from '../client/core/AjnaGeo.js'
 import { findLandingSpot } from './lib/landing-spots.mjs'
+import { BoundedCache } from './lib/bounded-cache.mjs'
 import { stepAlongPath, buildWayGraph, nearestNodeKey, randomReachableTarget, shortestPath, haversine, bearingRad } from '../client/core/StreetNav.js'
 import { animalNameFor } from '../client/core/animalNames.js'
 
@@ -80,6 +81,14 @@ import { wetterAnbieter } from './lib/wetter.mjs'
 const { ajna } = await bootAgent('director', {
   tag: 'director',
   setup: simpleSetup('director', { required: ['AJNA_USER', 'AJNA_PASS'], optional: ['AJNA_URL'] }),
+  // Woran der Speicher dieses Agenten haengt: Figuren und Wegegraphen. Ohne
+  // diese Zahlen sagt „RSS 180 MB" nicht, WAS die 180 MB sind.
+  // In `try`, weil die Meldung theoretisch laufen kann, bevor das Modul fertig
+  // ausgewertet ist — dann sind graphCache/managed noch in der Totzone.
+  memoryExtra: () => {
+    try { return `Figuren ${managed.length} · Wegegraphen ${graphCache.stats()}` }
+    catch { return 'noch im Start' }
+  },
 })
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -170,6 +179,14 @@ const PLAN_RETRY_MS = 15000
 // Figuren (statt pro Figur/Replan) — drückt die Overpass-Last drastisch.
 const GRAPH_TTL_MS   = parseFloat(process.env.WD_GRAPH_TTL_S || '3600') * 1000
 let GRAPH_RADIUS_M = Math.min(2000, RADIUS_M + WAY_RADIUS_M)   // folgt RADIUS_M
+// WIE VIELE Wegegraphen gleichzeitig. Die TTL oben sagt, wie LANGE einer gilt —
+// das ist keine Obergrenze: der Director folgt den Interest-Areas, und wandernde
+// Spieler erzeugen neue Zellen schneller als alte verfallen. Gemessen am
+// 19.10.2026: 45 verschiedene Zellen in 20 Minuten, rund 1 MB je Graph
+// (1600–2300 Knoten, ~500 Byte je Knoten) — der Prozess wuchs in acht Minuten
+// von 99 auf 203 MB. 24 Einträge sind also etwa 25 MB und reichen für mehrere
+// Areale gleichzeitig; wer mehr Spieler über mehr Fläche hat, dreht hoch.
+const GRAPH_CACHE_MAX = Math.max(1, parseInt(process.env.WD_GRAPH_CACHE_MAX || '24', 10))
 // Welche Archetypen laufen auf Straßen? (npc/enemy). Fliegende Wesen (dragon +
 // Vogel-Modelle) bekommen stattdessen freien Flug (siehe makeFlyer/advanceFlyer).
 const STREET_ARCHETYPES = new Set(['npc', 'enemy'])
@@ -1010,7 +1027,17 @@ const GRAPH_CELL_M = 300
 // Frist der Wegenetz-Abfrage (ms) und Abstand wiederholter Warnungen.
 const GRAPH_TIMEOUT_MS = parseFloat(process.env.WD_GRAPH_TIMEOUT_S || '10') * 1000
 const GEO_WARN_INTERVALL_MS = 5 * 60_000
-const graphCache = new Map()          // cellKey → { graph, at }
+// BEGRENZT, nicht nur befristet. Vorher war das eine blanke `Map`, in die nur
+// geschrieben wurde: die TTL entschied, ob ein Eintrag BENUTZT wird, entfernt
+// hat sie nie etwas. Jede Zelle, durch die einmal eine Figur gelaufen ist, hielt
+// ihren vollen Wegegraph bis zum Prozessende. Siehe lib/bounded-cache.mjs.
+const graphCache = new BoundedCache({
+  maxEntries: GRAPH_CACHE_MAX,
+  ttlMs: GRAPH_TTL_MS,
+  onEvict: (key, _graph, grund) => {
+    if (grund === 'evicted') console.log(`[director] Wegegraph ${key} verdrängt (Platz für neue Zelle)`)
+  },
+})
 const graphInflight = new Map()       // cellKey → Promise (dedupe parallele Fetches)
 function graphCellKey(lat, lon) {
   const g = GRAPH_CELL_M / 111000
@@ -1018,8 +1045,10 @@ function graphCellKey(lat, lon) {
 }
 async function getGraphNear(lat, lon) {
   const key = graphCellKey(lat, lon)
+  // Verfall und Obergrenze stecken im Cache — hier bleibt nur die Frage, ob
+  // ein brauchbarer Graph da ist.
   const hit = graphCache.get(key)
-  if (hit && (Date.now() - hit.at) < GRAPH_TTL_MS) return hit.graph
+  if (hit) return hit
   if (graphInflight.has(key)) return graphInflight.get(key)
   const p = (async () => {
     try {
@@ -1039,7 +1068,7 @@ async function getGraphNear(lat, lon) {
       }
       const graph = buildWayGraph(res.features || [])
       if (graph.nodes.size >= 2) {
-        graphCache.set(key, { graph, at: Date.now() })
+        graphCache.set(key, graph)
         console.log(`[director] Wegegraph @${lat.toFixed(4)},${lon.toFixed(4)}: ${graph.nodes.size} Knoten`)
         return graph
       }

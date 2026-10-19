@@ -23,6 +23,12 @@ import { spawnSync } from 'node:child_process'
 export function maybeReexecWithSystemCa(ajnaUrl) {
   if (!ajnaUrl || !ajnaUrl.startsWith('https://')) return  // HTTP → kein CA-Thema
   if (process.execArgv.includes('--use-system-ca')) return // schon re-exec't
+  // ÜBER NODE_OPTIONS GESETZT ZÄHLT AUCH. Flags von dort landen NICHT in
+  // `execArgv` (geprüft mit Node 25.8) — ohne diese Zeile startet sich der
+  // Agent ein zweites Mal, obwohl das Flag längst wirkt, und der Elternprozess
+  // bleibt die ganze Laufzeit über in `spawnSync` stehen. Auf einem 2-GB-Server
+  // ist jeder solche Zwilling verschenkter Speicher.
+  if ((process.env.NODE_OPTIONS || '').includes('--use-system-ca')) return
   if (process.env.AJNA_NO_SYSTEM_CA === '1') return        // explizit aus
   if (!process.argv[1]) return                             // node -e/REPL: kein Skript zum Re-Exec
 

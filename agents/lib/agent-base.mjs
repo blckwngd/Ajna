@@ -21,6 +21,7 @@
 
 import { loadAgentEnv, agentEnvPath } from './env.mjs'
 import { maybeReexecWithSystemCa } from './system-ca.mjs'
+import { startMemoryReport, formatMemory, heapLimit } from './memory-report.mjs'
 import { EventSource } from 'eventsource'
 // PB-SDK öffnet bei connect()/refreshObjects() eine Realtime-SSE über
 // globalThis.EventSource — in Node je nach Version nicht verfügbar → Polyfill.
@@ -353,6 +354,25 @@ export async function bootAgent(name, opts = {}) {
         '  Ohne Verbindung kennt dieser Agent seinen Bestand nicht und wuerde ihn neu anlegen.',
       ].join(TRENNER))
     }
+  }
+
+  // SPEICHER SICHTBAR MACHEN. Jeder Agent meldet von selbst, was er kostet —
+  // auf einem 2-GB-Server ist das der Unterschied zwischen „der Director
+  // wächst" und „PocketBase ist wieder weg, warum?". Die Marke kommt aus
+  // AJNA_MEM_WARN_MB; wer eine Heap-Grenze gesetzt hat (--max-old-space-size),
+  // bekommt sie vorgegeben, damit die Warnung VOR dem Abschuss kommt.
+  // Abschaltbar mit AJNA_MEM_REPORT_S=0.
+  const memTaktS = envNum('AJNA_MEM_REPORT_S', 600)
+  if (memTaktS > 0) {
+    const grenze = heapLimit()
+    const marke = envNum('AJNA_MEM_WARN_MB', grenze ? Math.round(grenze * 0.8) : 0)
+    log(`Speicher beim Start: ${formatMemory()}`
+      + (grenze ? ` · Heap-Grenze ${grenze} MB` : ' · keine Heap-Grenze gesetzt')
+      + (marke ? ` · Marke ${marke} MB` : ''))
+    startMemoryReport({
+      log, warn, intervalMs: memTaktS * 1000, warnAtMb: marke,
+      extra: opts.memoryExtra || null,
+    })
   }
 
   if (opts.sigint !== false) {

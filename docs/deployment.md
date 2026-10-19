@@ -151,6 +151,176 @@ halb-hochgefahrenes Backend.
 Prüft der Server unter anderer Adresse/Port: `AJNA_WAIT_HOST` / `AJNA_WAIT_PORT` /
 `AJNA_WAIT_PATH` als Env setzen.
 
+## Speicher auf einer kleinen Maschine
+
+Der Produktionsserver ist eine VM mit 2 GB. Dort ist im Oktober 2026 mehrfach
+PocketBase gestorben und die **ganze Maschine hing**, bis sie neu gestartet
+wurde. Beides zusammen ist eine Handschrift, die man wiedererkennt: der
+Kernel-OOM-Killer sucht sich den grössten Prozess (das war die Datenbank), und
+ohne Swap hat er vorher nichts, womit er Zeit gewinnen könnte — er lässt das
+System erst minutenlang zwischen zu wenig Speicher und zu wenig Cache pendeln.
+
+**Vier Schichten, und jede tut etwas anderes.** Die ersten drei stehen im
+Repository, die vierte muss auf dem Server eingerichtet werden.
+
+### 1. Heap-Budget je Agent (wirkt vorher)
+
+In [`scripts/agent-wrapped.sh`](../scripts/agent-wrapped.sh). Ohne Vorgabe
+richtet V8 seinen Heap nach dem **gesamten** Arbeitsspeicher der Maschine und
+lässt ihn wachsen, statt aufzuräumen — bei zehn Agents gleichzeitig.
+`--max-old-space-size=N` heisst nicht „der Agent darf nur N MB", sondern „ab N
+MB räumt V8 auf, statt zu wachsen". Der Preis ist Rechenzeit fürs Aufräumen,
+also etwas langsamere Antworten. Das ist die gewollte Richtung.
+
+```bash
+AJNA_HEAP_MB=96                    # Vorgabe für alle Agents
+AJNA_HEAP_MB_world_director=160    # einzeln übersteuern (Bindestrich → Unterstrich)
+AJNA_HEAP_MB=0                     # ganz abschalten
+AJNA_SEMI_MB=8                     # junge Fläche je Halbraum
+```
+
+**`--max-old-space-size` allein genügt nicht.** Es begrenzt nur den *alten*
+Bereich; die junge Fläche legt V8 nach eigenem Ermessen dazu. Gemessen am
+19.10.2026 mit Node 25.8:
+
+| Flags | Heap-Grenze |
+|---|---|
+| keine | 4288 MB |
+| `--max-old-space-size=96` | **288 MB** |
+| dazu `--max-semi-space-size=8` | 120 MB |
+
+Ohne den Halbraum-Wert ist das Budget also dreifach überschritten, obwohl eine
+Zahl dasteht. Der Wert gilt **je Halbraum**, und es gibt drei davon.
+
+### 2. Auffangnetz in PM2
+
+`max_memory_restart` je Dienst in [`ecosystem.config.cjs`](../ecosystem.config.cjs).
+Wächst ein Agent trotz Heap-Budget, holt PM2 ihn geordnet zurück, bevor der
+Kernel jemanden aussucht. **Greift das regelmässig, ist es ein Befund und kein
+Fall für eine grössere Zahl.**
+
+PocketBase bekommt bewusst **kein** `max_memory_restart`: es ist der Prozess,
+den alle anderen brauchen, ein Neustart hält die Welt für eine halbe Minute an,
+und ein abgebrochener WAL-Checkpoint kostet beim nächsten Start weit mehr.
+
+### 3. Die Rechnung geht auf — oder PM2 sagt es
+
+Beim Start rechnet `ecosystem.config.cjs` nach, ob die Marken zusammen in die
+Maschine passen, und warnt sonst. **Mit allen zehn Agents passen sie nicht:**
+
+```
+⚠ SPEICHER ÜBERBUCHT: die Neustart-Marken ergeben zusammen 2288 MB,
+  verfügbar sind etwa 1703 MB …
+  In dieser Reihenfolge passen 7 der 10 Agents.
+```
+
+**Diese Warnung addiert Obergrenzen, nicht den Normalbetrieb.** Der Unterschied
+ist gross und sollte nicht verwechselt werden:
+
+| | neun Agents, gemessen | alle Marken gleichzeitig |
+|---|---|---|
+| Agents | ~510 MB | 1846 MB |
+| + PocketBase, Caddy | ~115 MB | ~115 MB |
+| **zusammen** | **~625 MB** | **~1961 MB** |
+
+Die Marken selbst sind nicht frei gewählt, sondern eine Rechnung — in
+`ecosystem.config.cjs` steht sie als Funktion, damit Budget und Marke nicht
+auseinanderlaufen können:
+
+```
+Marke = Heap + 3 × Halbraum + 49 MB Node-Grundlast + 25 MB Luft
+```
+
+Eine Marke **unter** der Heap-Obergrenze wäre eine Falle: pm2 holt den Agenten
+dann zurück, bevor V8 je aufräumen muss, und das Budget wird wirkungslos.
+
+Im Betrieb passen also alle Agents bequem — gemessen mit Heap-Budget:
+`world-director` 107 MB, `cits-bridge` 99 MB (ohne Budget waren es 203 bzw.
+177), alle übrigen 33–56 MB. Die Marken sind der *schlechteste denkbare* Fall,
+und in dem ist die Maschine überbucht.
+
+Was heisst das praktisch? **Die Marken sind richtig gesetzt und die Summe
+trotzdem ein Problem** — denn genau dann, wenn mehrere Agents gleichzeitig
+einen schlechten Tag haben, soll das Netz halten, und das tut es nicht. Zwei
+Wege:
+
+* **Swap einrichten** (unten). Das ist der empfohlene: er tauscht Überbuchung
+  gegen Langsamkeit, statt gegen einen Ausfall.
+* **Agents auskommentieren**, wenn die Maschine ohne Swap bleiben soll. Die
+  Warnung sagt, wie viele in der aufgeführten Reihenfolge passen.
+
+Nicht verhandelbar ist die Grundlast: **ein frischer Node-Prozess kostet 49 MB,
+bevor er irgendetwas getan hat** (gemessen, Node 25.8). Zehn davon sind ein
+halbes Gigabyte, egal wie klein man die Budgets wählt. Wer dauerhaft mehr
+Quellen will, legt sie in einem Agenten zusammen statt in zehn Prozesse.
+`AJNA_HOST_MB=4096` setzen, wenn die VM grösser ist als angenommen.
+
+> Die Zahlen oben sind auf dem Entwicklungsrechner (Windows) gemessen. Die
+> Heap-Grenzen gelten plattformunabhängig, die RSS-Grundlast kann unter Linux
+> abweichen. Deshalb melden die Agents ihren Speicher jetzt selbst (unten) —
+> der erste Lauf auf dem Server sagt, ob die Marken passen.
+
+### 4. Swap und OOM-Gewichtung (auf dem Server einzurichten)
+
+Diese Schicht ist die, die aus „die VM hängt" ein „es ist gerade langsam"
+macht — genau der Tausch, der hier gewollt ist.
+
+```bash
+# Swap anlegen (einmalig). 2 GB Datei auf einer 2-GB-VM ist die übliche Wahl.
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+
+# Erst spät auslagern: Swap ist das Sicherheitsnetz, nicht der Normalbetrieb.
+echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-ajna.conf
+sudo sysctl --system
+```
+
+**PocketBase vor dem OOM-Killer schützen.** Der Kernel wählt nach Grösse, und
+das ist hier die falsche Reihenfolge: ein Agent darf sterben, die Datenbank
+nicht. `oom_score_adj` verschiebt die Wahl (−1000 = nie, +1000 = zuerst):
+
+```bash
+# PocketBase zum schlechtesten Opfer machen …
+sudo bash -c 'echo -800 > /proc/$(pgrep -f "pocketbase serve")/oom_score_adj'
+# … und die Agents zum bevorzugten.
+for p in $(pgrep -f "agents/.*\.mjs"); do
+  sudo bash -c "echo 400 > /proc/$p/oom_score_adj"
+done
+```
+
+Das überlebt keinen Neustart. Dauerhaft wird es über eine systemd-Unit für PM2
+(`OOMScoreAdjust=-800`) oder einen Eintrag in `scripts/deploy.sh` gesetzt.
+
+**`earlyoom`** greift, *bevor* das System ins Thrashing läuft, und tötet
+gezielt statt nach Grösse — der eigentliche Grund, warum eine VM hängt statt
+einfach einen Prozess zu verlieren:
+
+```bash
+sudo apt install earlyoom
+sudo systemctl enable --now earlyoom
+# /etc/default/earlyoom: EARLYOOM_ARGS="-m 8 -M 100000 --avoid '(^|/)(pocketbase|caddy)$'"
+```
+
+### Was im Log steht
+
+Jeder Agent meldet seinen Speicher von selbst
+([`agents/lib/memory-report.mjs`](../agents/lib/memory-report.mjs)), standardmässig
+alle zehn Minuten:
+
+```
+[director] [speicher] RSS 118.4 MB · Heap 74.2/96 MB · +6.1 MB seit der letzten Meldung
+           · Figuren 42 · Wegegraphen 24/24 Einträge · 88 % Treffer (712/809) · 31 verdrängt
+```
+
+Stellschrauben: `AJNA_MEM_REPORT_S` (Takt, `0` schaltet ab) und
+`AJNA_MEM_WARN_MB` (Marke; ohne Angabe 80 % der Heap-Grenze). Die Warnung beim
+Überschreiten kommt **einmal** je Überschreitung, nicht bei jeder Meldung —
+eine Zeile, die sich alle zehn Minuten wiederholt, wird weggefiltert und warnt
+dann niemanden mehr.
+
 ## Optional: automatisches Deployment
 
 - **Cronjob** (z. B. stündlich):

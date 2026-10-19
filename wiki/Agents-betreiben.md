@@ -120,6 +120,31 @@ pm2 logs ajna-director                     # was macht der Agent?
 
 Jeder Agent protokolliert mit seinem Namen als Präfix, etwa `[director] …`. Bridges melden beim Start ihre Konfiguration — Radius, Taktrate, Grenzen —, sodass Fehlkonfigurationen in der ersten Zeile auffallen.
 
+### Wie viel Speicher braucht er?
+
+Jeder Agent sagt das von selbst, beim Start und dann alle zehn Minuten:
+
+```
+[director] Speicher beim Start: RSS 63 MB · Heap 10.2/14 MB · Heap-Grenze 208 MB · Marke 166 MB
+[director] [speicher] RSS 118.4 MB · Heap 74.2/96 MB · +6.1 MB seit der letzten Meldung
+           · Figuren 42 · Wegegraphen 24/24 Einträge · 88 % Treffer · 31 verdrängt
+```
+
+Der **Zuwachs** ist die eigentliche Auskunft: „118 MB" sagt nichts, „118 MB,
+vor zehn Minuten 112" sagt alles. Wird die Marke überschritten, kommt **eine**
+Warnung — nicht bei jeder Meldung, denn eine Zeile, die sich alle zehn Minuten
+wiederholt, liest am Ende niemand mehr.
+
+| Env | wofür |
+|---|---|
+| `AJNA_MEM_REPORT_S` | Takt in Sekunden (Vorgabe 600, `0` schaltet ab) |
+| `AJNA_MEM_WARN_MB` | Marke; ohne Angabe 80 % der Heap-Grenze |
+| `AJNA_HEAP_MB` | Heap-Budget je Agent (Vorgabe 96, `0` = keins) |
+| `AJNA_HEAP_MB_<agent>` | einzeln übersteuern, Bindestrich → Unterstrich |
+
+Auf einem kleinen Server ist das keine Kosmetik: `docs/deployment.md` rechnet
+vor, warum auf 2 GB sechs Agents passen und nicht zehn.
+
 <!-- navfuss -->
 ---
 
