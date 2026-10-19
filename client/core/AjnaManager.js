@@ -454,6 +454,16 @@ export class AjnaManager {
     return this._clientFor(rec?.id || '').nachweisBildUrl(rec, dateiname, opts)
   }
 
+  /**
+   * Datei-Token des Servers, zu dem dieser Datensatz gehört.
+   *
+   * PRO SERVER, nicht global: jeder Server hat seine eigene Anmeldung, und ein
+   * Token des einen weist beim anderen niemanden aus.
+   */
+  fileToken(rec) {
+    return this._clientFor(rec?.id || '')?.fileToken?.() ?? Promise.resolve('')
+  }
+
   async interact(compositeId, action, payload) {
     return this._clientFor(compositeId).interact(compositeId, action, payload)
   }

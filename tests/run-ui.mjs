@@ -4379,6 +4379,37 @@ console.log('\n── Erweiterte Funktionen')
     (mainSrc.match(/id: 'filter'/g) || []).length === 1)
 }
 
+// ─── Geschützte Beweisbilder ─────────────────────────────────────────────
+// `quest_proofs.images` ist `protected` (Migration 1789100000). Ohne Token
+// liefert PocketBase 403. Kein Test holt ein echtes Bild, also wird hier am
+// Quelltext festgehalten, dass der Token mitgeht — sonst fiele ein Rückfall
+// erst jemandem auf, der eine Abnahme ansieht.
+{
+  const cl = readFileSync(new URL('../client/core/AjnaClient.js', import.meta.url), 'utf8')
+  const qs = readFileSync(new URL('../client/core/QuestService.js', import.meta.url), 'utf8')
+  const mg = readFileSync(new URL('../client/core/AjnaManager.js', import.meta.url), 'utf8')
+
+  check('die Bildadresse nimmt einen Token an und hängt ihn an',
+    /nachweisBildUrl\(rec, dateiname, \{ thumb = '', token = '' \} = \{\}\)/.test(cl)
+    && /if \(token\) opt\.token = token/.test(cl))
+  check('es gibt einen zwischengespeicherten Datei-Token',
+    /async fileToken\(\)/.test(cl) && /this\.pb\.files\.getToken\(\)/.test(cl))
+  // Sechs Bilder in einer Abnahme sollen nicht sechs Token ziehen.
+  check('nebenläufige Aufrufe teilen einen Token-Request',
+    /_fileTokenInflight/.test(cl))
+  check('der Token wird kurz gehalten, nicht dauerhaft',
+    /_fileTokenBis = Date\.now\(\) \+ 60_000/.test(cl))
+  check('der Manager holt den Token beim RICHTIGEN Server',
+    /fileToken\(rec\) \{[\s\S]{0,160}_clientFor\(rec\?\.id/.test(mg))
+  check('die Abnahme-Ansicht gibt den Token an beide Größen weiter',
+    /\{ token \}/.test(qs) && /\{ thumb: '320x240', token \}/.test(qs))
+
+  const mig = readFileSync(
+    new URL('../pocketbase/pb_migrations/1789100000_quest_proofs_geschuetzt.js', import.meta.url), 'utf8')
+  check('die Migration setzt protected auf dem Dateifeld',
+    /getByName\('images'\)/.test(mig) && /feld\.protected = true/.test(mig))
+}
+
 
 // ERST HIER AUSZÄHLEN. Diese Zeile stand rund hundert Zeilen weiter oben, also
 // VOR den letzten Prüfblöcken — wer unten etwas anhängte, sah sein ❌ in der

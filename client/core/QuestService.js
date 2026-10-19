@@ -276,13 +276,18 @@ export class QuestService {
   /** Beweisbilder eines Auftrags — für die Abnahme-Ansicht. */
   async nachweiseAnsehen(q) {
     const liste = await this.ajna.nachweiseZu(q.id).catch(() => [])
+    // EIN Token für die ganze Liste. Die Bilder sind `protected` (Migration
+    // 1789100000) und brauchen ihn an der Adresse; er läuft nach rund einer
+    // Minute ab, was für das Ansehen reicht. Bleibt die Ansicht lange offen,
+    // ist ein erneuter Aufruf die Auffrischung.
+    const token = await this.ajna.fileToken?.(liste[0]) ?? ''
     return liste.map(r => ({
       id: r.id,
       notiz: r.note || '',
       wann: r.created,
       bilder: (r.images || []).map(name => ({
-        gross: this.ajna.nachweisBildUrl(r, name),
-        klein: this.ajna.nachweisBildUrl(r, name, { thumb: '320x240' }),
+        gross: this.ajna.nachweisBildUrl(r, name, { token }),
+        klein: this.ajna.nachweisBildUrl(r, name, { thumb: '320x240', token }),
       })),
     }))
   }

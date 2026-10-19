@@ -543,12 +543,53 @@ export class AjnaClient {
    * abfragen, statt sich auf eine Fassung festzulegen — ein kaputter Bildlink
    * wäre ein stiller Fehler, den niemand im Log sieht.
    */
-  nachweisBildUrl(rec, dateiname, { thumb = '' } = {}) {
-    const opt = thumb ? { thumb } : {}
+  nachweisBildUrl(rec, dateiname, { thumb = '', token = '' } = {}) {
+    const opt = {}
+    if (thumb) opt.thumb = thumb
+    // OHNE TOKEN GIBT ES KEIN BILD. `quest_proofs.images` ist `protected`
+    // (Migration 1789100000): PocketBase prüft den Abruf gegen die `viewRule`
+    // des Datensatzes, braucht dafür aber einen Datei-Token. Fehlt er, kommt
+    // 403 — ein kaputtes Bild, nicht ein fremdes.
+    if (token) opt.token = token
     const f = this.pb.files
     if (typeof f?.getURL === 'function') return f.getURL(rec, dateiname, opt)
     if (typeof f?.getUrl === 'function') return f.getUrl(rec, dateiname, opt)
     return this.pb.getFileUrl(rec, dateiname, opt)
+  }
+
+  /**
+   * Kurzlebiger Datei-Token für geschützte Dateien.
+   *
+   * ER IST KEIN RECHT, SONDERN EIN AUSWEIS. PocketBase prüft den Abruf
+   * zusätzlich gegen die `viewRule` des Datensatzes — der Token sagt nur, WER
+   * fragt. Deshalb ist es unbedenklich, ihn an eine Bildadresse zu hängen.
+   *
+   * ZWISCHENGESPEICHERT, ABER KURZ. Die Vorgabe der Instanz liegt bei etwa
+   * zwei Minuten; wir behalten ihn 60 Sekunden und holen dann neu. Längeres
+   * Festhalten hiesse, dass eine offen stehende Ansicht irgendwann lauter
+   * abgelaufene Adressen zeigt — und ein abgelaufener Token ist von einem
+   * fehlenden Recht nicht zu unterscheiden, also eine schlechte Fehlermeldung.
+   */
+  async fileToken() {
+    const jetzt = Date.now()
+    if (this._fileToken && jetzt < (this._fileTokenBis || 0)) return this._fileToken
+    // Nebenläufige Aufrufe teilen EINEN Request — eine Abnahme-Ansicht mit
+    // sechs Bildern soll nicht sechs Token ziehen.
+    if (this._fileTokenInflight) return this._fileTokenInflight
+    this._fileTokenInflight = (async () => {
+      try {
+        const t = await this.pb.files.getToken()
+        this._fileToken = t
+        this._fileTokenBis = Date.now() + 60_000
+        return t
+      } catch (err) {
+        console.warn('[ajna] Datei-Token:', err?.message || err)
+        return ''
+      } finally {
+        this._fileTokenInflight = null
+      }
+    })()
+    return this._fileTokenInflight
   }
 
   /**
