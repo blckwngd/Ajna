@@ -570,16 +570,56 @@ ausdrücklich als in Leaflet 1.x unmöglich notiert.
 **Recherchiert am 19.10.2026, Entscheidung offen.** Vier Bausteine, drei
 verschiedene Antworten:
 
-**GeoPose 1.0 — dafür, und billig.** Verabschiedete OGC-Norm (21-056r11) für
-den Austausch georeferenzierter Lagen, drei Zielformen (Basic-YPR,
-Basic-Quaternion, Advanced), mit Konformitäts-Testsuite bei der OGC. Ajna
-speichert lat/lon/altitude plus `rotation` als Euler — Basic-YPR ist nahezu
-1:1. **Die Falle ist die Achsenlage:** GeoPose ist ENU mit Ost→X, **Nord→Y,
-Hoch→Z**; Ajna fährt X=Ost, **Y=Höhe, Z=Nord**, dazu `invertNorthSouth`. Genau
-diese Klasse Fehler hat schon einmal zugeschlagen (Figuren drehten in Kurven
-falsch herum, yaw = π − heading). Ein `lib/geopose.mjs` wäre die EINE Stelle,
-an der die Umrechnung festgenagelt und getestet ist — Aufwand rund ein Tag,
-und es macht das Szenario „fremdes AR-Spiel liest unsere Orte" erst sauber.
+**GeoPose 1.0 — ERLEDIGT am 19.10.2026**, `client/core/geopose.js` (39 Tests).
+Verabschiedete OGC-Norm (21-056r11), gebaut gegen die veröffentlichten
+JSON-Schemata: Basic-YPR und Basic-Quaternion, Winkel in Grad, Drehungen um
+z, y, x. Liegt in `client/core/`, weil Agents von dort schon neun Module
+beziehen und der Server keines.
+
+Zwei Fallen waren echt, und beide sind jetzt an einer Stelle festgenagelt:
+
+* **Die Achsen.** GeoPose ist ENU mit Ost→X, **Nord→Y, Hoch→Z**; die Szene ist
+  Ost→X, **Hoch→Y, Nord→−Z**. Die Abbildung ist eine Drehung um +90° um X,
+  Determinante +1 — eine Spiegelung hätte jede Drehung verkehrt herausgegeben,
+  und das fällt erst auf, wenn ein Modell eine Vorderseite hat. Ein Test rechnet
+  die Determinante nach.
+* **GeoPose-Yaw ist kein Kompasskurs.** Die Vorwärtsachse des inneren Rahmens
+  ist +X, Yaw läuft gegen den Uhrzeigersinn: `yaw = 90° − kurs`, selbstinvers.
+  Dieselbe Verwechslung, die `yaw.js` schon als `h − π/2` gegen `π − h` kennt.
+
+Geprüft wird nicht gegen die eigene Rechnung, sondern gegen die geometrischen
+Zusicherungen aus `yaw.js` (`richtungFuerKurs`, `blickFuerYaw`) — gegen sich
+selbst wäre es rund und falsch.
+
+**Zwei Dinge rät das Modul bewusst NICHT.** Es übernimmt `rotation.x`/`.z`
+nicht (was sie in GeoPose-Begriffen heissen, hängt vom Modell ab — dieselbe
+Trennlinie wie in `yaw.js`), und es erfindet keine Höhe: Ajnas `altitude` ist
+Meter über Grund, GeoPose `h` ist ellipsoidisch. Ohne Geländehöhe bleibt `h`
+auf 0 und `heightKnown` false. Dabei hat ein Test den Fehler gefangen, der in
+`kvm.mjs` schon einmal zugeschlagen hat: **`Number(null)` ist 0**, also war
+`Number.isFinite(Number(null))` wahr und eine fehlende Geländehöhe galt als
+Meereshöhe 0.
+
+**Offen geblieben:** dass die Vorwärtsachse +X ist, ist eine FOLGERUNG aus
+„Pitch um y, Roll um x" — der Normtext war nicht am Stück lesbar (eingebettete
+Bilder in der HTML-Fassung, PDF braucht poppler). Ergibt die
+[OGC-Konformitätssuite](https://cite.opengeospatial.org/te2/about/geopose10/1.0/site/)
+etwas anderes, ändert sich genau eine Funktion: `headingToYaw()`.
+
+**OpenXR — nichts zu tun, und das ist die gute Nachricht.** Ajna ist ein
+Browser-Client und spricht **WebXR** (W3C); OpenXR ist die native Schnittstelle,
+die eine Browser-WebXR-Umsetzung darunter benutzt. Aus einer Seite ist OpenXR
+nicht aufrufbar, und das ist richtig so — die Trennung ist gewollt. Relevant
+würde es erst bei einem NATIVEN Client: Babylon Native hat eine
+OpenXR-gestützte WebXR-Umsetzung (bisher für HoloLens), die Tür steht also
+offen, ist aber ein eigenes Projekt.
+
+Und das, was man sich von OpenXR erhoffen würde, liefert es gerade nicht:
+`XR_EXT_spatial_entity`, `XR_EXT_spatial_anchor` und `XR_EXT_spatial_persistence`
+gibt es, aber **nichts Geospatiales** — Anker sind gerätelokal, Persistenz ist
+auf „gleiches Gerät, gleicher Nutzer, gleiche App" begrenzt. Genau diese Lücke
+füllen GeoPose und OpenARCloud. Ajna nutzt mit `immersive-ar` und dem
+`unbounded`-Bezugsraum schon die richtige Wahl für eine weltweite Anwendung.
 
 **OpenVPS — Protokoll unterstützen, Dienst aufschieben.** Selbst hostbarer
 visueller Positionierungsdienst (MapBuilder, MapAligner, MapLocalizer, HLOC),
