@@ -141,6 +141,10 @@ export class AjnaManager {
   logout()                       { return this.defaultClient.logout() }
   isLoggedIn()                   { return this.defaultClient.isLoggedIn() }
   currentUser()                  { return this.defaultClient.currentUser() }
+  /** 'none' | 'valid' | 'expired' — siehe AjnaClient.sessionState(). */
+  sessionState()                 { return this.defaultClient?.sessionState() ?? 'none' }
+  /** Der Datensatz auch nach Ablauf — nur um zu sagen, WER abgemeldet wurde. */
+  lastUserRaw()                  { return this.defaultClient?.currentUserRaw() ?? null }
   updateCurrentUser(fields)      { return this.defaultClient.updateCurrentUser(fields) }
   onAuthChanged(callback)        { return this.defaultClient.onAuthChanged(callback) }
 
@@ -223,6 +227,9 @@ export class AjnaManager {
         isDefault: e.id === this._defaultId,
         isLoggedIn: c?.isLoggedIn() ?? false,
         currentUser: c?.currentUser() ?? null,
+        // Damit die Serverliste „abgelaufen" von „nie angemeldet" unterscheiden
+        // kann — beides ist nicht eingeloggt, aber nur eines ist eine Auskunft.
+        sessionState: c?.sessionState() ?? 'none',
         isConnected: c?._realtimeReady ?? false,
         // Bewusst getrennt (überdauert den Reload) — unterscheidet „aus“ von
         // „noch nicht verbunden“, was in der Server-Liste sonst gleich aussieht.

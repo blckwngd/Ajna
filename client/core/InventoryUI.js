@@ -16,6 +16,7 @@
 
 import { iconOf } from './Appearance.js'
 import { makeDraggable } from './draggable.js'
+import { getFabBar } from './FabBar.js'
 import { t } from './i18n.js'
 import { klickDaneben } from './klickDaneben.js'
 
@@ -109,6 +110,11 @@ export class InventoryUI {
     this.container.appendChild(this.fab)
     // Verschiebbar (Position gemerkt); Tap ohne Bewegung öffnet/schließt.
     this._dragCleanup = makeDraggable(this.fab, { key: 'ajna.inv.pos', onClick: () => this.toggle() })
+    // Gemeinsam mit den übrigen schwebenden Knöpfen ein- und ausblendbar.
+    this._fabUnreg = getFabBar().register({
+      id: 'inventory', el: this.fab, label: 'Inventar', hotkey: 'i',
+      toggle: () => this.toggle(), close: () => this.close(),
+    })
 
     // Overlay-Fenster
     this.root = document.createElement('div')
@@ -333,7 +339,7 @@ export class InventoryUI {
     catch (err) { alert(t('Löschen fehlgeschlagen: {grund}', { grund: err?.message || err })) }
   }
 
-  dispose() { try { this._unsub?.() } catch {} ; try { this._dragCleanup?.() } catch {} ; this.root?.remove(); this.fab?.remove() }
+  dispose() { try { this._unsub?.() } catch {} ; try { this._dragCleanup?.() } catch {} ; try { this._fabUnreg?.() } catch {} ; this.root?.remove(); this.fab?.remove() }
 
   // ── CSS ──────────────────────────────────────────────────────────────
   _injectStyles() {

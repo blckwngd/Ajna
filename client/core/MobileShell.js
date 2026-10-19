@@ -39,6 +39,7 @@ import { isMultiServer, serverLabelFor } from './ServerBadge.js'
 import { RANGE_DEFS, RANGE_EVENT, readRange, writeRange, valueFromSlider, sliderFromValue, formatRange }
   from './renderRange.js'
 import { isAdvanced, setAdvanced } from './advancedMode.js'
+import { getFabBar } from './FabBar.js'
 
 // Wie lange auf eine Antwort gewartet wird, bevor der Hinweis doch erscheint.
 // Vier Sekunden: lang genug, dass ein laufender Agent zuerst da ist (gemessen
@@ -104,6 +105,20 @@ export class MobileShell {
     // Ohne diesen Haken könnte ein Toast aus der Karten- oder AR-Ansicht das
     // Gespräch nicht öffnen (siehe Bündel-Falle bei window.ajnaLog).
     window.ajnaLogPanel = this._logPanel
+    // Inhaltsfilter als schwebender Knopf. Er wird oft gebraucht; über
+    // Einstellungen → Verwaltung sind es drei Antipper.
+    //
+    // Die Shell meldet ihn an, nicht die Ansichten: `getUI()` zeigt auf die
+    // AKTIVE Ansicht, der Knopf wirkt also in Karte UND AR, und keine der
+    // beiden streitet mit der anderen um dieselbe Kennung.
+    this._filterFab = getFabBar().createLauncher({
+      id: 'filter', label: 'Inhaltsfilter', emoji: '🗂', hotkey: 'f',
+      onClick: () => {
+        const dlg = this.getUI?.()?.filterDialog
+        if (!dlg?.open) { console.warn('[mobile] filterDialog nicht verfuegbar'); return }
+        dlg.open()
+      },
+    })
     // Aufträge: eigener Bereich mit drei Reitern (verfügbar / aktiv / prüfen).
     // Bewusst in JEDER Ansicht erreichbar — anders als die Minimap, die über
     // der großen Karte sinnlos wäre. Ein Auftrag interessiert unabhängig davon,
@@ -1122,8 +1137,19 @@ export class MobileShell {
     const erweitert = isAdvanced()
     const root = document.getElementById('mobileSettings')
     if (!root) return
-    const user = this.ajna.currentUser()
-    const loggedIn = !!user
+    // EINE QUELLE. Vorher stand hier `!!this.ajna.currentUser()` — der
+    // Datensatz überlebt den Ablauf des Tokens, also zeigte dieser Abschnitt
+    // „eingeloggt", während die Serverliste nichts zeigte und die Anfragen in
+    // 401 liefen. Jetzt entscheidet derselbe Zustand wie dort.
+    const sitzung = this.ajna.sessionState?.() ?? (this.ajna.isLoggedIn() ? 'valid' : 'none')
+    const loggedIn = sitzung === 'valid'
+    const user = loggedIn ? this.ajna.currentUser() : null
+    // Beim Ablauf noch den Namen nennen können — wer eben angemeldet war, soll
+    // lesen, WESSEN Sitzung abgelaufen ist, statt vor einem unerklärten
+    // Formular zu sitzen.
+    const abgelaufenerName = sitzung === 'expired'
+      ? (this.ajna.lastUserRaw?.()?.username || this.ajna.lastUserRaw?.()?.email || '')
+      : ''
     const displayName = user?.username || user?.email || user?.id || ''
     // AR-FOV-Kalibrierfaktor (per Gerät): vom AR-Client, sonst aus localStorage.
     const arFovFactor = window.arFovCalibration?.factor
@@ -1159,9 +1185,20 @@ export class MobileShell {
             <button class="settings-btn-inline" data-action="logout">Logout</button>
           </div>
         ` : `
+          ${sitzung === 'expired' ? `
+            <div class="settings-row" data-role="session-expired">
+              <div class="label">
+                <div>${t('Sitzung abgelaufen')}</div>
+                <div class="meta">${abgelaufenerName
+                  ? `${escapeHtml(abgelaufenerName)} — ${t('bitte neu anmelden')}`
+                  : t('bitte neu anmelden')}</div>
+              </div>
+            </div>
+          ` : ''}
           <input class="settings-input" data-field="email"
                  type="email" inputmode="email" autocapitalize="off"
-                 autocomplete="email" placeholder="E-Mail">
+                 autocomplete="email" placeholder="E-Mail"
+                 ${abgelaufenerName.includes('@') ? `value="${escapeHtml(abgelaufenerName)}"` : ''}>
           <input class="settings-input" data-field="password"
                  type="password" autocomplete="current-password" placeholder="Passwort">
           <button class="settings-btn" data-action="login">Login</button>

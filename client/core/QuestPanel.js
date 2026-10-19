@@ -22,6 +22,7 @@
 // Übersetzt wird in core/questMapping.js, nicht hier.
 
 import { makeDraggable } from './draggable.js'
+import { getFabBar } from './FabBar.js'
 import { t } from './i18n.js'
 import { klickDaneben } from './klickDaneben.js'
 import { karmaLabel } from './karma.js'
@@ -294,6 +295,10 @@ export class QuestPanel {
     this.fab = b
     this._badgeEl = b.querySelector('.qp-badge')
     this._fabDrag = makeDraggable(b, { key: 'ajna.quests.fab', onClick: () => this.toggle() })
+    this._fabUnreg = getFabBar().register({
+      id: 'quests', el: b, label: 'Aufträge', hotkey: 'a',
+      toggle: () => this.toggle(), close: () => this.close(),
+    })
     this._updateBadge()
   }
 
@@ -379,6 +384,7 @@ export class QuestPanel {
 
   destroy() {
     try { this._fabDrag?.() } catch {}
+    try { this._fabUnreg?.() } catch {}
     this.fab?.remove()
     this._overlay?.remove()
     this.fab = this._overlay = null

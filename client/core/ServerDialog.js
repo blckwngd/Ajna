@@ -153,6 +153,13 @@ export class ServerDialog {
     }
     if (s.isDefault) add('default', 'Standard', t('Standard-Server — neue Objekte landen hier.'))
     if (s.isConnected) add('online', 'verbunden', t('Angemeldet, Live-Verbindung steht.'))
+    // ABGELAUFEN IST NICHT „NIE ANGEMELDET". Beides ist nicht eingeloggt, aber
+    // nur eines ist eine Auskunft — eine leere Zeile liess den Nutzer rätseln,
+    // warum nichts zu sehen ist, obwohl er sich angemeldet hatte.
+    if (!s.isLoggedIn && s.sessionState === 'expired') {
+      add('warn', t('abgelaufen'), t('Die Anmeldung ist abgelaufen.') + ' '
+        + t('Über „Einstellungen → Zugang" neu anmelden.'))
+    }
     if (s.isLoggedIn && !s.isConnected) {
       const v = this._verify.get(s.id)
       if (v === 'unreachable') {

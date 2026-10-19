@@ -9,6 +9,7 @@
 
 import { messageLog, CATS } from './MessageLog.js'
 import { makeDraggable } from './draggable.js'
+import { getFabBar } from './FabBar.js'
 import { Toast } from './Toast.js'
 import { t } from './i18n.js'
 import { klickDaneben } from './klickDaneben.js'
@@ -198,6 +199,7 @@ export class MessageLogPanel {
     try { this._unsub?.() } catch {}
     try { this._chatOff?.() } catch {}
     try { this._dragCleanup?.() } catch {}
+    try { this._fabUnreg?.() } catch {}
     this._launcher?.remove()
     this._overlay?.remove()
     this._launcher = this._overlay = null
@@ -250,6 +252,10 @@ export class MessageLogPanel {
     this._badge = btn.querySelector('.mlg-badge')
     // Verschiebbar (Position gemerkt); Tap ohne Bewegung öffnet/schließt.
     this._dragCleanup = makeDraggable(btn, { key: 'ajna.msglog.pos', onClick: () => this.toggle() })
+    this._fabUnreg = getFabBar().register({
+      id: 'log', el: btn, label: 'Verlauf', hotkey: 'v',
+      toggle: () => this.toggle(), close: () => this.close(),
+    })
   }
 
   _updateBadge() {

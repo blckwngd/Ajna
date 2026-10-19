@@ -35,6 +35,7 @@ import { ServerDialog } from "./core/ServerDialog.js"
 import { ServerProfile } from './core/ServerProfile.js'
 import { ProfileDialog } from "./core/ProfileDialog.js"
 import { FilterDialog } from "./core/FilterDialog.js"
+import { getFabBar } from "./core/FabBar.js"
 import { AgentFilters } from "./core/AgentFilters.js"
 import { InterestArea } from "./core/InterestArea.js"
 import { ProximityReporter } from "./core/ProximityReporter.js"
@@ -1406,6 +1407,23 @@ async function init() {
   // in allen Tabs sichtbar) — dort kein zweites erzeugen, sonst überlappen zwei
   // identische Buttons. Nur die Standalone-AR-Seite braucht ein eigenes.
   const _inShell = !!document.querySelector('.shell-tabbar')
+
+  // Schwebender Knopf für den Inhaltsfilter — er wird oft gebraucht, und der
+  // Weg über Einstellungen → Verwaltung sind drei Antipper. Der Dialog hat
+  // keine eigene Panel-Klasse, deshalb baut die Leiste den Knopf selbst.
+  // 🗂 statt einer Lupe: die Lupe ist in Ajna die Adress-Lupe, und der Filter
+  // wählt Abschnitte, er sucht nicht.
+  //
+  // Nur im Alleinbetrieb, dieselbe Regel wie beim Inventar: in der Shell meldet
+  // die Shell den Knopf an und leitet an die AKTIVE Ansicht weiter — täte es
+  // jede Ansicht selbst, stritten Karte und AR um dieselbe Kennung.
+  if (!_inShell) {
+    getFabBar().createLauncher({
+      id: 'filter', label: 'Inhaltsfilter', emoji: '🗂', hotkey: 'f',
+      onClick: () => filterDialog.open(),
+    })
+  }
+
   const inventory = _inShell ? null : new InventoryUI({
     ajna: ajnaManager,
     editorUI,

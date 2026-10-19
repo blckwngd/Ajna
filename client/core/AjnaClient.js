@@ -172,6 +172,28 @@ export class AjnaClient {
   }
 
   /**
+   * Der Anmeldezustand in drei Worten — die EINE Quelle für alles, was ihn
+   * anzeigt.
+   *
+   * WARUM DAS NÖTIG IST. `authStore.isValid` prüft die Ablaufzeit des Tokens,
+   * `authStore.record` nur, ob überhaupt ein Datensatz liegt. Bei einem
+   * ABGELAUFENEN Token sagen beide etwas anderes, und genau das war in der
+   * Oberfläche zu sehen: „Einstellungen → Zugang" las den Datensatz und zeigte
+   * „eingeloggt", die Serverliste las die Gültigkeit und zeigte nichts, und die
+   * Anfragen liefen in 401 — also keine Inhalte. Drei Symptome, eine Ursache.
+   *
+   * `expired` ist deshalb ein eigener Zustand und nicht einfach `none`: wer
+   * eben noch angemeldet war, soll das lesen können, statt vor einem
+   * unerklärten Login-Formular zu sitzen.
+   *
+   * @returns {'none'|'valid'|'expired'}
+   */
+  sessionState() {
+    if (this.pb.authStore.isValid) return 'valid'
+    return (this.pb.authStore.record || this.pb.authStore.model) ? 'expired' : 'none'
+  }
+
+  /**
    * Prüft das gespeicherte Token GEGEN den Server (authRefresh) — anders als
    * isLoggedIn(), das nur lokal (authStore.isValid) prüft. Für die Server-UI,
    * damit „eingeloggt" echte Erreichbarkeit widerspiegelt.
@@ -222,6 +244,13 @@ export class AjnaClient {
    * deshalb wandelt der Caller bei Bedarf via composeId() um.
    */
   currentUser() {
+    // AN DIE GÜLTIGKEIT GEBUNDEN. Ein abgelaufenes Token ist keine Anmeldung,
+    // und ein Datensatz, der eine vortäuscht, ist schlimmer als keiner: jeder
+    // Aufrufer prüft hiermit „bin ich angemeldet?", und die Antwort muss
+    // dieselbe sein wie die von isLoggedIn(). Wer den Datensatz trotzdem
+    // braucht — etwa um nach dem Ablauf noch zu sagen, WER abgemeldet wurde —
+    // nimmt currentUserRaw().
+    if (!this.pb.authStore.isValid) return null
     const u = this.pb.authStore.record || this.pb.authStore.model || null
     return u ? { ...u, _origin: this.id } : null
   }

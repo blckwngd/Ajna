@@ -4263,7 +4263,6 @@ console.log('\n── Auftrags-Formular: Wortwahl')
     /export const ABNAHME = \[/.test(qe) && /export const NACHWEIS = \[/.test(qe))
 }
 
-const failed = results.filter(r => !r.ok)
 console.log(`\n${'═'.repeat(60)}`)
 
 // ── Erweiterte Funktionen: was ein neuer Nutzer NICHT sieht ─────────────
@@ -4304,7 +4303,88 @@ console.log('\n── Erweiterte Funktionen')
     /import \{ isAdvanced, setAdvanced \} from '\.\/advancedMode\.js'/.test(shell))
 }
 
+// ─── Schwebende Knöpfe als EINE Leiste (FabBar) ──────────────────────────
+// Die Tastenregel selbst steht in client/core/FabBar.test.mjs; hier geht es um
+// die Verdrahtung, die nur am Quelltext zu sehen ist.
+{
+  const bar = readFileSync(new URL('../client/core/FabBar.js', import.meta.url), 'utf8')
 
+  check('ausgeblendet wird per Klasse mit !important, nicht per style.display',
+    /body\.\$\{OFF_CLASS\} \.\$\{FAB_CLASS\} \{ display: none !important/.test(bar))
+
+  // Das ist der Grund für die Klasse: Minimap und QuestPanel schreiben
+  // style.display selbst. Ohne !important könnte ein ausgeblendeter Knopf von
+  // dort zurückgeholt werden — lautlos und schwer zu finden.
+  for (const [datei, pfad] of [
+    ['Minimap', '../client/core/Minimap.js'],
+    ['QuestPanel', '../client/core/QuestPanel.js'],
+  ]) {
+    const src = readFileSync(new URL(pfad, import.meta.url), 'utf8')
+    check(`${datei} setzt weiterhin style.display — deshalb braucht es !important`,
+      /fab\.style\.display = on \? '' : 'none'/.test(src))
+  }
+
+  // DER GRIFF MUSS STEHENBLEIBEN. Trüge er die Marker-Klasse oder meldete er
+  // sich an, würde er sich mit allem anderen ausblenden — und dann gäbe es im
+  // Browser keinen Weg zurück ausser der Taste H und in der App gar keinen.
+  {
+    // Auf die DEFINITION ankern, nicht auf den ersten Treffer: `_ensureHandle()`
+    // wird in register() auch nur aufgerufen, und ein dort beginnender
+    // Ausschnitt nähme createLauncher samt dessen register()-Aufruf mit.
+    const griff = bar.slice(bar.indexOf('\n  _ensureHandle() {'), bar.indexOf('// ── Tasten'))
+    check('der Randgriff meldet sich NICHT als ausblendbarer Knopf an',
+      griff.length > 100 && !/this\.register\(/.test(griff))
+    check('der Randgriff trägt die Marker-Klasse nicht',
+      /className = 'ajna-fab-handle'/.test(griff) && !/classList\.add\(FAB_CLASS\)/.test(griff))
+  }
+
+  check('eine ausgeblendete Leiste reagiert nicht auf die Einzeltasten',
+    /if \(!this\._visible\) return/.test(bar))
+  check('die Umschalt-Taste wirkt auch ausgeblendet',
+    bar.indexOf('if (key === TOGGLE_KEY)') < bar.indexOf('if (!this._visible) return'))
+  check('Ausblenden schliesst auch die offenen Fenster',
+    /if \(!next\) for \(const e of this\.entries\.values\(\)\) \{ try \{ e\.close\?\.\(\)/.test(bar))
+  check('der Zustand überlebt den Reload',
+    /localStorage\.setItem\(key, on \? '1' : '0'\)/.test(bar))
+
+  // Alle vier bestehenden Knöpfe melden sich an, mit eigener Taste.
+  const erwartet = [
+    ['InventoryUI', '../client/core/InventoryUI.js', 'inventory', 'i'],
+    ['Minimap', '../client/core/Minimap.js', 'minimap', 'm'],
+    ['QuestPanel', '../client/core/QuestPanel.js', 'quests', 'a'],
+    ['MessageLogPanel', '../client/core/MessageLogPanel.js', 'log', 'v'],
+  ]
+  for (const [name, pfad, id, taste] of erwartet) {
+    const src = readFileSync(new URL(pfad, import.meta.url), 'utf8')
+    check(`${name} meldet sich als "${id}" mit Taste ${taste.toUpperCase()} an`,
+      new RegExp(`getFabBar\\(\\)\\.register\\(\\{[\\s\\S]{0,200}id: '${id}'[\\s\\S]{0,120}hotkey: '${taste}'`).test(src))
+    check(`${name} meldet sich beim Aufräumen wieder ab`,
+      /_fabUnreg\?\.\(\)/.test(src))
+  }
+
+  // Der neue Filter-Knopf. In der Shell, weil getUI() auf die AKTIVE Ansicht
+  // zeigt — in main.js nur für den Alleinbetrieb.
+  const shell2 = readFileSync(new URL('../client/core/MobileShell.js', import.meta.url), 'utf8')
+  check('die Shell baut den Filter-Knopf mit Taste F',
+    /createLauncher\(\{[\s\S]{0,160}id: 'filter'[\s\S]{0,160}hotkey: 'f'/.test(shell2))
+  check('der Filter-Knopf geht an die AKTIVE Ansicht, nicht an eine feste',
+    /id: 'filter'[\s\S]{0,400}this\.getUI\?\.\(\)\?\.filterDialog/.test(shell2))
+
+  const mainSrc = readFileSync(new URL('../client/main.js', import.meta.url), 'utf8')
+  check('main.js baut den Filter-Knopf NUR im Alleinbetrieb',
+    /if \(!_inShell\) \{[\s\S]{0,260}id: 'filter'/.test(mainSrc))
+  // Sonst stritten Karte und AR um dieselbe Kennung, und wer zuletzt lädt,
+  // gewinnt — ein Knopf, der mal die eine und mal die andere Ansicht bedient.
+  check('die Kennung "filter" wird in main.js nicht doppelt angemeldet',
+    (mainSrc.match(/id: 'filter'/g) || []).length === 1)
+}
+
+
+// ERST HIER AUSZÄHLEN. Diese Zeile stand rund hundert Zeilen weiter oben, also
+// VOR den letzten Prüfblöcken — wer unten etwas anhängte, sah sein ❌ in der
+// Ausgabe, aber die Suite blieb grün und der Lauf endete mit 0. Das ist zweimal
+// passiert. Die Auszählung gehört an das Ende, nicht in die Mitte.
+const failed = results.filter(r => !r.ok)
 console.log(`UI: ${results.length - failed.length} bestanden, ${failed.length} fehlgeschlagen`)
 if (failed.length) {
   console.log('\nFehlgeschlagen:')

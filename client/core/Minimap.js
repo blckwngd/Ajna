@@ -30,6 +30,7 @@
 // abgeglichen mit OBJ_SYNC_MS statt in jedem Bild.
 
 import { makeDraggable } from './draggable.js'
+import { getFabBar } from './FabBar.js'
 import { iconOf } from './Appearance.js'
 
 const STYLE_ID   = 'ajna-minimap-style'
@@ -354,6 +355,7 @@ export class Minimap {
     this._objLayer = null
     try { this._resizeObserver?.disconnect() } catch {}
     try { this._dragCleanup?.() } catch {}
+    try { this._fabUnreg?.() } catch {}
     try { this._map?.remove() } catch {}
     this._map = null
     this._panel?.remove()
@@ -369,6 +371,13 @@ export class Minimap {
     this.fab.textContent = '🧭'
     this.container.appendChild(this.fab)
     this._fabDrag = makeDraggable(this.fab, { key: 'ajna.minimap.fab', onClick: () => this.toggle() })
+    // Erneutes Anmelden unter derselben Kennung ersetzt den Eintrag — _buildDom
+    // läuft beim An- und Abdocken wieder, und ein toter Knopf darf nicht als
+    // Tastenziel zurückbleiben.
+    this._fabUnreg = getFabBar().register({
+      id: 'minimap', el: this.fab, label: 'Minimap', hotkey: 'm',
+      toggle: () => this.toggle(), close: () => this.close(),
+    })
 
     const panel = document.createElement('div')
     panel.className = 'ajna-mm-panel'
