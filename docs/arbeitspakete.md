@@ -397,9 +397,68 @@ taugt oder ob er nur für die zwei Dinge passt, für die er gebaut wurde.
 
 ---
 
+### 8 · Raumpläne als Spielobjekte
+
+**Entschieden am 19.10.2026.** Nutzer sollen Pläne ihrer Räume einbinden, um
+IoT-Geräte und UWB-Anker präzise zu platzieren. Pläne sind **Spielobjekte** und
+hängen damit am bestehenden Rechtesystem — nicht jeder Spieler sieht jeden Plan.
+
+**Nicht in AR platzieren.** Dafür bräuchte es eine Lokalisierung, die in den
+meisten Fällen nicht vorliegt; Platzieren in AR wäre Scheingenauigkeit. Der Ort
+ist der **Free-Roam-3D-Modus mit vorhandenem Gebäudemodell**.
+
+**Drei Formate, zwei Stufen.** Raster und SVG sind die Vorlage, GeoJSON das
+Ergebnis: niemand hat GeoJSON seiner Wohnung, aber fast jeder ein Foto des
+Grundrisses. Also hochladen → grob georeferenzieren → Räume nachzeichnen.
+SVG wird **als reines Bild** eingebunden, nie inline — SVG kann Skripte
+tragen, und von eigener Herkunft ausgeliefert wäre das XSS mit Token in
+Reichweite.
+
+GeoJSON ist das einzige **semantische** Format: ein Rasterplan ist Pixel, da
+kann man nichts fragen. Mit benannten Flächen wird „Gerät in der Küche" ein
+Punkt-in-Polygon-Test statt einer Schätzung. Eigenschaftsnamen nach
+[Simple Indoor Tagging](https://wiki.openstreetmap.org/wiki/Simple_Indoor_Tagging)
+(`level`, `indoor=room|corridor|area`), damit der Inhaltsfilter darauf greifen
+kann wie auf andere Quellen und ein Export nach OSM möglich bleibt.
+
+**Drei Dinge, die vorher festgelegt sein müssen:**
+
+1. **`rotation`/`scale` gelten für Raster und SVG — für GeoJSON NICHT.** Ein
+   Bild muss platziert werden, dafür sind die Felder da (`rotation` ist Euler in
+   Radiant, `scale` ein Multiplikator, beide wendet `GameObject` auf den
+   Babylon-Root an). GeoJSON trägt seine Koordinaten schon; eine Drehung
+   obendrauf drehte den Plan ein zweites Mal. Das gehört **erzwungen**, nicht
+   dokumentiert. Und die Nordabweichung muss durch `client/core/yaw.js` —
+   wegen `invertNorthSouth` ist die naive Formel falsch-händig, siehe den
+   Flieger-Fix.
+2. **Die Geometrie gehört in ein DATEIFELD, nicht in `state`.** `state` reist
+   bei jeder Aktualisierung über Realtime an alle Clients in Reichweite; das
+   grösste `state` im Bestand ist 890 Byte, ein Grundriss sind Kilobyte. In
+   `state` bleibt nur, was zum Filtern nötig ist: Etage, Format, Bounding-Box,
+   Ursprung. Das Dateifeld wird `protected` (wie `quest_proofs.images` seit
+   19.10.), der Abruf läuft über den Datei-Token.
+3. **Lokale Meter, nicht Grad.** 1e-7 ° sind 1,1 cm — man bräuchte sieben
+   Dezimalstellen, und jede Rundung im Weg zerstört das. Schlimmer: in Koblenz
+   ist ein Längengrad ~71 km, ein Breitengrad ~111 km, der Maßstab in
+   Gradkoordinaten also um Faktor 1,56 anisotrop — ein quadratisches Zimmer ist
+   kein Quadrat. Richtig ist ein lokaler Meterrahmen relativ zum Ursprung des
+   Planobjekts, Umrechnung nach WGS84 nur für die Anzeige. Der
+   Anker→Welt-Transform des UWB-Systems ist genau so ein Rahmen.
+
+**Aufwand**, geschätzt: Datenmodell 1,5 T · Raster/SVG platzieren 1,5 T ·
+GeoJSON in Leaflet und Babylon 1,5 T · **Zeichen-Editor 3–4 T** · Etagen und
+Inhaltsfilter 1–2 T · Anker setzen im Free-Roam-3D 2–3 T · Tests und Doku 25 %
+obendrauf. Brauchbare erste Fassung **~4 Tage** (platzieren + anzeigen,
+Geometrie kommt von aussen), vollständig **13–16 Tage**. Wer anfangs GeoJSON
+aus JOSM oder QGIS importiert, spart den Editor und ist bei ~7 Tagen.
+
+**Die Kartenbibliothek ist dafür NICHT die Frage** — siehe Paket 15.
+
+---
+
 ## Kleiner, wartet auf eine Entscheidung
 
-### 8 · Kommentar-Bestand übersetzen
+### 9 · Kommentar-Bestand übersetzen
 
 Neue Kommentare sind englisch (`CLAUDE.md`), der Bestand ist deutsch: 10.790 von
 17.577 Kommentarzeilen, gemessen am 22.09.2026. **Der größte Block der ganzen
@@ -410,7 +469,7 @@ Sprachumstellung** — und der heikelste, weil diese Kommentare durchgehend das
 Vorgemerkt auf Wunsch des Owners. Sinnvoll in Dateigruppen statt am Stück, und
 am besten dort zuerst, wo ohnehin gearbeitet wird.
 
-### 9 · ADS-B und AIS auf `lib/fleet.mjs` umstellen
+### 10 · ADS-B und AIS auf `lib/fleet.mjs` umstellen
 
 Die C-ITS-Brücke benutzt die gemeinsame Flotten-Bibliothek; `adsb-bridge` und
 `ais-bridge` tragen ihre eigene Kopie derselben hundert Zeilen weiter. Das ist
@@ -426,7 +485,7 @@ Zugangsdaten, eigenes Kontingent, eigenes Konto, eigenes Manifest — und ein
 Parser-Fehler in einer Quelle darf die anderen beiden nicht mitreissen. Die
 Wiederholung war das Problem, nicht die Trennung.
 
-### 10 · `npm audit`: sechs Schwachstellen im Bestand
+### 11 · `npm audit`: sechs Schwachstellen im Bestand
 
 Beim Hinzufügen von `markdown-it` aufgefallen, **nicht davon verursacht** (das
 Paket taucht in keinem Pfad auf): 1 niedrig, 2 mittel, 3 hoch. Der Großteil sind
@@ -438,13 +497,13 @@ Zwei betreffen aber Laufzeit-Abhängigkeiten und verdienen einen Blick:
 sie hereinkommen und ob ein `npm audit fix` ohne Bruch durchgeht — blind
 aktualisieren heißt hier, die Bündel neu zu bauen und zu hoffen.
 
-### 11 · Telefonbuch-Parser gegen die echte Seite prüfen
+### 12 · Telefonbuch-Parser gegen die echte Seite prüfen
 
 Bisher nur gegen erfundenes Markup getestet. Vor einem echten Einsatz des Modus
 `erweitert` nötig. Der Parser hängt an `nasort`-Attributen — jedes Redesign der
 Seite bricht ihn.
 
-### 12 · Weitere Lupen für weitere Spieler
+### 13 · Weitere Lupen für weitere Spieler
 
 **Entschieden:** Die Lupe wechselt den Besitzer. Sie ist `portable`, und
 Aufnehmen überträgt in Ajna den Besitz („Loot: Eigentum übergeht auf den
@@ -460,13 +519,97 @@ zugleich das Recht bekommt, seine zu benutzen.
 Zu klären, wenn es soweit ist: Auslöser (Kommando? Aktion an einer vorhandenen
 Lupe?), Obergrenze je Spieler, und was mit herrenlosen Lupen geschieht.
 
-### 13 · Wo soll die Adress-Lupe liegen?
+### 14 · Wo soll die Adress-Lupe liegen?
 
 Steht derzeit auf **Moselring 11, 56073 Koblenz** (50.356717, 7.588443) — dorthin
 verschoben, damit der erste Test etwas zeigt; an der ursprünglichen
 Vorgabe-Koordinate lag im 25-m-Umkreis keine einzige Adresse. Ein bewusster Ort
 ist das noch nicht. `ADR_START_LAT/LON` wirken nur beim Erzeugen, das vorhandene
 Objekt lässt sich jederzeit verschieben.
+
+### 15 · Leaflet, Vektorkacheln oder MapLibre?
+
+**Geprüft am 19.10.2026, zurückgestellt.** Der Anlass war scharfes Zoomen für
+Innenräume. Zwei Befunde:
+
+* **Das Schärfeproblem ist echt und messbar:** `maxNativeZoom: 19` bei
+  `maxZoom: 22` — die Stufen 20 bis 22 sind hochskalierte Pixel. Die
+  CARTO-Ebene hat schon 20, OSM nur 19. **Vorher billiger prüfen, ob ein
+  Wechsel der Rasterquelle genügt** — das kostet nichts.
+* **Vektorkacheln bringen KEINE Innenräume.** Weder Protomaps noch
+  OpenMapTiles führen Innenraumdaten; OpenMapTiles schliesst „indoor features"
+  ausdrücklich aus. Die Innenraum-Frage ist damit Paket 8, nicht diese.
+
+**Gegen `maplibre-gl-leaflet`:** Die Brücke schaltet MapLibre nicht-interaktiv,
+Leaflet nimmt die Eingaben. Laut README keine Rotation, kein Bearing, kein
+Pitch, plus Verzögerung. Man zahlt 259 KB gzip (gemessen; Leaflet 44 KB) und
+bekommt nur Schärfe. Als Zwischenschritt zu einem späteren Umstieg taugt es
+nicht — der nicht-interaktive Modus ist gerade nicht die Zielfassung.
+
+**Zwei Kontexte sind erlaubt, aber nicht gratis.** Das Browser-Limit liegt bei
+rund acht WebGL-Kontexten. Aber: alle Ansichten liegen in EINEM Dokument
+(`index.html`, umgeschaltet per `display`), und `display:none` beendet keinen
+Kontext — eingeschaltete Vektorkacheln heissen zweiter Kontext neben Babylon,
+unabhängig vom aktiven Tab. Abhilfe wäre, MapLibre erst beim Einschalten zu
+erzeugen und beim Tabwechsel `map.remove()` zu rufen.
+
+**Das Pixi-Rezept aus der Babylon-Doku ist NICHT übertragbar.** Es teilt EINEN
+Kontext (Pixi bekommt `engine._gl` und Babylons Canvas übergeben). MapLibre
+besitzt seinen Kontext; die Teilung läuft umgekehrt (deck.gl und luma.gl hängen
+sich an MapLibres Canvas). Einen fremden Kontext hineinzugeben gibt es nicht.
+
+**Was für MapLibre spricht, falls die Frage wiederkommt:** `transformRequest`
+hängt jedem Request Header an (Token für geschützte Pläne — Leaflets
+`imageOverlay` ist ein `<img>` und kann das nicht), `ImageSource` georeferenziert
+über vier Ecken (Leaflet-Kern kann nur achsparallel, rotierte Pläne brauchen ein
+Drittanbieter-Plugin), und Bearing — was `Minimap.js` im Kopfkommentar
+ausdrücklich als in Leaflet 1.x unmöglich notiert.
+
+### 16 · Interoperabilität mit OpenARCloud (GeoPose, OpenVPS, OSCP)
+
+**Recherchiert am 19.10.2026, Entscheidung offen.** Vier Bausteine, drei
+verschiedene Antworten:
+
+**GeoPose 1.0 — dafür, und billig.** Verabschiedete OGC-Norm (21-056r11) für
+den Austausch georeferenzierter Lagen, drei Zielformen (Basic-YPR,
+Basic-Quaternion, Advanced), mit Konformitäts-Testsuite bei der OGC. Ajna
+speichert lat/lon/altitude plus `rotation` als Euler — Basic-YPR ist nahezu
+1:1. **Die Falle ist die Achsenlage:** GeoPose ist ENU mit Ost→X, **Nord→Y,
+Hoch→Z**; Ajna fährt X=Ost, **Y=Höhe, Z=Nord**, dazu `invertNorthSouth`. Genau
+diese Klasse Fehler hat schon einmal zugeschlagen (Figuren drehten in Kurven
+falsch herum, yaw = π − heading). Ein `lib/geopose.mjs` wäre die EINE Stelle,
+an der die Umrechnung festgenagelt und getestet ist — Aufwand rund ein Tag,
+und es macht das Szenario „fremdes AR-Spiel liest unsere Orte" erst sauber.
+
+**OpenVPS — Protokoll unterstützen, Dienst aufschieben.** Selbst hostbarer
+visueller Positionierungsdienst (MapBuilder, MapAligner, MapLocalizer, HLOC),
+von Nokia Bell Labs unter NGI Search gebaut, aktiv (Stand Oktober 2026). Er
+löst genau das, was dem SLAM-Spike fehlte: eine Lage aus einem Kamerabild,
+**ohne IMU** — und Brave sowie der WebView blockieren Sensoren. Aber: er
+braucht je Ort eine aus vielen Bildern gebaute Karte, ist ein Dienstverbund mit
+FusionAuth und realistisch eine eigene Maschine mit GPU. Auf der 2-GB-VM
+ausgeschlossen (dort passen sechs Agents). Dazu ein Mismatch, der Ajna
+besonders trifft: die Kartenhöhe ist laut Repo „über Grund" statt echte Höhe,
+und Ajna nimmt Höhe ernst (Geländeabtastung, `findLandingSpot`).
+→ Über GeoPose und das OSCP-GeoPose-Protokoll anschlussfähig bleiben, den
+Dienst später und auf eigener Hardware.
+
+**OSCP Spatial Service / Content Discovery — passt auf den eigenen Fahrplan,
+aber nicht jetzt.** SSD beantwortet „welche Dienste deckt dieses Gebiet ab?",
+SCD „welche Inhalte hängen hier?". Das ist dieselbe Frage wie beim
+Multi-Server-Konzept, wo der Nutzer heute Server-Adressen eintippt, und
+überlappt mit `agent_manifests`. MIT-lizenziertes TypeScript, Sandbox-Instanzen,
+aktiv (ISMAR2026-Stand September 2026). **Aber es ist ein öffentliches
+Register** — eine Ajna-Instanz dort anzumelden ist eine Preisgabe-Entscheidung,
+und die Instanz ist in der Testphase ohne öffentliche Zugriffe. Also: die
+Manifest- und Multi-Server-Arbeit so formen, dass ein Adapter möglich bleibt;
+nicht anmelden.
+
+**SpatialDDS 1.7 — beobachten.** Sehr neu (August 2026). DDS ist schweres
+Echtzeit-Pub/Sub; Ajna hat PocketBase-Realtime über SSE, ein Austausch oder
+eine Brücke ist ein grosser Schritt für unklaren Gewinn. **Eine Verbindung ist
+aber bemerkenswert:** ROS 2 spricht DDS — für Paket 6 (Rover) könnte das
+später der natürliche Weg nach draussen sein.
 
 ---
 
