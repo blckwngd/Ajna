@@ -821,6 +821,103 @@ cronAdd("proof_cleanup", "17 * * * *", () => {
   if (weg) console.log(`[proof_cleanup] ${weg} Beweis-Datensatz/-Dateien entfernt`)
 })
 
+// ---------------------------------------------------------------------
+// Lebensdauer für Objekte: `state.expires_at`.
+//
+// WARUM ES DAS BRAUCHT. In Ajna gab es bis hierher KEINE Lebensdauer. Alles,
+// was ein Agent anlegt, bleibt — und jede Idee mit einem Termin sammelt damit
+// Müll an: ein Hofflohmarkt-Stand nach dem Markttag, eine Veranstaltung aus der
+// Karte von Morgen, ein Fundort nach dem Gewitter. In einem Monat ist das Müll,
+// in einem Jahr eine Lüge über etwas, das längst vorbei ist.
+//
+// EIN OBJEKT VERFÄLLT NUR, WENN ES DAS SELBST SAGT. Es gibt keine Liste von
+// Typen, keine Ausnahmen und keine Vorgabe — wer `state.expires_at` nicht
+// setzt, ist nicht betroffen. AR-Marker und UWB-Anker bleiben also unangetastet,
+// ohne dass sie hier erwähnt werden müssten. Das ist der ganze Grund für diesen
+// Entwurf: eine Löschregel, die man versehentlich auf etwas anwendet, ist eine
+// schlechte Löschregel.
+//
+// ABSCHALTBAR UND AUS. Vorgabe ist `objects.expiry` = false: eine Instanz, die
+// nichts davon weiss, löscht nichts. Einschalten ist eine Betriebsentscheidung
+// (Verwaltung → Collections → settings).
+//
+//   objects.expiry       false   Hauptschalter
+//   objects.expiry_max   200     Obergrenze je Lauf
+//
+// Die Obergrenze ist kein Komfort. Eine falsch gestellte Uhr oder eine
+// Migration, die `expires_at` irgendwo einträgt, würde sonst in einem Tick den
+// halben Bestand mitnehmen. Mit 200 je Stunde fällt es auf, bevor es weh tut.
+//
+// FORMAT: ISO-8601 in UTC, z. B. "2026-05-30T22:00:00Z". Zeichenweise
+// vergleichbar, und genau darauf beruht der Filter unten.
+cronAdd("object_expiry", "23 * * * *", () => {
+  // `einstellung` aus gastkonten.js, NICHT selbst gebaut: ein JSON-Feld kommt
+  // in der JSVM als Primitiv, Objekt ODER Byte-Array an, und genau daran ist
+  // meine erste Fassung gescheitert — der Schalter stand auf true und der Cron
+  // sah ihn nicht. Dort ist das gelöst (Bytes über utf8.jsonText).
+  // require() IM Callback: die Hook-Dateien teilen keinen Modul-Scope.
+  const { einstellung } = require(`${__hooks}/gastkonten.js`)
+  const { jsonObject } = require(`${__hooks}/utf8.js`)
+
+  // Hauptschalter. Alles ausser einem ausdrücklichen `true` heisst aus.
+  if (einstellung($app, "objects.expiry", false) !== true) return
+
+  let max = Number(einstellung($app, "objects.expiry_max", 200))
+  if (!isFinite(max) || max < 1 || max > 1000) max = 200
+
+  const jetzt = new Date()
+  // PocketBase-Datumsformat für Filter: "YYYY-MM-DD HH:MM:SSZ".
+  const grenzeIso = jetzt.toISOString()
+
+  let weg = 0, uebersprungen = 0
+  try {
+    // DER FILTER SCHRÄNKT EIN, ER ENTSCHEIDET NICHT. Gemessen am 20.10.2026:
+    // `state.expires_at != ""` traf ALLE 689 Objekte — ein fehlender
+    // JSON-Schlüssel gilt dort nicht als leer. Brauchbar ist nur der Vergleich
+    // selbst, und auch der ist nicht genug: SQLite sortiert Zahlen vor
+    // Zeichenketten, ein numerisches `0` wäre also „kleiner als jetzt" und
+    // flöge mit. Deshalb prüft die Schleife jeden Treffer noch einmal.
+    const kandidaten = $app.findRecordsByFilter("objects",
+      "state.expires_at < {:t}", "created", max, 0, { t: grenzeIso })
+
+    for (let i = 0; i < kandidaten.length; i++) {
+      const rec = kandidaten[i]
+      // `jsonObject` AUS utf8.js, nicht `typeof === "object"`. Ein JSON-Feld
+      // kommt in der JSVM als Objekt, als Zeichenkette ODER als BYTE-ARRAY an —
+      // und für ein Array ist `typeof` ebenfalls "object". Meine erste Fassung
+      // nahm deshalb das Byte-Array für den gelesenen Zustand und fand nie ein
+      // `expires_at`: der Cron meldete „3 übersprungen" und löschte nichts.
+      let wert
+      try {
+        wert = jsonObject(rec.get("state"), {}).expires_at
+      } catch (err) { uebersprungen++; continue }
+
+      // Nur eine Zeichenkette, die wie ein Zeitpunkt aussieht, und die auch
+      // als einer lesbar ist. Alles andere bleibt liegen — ein Objekt
+      // irrtümlich zu behalten ist zu verschmerzen, es irrtümlich zu löschen
+      // nicht.
+      if (typeof wert !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(wert)) {
+        uebersprungen++
+        continue
+      }
+      const zeit = new Date(wert)
+      if (isNaN(zeit.getTime()) || zeit.getTime() > jetzt.getTime()) { uebersprungen++; continue }
+
+      try { $app.delete(rec); weg++ }
+      catch (err) { console.log("[object_expiry] " + rec.id + ": " + (err && err.message ? err.message : err)) }
+    }
+  } catch (err) {
+    console.log("[object_expiry] " + (err && err.message ? err.message : err))
+    return
+  }
+
+  if (weg || uebersprungen) {
+    console.log(`[object_expiry] ${weg} verfallene Objekte entfernt`
+      + (uebersprungen ? `, ${uebersprungen} übersprungen (kein lesbares expires_at)` : "")
+      + (weg === max ? ` — Obergrenze erreicht, der Rest folgt im nächsten Lauf` : ""))
+  }
+})
+
 
 routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
   try {

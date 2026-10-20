@@ -91,12 +91,14 @@ Auftauch- und Verschwindezeit.
 
 Drei Schritte, in dieser Reihenfolge:
 
-**a) Verfall für Objekte** (~½ Tag, unabhängig nützlich). In ganz Ajna gibt es
-heute **keine Lebensdauer für Objekte**. Ohne sie sammelt diese Idee — und jede
-ähnliche — Müll an. Also `state.expires_at` plus ein `cronAdd("object_expiry", …)`
-neben den vorhandenen Aufräum-Crons. Serverseitig, nicht im Agenten: „Was nur
-tickt, solange ein Agent läuft, ist keine Regel" (dieselbe Begründung wie bei
-den Auftragsfristen).
+**a) Verfall für Objekte — ERLEDIGT am 20.10.2026.** `state.expires_at` plus
+`cronAdd("object_expiry", "23 * * * *")`, serverseitig und nicht im Agenten
+(„Was nur tickt, solange ein Agent läuft, ist keine Regel"). Abschaltbar und
+**aus in der Vorgabe**: `objects.expiry` = false, `objects.expiry_max` = 200.
+Ein Objekt verfällt nur, wenn es selbst ein `expires_at` trägt — damit braucht
+es keine Typ-Ausnahmen für AR-Marker und UWB-Anker. Einzelheiten samt der
+Filter-Falle in `docs/betrieb.md`, Abschnitt „Aufräumen". 14 Prüfungen gegen
+eine Wegwerf-Kopie, davon sieben Grenzfälle, die NICHT gelöscht werden dürfen.
 
 **b) `agents/environment-bridge.mjs` mit Simulationsquelle** (~1 Tag). Quelle
 austauschbar hinter einer schmalen Schnittstelle, `--simulate` von Anfang an —

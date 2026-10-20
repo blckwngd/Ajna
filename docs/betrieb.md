@@ -351,6 +351,53 @@ mit `sql: no rows in result set`). Für eine Neuinstallation ist das zu klären.
 
 ## Aufräumen
 
+### Lebensdauer: `state.expires_at`
+
+Bis Oktober 2026 hatte in Ajna **kein Objekt eine Lebensdauer**. Alles, was ein
+Agent anlegt, bleibt — und jede Idee mit einem Termin sammelt damit Müll an: ein
+Hofflohmarkt-Stand nach dem Markttag, eine Veranstaltung aus der Karte von
+Morgen, ein Fundort nach dem Gewitter. In einem Monat ist das Müll, in einem
+Jahr eine Lüge über etwas, das längst vorbei ist.
+
+**Ein Objekt verfällt nur, wenn es das selbst sagt.** Es gibt keine Liste von
+Typen und keine Vorgabe: wer `state.expires_at` nicht setzt, ist nicht
+betroffen. AR-Marker und UWB-Anker bleiben also unangetastet, ohne dass sie
+irgendwo ausgenommen werden müssten — eine Löschregel, die man versehentlich auf
+etwas anwendet, wäre eine schlechte Löschregel.
+
+```json
+"state": { "expires_at": "2026-05-30T22:00:00Z" }
+```
+
+ISO-8601 in UTC. Andere Formen werden **nicht** gelöscht (siehe unten).
+
+| Einstellung | Vorgabe | Wirkung |
+|---|---|---|
+| `objects.expiry` | `false` | Hauptschalter. Aus heisst: der Cron löscht nichts |
+| `objects.expiry_max` | `200` | Höchstens so viele je Lauf (stündlich, `23 * * * *`) |
+
+Die Vorgabe ist **aus**, und das Einschalten ist eine bewusste
+Betriebsentscheidung — es ist die einzige Einstellung in Ajna, die Daten
+vernichtet. Die Obergrenze ist kein Komfort: eine falsch gestellte Uhr oder eine
+Migration, die `expires_at` irgendwo einträgt, würde sonst in einem Tick den
+halben Bestand mitnehmen.
+
+**Der Filter schränkt ein, er entscheidet nicht.** Das ist der Teil, der beim
+Nachbauen schiefgeht, deshalb steht er hier. Gemessen am 20.10.2026 auf einer
+Instanz mit 689 Objekten:
+
+* `state.expires_at != ""` traf **alle 689** — ein fehlender JSON-Schlüssel gilt
+  in PocketBase-Filtern nicht als leer. Die Prüfung „hat überhaupt ein
+  Verfallsdatum" ist so nicht zu machen.
+* `state.expires_at < "<jetzt>"` traf **drei**: das gesuchte Objekt, eines mit
+  `0` und eines mit `""`. SQLite sortiert Zahlen vor Zeichenketten, und `""` ist
+  lexikografisch kleiner als jede Jahreszahl.
+
+Der Cron prüft jeden Treffer deshalb noch einmal im Code und löscht nur, was
+wie ein Zeitpunkt aussieht **und** als einer lesbar ist. Geprüft mit sieben
+Fällen (Vergangenheit, Zukunft, Unsinn, `0`, `null`, `""`, fehlend): nur der
+erste wird gelöscht.
+
 ### Objekte eines stillgelegten Agenten
 
 Ein Agent, den niemand mehr startet, hinterlässt seine Welt. Auf der
