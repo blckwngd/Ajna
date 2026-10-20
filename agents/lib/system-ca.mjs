@@ -40,8 +40,19 @@ export function maybeReexecWithSystemCa(ajnaUrl) {
     return
   }
 
+  // DIE EIGENEN NODE-SCHALTER MITNEHMEN. Ohne `process.execArgv` verlor das
+  // Kind alles, was dem Elternteil mitgegeben wurde — vor allem
+  // `--max-old-space-size` und `--max-semi-space-size`. Gemessen am
+  // 20.10.2026: von neun gestarteten Agents hatten nur die drei eine
+  // Heap-Grenze, die über `http://` gehen und deshalb gar nicht re-exec'en;
+  // die übrigen sechs meldeten „Heap-Grenze 4288 MB", also keine. Das
+  // Speicherbudget war damit genau dort wirkungslos, wo es gebraucht wird.
+  //
+  // Auf dem Server fiel es nicht auf, weil `scripts/agent-wrapped.sh` das Flag
+  // selbst mitgibt und der Re-Exec dann entfällt — ein Loch, das nur beim
+  // direkten Start aufgeht (`npm run director`) und das niemand gesehen hätte.
   const r = spawnSync(process.execPath,
-    ['--use-system-ca', process.argv[1], ...process.argv.slice(2)],
+    [...process.execArgv, '--use-system-ca', process.argv[1], ...process.argv.slice(2)],
     { stdio: 'inherit' })
   process.exit(r.status ?? 1)
 }
