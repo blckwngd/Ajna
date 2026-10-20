@@ -658,6 +658,93 @@ routerAdd("POST", "/api/objects/{id}/pickup", (e) => {
 // =====================================================================
 // POST /api/objects/{id}/place  — getragenes Objekt wieder in die Welt setzen
 //
+// =====================================================================
+// GET /api/objects/{id}/owner[?app=<name>] — wer hat dieses Objekt angelegt?
+//
+// WARUM ES DIESEN ENDPUNKT GIBT. `users.viewRule` ist `id = @request.auth.id`:
+// niemand sieht ein fremdes Konto, und das soll so bleiben — eine Öffnung der
+// Regel wurde ausdrücklich abgelehnt (docs/gastkonten-entscheidungen.md, F6a).
+// Es gibt aber einen legitimen Bedarf: Wer ein Objekt VERWALTET, muss den
+// Menschen dahinter erreichen können. Eine Hofflohmarkt-Organisation, die eine
+// Anmeldung prüft, braucht den Namen und eine Rückfragemöglichkeit; bisher kam
+// das nur per Mail an eine Sammeladresse beim Agenten vorbei.
+//
+// DIE BERECHTIGUNG IST AUSDRÜCKLICH, nicht abgeleitet. Nicht `edit` und nicht
+// `owner`, sondern eine benannte Interaktion `contact` in der ACE. Begründung:
+// `rights` sind vier feste Werte mit festen Bedeutungen — „darf Felder ändern"
+// soll NICHT nebenbei „darf Kontaktdaten sehen" heissen. `interact_actions` ist
+// die dafür vorgesehene offene Achse, wird von derselben Maschinerie über
+// Gruppen aufgelöst, und ein Eintrag dort ist eine lesbare Entscheidung.
+//
+// UND NUR VON EINEM BENANNTEN SUBJEKT. `everyone`, `authenticated` und
+// `anonymous` werden hier NICHT berücksichtigt, obwohl `resolveEffective` sie
+// einschliesst: eine ACE `{everyone, interact_actions:["contact"]}` würde sonst
+// die Kontaktdaten aller Teilnehmer öffentlich machen — ein Fehlgriff mit
+// einem Haken. Erlaubt ist `subject_type` "user" (der Aufrufer) oder "group"
+// (eine Gruppe, in der er ist).
+//
+// `?app=` gibt zusätzlich den NAMENSRAUM dieser Anwendung aus `app_data`
+// heraus, nie das ganze Feld: dort stehen die Daten ALLER Anwendungen über
+// diesen Menschen.
+// =====================================================================
+routerAdd("GET", "/api/objects/{id}/owner", (e) => {
+  try {
+    const { transitiveGroupsOf } = require(`${__hooks}/permissions.js`)
+    const { jsonArray, jsonObject } = require(`${__hooks}/utf8.js`)
+
+    const objectId = e.request.pathValue("id")
+    const user = e.requestInfo().auth
+    if (!user) return e.json(401, { error: "authentication required" })
+
+    let obj
+    try { obj = $app.findRecordById("objects", objectId) }
+    catch (err) { return e.json(404, { error: "object not found" }) }
+
+    const ownerId = obj.get("owner")
+    if (!ownerId) return e.json(404, { error: "object has no owner" })
+
+    let erlaubt = String(ownerId) === String(user.id)
+    if (!erlaubt) {
+      const meine = new Set(["user:" + user.id])
+      for (const g of transitiveGroupsOf(user.id)) meine.add("group:" + g)
+      const aces = $app.findRecordsByFilter("object_permissions",
+        "object = {:obj}", "", 500, 0, { obj: obj.id })
+      for (let i = 0; i < aces.length; i++) {
+        const typ = aces[i].get("subject_type")
+        if (typ !== "user" && typ !== "group") continue      // keine Audiences
+        if (!meine.has(typ + ":" + (aces[i].get("subject") || ""))) continue
+        const aktionen = jsonArray(aces[i].get("interact_actions"))
+        if (aktionen.indexOf("contact") !== -1 || aktionen.indexOf("*") !== -1) { erlaubt = true; break }
+      }
+    }
+    if (!erlaubt) return e.json(403, { error: "not allowed to see the owner of this object" })
+
+    let owner
+    try { owner = $app.findRecordById("users", ownerId) }
+    catch (err) { return e.json(404, { error: "owner account no longer exists" }) }
+
+    const antwort = {
+      id: owner.id,
+      name: owner.get("name") || "",
+      username: owner.get("username") || "",
+      email: owner.email() || "",
+      telefon: owner.get("telefon") || "",
+      guest: owner.get("guest") === true,
+    }
+    const app = e.request.url.query().get("app")
+    if (app && /^[a-z0-9_-]{1,40}$/.test(app)) {
+      const alle = jsonObject(owner.get("app_data"), {})
+      antwort.app_data = {}
+      if (alle && alle[app] !== undefined) antwort.app_data[app] = alle[app]
+    }
+    return e.json(200, antwort)
+  } catch (err) {
+    console.log("[owner] error: " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err) })
+  }
+})
+
+// =====================================================================
 // Nur der Träger (carried_by) darf platzieren. Setzt lat/lon(/altitude) und
 // leert carried_by → Objekt erscheint an der neuen Position wieder in der Welt.
 // =====================================================================

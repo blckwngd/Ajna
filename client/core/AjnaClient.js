@@ -1021,6 +1021,24 @@ export class AjnaClient {
     return this.pb.send(`/api/objects/${raw}/effective-rights`, { method: 'GET' })
   }
 
+  /**
+   * Kontaktdaten des Kontos, das ein Objekt angelegt hat.
+   *
+   * Das geht NICHT über `users`: dort gilt `id = @request.auth.id`, niemand
+   * sieht ein fremdes Konto. Erlaubt ist der Zugriff nur, wer entweder selbst
+   * der Besitzer ist oder in einer ACE die Interaktion `contact` zugesprochen
+   * bekommen hat — ausdrücklich als Benutzer oder Gruppe, nicht über
+   * `everyone`/`authenticated`. Alles andere beantwortet der Server mit 403.
+   *
+   * `app` ist der Name EINER Anwendung; nur deren Abschnitt aus `app_data`
+   * kommt mit. Ohne `app` kommt kein `app_data`.
+   */
+  async getObjectOwner(objectId, { app } = {}) {
+    const raw = this._toRaw(objectId)
+    const q = app ? `?app=${encodeURIComponent(app)}` : ''
+    return this.pb.send(`/api/objects/${raw}/owner${q}`, { method: 'GET' })
+  }
+
   // ===================================================================
   //  Gruppen
   // ===================================================================

@@ -41,10 +41,54 @@ Ajna hat ein NTFS-artiges Berechtigungssystem auf Objekt-Ebene: pro Objekt eine 
 |---|---|
 | `view` | Objekt ist im Client sichtbar (List/Get/Realtime) |
 | `edit` | Beliebige Felder (Name, Animation, Position) änderbar |
-| `move` | Nur Position (`lat`/`lon`/`altitude`) änderbar |
+| `move` | **Noch ohne Wirkung — siehe unten.** Gedacht: nur Position (`lat`/`lon`/`altitude`) änderbar |
 | `owner` | Darf ACEs verwalten (Eigentümer-Recht). Nur für `user`/`group`-Subjekte zulässig |
 
+### `move` ist bislang nur ein Vorsatz
+
+`move` steht im Vokabular (`ALL_RIGHTS`), lässt sich in jeder ACE setzen und
+taucht in den effektiven Rechten auf — **durchgesetzt wird es nirgends.** Die
+`updateRule` der `objects`-Collection verlangt `edit`, auch für `lat`/`lon`.
+Daraus folgt beides:
+
+* Wer `edit` hat, darf verschieben, ganz ohne `move`.
+* Wer **nur** `move` hat, kann gar nichts — jedes Update scheitert an der Rule.
+
+Wer heute Verschieben erlauben will, gibt `edit`. Das ist die ehrliche Auskunft;
+die Trennung ist sinnvoll (ein Spieler darf ein Schwert ablegen, aber ihm keine
+Trefferpunkte geben) und ist als Arbeitspaket vorgemerkt — bis dahin bitte keine
+ACE bauen, die sich auf `move` verlässt.
+
 `interact_actions` ist ein eigenes Set: erlaubte Action-Keys wie `["attack","pet"]` oder `["*"]` für alles. Wird in `/api/objects/:id/interact` gegen den Action-Parameter geprüft.
+
+Die Liste ist **offen** — jede Zeichenkette ist ein gültiger Action-Key. Das ist
+die vorgesehene Achse für „darf X mit diesem Objekt tun", während `rights` vier
+feste Bedeutungen hat. Eine Aktion mit Sonderstellung ist `contact`: sie gibt
+die Kontaktdaten des eintragenden Kontos frei (siehe unten).
+
+### `contact` — wer hat das Objekt angelegt?
+
+`users.viewRule` ist `id = @request.auth.id`; niemand sieht ein fremdes Konto,
+und das bleibt so. Wer ein Objekt aber **verwaltet**, muss den Menschen dahinter
+erreichen können — eine Hofflohmarkt-Organisation, die eine Anmeldung prüft,
+braucht Name und Rückfragemöglichkeit.
+
+```
+GET /api/objects/{id}/owner[?app=<name>]
+→ 200 { id, name, username, email, telefon, guest, app_data? }
+→ 401 nicht eingeloggt · 403 nicht berechtigt · 404 Objekt/Konto weg
+```
+
+Erlaubt ist der Zugriff, wenn der Aufrufer **selbst Besitzer** ist, oder wenn
+eine ACE auf dem Objekt ihm `contact` (oder `*`) in `interact_actions` gibt —
+und zwar über `subject_type` `user` oder `group`. **`everyone`,
+`authenticated` und `anonymous` zählen hier absichtlich nicht**: eine einzige
+öffentliche ACE würde sonst die Kontaktdaten aller Teilnehmer freigeben, mit
+einem Haken als einziger Hürde. Personendaten brauchen ein benanntes Subjekt.
+
+`?app=` gibt zusätzlich einen Abschnitt aus `app_data` heraus, nie das ganze
+Feld — dort stehen die Daten *aller* Anwendungen über diesen Menschen.
+Client-seitig: `client.getObjectOwner(id, { app: 'heimatradar' })`.
 
 ## Subjekt-Typen
 
@@ -125,31 +169,44 @@ Jeder User kann ein Template hinterlegen, das beim Erstellen neuer Objekte als A
 
 ## API-Rules der `objects`-Collection
 
-So filtert PocketBase Objekt-Reads (List, View, Realtime):
+> **Immer `?=`, nie `=`, auf einer `@collection.…`-Referenz.**
+>
+> In einer API-Regel heisst ein nacktes `=` auf `@collection.x.feld` nicht „es
+> gibt eine Zeile, die passt", sondern „**alle** Zeilen der Tabelle erfüllen
+> das" (PocketBase baut daraus ein NOT-EXISTS über die ganze Tabelle). Nur die
+> Fragezeichen-Operatoren `?=`, `?~`, `?!=` meinen „mindestens eine Zeile".
+>
+> Eine Regel in der `=`-Fassung trifft deshalb genau so lange, wie die Tabelle
+> leer ist — lokal grün, in Betrieb 404. Das ist in Ajna zweimal passiert
+> (Pakete 2 / 1786800000); in diesem Dokument stand bis zum 20.10. die falsche
+> Fassung zum Abschreiben. Wer eine Regel in der Verwaltungsoberfläche anfasst:
+> `pb_migrations/1792600000_update_rule_any_match.js` ist die Wahrheit, und
+> `tests/privacy/ace-schreiben.mjs` merkt es, wenn sie wieder wandert.
+
+So filtert PocketBase Objekt-Reads (List, View, Realtime) — der Wortlaut aus
+`1788300000_audience_flags.js`:
 
 ```
 owner = @request.auth.id
-|| (@collection.effective_permissions.object = id
-    && @collection.effective_permissions.user = @request.auth.id
+|| (@collection.effective_permissions.object ?= id
+    && @collection.effective_permissions.user ?= @request.auth.id
     && @collection.effective_permissions.rights ?~ "view")
+|| ((@request.auth.id != "" && view_auth = true)
+    || (@request.auth.id = "" && view_anon = true))
 ```
 
-`updateRule` analog mit `"edit"`. Für Implicit Audiences ist die Rule um zwei zusätzliche Klauseln zu erweitern:
+Die beiden impliziten Zielgruppen stehen nicht mehr als Unterabfrage in der
+Regel, sondern als **Spalten** `view_auth` / `view_anon` am Objekt — die Hooks
+pflegen sie aus den ACEs. Das war nötig, weil eine Unterabfrage über
+`object_permissions` in jeder Listenanfrage mitlief.
 
-```
-|| (@request.auth.id != ""
-    && @collection.object_permissions.object = id
-    && (@collection.object_permissions.subject_type = "authenticated"
-        || @collection.object_permissions.subject_type = "everyone")
-    && @collection.object_permissions.rights ?~ "view")
-|| (@request.auth.id = ""
-    && @collection.object_permissions.object = id
-    && (@collection.object_permissions.subject_type = "anonymous"
-        || @collection.object_permissions.subject_type = "everyone")
-    && @collection.object_permissions.rights ?~ "view")
-```
+`updateRule` ist dieselbe Cache-Klausel mit `"edit"`, `deleteRule` mit
+`"owner"` — **ohne** die Zielgruppen-Spalten: `authenticated`/`everyone`
+erlauben nur Sehen, niemals Schreiben.
 
-Aktueller Stand: die Rule deckt nur Owner + Cache ab. Die Implicit-Audience-Klauseln werden ergänzt, sobald die UI Audience-ACEs sauber pflegen kann.
+Die Zielgruppen-Spalten sind seit `1788300000_audience_flags.js` in der
+view-Regel aktiv; die Rechnung „welche ACE macht ein Objekt öffentlich"
+passiert in den Hooks, nicht in der Regel.
 
 ## UI-Workflow
 
@@ -242,16 +299,25 @@ AJNA_URL=http://127.0.0.1:8090 node tools/acl-selftest.mjs     # an Caddy vorbei
 - ✅ PermissionDialog ans Backend angebunden
 - ✅ Group-Management-UI (Anlegen, Members verwalten, Untergruppen)
 - ✅ Einladungs-System für Gruppen-Mitgliedschaften
+- ✅ Schreiben über eine ACE (`edit`), auch über Gruppen und Untergruppen — war
+  bis 20.10. durch einen Operator in `objects.updateRule` blockiert (404 trotz
+  korrekter Rechte, Arbeitspaket 2). Netz dagegen:
+  `tests/privacy/ace-schreiben.mjs`
+- ✅ `GET /api/objects/{id}/owner` — Kontaktdaten des Eintragenden über die
+  Interaktion `contact`
+- ⛔ `move` steht im Vokabular, wird aber nirgends durchgesetzt (Paket 2a)
 - 🚧 Self-Leave: Member verlässt eine Gruppe selbst
 - 🚧 Default-Permissions-Editor im User-Profil
-- 🚧 `objects.viewRule` mit Implicit-Audience-Klauseln (siehe oben)
+- ✅ `objects.viewRule` deckt die impliziten Zielgruppen ab — über die Spalten
+  `view_auth`/`view_anon`, nicht über eine Unterabfrage
 - 🚧 Zyklus-Erkennung beim Hinzufügen von Sub-Groups
 
 ## Roadmap
 
 1. **Self-Leave**: Member kann sich selbst aus einer Gruppe entfernen (Server-Route, da Member-Update sonst nur dem Owner erlaubt ist).
 2. **Default-Permissions-Editor**: UI-Tab im User-Profil, damit Owner ihre Templates pflegen können.
-3. **Implicit-Audience-Klauseln** in `objects.viewRule` aktivieren — bisher prüft die Rule nur Owner + Cache, der `authenticated`/`everyone`-Pfad ist noch zu ergänzen.
+3. ~~Implicit-Audience-Klauseln in `objects.viewRule`~~ — erledigt mit
+   `1788300000_audience_flags.js`.
 4. **Zyklus-Erkennung** für tiefere Sub-Group-Hierarchien (aktuell nur 1-Hop verhindert).
 5. **Object-Container** für hierarchische Inheritance (Räume → Wohnungen). Optional, falls Use-Case auftaucht.
 6. **Conditional Rules** ("Level ≥ 10", "Item X im Inventar") via Object-Scripting-Schicht.

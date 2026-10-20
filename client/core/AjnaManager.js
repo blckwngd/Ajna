@@ -893,6 +893,10 @@ export class AjnaManager {
     return this._clientFor(compositeId).getEffectiveRights(compositeId)
   }
 
+  async getObjectOwner(compositeId, opts) {
+    return this._clientFor(compositeId).getObjectOwner(compositeId, opts)
+  }
+
   // ===================================================================
   //  Gruppen — operieren am Default-Client (Phase 3 erweitert)
   // ===================================================================
