@@ -63,6 +63,17 @@ Der eigentliche Schutz liegt woanders und ist echt: Diese Bahn **schreibt
 ohnehin nichts in die Datenbank** und geht an **genau ein Konto**. Das
 Kennzeichen schließt die letzte Lücke — beim Empfänger.
 
+> **Nachtrag vom 20.10.2026, und eine Richtigstellung.** „Geht an genau ein
+> Konto" stimmte für das *Senden*, nicht fürs *Zuhören*: Ein Realtime-Thema ist
+> eine frei gewählte Zeichenkette, und beim Abonnieren prüfte niemand, ob der
+> Name den Abonnenten etwas angeht. Jedes angemeldete Konto konnte
+> `chat:<fremde-id>` abonnieren und mitlesen — gemessen an einer
+> Wegwerf-Instanz. Der halbe Satz oben war damit die ganze Zeit eine Zusage
+> ohne Deckung.
+>
+> Seitdem gilt er: `pb_hooks/realtime-guard.pb.js` lässt `chat:<id>` nur für
+> das eigene Konto zu (Arbeitspaket 0, Netz: `tests/privacy/realtime-themen.mjs`).
+
 ## Die vier Ablagestellen
 
 Wer flüchtige Daten baut, muss alle vier kennen:

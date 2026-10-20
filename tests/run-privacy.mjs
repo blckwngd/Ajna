@@ -22,5 +22,6 @@ import * as clientzugang from './privacy/clientzugang.mjs'
 import * as fluechtig from './privacy/fluechtig.mjs'
 import * as quelleBeute from './privacy/quelle-beute.mjs'
 import * as aceSchreiben from './privacy/ace-schreiben.mjs'
+import * as realtimeThemen from './privacy/realtime-themen.mjs'
 
-await runSuites('Privatsphäre', 'ptest', [proximity, agentCommand, gastkonten, publicSettings, clientzugang, fluechtig, quelleBeute, aceSchreiben])
+await runSuites('Privatsphäre', 'ptest', [proximity, agentCommand, gastkonten, publicSettings, clientzugang, fluechtig, quelleBeute, aceSchreiben, realtimeThemen])

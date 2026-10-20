@@ -13,7 +13,33 @@ Stand: 29. September 2026 (Handbuch-Webseite, C-ITS-Brücke)
 
 ## Als Nächstes
 
-### 0 · Jedes Konto kann jedes Gespräch mitlesen
+### 0 · Jedes Konto kann jedes Gespräch mitlesen — **behoben am 20.10.**
+#### offen bleibt: `agent:<source>`
+
+Behoben durch `pb_hooks/realtime-guard.pb.js`, Netz dagegen:
+`tests/privacy/realtime-themen.mjs` (10 Prüfungen). **Gegen eine ungeschützte
+Instanz schlägt die Suite rot aus — nachgemessen, bevor der Wächter stand.**
+Geschlossen sind `chat:<id>` (nur das eigene Postfach) und
+`proximity:<objectId>` (nur der Betreiber des Objekts oder ein ACE-Recht
+`owner`); dass auch die Näherung leckte, hat erst die Suite gezeigt.
+
+**Gefiltert, nicht abgelehnt.** Beides wirkt (gemessen), aber ein Client
+schickt bei jeder Änderung seine GANZE Themenliste — eine abgelehnte Anfrage
+nähme die erlaubten Themen derselben Anfrage mit. Der Filter entfernt nur das
+beanstandete.
+
+**Was noch offen ist: `agent:<source>`.** Der Kanal trägt Kommandos samt
+Koordinaten (`payload.at`), ein Mitlesender erfährt also, wo jemand etwas
+angefordert hat. Die Regel wäre „das Konto, dem das Manifest dieser Quelle
+gehört, plus seine Delegierten". Dafür braucht es eine Manifest-Abfrage im
+Wächter und — wichtiger — eine Prüfung aller neun Agents, ob einer sein
+Kommando-Abo VOR dem Veröffentlichen seines Manifests aufsetzt. Der
+World-Director macht es in der richtigen Reihenfolge, die übrigen sind
+ungeprüft. Einen Agenten aus seinem eigenen Kanal auszusperren wäre schlimmer
+als das Leck, deshalb ein eigener Durchgang.
+
+<details>
+<summary>Der ursprüngliche Befund</summary>
 
 **Gemessen am 20.10. an einer Wegwerf-Instanz.** Drei Konten: A, ein Lauscher L,
 ein Sender S. L abonniert `chat:<A>`, S schreibt an A.
@@ -38,30 +64,16 @@ gehört `chat:*` vollständig zugemacht. Ein künftiger Weltchat bekommt ein
 eigenes Thema und ist dort ausdrücklich öffentlich, statt die Regel für die
 gerichteten Nachrichten aufzuweichen.
 
-**Der Hebel ist da:** `onRealtimeSubscribeRequest` gibt es in dieser
-PocketBase-Fassung (`pb_data/types.d.ts`), mit `e.subscriptions` (die
-gewünschten Themen) und `e.requestInfo().auth`. Regel: `chat:<id>` nur, wenn
-`id` das eigene Konto ist.
-
-**Vorher zu messen, nicht anzunehmen:**
-
-* Wirkt ein Ändern von `e.subscriptions` im JSVM, oder muss die ganze Anfrage
-  abgelehnt werden? (Array-Mutationen über die Go-Brücke sind nicht immer
-  sichtbar.)
-* Was passiert mit einem Client, dessen Abo abgelehnt wird — bricht die
-  Realtime-Verbindung, oder fehlt nur dieses eine Thema? Davon hängt ab, ob
-  Ablehnen überhaupt gangbar ist.
-* **Dieselbe Frage für `proximity:<objectId>`** — das Ereignis trägt die
-  Konto-ID des Spielers, der sich nähert. Ein Fremder, der das Thema
-  abonniert, erfährt damit Anwesenheiten. Und für `agent:<source>`.
-
-**Netz dagegen:** Die Messung gehört als Suite nach `tests/privacy/` — der
-Fehler ist unsichtbar, solange niemand ihn ausdrücklich sucht.
-
-**Warum jetzt:** Heute antwortet eine Figur aus einer festen Satzliste, der
-Schaden ist begrenzt. Sobald NPCs frei formulieren und mitbekommen, was ein
+**Warum es auffiel:** Heute antwortet eine Figur aus einer festen Satzliste,
+der Schaden ist begrenzt. Sobald NPCs frei formulieren und mitbekommen, was ein
 Spieler ihnen erzählt hat (geplante LLM-Sonderrollen), ist derselbe Kanal etwas
-anderes. Das gehört davor behoben, nicht danach.
+anderes.
+
+Die drei Fragen, die vor dem Bauen gemessen wurden — wirkt ein Zuweisen auf
+`e.subscriptions`, wirkt ein Ablehnen, nimmt ein Ablehnen die übrigen Abos
+mit — sind mit ja / ja / nein beantwortet.
+
+</details>
 
 ### 1 · Welt-Kontext: der Ort fehlt noch
 

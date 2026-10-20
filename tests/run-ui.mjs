@@ -4525,3 +4525,40 @@ process.on('exit', (code) => {
   check('sie hält fest, dass move noch nicht wirkt',
     /move allein verschiebt \(noch\) NICHT/.test(suite))
 }
+
+// ---------------------------------------------------------------------------
+// Wer darf auf welchem Realtime-Thema mithören (Arbeitspaket 0).
+//
+// Das Verhalten prüft `tests/privacy/realtime-themen.mjs` an einer laufenden
+// Instanz — gegen eine ungeschützte Instanz schlägt es dort rot aus, das ist
+// nachgemessen. Hier stehen die Eigenschaften, die beim Umbauen still
+// verlorengehen könnten.
+{
+  const g = readFileSync(
+    new URL('../pocketbase/pb_hooks/realtime-guard.pb.js', import.meta.url), 'utf8')
+  const priv = readFileSync(new URL('./run-privacy.mjs', import.meta.url), 'utf8')
+  const suite = readFileSync(new URL('./privacy/realtime-themen.mjs', import.meta.url), 'utf8')
+
+  check('der Wächter hängt am Abo-Ereignis', /onRealtimeSubscribeRequest\(/.test(g))
+  check('gerichteter Chat nur für das eigene Konto',
+    /name === "chat:" \+ uid/.test(g) && /!!uid &&/.test(g))
+  check('Näherung nur für den Betreiber des Objekts',
+    /String\(obj\.get\("owner"\)\) === uid/.test(g))
+  check('oder für ein ACE-Recht owner', /indexOf\("owner"\) !== -1/.test(g))
+  // GEFILTERT, nicht abgelehnt: ein Client schickt seine GANZE Themenliste.
+  check('es wird gefiltert, nicht die Anfrage abgelehnt',
+    /e\.subscriptions = kept/.test(g) && !/e\.json\(403/.test(g))
+  // Die Konstante MUSS im Callback stehen — JSVM-Hooks teilen keinen Scope.
+  check('die Obergrenze steht IM Callback',
+    /onRealtimeSubscribeRequest\(\(e\) => \{[\s\S]{0,900}const MAX_PROXIMITY_LOOKUPS/.test(g))
+  check('ein Fehler im Wächter lässt chat/proximity NICHT durch',
+    /guard error[\s\S]{0,260}filter\(t => !\/\^\(chat\|proximity\):\//.test(g))
+  check('Collection-Themen bleiben unberührt', /return true/.test(g))
+
+  check('die Suite läuft in npm test mit', /realtimeThemen/.test(priv))
+  check('sie prüft BEIDE Richtungen, nicht nur das Verbot',
+    /der Empfänger bekommt seine Nachricht/.test(suite)
+    && /ein fremdes Postfach bleibt STUMM/.test(suite))
+  check('sie prüft, dass das erlaubte Thema derselben Anfrage überlebt',
+    /das eigene Postfach derselben Anfrage funktioniert weiter/.test(suite))
+}
