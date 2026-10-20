@@ -4411,15 +4411,117 @@ console.log('\n── Erweiterte Funktionen')
 }
 
 
-// ERST HIER AUSZÄHLEN. Diese Zeile stand rund hundert Zeilen weiter oben, also
-// VOR den letzten Prüfblöcken — wer unten etwas anhängte, sah sein ❌ in der
-// Ausgabe, aber die Suite blieb grün und der Lauf endete mit 0. Das ist zweimal
-// passiert. Die Auszählung gehört an das Ende, nicht in die Mitte.
-const failed = results.filter(r => !r.ok)
-console.log(`UI: ${results.length - failed.length} bestanden, ${failed.length} fehlgeschlagen`)
-if (failed.length) {
-  console.log('\nFehlgeschlagen:')
-  for (const f of failed) console.log('  ❌ ' + f.name)
-  process.exit(1)
+
+
+// ---------------------------------------------------------------------------
+// Kontaktdaten des Eintragenden: GET /api/objects/{id}/owner
+//
+// Die Prüfungen hier bewachen EINE Eigenschaft, die sich beim Umbauen leicht
+// verliert: dass die impliziten Zielgruppen NICHT zählen. Eine ACE
+// `{everyone, interact_actions:["contact"]}` würde sonst die Kontaktdaten
+// aller Teilnehmer freigeben — und zwar still. Das Verhalten selbst ist an
+// einer Wegwerf-Instanz mit 20 Fällen gemessen; hier steht nur das Netz
+// darunter.
+{
+  const hooks = readFileSync(
+    new URL('../pocketbase/pb_hooks/main.pb.js', import.meta.url), 'utf8')
+  const cl = readFileSync(new URL('../client/core/AjnaClient.js', import.meta.url), 'utf8')
+  const mg = readFileSync(new URL('../client/core/AjnaManager.js', import.meta.url), 'utf8')
+  const doc = readFileSync(new URL('../docs/permissions.md', import.meta.url), 'utf8')
+
+  const route = hooks.slice(hooks.indexOf('"/api/objects/{id}/owner"'))
+    .slice(0, 3000)
+
+  check('die Route ist registriert', /routerAdd\("GET", "\/api\/objects\/\{id\}\/owner"/.test(hooks))
+  check('ohne Anmeldung 401', /if \(!user\) return e\.json\(401/.test(route))
+  check('der Besitzer selbst darf immer', /String\(ownerId\) === String\(user\.id\)/.test(route))
+  check('Gruppen werden transitiv aufgelöst', /transitiveGroupsOf\(user\.id\)/.test(route))
+  // Der Kern: nur benannte Subjekte.
+  check('implizite Zielgruppen werden übersprungen',
+    /if \(typ !== "user" && typ !== "group"\) continue/.test(route))
+  check('die Aktion heißt contact, * schließt sie ein',
+    /indexOf\("contact"\)/.test(route) && /indexOf\("\*"\)/.test(route))
+  check('ohne Berechtigung 403', /return e\.json\(403/.test(route))
+  // JSON-Felder kommen als Objekt, Zeichenkette ODER Bytefolge.
+  check('die Aktionsliste wird über jsonArray gelesen',
+    /jsonArray\(aces\[i\]\.get\("interact_actions"\)\)/.test(route))
+  check('app_data wird über jsonObject gelesen', /jsonObject\(owner\.get\("app_data"\)/.test(route))
+  check('app_data nur im genannten Namensraum',
+    /antwort\.app_data\[app\] = alle\[app\]/.test(route)
+    && /\/\^\[a-z0-9_-\]\{1,40\}\$\//.test(route))
+  check('ohne ?app kommt kein app_data', !/antwort\.app_data = alle/.test(route))
+
+  check('der Client hat getObjectOwner', /async getObjectOwner\(objectId, \{ app \} = \{\}\)/.test(cl))
+  check('der Manager reicht an den richtigen Server weiter',
+    /async getObjectOwner\(compositeId, opts\) \{[\s\S]{0,120}_clientFor\(compositeId\)/.test(mg))
+
+  check('die Doku nennt move als noch nicht durchgesetzt',
+    /`move` ist bislang nur ein Vorsatz/.test(doc))
+  check('die Doku erklärt contact und die Ausnahme',
+    /zählen hier absichtlich nicht/.test(doc))
 }
-console.log('✅ alles grün')
+
+
+// DIE AUSZÄHLUNG HÄNGT AM EXIT-HAKEN, NICHT AM DATEIENDE.
+//
+// Vorher stand sie als gewöhnlicher Code hier unten — und wanderte dadurch
+// jedes Mal in die Mitte, wenn jemand einen Prüfblock anhängte. Die Folge war
+// still und tückisch: Die neuen Prüfungen gaben ihr ❌ aus, die Zählung hatte
+// sie aber nie gesehen, und der Lauf endete mit „alles grün" und Rückgabewert
+// 0. Dreimal passiert, zweimal nur durch einen Kommentar „beantwortet".
+//
+// Als exit-Haken ist die Stelle gleichgültig: Node ruft ihn auf, wenn der
+// Rumpf durch ist — egal wie viel danach noch angehängt wird. `process.exit`
+// darf drinnen nicht mehr vorkommen (das wäre Rekursion); `process.exitCode`
+// wirkt hier, gemessen.
+process.on('exit', (code) => {
+  const failed = results.filter(r => !r.ok)
+  console.log(`UI: ${results.length - failed.length} bestanden, ${failed.length} fehlgeschlagen`)
+  if (failed.length) {
+    console.log('\nFehlgeschlagen:')
+    for (const f of failed) console.log('  ❌ ' + f.name)
+    process.exitCode = 1
+    return
+  }
+  // Ein Abbruch mitten im Lauf darf nicht als „alles grün" durchgehen.
+  if (code) {
+    console.log(`⚠ abgebrochen (Rückgabewert ${code}) — die Suite ist NICHT durchgelaufen`)
+    return
+  }
+  console.log('✅ alles grün')
+})
+
+// ---------------------------------------------------------------------------
+// ALL-Match gegen ANY-Match in den API-Regeln.
+//
+// `objects.updateRule` stand zweimal in der `=`-Fassung („alle Zeilen der
+// Tabelle erfüllen das") und war damit in jeder benutzten Instanz wirkungslos.
+// Das Verhalten prüft `tests/privacy/ace-schreiben.mjs` an einer laufenden
+// Instanz; hier geht es um die Vorlagen, von denen abgeschrieben wird — die
+// Migration und die Doku.
+{
+  const mig = readFileSync(
+    new URL('../pocketbase/pb_migrations/1792600000_update_rule_any_match.js', import.meta.url), 'utf8')
+  const doc = readFileSync(new URL('../docs/permissions.md', import.meta.url), 'utf8')
+  const priv = readFileSync(new URL('./run-privacy.mjs', import.meta.url), 'utf8')
+  const suite = readFileSync(new URL('./privacy/ace-schreiben.mjs', import.meta.url), 'utf8')
+
+  check('die Migration setzt die ANY-Fassung',
+    /@collection\.effective_permissions\.object \?= id/.test(mig))
+  check('und ist mehrfach ausführbar', /if \(objects\.updateRule === RICHTIG\)/.test(mig))
+  check('ihr down trägt die alte Fassung, nicht eine erfundene',
+    /const FALSCH = /.test(mig) && /objects\.updateRule = FALSCH/.test(mig))
+
+  // Die Doku war die Vorlage, aus der die Falle stammte.
+  check('die Doku warnt vor dem nackten =', /Immer `\?=`, nie `=`/.test(doc))
+  const regelBlock = doc.slice(doc.indexOf('## API-Rules'), doc.indexOf('## UI-Workflow'))
+  check('und zeigt in ihren Regelbeispielen keine ALL-Fassung mehr',
+    !/@collection\.[A-Za-z0-9_.]+ = /.test(regelBlock))
+
+  check('die ACE-Schreibsuite läuft in npm test mit', /aceSchreiben/.test(priv))
+  check('sie prüft den Gruppenpfad', /eine Gruppen-ACE mit edit darf schreiben/.test(suite))
+  check('sie prüft, dass nichts über Zeilen hinweg vermischt wird',
+    /Alice kommt NICHT an Bobs Objekt/.test(suite))
+  check('sie hält fest, dass move noch nicht wirkt',
+    /move allein verschiebt \(noch\) NICHT/.test(suite))
+}

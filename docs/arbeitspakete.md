@@ -28,34 +28,108 @@ Bundesland.
 Dazu kleiner: Luftqualität (zweiter Open-Meteo-Endpunkt, ein Anbieter mehr) und
 Abfahrten als 30-Minuten-Vorrat.
 
-### 2 · Objekte lassen sich über ACE-Rechte nicht ändern
+### 2 · Objekte lassen sich über ACE-Rechte nicht ändern — **behoben am 20.10.**
 
-**Gemessen am 16.09., ungelöst.** Ein Konto mit `edit` ODER `move` aus einer
-Nutzer-ACE bekommt beim `PATCH` auf ein fremdes Objekt **404**, obwohl
+Es war **ein Operator**. In `objects.updateRule` stand
 
-* `effective_permissions` das Recht korrekt führt (`["view","edit"]`),
-* `objects.updateRule` die passende Cache-Klausel enthält,
-* und das **Lesen** über dieselbe Cache-Klausel funktioniert.
+```
+@collection.effective_permissions.object  = id    ← ALLE Zeilen müssen passen
+@collection.effective_permissions.object ?= id    ← mindestens eine (richtig)
+```
 
-Nur `owner = @request.auth.id` greift zuverlässig. Damit ist das Rechtemodell an
-dieser Stelle eine Zusage, die es nicht einlöst — dieselbe Sorte Fehler wie ein
-Knopf ohne Draht, nur tiefer.
+Ein nacktes `=` auf einer `@collection.…`-Referenz heisst in einer API-Regel
+nicht „es gibt eine passende Zeile", sondern „alle Zeilen der Tabelle erfüllen
+das". Die Regel traf also nur, solange `effective_permissions` praktisch leer
+war. Das erklärt rückblickend auch den Einzelversuch vom 16.09., der nach dem
+Löschen aller anderen ACEs einmal `200` lieferte: bei genau einer Zeile stimmt
+„alle Zeilen" zufällig. Der Verdacht damals („mehrere ACE-Zeilen kippen die
+Auswertung") war also richtig, nur die Ursache lag eine Ebene tiefer.
 
-**Unsicher ist die Bedingung:** Ein früher Einzelversuch am selben Tag lieferte
-einmal `200` — dort waren vorher alle anderen ACEs des Objekts gelöscht worden.
-Der Verdacht ist deshalb, dass **mehrere ACE-Zeilen am selben Objekt** die
-Auswertung kippen (Join über `@collection.*` in einer Update-Regel). Bestätigt
-ist das nicht.
+Behoben durch `pb_migrations/1792600000_update_rule_any_match.js`. Gemessen an
+einer Wegwerf-Kopie: alte Regel 404, neue 200 — und **nicht durchlässig**, wer
+`edit` auf Objekt A hat, bekommt auf Objekt B weiterhin 404.
 
-**Nicht nebenbei zu klären.** Ein Anlauf, hier ein `move`-Recht zu ergänzen, ist
-am 16.09. gescheitert und wurde vollständig zurückgenommen — samt Migration und
-Hook. Wer das angeht, braucht einen eigenen Durchgang mit einer sauberen
-Instanz, nicht einen Seitenzweig einer Werkzeug-Aufgabe.
+**Das Unangenehme daran:** Behoben war es schon einmal. `1786800000_any_match_
+rules.js` setzt alle Regeln auf `?=` und ist in der Instanz als ausgeführt
+vermerkt — und trotzdem stand in der Datenbank wieder `=`, ausgerechnet nur in
+dieser einen Regel (list/view/delete waren richtig, `pb_schema.json` im
+Quellbaum auch). PocketBase schreibt Regeländerungen aus der
+Verwaltungsoberfläche als eigene Migration, deren `down` die Falle
+zurückbringt; genau so ein Artefakt ist bei der Fehlersuche am 20.10. auch
+entstanden. Eine Regel, die man anklicken kann, wandert.
 
-Nebenbefund, ebenfalls gemessen: Eine ACE für die impliziten Audiences
-(`authenticated`, `everyone`) erlaubt **grundsätzlich kein** Schreiben — auch
-als einzige Klausel der Regel nicht, während dieselbe Konstruktion in der
-view-Regel wirkt.
+**Was das nächste Mal auffällt, bevor es wehtut:** `tools/acl-selftest.mjs`
+hätte diesen Fehler jederzeit gefunden — es stand nur in keinem `npm test`.
+Jetzt gibt es `tests/privacy/ace-schreiben.mjs` (13 Prüfungen: Nutzer-ACE,
+Gruppen-ACE, Untergruppe, lat/lon, Fremdobjekt, nur-`view`, nur-`move`), und
+`tools/snapshot-ajna-schema.mjs` in HeimatRadar verweigert einen Abzug, der
+eine ALL-Match-Regel einfrieren würde.
+
+Offen bleibt der Nebenbefund vom 16.09., unverändert gültig: Eine ACE für die
+impliziten Audiences (`authenticated`, `everyone`) erlaubt **grundsätzlich
+kein** Schreiben — auch als einzige Klausel nicht, während dieselbe
+Konstruktion in der view-Regel wirkt. Das ist so gewollt (`UPDATE_RULE` kennt
+die Audiences nicht), nur nirgends sonst notiert.
+
+### 2a · `move` durchsetzen
+
+**Heute ist `move` ein Wort ohne Wirkung** (gemessen, Prüfung in
+`tests/privacy/ace-schreiben.mjs`). Es steht in `ALL_RIGHTS`, lässt sich
+in jeder ACE setzen, erscheint in den effektiven Rechten — und wird nirgends
+geprüft. `objects.updateRule` verlangt `edit`, auch für `lat`/`lon`. Also:
+
+* wer `edit` hat, verschiebt auch ohne `move`;
+* wer **nur** `move` hat, kann nichts (jedes Update scheitert an der Rule).
+
+`docs/permissions.md` sagt das inzwischen offen; der Eintrag dort war vorher
+eine Zusage ohne Draht.
+
+**Warum die Trennung trotzdem gewollt ist.** Es gibt Objekte, die ein Spieler
+benutzen und bewegen, aber nicht umschreiben darf: ein Schwert ablegen und
+mitnehmen — ja; ihm höhere Trefferpunkte geben — nein. Heute braucht genau das
+`edit`, und `edit` erlaubt jedes Feld. Für Inventar-Gegenstände ist der Bedarf
+noch gering, weil deren Lebenszyklus ohne `edit` auskommt (`interact` prüft
+`interact_actions`, `pickup` braucht `view` + `state.portable`, `place` den
+Träger). Sichtbar wird die Lücke bei **fremdem Inventar an fester Welt**:
+Wegweiser gerade ziehen, Marker einer Geokodierung korrigieren, Möbel in einem
+Raumplan schieben — alles Fälle aus Paket 8.
+
+**Entwurf**, bewusst als Hook und nicht als Regel (die Regel kann Feldmengen
+nicht vergleichen):
+
+```js
+onRecordUpdateRequest((e) => {
+  const { resolveEffective } = require(`${__hooks}/permissions.js`)
+  const user = e.requestInfo().auth
+  if (!user) return e.next()
+  if (String(e.record.get("owner")) === String(user.id)) return e.next()
+
+  const { rights } = resolveEffective(user, e.record)   // nicht (id, id)!
+  if (rights.indexOf("edit") !== -1) return e.next()
+  if (rights.indexOf("move") === -1) return e.next()    // Rule lehnt eh ab
+
+  // Nur Position: alles andere gegen den gespeicherten Stand vergleichen
+  const alt = $app.findRecordById("objects", e.record.id)
+  const ERLAUBT = ["lat", "lon", "altitude"]
+  for (const f of e.record.collection().fields) {
+    if (ERLAUBT.indexOf(f.name) !== -1) continue
+    if (JSON.stringify(e.record.get(f.name)) !== JSON.stringify(alt.get(f.name))) {
+      return e.json(403, { error: `move erlaubt nur ${ERLAUBT.join("/")}` })
+    }
+  }
+  return e.next()
+}, "objects")
+```
+
+Der Hook allein genügt nicht: `objects.updateRule` muss `move` zusätzlich
+durchlassen, sonst kommt die Anfrage nie beim Hook an — die Klausel also um
+`|| CACHE('move')` erweitern, in der **`?=`-Fassung** (siehe Paket 2; genau
+diese Erweiterung ist am 16.09. gescheitert, und rückblickend ist klar warum:
+sie wurde in der ALL-Match-Form geschrieben und konnte nicht treffen).
+
+Beim Umsetzen schlägt die Prüfung „move allein verschiebt (noch) NICHT" in
+`tests/privacy/ace-schreiben.mjs` fehl — das ist der Wecker. Dann dort und in
+`docs/permissions.md` nachziehen.
 
 ### 3 · Übergangszeit der Schlüssel-Umstellung abbauen
 

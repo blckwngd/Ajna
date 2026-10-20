@@ -161,12 +161,21 @@ try {
   await rm(cacheDir, { recursive: true, force: true }).catch(() => {})
 }
 
-const fehler = ergebnisse.filter(r => !r.ok)
-console.log(`\n${'═'.repeat(60)}`)
-console.log(`Geo-Cache: ${ergebnisse.length - fehler.length} bestanden, ${fehler.length} fehlgeschlagen`)
-if (fehler.length) {
-  console.log('\nFehlgeschlagen:')
-  for (const f of fehler) console.log(`  ❌ ${f.name}`)
-  process.exit(1)
-}
-console.log('✅ alles grün')
+// Am exit-Haken, damit angehängte Prüfblöcke immer mitgezählt werden — siehe
+// die Begründung in `run-ui.mjs`.
+process.on('exit', (code) => {
+  const fehler = ergebnisse.filter(r => !r.ok)
+  console.log(`\n${'═'.repeat(60)}`)
+  console.log(`Geo-Cache: ${ergebnisse.length - fehler.length} bestanden, ${fehler.length} fehlgeschlagen`)
+  if (fehler.length) {
+    console.log('\nFehlgeschlagen:')
+    for (const f of fehler) console.log(`  ❌ ${f.name}`)
+    process.exitCode = 1
+    return
+  }
+  if (code) {
+    console.log(`⚠ abgebrochen (Rückgabewert ${code}) — die Suite ist NICHT durchgelaufen`)
+    return
+  }
+  console.log('✅ alles grün')
+})

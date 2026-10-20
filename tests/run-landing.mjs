@@ -102,12 +102,21 @@ const a = findLandingSpot({ ...P, rng: () => 0.0 })
 const b = findLandingSpot({ ...P, rng: () => 0.5 })
 check('verschiedene Rufe → verschiedene Richtungen', distM(a.lat, a.lon, b.lat, b.lon) > 1)
 
-const failed = results.filter(r => !r.ok)
-console.log(`\n${'═'.repeat(60)}`)
-console.log(`Landeplatz: ${results.length - failed.length} bestanden, ${failed.length} fehlgeschlagen`)
-if (failed.length) {
-  console.log('\nFehlgeschlagen:')
-  for (const f of failed) console.log('  ❌ ' + f.name)
-  process.exit(1)
-}
-console.log('✅ alles grün')
+// Am exit-Haken, damit angehängte Prüfblöcke immer mitgezählt werden — siehe
+// die Begründung in `run-ui.mjs`.
+process.on('exit', (code) => {
+  const failed = results.filter(r => !r.ok)
+  console.log(`\n${'═'.repeat(60)}`)
+  console.log(`Landeplatz: ${results.length - failed.length} bestanden, ${failed.length} fehlgeschlagen`)
+  if (failed.length) {
+    console.log('\nFehlgeschlagen:')
+    for (const f of failed) console.log('  ❌ ' + f.name)
+    process.exitCode = 1
+    return
+  }
+  if (code) {
+    console.log(`⚠ abgebrochen (Rückgabewert ${code}) — die Suite ist NICHT durchgelaufen`)
+    return
+  }
+  console.log('✅ alles grün')
+})
