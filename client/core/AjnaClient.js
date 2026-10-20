@@ -350,7 +350,29 @@ export class AjnaClient {
     return this.objectMap.get(`${this.id}:${id}`)
   }
 
+  /**
+   * Den Objektbestand neu holen.
+   *
+   * SINGLE-FLIGHT, UND DAS IST EIN SCHLEIFENSCHUTZ. Diese Methode feuert am
+   * Ende `objectsChanged` — ein Aufrufer, der in genau diesem Ereignis wieder
+   * `refreshObjects()` ruft (eine naheliegende Art, eine Liste aktuell zu
+   * halten), dreht sich sonst im Kreis. Früher brach das SDK den Kreis durch
+   * Auto-Stornierung ab; seit `requestKey: null` tut es das nicht mehr, und aus
+   * der Fehlermeldung wurde eine Endlosschleife von Vollabrufen.
+   *
+   * Gemeldet am 20.10.2026 aus HeimatRadars Orga-Sicht: „Die Anmeldungen
+   * liessen sich nicht laden" bei jeder Freigabe — das war der abgebrochene
+   * Zwilling. Parallele Aufrufe teilen deshalb EINEN Abruf; dasselbe Mittel
+   * wie bei `verifySession`.
+   */
   async refreshObjects() {
+    if (this._refreshInflight) return this._refreshInflight
+    this._refreshInflight = this._refreshObjectsNow()
+      .finally(() => { this._refreshInflight = null })
+    return this._refreshInflight
+  }
+
+  async _refreshObjectsNow() {
     // Timestamp VOR dem Request stempeln — der Catch-up-Trigger aus
     // PB_CONNECT prüft das Fenster, um Doppel-Calls beim Boot zu sparen.
     this._lastRefreshAt = Date.now()
