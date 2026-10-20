@@ -13,6 +13,56 @@ Stand: 29. September 2026 (Handbuch-Webseite, C-ITS-Brücke)
 
 ## Als Nächstes
 
+### 0 · Jedes Konto kann jedes Gespräch mitlesen
+
+**Gemessen am 20.10. an einer Wegwerf-Instanz.** Drei Konten: A, ein Lauscher L,
+ein Sender S. L abonniert `chat:<A>`, S schreibt an A.
+
+```
+Abo auf fremdes chat-Thema: ANGENOMMEN
+  MITGEHÖRT: {"from":…,"to":…,"text":"Vertraulich: mein Passwort lautet Banane."}
+Empfänger bekam 1, Lauscher bekam 1
+```
+
+Realtime-Themen sind frei wählbare Zeichenketten; PocketBase prüft beim
+Abonnieren nicht, ob der Name den Abonnenten etwas angeht. Der Chat-Hook kennt
+die Lücke im Ansatz („Missbrauchsschutz: jeder Angemeldete darf jedem
+schreiben"), aber das Mitlesen steht dort nicht — und es ist das Schwerere von
+beidem.
+
+**Die Grenze verläuft zwischen gerichtet und öffentlich.** Weltnachrichten
+*dürfen* jeden erreichen, das ist ihr Zweck. Gerichtete Nachrichten — Spieler
+an Spieler, Spieler an Figur — dürfen es nicht. Heute ist **alles** auf
+`chat:*` gerichtet (ein Weltchat steht in `AjnaClient.js` als „später"), also
+gehört `chat:*` vollständig zugemacht. Ein künftiger Weltchat bekommt ein
+eigenes Thema und ist dort ausdrücklich öffentlich, statt die Regel für die
+gerichteten Nachrichten aufzuweichen.
+
+**Der Hebel ist da:** `onRealtimeSubscribeRequest` gibt es in dieser
+PocketBase-Fassung (`pb_data/types.d.ts`), mit `e.subscriptions` (die
+gewünschten Themen) und `e.requestInfo().auth`. Regel: `chat:<id>` nur, wenn
+`id` das eigene Konto ist.
+
+**Vorher zu messen, nicht anzunehmen:**
+
+* Wirkt ein Ändern von `e.subscriptions` im JSVM, oder muss die ganze Anfrage
+  abgelehnt werden? (Array-Mutationen über die Go-Brücke sind nicht immer
+  sichtbar.)
+* Was passiert mit einem Client, dessen Abo abgelehnt wird — bricht die
+  Realtime-Verbindung, oder fehlt nur dieses eine Thema? Davon hängt ab, ob
+  Ablehnen überhaupt gangbar ist.
+* **Dieselbe Frage für `proximity:<objectId>`** — das Ereignis trägt die
+  Konto-ID des Spielers, der sich nähert. Ein Fremder, der das Thema
+  abonniert, erfährt damit Anwesenheiten. Und für `agent:<source>`.
+
+**Netz dagegen:** Die Messung gehört als Suite nach `tests/privacy/` — der
+Fehler ist unsichtbar, solange niemand ihn ausdrücklich sucht.
+
+**Warum jetzt:** Heute antwortet eine Figur aus einer festen Satzliste, der
+Schaden ist begrenzt. Sobald NPCs frei formulieren und mitbekommen, was ein
+Spieler ihnen erzählt hat (geplante LLM-Sonderrollen), ist derselbe Kanal etwas
+anderes. Das gehört davor behoben, nicht danach.
+
 ### 1 · Welt-Kontext: der Ort fehlt noch
 
 Wetter, Sonne, Mond und Tageszeit stehen (23.09., siehe `welt-kontext.md`).
