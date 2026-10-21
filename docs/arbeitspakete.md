@@ -99,7 +99,7 @@ Sammeln der Beweise (Erwartung → Beobachtung).
 | 0 | Realtime-Themen absichern (Paket 0) | ✅ |
 | 1 | Aktionsregister `agents/lib/actions.mjs` — Spieler-Oberfläche, Wächter, Werkzeugdefinitionen | ✅ 25 Tests |
 | 2 | `agents/persona.mjs` **ohne** Modell: Konto, Figur, Manifest, ACE, Parley, Laufen, Näherung | ✅ live geprüft, 21 Tests |
-| 3 | `agents/lib/llm.mjs` + Adapter Anthropic / OpenAI-kompatibel, offline gegen eine Attrappe getestet | offen |
+| 3 | `agents/lib/llm.mjs` + Adapter Anthropic (offizielles SDK) / OpenAI-kompatibel (Ollama, vLLM — roher `fetch`), offline gegen Attrappen getestet | ✅ 34 Tests |
 | 4 | Ereignisse → Bündelung → Rate-Limit → Tool-Calls → Wächter → Rückfall; Modi basic/passive | offen |
 | 5 | Journal (Beweise) + Befunde (Urteil des Modells) + CLI-Export, JSONL neben dem Agenten | offen |
 | 6 | Modi active/debug | offen |
@@ -107,6 +107,15 @@ Sammeln der Beweise (Erwartung → Beobachtung).
 
 Parley bleibt die Quelle für Verbindliches: eine als `binding: true` markierte
 Regel geht wörtlich raus, ohne Modell. Das Feld gibt es noch nicht — Schritt 4.
+
+**Entscheidungen aus Schritt 3.** Vorgabe-Modell `claude-opus-5-5`, Denken
+adaptiv (Parameter wird nicht gesendet), Tiefe `output_config.effort = low` —
+eine Spielfigur muss nicht grübeln. Werkzeuge `strict`, `tool_choice` bleibt
+`auto` (Erzwingen gibt auf den aktuellen Modellen 400). **Keine
+Server-Fallbacks bei einer Ablehnung** (`stop_reason: refusal`): bei einer
+Figur ist der richtige Rückfall Parley, den gibt es, und ein Beta-Schalter
+bleibt dem Spiel erspart. Regler-Namen dürfen kein `token`/`key` enthalten
+(`konfig.mjs` weigert sich) — also `llm.max_output`, nicht `max_tokens`.
 
 ### 1 · Welt-Kontext: der Ort fehlt noch
 

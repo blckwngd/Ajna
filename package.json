@@ -55,6 +55,7 @@
     "address:setup": "node agents/address-bridge.mjs --setup"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.137.0",
     "@babylonjs/core": "^8.54.3",
     "@babylonjs/inspector": "^8.55.3",
     "@capacitor-community/text-to-speech": "^8.0.2",
