@@ -1,0 +1,85 @@
+# Personas — Figuren mit eigenem Konto
+
+Eine Persona ist eine entworfene Figur wie in [`figuren/`](../figuren) — mit
+einem Unterschied, der alles ändert: **sie gehört nicht dem World-Director,
+sondern einem eigenen Konto.** Der Director schreibt an Objekten, die ihm
+gehören, und kommt damit über den Besitzer-Pfad an jeder Rechteprüfung
+vorbei. Eine Persona geht die Wege eines Spielers (`/interact`, `/pickup`,
+`/chat/send`) und stößt an dieselben Wände wie ein Spieler. Für eine Figur,
+die bemerken soll, was ein Spieler bemerken würde, ist genau das der Zweck.
+
+Eine Datei je Persona, ein Prozess je Persona:
+
+```
+node agents/persona.mjs --persona wanderer --setup   # einmalig: Konto anlegen
+node agents/persona.mjs --persona wanderer           # danach
+npm run persona -- --persona wanderer                # dasselbe
+```
+
+`--setup` braucht `AJNA_SU`/`AJNA_SU_PASS` aus der Root-`.env`: Es legt das
+Konto als Superuser an, **versiegelt** es (`agent_seal` — der Client zeigt
+`✓ @wanderer` an allem, was die Figur anlegt) und schreibt
+`agents/.env.persona-wanderer` mit dem eigenen Login. Das Superuser-Passwort
+landet nicht in dieser Datei. Ein zweiter Lauf findet das Konto wieder und
+fasst das Passwort nicht an; `--reset-password` vergibt ein neues.
+
+## Die Datei
+
+```json
+{
+  "name": "Jorin der Wanderer",
+  "type": "npc",
+  "lat": 50.3569, "lon": 7.5890,
+  "description": "Ein Reisender, der sich alles genau ansieht.",
+  "dialog": "mensch",
+  "movement": "free",
+  "appearance": { "gltf": "quaternius_men/Adventurer.gltf", "emoji": "🧭" },
+  "mode": "debug",
+  "prompt": "Du bist Jorin …"
+}
+```
+
+Alles bis `appearance` ist das Figur-Format aus `figuren/README.md`; `id`
+entfällt, der Dateiname ist der Anker. Dazu:
+
+| Feld | |
+|---|---|
+| `mode` | `basic` (kein Sprachmodell, Verhalten wie der Director) · `passive` · `active` · `debug`. Vorgabe für den Regler `persona.mode` in `agent_settings` — dort zur Laufzeit umschaltbar |
+| `prompt` | Die Rolle fürs Sprachmodell. Deutsch, es ist Inhalt. Steht **nur** hier und in `agent_settings` des eigenen Kontos — nie in `objects.state`, das jeder lesen kann, der die Figur sieht |
+
+Der Dateiname ist zugleich der Handle des Kontos (`@wanderer`) und muss
+dessen Regeln genügen: Kleinbuchstaben, Ziffern, `-`, `_`.
+
+## Was eine Persona in der Welt ist
+
+Ein gewöhnliches Objekt, `state.persistent = true`, `state.source =
+persona-<name>`, mit eigenem Manifest — also im Agent-Filter der Spieler
+ausblendbar wie jede andere Quelle. **Kein** `state.director`: sonst
+adoptierte der Director die Figur als seine eigene.
+
+Spieler erreichen sie über `Sprechen` und `Untersuchen`; die Antworten kommen
+aus dem Parley-Paket unter `dialog`. In den Modi mit Sprachmodell kommt das
+Modell dazu — Parley bleibt dabei die Quelle für alles Verbindliche.
+
+## Interessensbereich
+
+Eine Persona kann wie ein Spieler ihren unscharfen Bereich veröffentlichen
+(`persona.publish_area`). Dann bevölkert der Director die Gegend um sie — ohne
+das liefe sie durch eine leere Welt. Vorgabe: **an** im Modus `debug`, sonst
+aus; eine dauerhaft stehende Figur hielte sonst still eine Gegend am Leben.
+
+## Regler (`agent_settings`, Präfix `persona.`)
+
+| Regler | Env | Vorgabe |
+|---|---|---|
+| `mode` | `PERSONA_MODE` | aus der Datei |
+| `publish_area` | `PERSONA_PUBLISH_AREA` | an bei `debug` |
+| `roam_radius_m` | `PERSONA_ROAM_RADIUS_M` | 150 |
+| `speed` | `PERSONA_SPEED` | 1.3 |
+| `tick_ms` | `PERSONA_TICK_MS` | 500 |
+| `pause_s` | `PERSONA_PAUSE_S` | 12 |
+| `talk_halt_s` | `PERSONA_TALK_HALT_S` | 45 |
+| `heartbeat_s` | `PERSONA_HEARTBEAT_S` | 60 |
+| `area_refresh_s` | `PERSONA_AREA_REFRESH_S` | 120 |
+
+Ein leerer Eintrag heißt: es gilt die `.env`.

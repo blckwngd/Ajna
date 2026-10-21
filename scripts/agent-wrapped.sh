@@ -10,6 +10,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 AGENT="$1"
+# Weitere Argumente gehen an den Agenten durch — eine Persona braucht
+# `--persona <name>`, alle anderen Agents brauchen nichts.
+shift
 
 # ─── Speicherbudget ──────────────────────────────────────────────────────────
 #
@@ -62,4 +65,4 @@ fi
 
 node scripts/wait-stack.mjs
 echo "[wrapper] $AGENT startet mit ${NODE_ARGS[*]:-ohne Sonderflags}"
-exec node "${NODE_ARGS[@]}" "agents/$AGENT.mjs"
+exec node "${NODE_ARGS[@]}" "agents/$AGENT.mjs" "$@"

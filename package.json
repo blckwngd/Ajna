@@ -31,6 +31,7 @@
     "wigle": "node agents/wigle-bridge.mjs",
     "wand-agent": "node agents/wand-agent.mjs",
     "director": "node agents/world-director.mjs",
+    "persona": "node agents/persona.mjs",
     "ha-gateway": "node agents/homeassistant-gateway.mjs",
     "ha-gateway:setup": "node agents/homeassistant-gateway.mjs --setup",
     "uwb-anchors": "node agents/uwb-anchors.mjs",

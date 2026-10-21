@@ -75,6 +75,39 @@ mit — sind mit ja / ja / nein beantwortet.
 
 </details>
 
+### 0b · Personas: Figuren mit eigenem Konto — und später mit Sprachmodell
+
+**Was es ist.** Wenige Sonderrollen, keine Bevölkerung: eine Figur je Prozess,
+mit **eigenem Konto** (`agent_seal` vom Betreiber, `✓ @name` im Client),
+eigener Figur, eigenem Manifest. Sie geht die Wege eines Spielers
+(`/interact`, `/pickup`, `/chat/send`) und stößt an dieselben Wände — der
+Director kommt über den Besitzer-Pfad an jeder Rechteprüfung vorbei, genau
+deshalb blieb die kaputte `updateRule` ein halbes Jahr unentdeckt. Entwurf und
+Entscheidungen: `personas/README.md`, `agents/persona.mjs` (Kopf).
+
+**Entschieden (21.10.):** ein Prozess je Persona · Persona-Konfiguration in
+`agent_settings` des eigenen Kontos, nie in `objects.state` (das liest jeder,
+der die Figur sieht) · Schlüssel nur in der Umgebung · Interest-Area pro
+Persona einstellbar, Vorgabe **an** im Modus `debug` (sonst liefe sie durch
+eine leere Welt, weil der Director nur dort bevölkert) · **was ein Befund ist,
+entscheidet das Modell, kein vorab geschriebenes Prädikat** — sonst entgingen
+genau die Logikfehler, an die niemand gedacht hat; deterministisch ist nur das
+Sammeln der Beweise (Erwartung → Beobachtung).
+
+| Schritt | | Stand |
+|---|---|---|
+| 0 | Realtime-Themen absichern (Paket 0) | ✅ |
+| 1 | Aktionsregister `agents/lib/actions.mjs` — Spieler-Oberfläche, Wächter, Werkzeugdefinitionen | ✅ 25 Tests |
+| 2 | `agents/persona.mjs` **ohne** Modell: Konto, Figur, Manifest, ACE, Parley, Laufen, Näherung | ✅ live geprüft, 21 Tests |
+| 3 | `agents/lib/llm.mjs` + Adapter Anthropic / OpenAI-kompatibel, offline gegen eine Attrappe getestet | offen |
+| 4 | Ereignisse → Bündelung → Rate-Limit → Tool-Calls → Wächter → Rückfall; Modi basic/passive | offen |
+| 5 | Journal (Beweise) + Befunde (Urteil des Modells) + CLI-Export, JSONL neben dem Agenten | offen |
+| 6 | Modi active/debug | offen |
+| 7 | Doku | offen |
+
+Parley bleibt die Quelle für Verbindliches: eine als `binding: true` markierte
+Regel geht wörtlich raus, ohne Modell. Das Feld gibt es noch nicht — Schritt 4.
+
 ### 1 · Welt-Kontext: der Ort fehlt noch
 
 Wetter, Sonne, Mond und Tageszeit stehen (23.09., siehe `welt-kontext.md`).

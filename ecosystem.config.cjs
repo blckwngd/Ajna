@@ -67,6 +67,15 @@ const AGENT_HEAP = {
 }
 const AGENT_HEAP_DEFAULT = { heap: 96, semi: 4 }
 
+// Personas: eine Figur mit eigenem Konto je Prozess (agents/persona.mjs,
+// personas/<name>.persona.json). Hier stehen nur die Namen; das Konto legt
+// `node agents/persona.mjs --persona <name> --setup` an, und die Zugangsdaten
+// liegen in agents/.env.persona-<name> — pro Server, nicht im Repo.
+// Leer lassen, solange auf diesem Server keine Persona laufen soll.
+const PERSONAS = [
+  // 'wanderer',
+]
+
 /**
  * Die Marke aus dem Budget. Sie MUSS über der Heap-Obergrenze liegen, sonst
  * holt pm2 den Agenten zurück, bevor V8 je aufräumen muss — dann ist das
@@ -199,6 +208,24 @@ module.exports = {
       env: {
         AJNA_HEAP_MB: String((AGENT_HEAP[name] || AGENT_HEAP_DEFAULT).heap),
         AJNA_SEMI_MB: String((AGENT_HEAP[name] || AGENT_HEAP_DEFAULT).semi),
+      },
+      time: true,
+    })),
+    // Eine App je Persona. Der Wrapper reicht alles nach dem Agentennamen an
+    // den Agenten durch — hier `--persona <name>`. Heap wie ein gewöhnlicher
+    // Agent; der Wegegraph ist auf den Bewegungsbereich begrenzt.
+    ...PERSONAS.map(p => ({
+      name: `persona-${p}`,
+      script: './scripts/agent-wrapped.sh',
+      args: `persona --persona ${p}`,
+      interpreter: 'bash',
+      cwd: ROOT,
+      autorestart: true,
+      restart_delay: 5000,
+      max_memory_restart: `${markeFuer(AGENT_HEAP.persona || AGENT_HEAP_DEFAULT)}M`,
+      env: {
+        AJNA_HEAP_MB: String((AGENT_HEAP.persona || AGENT_HEAP_DEFAULT).heap),
+        AJNA_SEMI_MB: String((AGENT_HEAP.persona || AGENT_HEAP_DEFAULT).semi),
       },
       time: true,
     })),

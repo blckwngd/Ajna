@@ -27,6 +27,7 @@ Agents sind normale Node-Prozesse, die sich als regulärer Benutzer anmelden und
 | **Roboter** | `npm run robot` | Betreibt ein teilautonomes Gerät (Rover, Hexapod) als Spielobjekt: Wegpunkte, Spielaktionen, Telemetrie. Mit `ROBOT_DRIVER=sim` **ohne jede Hardware** ausprobierbar — Agent, Navigation und Ajna-Objekt sind echt, nur die Räder nicht. Einen eigenen Antrieb anschliessen: siehe `agents/lib/robot-driver.mjs`. | — (Simulation) |
 | **UWB-Anker** | `npm run uwb-anchors` | Legt UWB-Anker aus einer JSON-Datei als Objekte an. Siehe [`docs/uwb.md`](https://github.com/blckwngd/Ajna/blob/main/docs/uwb.md) | Ankerdatei |
 | **Wand-Agent** | `npm run wand-agent` | Gegenstück zum Zeigegerät. Siehe [`docs/wand-slice.md`](https://github.com/blckwngd/Ajna/blob/main/docs/wand-slice.md) | Zauberstab |
+| **Persona** | `npm run persona -- --persona <name>` | **Eine** Figur mit **eigenem Konto** je Prozess — geht die Wege eines Spielers statt die des Directors und stößt an dieselben Wände. Einmalig `--setup` (legt das Konto als Superuser an und versiegelt es). Beschreibung in [`personas/README.md`](https://github.com/blckwngd/Ajna/blob/main/personas/README.md) | `AJNA_SU`/`AJNA_SU_PASS` fürs Setup |
 
 ## Erststart
 
