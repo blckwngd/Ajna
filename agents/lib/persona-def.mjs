@@ -33,13 +33,18 @@ export const PERSONAS_DIR = join(HERE, '..', '..', 'personas')
 export const MODES = ['basic', 'passive', 'active', 'debug']
 
 /** Menu actions per figure type — labels are what the player reads. */
+// `call` ("Rufen") is the summon: the client attaches the caller's position
+// (fuzzed or exact, by the player's privacy level for this server — the
+// dragon uses the same route), and the persona moves its home there. Who
+// may call is decided by the agent (`persona.call_allow`), not by the ACE:
+// the menu offers it to everyone, a refused call is answered in chat.
 export const MENU_ACTIONS = {
-  npc:    [{ key: 'talk', label: 'Sprechen' }, { key: 'examine', label: 'Untersuchen' }],
-  animal: [{ key: 'talk', label: 'Ansprechen' }, { key: 'examine', label: 'Untersuchen' }],
-  enemy:  [{ key: 'talk', label: 'Sprechen' }, { key: 'examine', label: 'Untersuchen' }],
+  npc:    [{ key: 'talk', label: 'Sprechen' }, { key: 'examine', label: 'Untersuchen' }, { key: 'call', label: 'Rufen' }],
+  animal: [{ key: 'talk', label: 'Ansprechen' }, { key: 'examine', label: 'Untersuchen' }, { key: 'call', label: 'Rufen' }],
+  enemy:  [{ key: 'talk', label: 'Sprechen' }, { key: 'examine', label: 'Untersuchen' }, { key: 'call', label: 'Rufen' }],
 }
 /** The interaction keys a persona grants to every logged-in player. */
-export const GRANTED_ACTIONS = ['talk', 'examine']
+export const GRANTED_ACTIONS = ['talk', 'examine', 'call']
 
 /** Same rule as `users.username` — the persona name becomes the handle. */
 export const NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{1,31}$/

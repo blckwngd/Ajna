@@ -146,6 +146,15 @@ const R = {
   talk_halt_s:    ['PERSONA_TALK_HALT_S',    45,   'how long the figure stands still after being addressed, in seconds'],
   heartbeat_s:    ['PERSONA_HEARTBEAT_S',    60,   'manifest heartbeat, in seconds'],
   area_refresh_s: ['PERSONA_AREA_REFRESH_S', 120,  'how often the interest area is renewed (server TTL is 180 s)'],
+  // THE AREA TO INVESTIGATE: home plus roam radius. Set here (or by a
+  // summon) and the figure moves — no database edit, no drag on the map;
+  // the agent is the only writer of its position and would undo both.
+  // ONE key, not two: lat and lon written separately would be seen by the
+  // settings subscription as two changes with a half-updated point between
+  // them — and the figure jumped there. A JSON value changes atomically.
+  home:           ['PERSONA_HOME',           `{"lat":${persona.figure.lat},"lon":${persona.figure.lon}}`, 'JSON {"lat":…,"lon":…} — overrides the file; a summon writes it'],
+  call_walk_m:    ['PERSONA_CALL_WALK_M',    400,  'summoned within this distance the figure walks; beyond it, it jumps (0 = always jump)'],
+  call_allow:     ['PERSONA_CALL_ALLOW',     '*',  'who may summon ("Rufen"): * = every logged-in player, or comma-separated account ids'],
 }
 await konf.saee(Object.entries(R).map(([name, [envName, vorgabe, note]]) => ({ name, envName, vorgabe, note })))
 const num = (k) => konf.zahl(k, R[k][0], R[k][1])
@@ -154,6 +163,31 @@ const mode = () => {
   return MODES.includes(m) ? m : 'basic'
 }
 const publishArea = () => konf.jaNein('publish_area', R.publish_area[0], R.publish_area[1] === 'on')
+// Home: the setting wins over the file, and a summon writes the setting —
+// so the area the figure investigates survives a restart.
+const parseHome = (v) => {
+  if (!v) return null
+  let o = v
+  if (typeof v === 'string') {
+    const s = v.trim()
+    try { o = JSON.parse(s) }
+    catch { const m = s.split(/[,;\s]+/); o = { lat: Number(m[0]), lon: Number(m[1]) } }
+  }
+  const lat = Number(o?.lat), lon = Number(o?.lon)
+  return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null
+}
+const effectiveHome = () =>
+  parseHome(konf.objekt('home', null))            // the setting (a summon writes it)
+  || parseHome(process.env.PERSONA_HOME)          // or the env
+  || { lat: persona.figure.lat, lon: persona.figure.lon }   // or the file
+{
+  const h = effectiveHome()
+  if (h.lat !== persona.figure.lat || h.lon !== persona.figure.lon) {
+    log(`home from settings: ${h.lat.toFixed(5)}, ${h.lon.toFixed(5)} (file: ${persona.figure.lat}, ${persona.figure.lon})`)
+    persona.figure.lat = h.lat
+    persona.figure.lon = h.lon
+  }
+}
 
 // ─── The figure ──────────────────────────────────────────────────────────
 const MODEL_BASE = '/models/'
@@ -220,7 +254,7 @@ every(publishManifest, () => num('heartbeat_s') * 1000)
 // within `roam_radius_m` of the figure's home, and a figure declared
 // `movement: still` never moves at all.
 const geo = new AjnaGeo(ajna)
-const home = { lat: persona.figure.lat, lon: persona.figure.lon }
+let home = { ...effectiveHome() }
 const c = {
   id: figure.id,
   lat: figure.lat, lon: figure.lon,
@@ -339,6 +373,81 @@ async function stopHere({ holdMs = 0 } = {}) {
   } finally { c.busy = false }
 }
 
+// ─── Moving house ────────────────────────────────────────────────────────
+//
+// Two ways to give the figure a new area to investigate, both ending here:
+// the operator sets `persona.home.*` in agent_settings, or a player summons
+// the figure ("Rufen"). A summon that is close enough is walked — the figure
+// moves like a player; beyond `call_walk_m` it jumps, because sending a
+// tester across town is an operator's decision, not gameplay.
+
+/** Put the figure at `to` now, make it home, and tell the world. */
+async function relocate(to, reason) {
+  // Already home there (the figure may be walking towards it): nothing to do.
+  if (haversine(home.lat, home.lon, to.lat, to.lon) < 1) return
+  for (let i = 0; c.busy && i < 30; i++) await new Promise(r => setTimeout(r, 50))
+  c.busy = true
+  try {
+    home = { lat: to.lat, lon: to.lon }
+    c.lat = to.lat; c.lon = to.lon
+    c.path = null; c.fsm = 'idle'; c.summonTarget = null
+    c.nextPlanAt = Date.now() + 8000
+    graph = null                     // the way graph belongs to the old place
+    setAnim('idle')
+    c.plan.zuruecksetzen()
+    const halt = c.plan.haltAn({ lat: c.lat, lon: c.lon, altitude: 0, trk: 0 })
+    const patch = { lat: c.lat, lon: c.lon, altitude: 0, state: { ...c.baseState, motion: halt } }
+    if (c.animOpen) { patch.animation_state = c.anim; c.animOpen = false }
+    await ajna.updateObject(c.id, patch)
+    log(`🚩 relocated to ${to.lat.toFixed(5)}, ${to.lon.toFixed(5)} (${reason})`)
+  } finally { c.busy = false }
+  await refreshArea()
+}
+
+/** Make the current home durable — it is the operator's regler, so write it there. */
+async function persistHome() {
+  const me = ajna.currentUser()
+  try {
+    const rec = await ajna.pb.collection('agent_settings')
+      .getFirstListItem(`owner = "${me.id}" && key = "persona.home"`, { requestKey: null })
+    await ajna.pb.collection('agent_settings').update(rec.id, { value: { lat: home.lat, lon: home.lon } }, { requestKey: null })
+  } catch (err) {
+    warn(`could not persist persona.home: ${err?.message || err}`)
+  }
+}
+
+/** A player called the figure. */
+async function summon(evt) {
+  const who = evt?.source || ''
+  const allow = konf.text('call_allow', R.call_allow[0], R.call_allow[1]).trim()
+  const allowed = allow === '*' || allow.split(',').map(s => s.trim()).filter(Boolean).includes(who)
+  if (!allowed) {
+    log(`📣 call by ${who} refused (call_allow)`)
+    if (who) await ajna.sendChat(who, { text: 'Ich komme nicht auf Zuruf — frag die, die mich hier hingestellt haben.', object: figure.id }).catch(() => {})
+    return
+  }
+  const at = evt?.payload?.at
+  const lat = Number(at?.lat), lon = Number(at?.lon)
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    log(`📣 call by ${who} without a position — ignored`)
+    return
+  }
+  const d = haversine(c.lat, c.lon, lat, lon)
+  const walkM = num('call_walk_m')
+  log(`📣 called by ${who}: ${Math.round(d)} m away, ${at?.precise ? 'exact' : 'approximate'} position`)
+  if (walkM > 0 && d <= walkM) {
+    // Walk there; the arrival makes it home (see advance()).
+    c.attendUntil = 0
+    c.summonTarget = { lat, lon }
+    const ok = await planWalk({ lat, lon })
+    if (!ok) await relocate({ lat, lon }, `summon by ${who}, no path — jumped`)
+    else { home = { lat, lon }; await refreshArea() }
+  } else {
+    await relocate({ lat, lon }, `summon by ${who}`)
+  }
+  await persistHome()
+}
+
 async function advance() {
   c.busy = true
   try {
@@ -362,7 +471,8 @@ async function advance() {
       const patch = { state: { ...c.baseState, motion: halt } }
       if (c.animOpen) { patch.animation_state = c.anim; c.animOpen = false }
       await ajna.updateObject(c.id, patch)
-      log(`⏸ arrived — pause ${(pause / 1000) | 0} s`)
+      if (c.summonTarget) { c.summonTarget = null; log(`🚩 arrived where I was called — this is home now`) }
+      else log(`⏸ arrived — pause ${(pause / 1000) | 0} s`)
     }
   } catch (err) {
     if (err?.status === 404) { die('the figure was deleted — stopping') }
@@ -444,6 +554,7 @@ setInterval(() => { const n = parley.sweep(15 * 60_000); if (n) log(`${n} idle c
 ajna.onInteract(figure.id, (evt) => {
   const action = evt?.action
   if (!action || action === 'examine') return
+  if (action === 'call') { summon(evt).catch(err => warn(`summon: ${err?.message || err}`)); return }
   if (action === 'talk' && evt?.source) say(evt.source, 'hallo').catch(err => warn(`greeting: ${err?.message || err}`))
   stopHere({ holdMs: num('talk_halt_s') * 1000 }).catch(() => {})
   log(`👂 ${action} by ${evt?.source || '?'} — holding ${num('talk_halt_s')} s`)
@@ -466,6 +577,15 @@ konf.beiAenderung((key) => {
   for (const t of TICKS) t.retime()
   if (key === 'persona.mode') log(`mode → ${mode()}${mode() === 'basic' ? '' : ' (model not wired yet — behaves like basic)'}`)
   if (key === 'persona.publish_area') refreshArea().catch(() => {})
+  if (key === 'persona.home') {
+    // The agent writes this key itself after a summon; the subscription then
+    // hands it back. Only a value that differs from what is already home is
+    // an operator's decision.
+    const h = effectiveHome()
+    if (haversine(home.lat, home.lon, h.lat, h.lon) >= 1) {
+      relocate(h, 'settings').catch(err => warn(`relocate: ${err?.message || err}`))
+    }
+  }
 })
 
 log(`ready — @${NAME} as „${figure.name}", mode ${mode()}${mode() === 'basic' ? '' : ' (model not wired yet — behaves like basic)'}, `

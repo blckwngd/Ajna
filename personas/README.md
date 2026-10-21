@@ -81,5 +81,29 @@ aus; eine dauerhaft stehende Figur hielte sonst still eine Gegend am Leben.
 | `talk_halt_s` | `PERSONA_TALK_HALT_S` | 45 |
 | `heartbeat_s` | `PERSONA_HEARTBEAT_S` | 60 |
 | `area_refresh_s` | `PERSONA_AREA_REFRESH_S` | 120 |
+| `home` | `PERSONA_HOME` (`"lat,lon"` oder JSON) | aus der Datei |
+| `call_walk_m` | `PERSONA_CALL_WALK_M` | 400 |
+| `call_allow` | `PERSONA_CALL_ALLOW` | `*` |
 
 Ein leerer Eintrag heißt: es gilt die `.env`.
+
+## Die Figur woandershin schicken
+
+**Nicht** über die Datenbank oder Drag & Drop auf der Karte: Der Agent ist die
+einzige Instanz, die seine Position schreibt, und überschreibt beides beim
+nächsten Takt. Zwei Wege, die er versteht:
+
+* **Heimat als Regler.** `persona.home` in `agent_settings` auf
+  `{"lat": 50.37, "lon": 7.59}` setzen — die Figur zieht sofort um (Sprung,
+  mit Logzeile `🚩 relocated`), die Interest-Area wandert mit, und Heimat plus
+  `roam_radius_m` sind ab da der Bereich, den sie untersucht. Überlebt einen
+  Neustart; ein leerer Eintrag heißt wieder: die Datei gilt. **Ein** Wert mit
+  beiden Koordinaten, nicht zwei — zwei Regler hätten einen Zwischenzustand,
+  in dem nur eine Hälfte neu ist, und die Figur spränge dorthin.
+* **Rufen.** Die Figur bietet `Rufen` im Menü (wie der Drache). Der Client
+  schickt dabei die Position des Rufenden nach dessen Privatsphäre-Stufe —
+  exakt oder aufs Raster gerundet, bei „Verborgen" gar nicht. Bis
+  `call_walk_m` geht die Figur hin, darüber springt sie (0 = immer springen).
+  Der Ort wird zur neuen Heimat und in die Regler geschrieben. Wer rufen darf,
+  bestimmt `call_allow`: `*` oder eine Liste von Konto-Kennungen; ein
+  abgewiesener Ruf wird im Chat beantwortet.
