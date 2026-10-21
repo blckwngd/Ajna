@@ -41,6 +41,11 @@ Teilstring** und über eine Alias-Prioritätsliste — ein Präfix wie `metarig|
 also nicht, und modell-spezifische Namen (`FlapFlight`, `GlideFlight`) werden
 erkannt. Fehlt jeder Treffer, fällt der Renderer auf die erste Gruppe zurück.
 
+Gesten enden in der Aliasliste immer auf `idle`, damit ein Modell ohne
+passenden Clip ruhig steht statt irgendeinen zu erwischen. `think` (eine
+Figur wartet auf ihr Sprachmodell) läuft über `interact` bzw. `spell` — die
+Alltagsleute haben das eine, die Helden das andere.
+
 **Verfügbare Flug-Modelle** (`MODEL_POOL.dragon` im World-Director):
 
 | Modell | idle | fly (klappen) | glide (gleiten) | walk | takeoff (abheben) |

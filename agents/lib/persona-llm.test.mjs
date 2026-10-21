@@ -98,7 +98,10 @@ test('tool calls run through the guard; results go back; say is collected', asyn
   const ctx = makeCtx()
   const r = await b.turn([{ kind: 'chat', player: 'p1', text: 'was ist das' }], ctx)
   assert.equal(r.source, 'model')
-  assert.deepEqual(r.say, [{ to: 'p1', text: 'Eine Bank.' }])
+  // `sent: true`: the tool delivered it — the agent must not send it again
+  // (it did, once; every answer appeared twice in the chat).
+  assert.deepEqual(r.say, [{ to: 'p1', text: 'Eine Bank.', sent: true }])
+  assert.equal(ctx.calls.filter(c => c[0] === 'sendChat').length, 1, 'exactly one chat message left the tool')
   assert.equal(ctx.calls.filter(c => c[0] === 'interact').length, 1)
   assert.equal(ctx.calls.some(c => c[0] === 'sendChat'), true)
   // the refused call went back to the model as an error result
@@ -129,6 +132,18 @@ test('the per-turn cap on tool calls holds', async () => {
   assert.equal(ctx.calls.filter(c => c[0] === 'interact').length, 3)
   const results = llm.requests[1].messages.at(-1).results
   assert.equal(results.filter(r => r.isError).length, 6)
+})
+
+test('rounds per turn are capped — each round resends the transcript, this is the cost lever', async () => {
+  // A model that keeps asking for one more tool call forever.
+  const endless = Array.from({ length: 20 }, (_, i) => ({ toolCalls: [{ id: `c${i}`, name: 'use', input: { object_id: 'bench1', action: 'examine' } }] }))
+  const llm = scriptedLlm(endless)
+  const b = mk(llm, 'debug', { maxRounds: 2, maxToolCalls: 50 })
+  await b.turn([{ kind: 'idle' }], makeCtx())
+  assert.equal(llm.requests.length, 2, 'two requests, then the turn ends')
+  const b1 = mk(scriptedLlm(endless.slice()), 'debug', { maxRounds: 0 })
+  await b1.turn([{ kind: 'idle' }], makeCtx())
+  assert.equal(b1.maxRounds, 1, 'at least one round, or the model is never asked')
 })
 
 test('report_finding is available in debug and reaches the recorder — content is not judged', async () => {

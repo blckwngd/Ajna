@@ -626,6 +626,17 @@ routerAdd("POST", "/api/objects/{id}/pickup", (e) => {
       }
     }
 
+    // LEBEWESEN SIND KEINE GEGENSTAENDE. `portable` allein entschied bisher —
+    // und ein Objekt vom Typ enemy mit state.portable = true liess sich
+    // einstecken (gefunden am 21.10., ein Nebelbeisser im Inventar einer
+    // Figur). Der Typ zaehlt vor dem Flag, auch fuer den Besitzer: Wer einen
+    // Gegner anlegt, darf ihn trotzdem nicht in die Tasche stecken. Beute
+    // eines Gefallenen ist davon nicht betroffen — sie ist `type: item`.
+    const typ = String(obj.get("type") || "").toLowerCase()
+    if (typ === "npc" || typ === "enemy" || typ === "animal" || typ === "dragon" || typ === "call") {
+      return e.json(403, { error: "a " + typ + " is not an item and cannot be picked up" })
+    }
+
     const isOwner = obj.get("owner") === user.id
     let ownerChanged = false
     if (!isOwner) {

@@ -44,7 +44,10 @@ export class AnthropicAdapter {
     const params = {
       model: this.model,
       max_tokens: maxTokens,
-      system: system || undefined,
+      // The system prompt is the stable prefix (tools → system → messages):
+      // a cache breakpoint here pays off from the second call of a turn on.
+      // Below the model's minimum cacheable size it is silently ignored.
+      system: system ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : undefined,
       messages: toWire(messages),
     }
     if (tools.length) {

@@ -40,7 +40,9 @@ test('the request carries system, tools (strict), auto tool choice, effort — a
   const { params, options } = c.calls[0]
   assert.equal(params.model, DEFAULT_MODEL)
   assert.equal(params.max_tokens, 500)
-  assert.equal(params.system, 'Du bist Jorin.')
+  // The system prompt is a cached text block: tools → system is the stable
+  // prefix, every further round of a turn reads it from the cache.
+  assert.deepEqual(params.system, [{ type: 'text', text: 'Du bist Jorin.', cache_control: { type: 'ephemeral' } }])
   assert.equal(params.tools[0].strict, true)
   assert.equal(params.tools[0].input_schema.additionalProperties, false)
   assert.deepEqual(params.tool_choice, { type: 'auto' })

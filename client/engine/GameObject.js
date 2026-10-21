@@ -90,6 +90,10 @@ const ANIM_ALIASES = {
   wave:  ["wave", "waving", "greet", "salute", "yes", "idle"],
   dance: ["dance", "dancing", "idle"],
   jump:  ["jump", "hop", "idle"],
+  // Nachdenken — eine Figur, die auf ihr Sprachmodell wartet, soll nicht
+  // wie eingefroren wirken. Die Alltagsleute haben „Interact", die Helden
+  // „Spell"; wer nichts dergleichen hat, steht ruhig.
+  think: ["think", "thinking", "ponder", "interact", "spell", "idle"],
 }
 
 // Typen, die als „Figur" einen Blob-Schatten bekommen (Objekte mit 3D-Modell

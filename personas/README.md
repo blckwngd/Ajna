@@ -91,7 +91,8 @@ aus; eine dauerhaft stehende Figur hielte sonst still eine Gegend am Leben.
 | `llm.rate_per_min` | `PERSONA_LLM_RATE_PER_MIN` | 6 |
 | `llm.timeout_ms` | `PERSONA_LLM_TIMEOUT_MS` | 20000 |
 | `llm.bundle_ms` | `PERSONA_LLM_BUNDLE_MS` | 1500 |
-| `llm.idle_s` | `PERSONA_LLM_IDLE_S` | 180 (`active`/`debug`: Eigeninitiative, 0 = nie) |
+| `llm.idle_s` | `PERSONA_LLM_IDLE_S` | 180 (`active`/`debug`: Eigeninitiative und Mindestabstand der Ankunfts-Züge, 0 = nie) |
+| `llm.max_rounds` | `PERSONA_LLM_MAX_ROUNDS` | 3 — **der Kostenregler:** Modellanfragen je Zug, jede schickt den ganzen Verlauf erneut |
 
 Ein leerer Eintrag heißt: es gilt die `.env`.
 
@@ -122,6 +123,17 @@ alles andere bekommt es als Material. Es handelt ausschließlich über die
 Werkzeuge des Aktionsregisters, jeder Aufruf geht durch den Wächter; ein
 verweigerter Aufruf kommt als Ergebnis zurück. Zeitüberschreitung,
 Rate-Limit, Anbieterfehler, Ablehnung: die Figur antwortet aus Parley.
+
+Wird die Figur angesprochen, bleibt sie stehen (`talk_halt_s`) — als
+Haltplan geschrieben, damit sie auch beim Betrachter steht und nicht
+weiterläuft. Solange das Modell rechnet, spielt sie `think` (bei den
+Alltagsleuten „Interact", bei den Helden „Spell", sonst ruhiges Stehen).
+
+**Was Anfragen kostet.** Ein Zug besteht aus bis zu `llm.max_rounds`
+Anfragen; jede schickt den ganzen Verlauf erneut, das Modell kann mehrere
+Werkzeuge in eine Runde packen. Ankunfts- und Leerlauf-Züge (`active`/`debug`)
+halten den Abstand `llm.idle_s`. Das Rate-Limit `llm.rate_per_min` zählt
+Anfragen, nicht Züge; darüber hinaus antwortet die Figur aus Parley.
 
 Was sie mit einem Spieler besprochen hat, merkt sie sich — begrenzt je
 Spieler und insgesamt, und über einen Neustart hinweg (siehe unten).

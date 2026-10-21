@@ -184,7 +184,8 @@ const R = {
   'llm.rate_per_min': ['PERSONA_LLM_RATE_PER_MIN', 6,               'model calls per minute; beyond that the figure answers from Parley'],
   'llm.timeout_ms':   ['PERSONA_LLM_TIMEOUT_MS',   20000,           'per call; a slow model is a Parley answer, not a frozen figure'],
   'llm.bundle_ms':    ['PERSONA_LLM_BUNDLE_MS',    1500,            'how long to gather events before one model turn'],
-  'llm.idle_s':       ['PERSONA_LLM_IDLE_S',       180,             'active/debug: own initiative every N seconds when nothing happens (0 = never)'],
+  'llm.idle_s':       ['PERSONA_LLM_IDLE_S',       180,             'active/debug: own initiative every N seconds when nothing happens (0 = never); also the minimum spacing of arrival turns'],
+  'llm.max_rounds':   ['PERSONA_LLM_MAX_ROUNDS',   3,               'model requests per turn — each resends the whole transcript, this is the cost lever'],
 }
 await konf.saee(Object.entries(R).map(([name, [envName, vorgabe, note]]) => ({ name, envName, vorgabe, note })))
 const num = (k) => konf.zahl(k, R[k][0], R[k][1])
@@ -576,7 +577,10 @@ ajna.onChat(async (msg) => {
     const now = Date.now()
     if (now - (lastLine.get(from) || 0) < 400) return
     lastLine.set(from, now)
-    c.attendUntil = Math.max(c.attendUntil, now + num('talk_halt_s') * 1000)
+    // Stop AND tell the viewers: `attendUntil` alone froze the figure here
+    // while every client extrapolated it walking on. stopHere writes the
+    // halt plan and keeps the pause for talk_halt_s.
+    stopHere({ holdMs: num('talk_halt_s') * 1000 }).catch(() => {})
     log(`💬 ${from}: ${text.slice(0, 60)}`)
     lastEventAt = now
     const p = person(from); p.lastSaid = text.slice(0, 80); p.seenAt = now
@@ -705,6 +709,7 @@ const behaviour = new LlmBehaviour({
   log: (m) => log(`🧠 ${m}`),
   warn: (m) => warn(`🧠 ${m}`),
   bundleMs: num('llm.bundle_ms'),
+  maxRounds: num('llm.max_rounds'),
   memory,
   onJournal: (e) => {
     journal.entry(e)
@@ -713,14 +718,23 @@ const behaviour = new LlmBehaviour({
   },
 })
 await ensureLlm()
+// Arrivals are frequent (a walk a minute); without spacing they were the
+// bulk of the model calls. Same spacing as the idle nudge, and never while
+// a turn is running.
+let lastInitiativeAt = 0
 onArrived = () => {
-  if (mode() !== 'passive' && modelOn()) toModel({ kind: 'arrived' }).catch(err => warn(`arrival turn: ${err?.message || err}`))
+  if (mode() === 'passive' || !modelOn()) return
+  const idle = num('llm.idle_s')
+  if (!idle || Date.now() - lastInitiativeAt < idle * 1000 || behaviour.running) return
+  lastInitiativeAt = Date.now()
+  toModel({ kind: 'arrived' }).catch(err => warn(`arrival turn: ${err?.message || err}`))
 }
 
 /** Send what a turn decided to say; a binding Parley answer carries its gestures. */
 async function deliver(result) {
   for (const s of result?.say || []) {
     if (!s?.to || !s.text) continue
+    if (s.sent) continue      // the say tool delivered it already — once is enough
     try {
       await ajna.sendChat(s.to, { text: s.text, object: figure.id })
       for (const a of s.do || []) if (a?.action === 'anim' && a.value) { try { await ajna.setAnimation(figure.id, String(a.value)); c.anim = String(a.value) } catch {} }
@@ -731,10 +745,19 @@ async function deliver(result) {
 /** Hand an event to the model (if on). Returns true when the model handled it. */
 async function toModel(event) {
   if (!modelOn()) return false
-  const r = await behaviour.handle(event, buildCtx)
-  if (!r?.handled) return false
-  await deliver(r)
-  return true
+  // While the model thinks, the figure visibly thinks: `think` resolves to
+  // Interact/Spell where the model has it, idle elsewhere (GameObject.js).
+  // Only when standing — a walking figure keeps walking.
+  const thinking = c.fsm !== 'walking'
+  if (thinking) { try { await ajna.setAnimation(figure.id, 'think'); c.anim = 'think' } catch {} }
+  try {
+    const r = await behaviour.handle(event, buildCtx)
+    if (!r?.handled) return false
+    await deliver(r)
+    return true
+  } finally {
+    if (thinking && c.anim === 'think') { try { await ajna.setAnimation(figure.id, 'idle'); c.anim = 'idle' } catch {} }
+  }
 }
 
 // Own initiative in active/debug: a nudge when nothing has happened.
@@ -742,8 +765,8 @@ let lastEventAt = Date.now()
 every(() => {
   const idle = num('llm.idle_s')
   if (!idle || mode() === 'passive' || !modelOn()) return
-  if (Date.now() - lastEventAt < idle * 1000) return
-  lastEventAt = Date.now()
+  if (Date.now() - lastEventAt < idle * 1000 || Date.now() - lastInitiativeAt < idle * 1000 || behaviour.running) return
+  lastEventAt = Date.now(); lastInitiativeAt = Date.now()
   toModel({ kind: 'idle' }).catch(err => warn(`idle turn: ${err?.message || err}`))
 }, () => 15_000)
 

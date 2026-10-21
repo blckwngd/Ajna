@@ -108,4 +108,27 @@ export async function run(t) {
   })
   t.check('eine aufgegebene fremde Quelle lässt sich NICHT zurückholen',
     zurueck.status === 403, `status ${zurueck.status}`)
+
+  // ── Lebewesen sind keine Gegenstände ────────────────────────────────────
+  // Gefunden am 21.10.: ein Objekt vom Typ enemy mit state.portable = true
+  // liess sich einstecken — `portable` allein entschied. Der Typ zählt vor
+  // dem Flag, auch für den Besitzer.
+  const gegner = await t.object(agent.token, {
+    name: 'Prüf-Nebelbeißer', type: 'enemy', lat: 50.4466, lon: 7.5971, altitude: 0,
+    state: { portable: true },
+  })
+  await req('/api/collections/object_permissions/records', {
+    method: 'POST', token: agent.token,
+    body: { object: gegner.id, subject_type: 'authenticated', subject: '', rights: ['view'], interact_actions: ['examine'] },
+  })
+  const einstecken = await req(`/api/objects/${gegner.id}/pickup`, { method: 'POST', token: spieler.token })
+  t.check('ein Gegner lässt sich NICHT einstecken, auch mit portable', einstecken.status === 403,
+    `status ${einstecken.status}`)
+  const selbst = await req(`/api/objects/${gegner.id}/pickup`, { method: 'POST', token: agent.token })
+  t.check('auch nicht vom Besitzer', selbst.status === 403, `status ${selbst.status}`)
+  const tier = await t.object(agent.token, {
+    name: 'Prüf-Fuchs', type: 'animal', lat: 50.4466, lon: 7.5971, altitude: 0, state: { portable: true },
+  })
+  const fuchs = await req(`/api/objects/${tier.id}/pickup`, { method: 'POST', token: agent.token })
+  t.check('ein Tier ebenso wenig', fuchs.status === 403, `status ${fuchs.status}`)
 }

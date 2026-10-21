@@ -80,7 +80,9 @@ export function describeState(s) {
     }
   }
   const inv = (s.inventory || []).filter(o => o && o.id)
-  if (inv.length) lines.push(`Du trägst: ${inv.map(o => `${o.name || '?'} [${o.id}]`).join(', ')}.`)
+  // With the type: a figure that carries an "enemy" should be able to notice
+  // that something is off — it cannot, if all it sees is a name.
+  if (inv.length) lines.push(`Du trägst: ${inv.map(o => `${o.name || '?'} [${o.id}]${o.type ? ` (${o.type})` : ''}`).join(', ')}.`)
   if (s.world && Object.keys(s.world).length) {
     const w = []
     for (const [k, v] of Object.entries(s.world)) {
@@ -185,7 +187,7 @@ export class Memory {
  * @param {() => number} [deps.now]
  */
 export class LlmBehaviour {
-  constructor({ llm, persona, mode, log, warn, onJournal = null, maxToolCalls = 6, bundleMs = 1200, memory = null, now = () => Date.now() } = {}) {
+  constructor({ llm, persona, mode, log, warn, onJournal = null, maxToolCalls = 6, maxRounds = 3, bundleMs = 1200, memory = null, now = () => Date.now() } = {}) {
     if (!llm) throw new Error('LlmBehaviour: llm is required')
     this.llm = llm
     this.persona = persona
@@ -194,6 +196,10 @@ export class LlmBehaviour {
     this.warn = warn || this.log
     this.onJournal = onJournal
     this.maxToolCalls = maxToolCalls
+    // Rounds = model requests per turn. Each one resends the whole transcript,
+    // so this is the cost lever: one turn used to allow up to seven. The model
+    // can put several tool calls into one round; it does not need more.
+    this.maxRounds = Math.max(1, maxRounds)
     this.bundleMs = bundleMs
     this.memory = memory || new Memory()
     this.now = now
@@ -266,7 +272,7 @@ export class LlmBehaviour {
     let ended = false
     let lastText = ''
     try {
-      for (let round = 0; round < this.maxToolCalls + 1 && !ended; round++) {
+      for (let round = 0; round < this.maxRounds && !ended; round++) {
         const res = await this.llm.complete({ system, messages, tools })
         this.stats.turns++
         this.stats.tokensIn += res.usage.input; this.stats.tokensOut += res.usage.output
@@ -297,7 +303,10 @@ export class LlmBehaviour {
           try {
             const r = await g.action.run(ctx, call.input)
             outcome = { ok: true, result: compact(r) }
-            if (call.name === 'say') said.push({ to: call.input.to, text: call.input.text })
+            // `sent: true` — the tool already delivered it. The caller must
+            // not send it a second time (it did, once: every answer showed up
+            // twice in the chat).
+            if (call.name === 'say') said.push({ to: call.input.to, text: call.input.text, sent: true })
           } catch (err) {
             outcome = { ok: false, error: String(err?.response?.data?.message || err?.message || err).slice(0, 200) }
           }
