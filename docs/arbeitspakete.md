@@ -100,13 +100,14 @@ Sammeln der Beweise (Erwartung → Beobachtung).
 | 1 | Aktionsregister `agents/lib/actions.mjs` — Spieler-Oberfläche, Wächter, Werkzeugdefinitionen | ✅ 25 Tests |
 | 2 | `agents/persona.mjs` **ohne** Modell: Konto, Figur, Manifest, ACE, Parley, Laufen, Näherung | ✅ live geprüft, 21 Tests |
 | 3 | `agents/lib/llm.mjs` + Adapter Anthropic (offizielles SDK) / OpenAI-kompatibel (Ollama, vLLM — roher `fetch`), offline gegen Attrappen getestet | ✅ 34 Tests |
-| 4 | Ereignisse → Bündelung → Rate-Limit → Tool-Calls → Wächter → Rückfall; Modi basic/passive | offen |
+| 4 | Ereignisse → Bündelung → Rate-Limit → Tool-Calls → Wächter → Rückfall; Modi basic/passive/active/debug (`agents/lib/persona-llm.mjs`, Einbau in `persona.mjs`) | ✅ 19 Tests gegen Attrappen; der Einbau in `persona.mjs` ist syntaxgeprüft, der Live-Lauf steht aus (Persona läuft beim Betreiber, Neustart nötig) |
 | 5 | Journal (Beweise) + Befunde (Urteil des Modells) + CLI-Export, JSONL neben dem Agenten | offen |
 | 6 | Modi active/debug | offen |
 | 7 | Doku | offen |
 
 Parley bleibt die Quelle für Verbindliches: eine als `binding: true` markierte
-Regel geht wörtlich raus, ohne Modell. Das Feld gibt es noch nicht — Schritt 4.
+Regel geht wörtlich raus, ohne Modell. Das Feld gibt es seit Schritt 4
+(`parley/src/doc.mjs`, erbt über `same_as`; `say()` liefert es zurück).
 
 **Entscheidungen aus Schritt 3.** Vorgabe-Modell `claude-opus-5-5`, Denken
 adaptiv (Parameter wird nicht gesendet), Tiefe `output_config.effort = low` —

@@ -166,7 +166,7 @@ export class Conversation {
 
     if (!treffer) {
       this.last = null
-      return { text: null, matched: false, label: null, choices: null, input: this._inputMode(null), do: [] }
+      return { text: null, matched: false, label: null, binding: false, choices: null, input: this._inputMode(null), do: [] }
     }
 
     const { regel, caps } = treffer
@@ -193,6 +193,7 @@ export class Conversation {
       text: antwortText,
       matched: true,
       label: regel.label,
+      binding: regel.binding === true,
       choices: choices && choices.length ? choices : null,
       input: modus,
       do: aktionen,

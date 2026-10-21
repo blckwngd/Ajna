@@ -179,6 +179,20 @@ Der Agent lädt beim Start alles aus `/dialogs`; ein Neustart genügt. Die
 vollständige Formatbeschreibung — Muster, Bedingungen, Platzhalter, Vererbung —
 steht in der [Parley-README](../parley/README.md).
 
+## Wenn ein Sprachmodell mitspricht
+
+Figuren mit eigenem Konto (Personas) können in den Modi `passive`, `active`
+und `debug` frei formulieren. Parley bleibt dabei die erste Instanz: Jede
+Eingabe läuft zuerst durch die Regeln. Trifft eine Regel mit
+`"binding": true`, geht **ihr Text wörtlich raus** — das Modell bekommt ihn
+gar nicht erst zu formulieren. Alles andere reicht der Agent dem Modell als
+Material („Parley würde antworten: …"), und das Modell spricht in der Rolle.
+
+Verbindlich markieren, was später nachgeprüft wird oder zusagt: Wegbeschreibungen
+zu einem Auftragsort, Preise, Bedingungen, alles mit `do:`. Was nur Farbe ist,
+bleibt frei. Ein `same_as`-Alias ohne eigene Antwort erbt die Verbindlichkeit
+der Regel, auf die er zeigt.
+
 **Zwei Fallen beim Schreiben:**
 
 - Die Reihenfolge entscheidet. Eine engere Regel muss **über** der allgemeinen

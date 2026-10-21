@@ -45,6 +45,10 @@ import { Bewegungsplan, bewegungsUpdate } from './lib/bewegung.mjs'
 import { yawFuerKurs } from '../client/core/yaw.js'
 import { npcParley } from './lib/dialogs.mjs'
 import { dialogNameFor, dialogVarsFor, talkSessionId } from '../client/core/Parley.js'
+import { createLlmClient } from './lib/llm.mjs'
+import { LlmBehaviour } from './lib/persona-llm.mjs'
+import { Weltkontext, zelleFuer } from './lib/weltkontext.mjs'
+import { wetterAnbieter } from './lib/wetter.mjs'
 
 // ─── Arguments ───────────────────────────────────────────────────────────
 const argv = process.argv.slice(2)
@@ -155,6 +159,17 @@ const R = {
   home:           ['PERSONA_HOME',           `{"lat":${persona.figure.lat},"lon":${persona.figure.lon}}`, 'JSON {"lat":…,"lon":…} — overrides the file; a summon writes it'],
   call_walk_m:    ['PERSONA_CALL_WALK_M',    400,  'summoned within this distance the figure walks; beyond it, it jumps (0 = always jump)'],
   call_allow:     ['PERSONA_CALL_ALLOW',     '*',  'who may summon ("Rufen"): * = every logged-in player, or comma-separated account ids'],
+  // THE MODEL. Keys live in the environment only (ANTHROPIC_API_KEY,
+  // OPENAI_API_KEY, OPENAI_BASE_URL); `konfig.mjs` refuses to create a
+  // regler whose name contains key/token — which is why it is `max_output`.
+  'llm.provider':     ['PERSONA_LLM_PROVIDER',     'anthropic',     'anthropic | openai (OpenAI-compatible: Ollama, vLLM — needs OPENAI_BASE_URL in the env)'],
+  'llm.model':        ['PERSONA_LLM_MODEL',        'claude-opus-5-5', 'model id; the persona file does not know about models'],
+  'llm.effort':       ['PERSONA_LLM_EFFORT',       'low',           'thinking depth: low | medium | high (a character does not need to deliberate)'],
+  'llm.max_output':   ['PERSONA_LLM_MAX_OUTPUT',   1024,            'max output tokens per model call'],
+  'llm.rate_per_min': ['PERSONA_LLM_RATE_PER_MIN', 6,               'model calls per minute; beyond that the figure answers from Parley'],
+  'llm.timeout_ms':   ['PERSONA_LLM_TIMEOUT_MS',   20000,           'per call; a slow model is a Parley answer, not a frozen figure'],
+  'llm.bundle_ms':    ['PERSONA_LLM_BUNDLE_MS',    1500,            'how long to gather events before one model turn'],
+  'llm.idle_s':       ['PERSONA_LLM_IDLE_S',       180,             'active/debug: own initiative every N seconds when nothing happens (0 = never)'],
 }
 await konf.saee(Object.entries(R).map(([name, [envName, vorgabe, note]]) => ({ name, envName, vorgabe, note })))
 const num = (k) => konf.zahl(k, R[k][0], R[k][1])
@@ -269,6 +284,7 @@ const c = {
 }
 function withoutRun(state) { const { walk_path, motion, ...rest } = state || {}; return rest }
 const stills = persona.figure.movement === 'still'
+let onArrived = null           // set by the model block below
 
 let graph = null, graphAt = 0, geoWarned = 0
 async function wayGraph() {
@@ -473,6 +489,10 @@ async function advance() {
       await ajna.updateObject(c.id, patch)
       if (c.summonTarget) { c.summonTarget = null; log(`🚩 arrived where I was called — this is home now`) }
       else log(`⏸ arrived — pause ${(pause / 1000) | 0} s`)
+      // In active/debug an arrival is a moment to look around. Through a
+      // hook: the model block is defined further down, and a tick can fire
+      // before the module has got there.
+      if (onArrived) onArrived()
     }
   } catch (err) {
     if (err?.status === 404) { die('the figure was deleted — stopping') }
@@ -543,6 +563,25 @@ ajna.onChat(async (msg) => {
     lastLine.set(from, now)
     c.attendUntil = Math.max(c.attendUntil, now + num('talk_halt_s') * 1000)
     log(`💬 ${from}: ${text.slice(0, 60)}`)
+    lastEventAt = now
+    const p = person(from); p.lastSaid = text.slice(0, 80); p.seenAt = now
+
+    if (modelOn()) {
+      // Parley first — its verdict (binding or material) travels with the
+      // event; the model answers unless the rules insist.
+      const conv = parley.open(dialogNameFor(figure), talkSessionId(from, figure.id), { vars: dialogVarsFor(figure) })
+      const a = conv.say(text)
+      const handled = await toModel({ kind: 'chat', player: from, text, parley: { text: a.text, binding: a.binding === true, do: a.do || [] } })
+      if (handled) return
+      // The model had nothing (off, refused without a rule answer): the
+      // rules answer as they always did — but the conversation already
+      // advanced one turn above, so send that answer rather than re-asking.
+      if (a.text) {
+        await ajna.sendChat(from, { text: a.text, object: figure.id, meta: a.choices ? { choices: a.choices, input: a.input } : null })
+        for (const d of a.do || []) if (d?.action === 'anim' && d.value) { try { await ajna.setAnimation(figure.id, String(d.value)); c.anim = String(d.value) } catch {} }
+      }
+      return
+    }
     await say(from, text)
   } catch (err) { warn(`chat: ${err?.message || err}`) }
 }).then(() => log(`listening for chat (dialogue set: ${dialogNameFor(figure)})`))
@@ -550,12 +589,147 @@ ajna.onChat(async (msg) => {
 
 setInterval(() => { const n = parley.sweep(15 * 60_000); if (n) log(`${n} idle conversation(s) forgotten`) }, 60_000).unref()
 
+// ─── The model ───────────────────────────────────────────────────────────
+//
+// Built from the reglers plus the key in the environment. No key and a
+// model mode → the figure says so once and behaves like `basic`; it never
+// goes mute and never fails to start. The client is rebuilt when an
+// `llm.*` regler changes, so provider and model can be switched live.
+const PERCEPTION_M = 120
+const MODEL_MODES = new Set(['passive', 'active', 'debug'])
+const llmCfg = () => ({
+  provider: konf.text('llm.provider', R['llm.provider'][0], R['llm.provider'][1]).toLowerCase(),
+  model: konf.text('llm.model', R['llm.model'][0], R['llm.model'][1]),
+  effort: konf.text('llm.effort', R['llm.effort'][0], R['llm.effort'][1]),
+  maxTokens: num('llm.max_output'),
+  ratePerMinute: num('llm.rate_per_min'),
+  timeoutMs: num('llm.timeout_ms'),
+})
+let llm = null, llmKey = ''
+async function ensureLlm() {
+  const cfg = llmCfg()
+  const apiKey = cfg.provider === 'anthropic' ? process.env.ANTHROPIC_API_KEY : process.env.OPENAI_API_KEY
+  const baseUrl = cfg.provider === 'openai' ? (process.env.OPENAI_BASE_URL || undefined) : undefined
+  const key = JSON.stringify([cfg, !!apiKey, baseUrl])
+  if (llm && key === llmKey) return llm
+  if (cfg.provider === 'anthropic' && !apiKey) {
+    if (llmKey !== 'nokey') warn('no ANTHROPIC_API_KEY in agents/.env.' + AGENT + ' — the model stays off, the figure behaves like basic')
+    llmKey = 'nokey'; llm = null; return null
+  }
+  try {
+    llm = await createLlmClient({ ...cfg, apiKey: apiKey || '', baseUrl })
+    llmKey = key
+    log(`model: ${cfg.provider} ${cfg.model}, effort ${cfg.effort}, ${cfg.ratePerMinute}/min, ${cfg.timeoutMs} ms`)
+  } catch (err) { warn(`model not configured: ${err?.message || err}`); llm = null; llmKey = 'err' }
+  return llm
+}
+const modelOn = () => MODEL_MODES.has(mode()) && !!llm
+
+// World context (weather, daylight) for the situation description —
+// refreshed for the figure's cell, synchronous to read.
+const world = new Weltkontext({ anbieter: [wetterAnbieter({ ttlMs: 15 * 60_000 })], warn })
+async function refreshWorld() {
+  try { await world.frischen([zelleFuer(c.lat, c.lon)]); world.aufraeumen() } catch (err) { warn(`world context: ${err?.message || err}`) }
+}
+refreshWorld().catch(() => {})
+every(refreshWorld, () => 10 * 60_000)
+
+// People the figure knows about: who is near, who said what. No positions
+// ever arrive — only ids and words.
+const people = new Map()       // userId → { id, near, lastSaid, seenAt }
+const person = (id) => { if (!people.has(id)) people.set(id, { id, near: false, lastSaid: '', seenAt: 0 }); return people.get(id) }
+const findings = []            // step 5 moves this to a file; for now in memory + log
+const recent = []              // last journal lines for the situation description
+
+/** Everything an action may touch — rebuilt per turn, so perception is fresh. */
+function buildCtx() {
+  const me = ajna.currentUser()
+  const objects = ajna.getObjects().filter(o => o?.id && o.id !== figure.id && !o.carried_by
+    && Number.isFinite(o.lat) && Number.isFinite(o.lon) && haversine(c.lat, c.lon, o.lat, o.lon) <= PERCEPTION_M)
+  const inventory = ajna.getObjects().filter(o => o?.carried_by && String(o.carried_by) === String(me?.id))
+  const cutoff = Date.now() - 20 * 60_000
+  const players = [...people.values()].filter(p => p.near || p.seenAt > cutoff)
+  return {
+    mode: mode(),
+    self: { id: figure.id, lat: c.lat, lon: c.lon, rotation: { x: 0, y: 0, z: 0 } },
+    perception: { objects, players, inventory },
+    limits: { roam: { lat: home.lat, lon: home.lon, radius_m: num('roam_radius_m') } },
+    world: world.varsFuer(c.lat, c.lon),
+    activity: c.fsm === 'walking' ? 'du gehst' : 'du stehst',
+    recent: recent.slice(-8),
+    ajna,
+    walkTo: (lat, lon) => planWalk({ lat, lon }),
+    stop: () => stopHere({ holdMs: 5000 }),
+    wait: (seconds) => { c.attendUntil = Math.max(c.attendUntil, Date.now() + seconds * 1000); return true },
+    recordFinding: (f) => {
+      const entry = { at: new Date().toISOString(), persona: NAME, ...f, context: recent.slice(-6) }
+      findings.push(entry)
+      log(`📝 FINDING [${f.type}] ${f.title} — ${String(f.description).slice(0, 120)}`)
+      return { recorded: findings.length }
+    },
+  }
+}
+
+const behaviour = new LlmBehaviour({
+  llm: { async complete(req) { const cl = await ensureLlm(); if (!cl) throw new Error('model off'); return cl.complete(req) } },
+  persona: { name: figure.name, prompt: persona.prompt },
+  mode: () => (modelOn() ? mode() : 'basic'),
+  log: (m) => log(`🧠 ${m}`),
+  warn: (m) => warn(`🧠 ${m}`),
+  bundleMs: num('llm.bundle_ms'),
+  onJournal: (e) => { recent.push(`${e.action}(${JSON.stringify(e.input).slice(0, 60)}) → ${e.outcome.ok ? 'ok' : 'FEHLER ' + e.outcome.error}`); if (recent.length > 40) recent.shift() },
+})
+await ensureLlm()
+onArrived = () => {
+  if (mode() !== 'passive' && modelOn()) toModel({ kind: 'arrived' }).catch(err => warn(`arrival turn: ${err?.message || err}`))
+}
+
+/** Send what a turn decided to say; a binding Parley answer carries its gestures. */
+async function deliver(result) {
+  for (const s of result?.say || []) {
+    if (!s?.to || !s.text) continue
+    try {
+      await ajna.sendChat(s.to, { text: s.text, object: figure.id })
+      for (const a of s.do || []) if (a?.action === 'anim' && a.value) { try { await ajna.setAnimation(figure.id, String(a.value)); c.anim = String(a.value) } catch {} }
+    } catch (err) { warn(`say to ${s.to}: ${err?.message || err}`) }
+  }
+}
+
+/** Hand an event to the model (if on). Returns true when the model handled it. */
+async function toModel(event) {
+  if (!modelOn()) return false
+  const r = await behaviour.handle(event, buildCtx)
+  if (!r?.handled) return false
+  await deliver(r)
+  return true
+}
+
+// Own initiative in active/debug: a nudge when nothing has happened.
+let lastEventAt = Date.now()
+every(() => {
+  const idle = num('llm.idle_s')
+  if (!idle || mode() === 'passive' || !modelOn()) return
+  if (Date.now() - lastEventAt < idle * 1000) return
+  lastEventAt = Date.now()
+  toModel({ kind: 'idle' }).catch(err => warn(`idle turn: ${err?.message || err}`))
+}, () => 15_000)
+
 // ─── Being addressed and approached ──────────────────────────────────────
 ajna.onInteract(figure.id, (evt) => {
   const action = evt?.action
   if (!action || action === 'examine') return
   if (action === 'call') { summon(evt).catch(err => warn(`summon: ${err?.message || err}`)); return }
-  if (action === 'talk' && evt?.source) say(evt.source, 'hallo').catch(err => warn(`greeting: ${err?.message || err}`))
+  lastEventAt = Date.now()
+  if (action === 'talk' && evt?.source) {
+    const p = person(evt.source); p.seenAt = Date.now()
+    if (modelOn()) {
+      toModel({ kind: 'interact', player: evt.source, action }).then(handled => {
+        if (!handled) return say(evt.source, 'hallo')
+      }).catch(err => warn(`greeting: ${err?.message || err}`))
+    } else {
+      say(evt.source, 'hallo').catch(err => warn(`greeting: ${err?.message || err}`))
+    }
+  }
   stopHere({ holdMs: num('talk_halt_s') * 1000 }).catch(() => {})
   log(`👂 ${action} by ${evt?.source || '?'} — holding ${num('talk_halt_s')} s`)
 }).catch(err => warn(`interact subscription: ${err?.message || err}`))
@@ -564,18 +738,23 @@ ajna.onInteract(figure.id, (evt) => {
 // No coordinates arrive — only that, and who. For now the figure stops and
 // turns attentive; in the model modes this is the main trigger.
 ajna.onProximity(figure.id, (evt) => {
+  if (evt?.source) { const p = person(evt.source); p.near = evt.state === 'enter'; p.seenAt = Date.now() }
+  lastEventAt = Date.now()
   if (evt?.state === 'enter') {
     log(`👀 ${evt.source || 'someone'} is near`)
     stopHere({ holdMs: 20_000 }).catch(() => {})
+    if (evt.source) toModel({ kind: 'proximity', player: evt.source, state: 'enter' }).catch(err => warn(`proximity turn: ${err?.message || err}`))
   } else if (evt?.state === 'leave') {
     log(`👋 ${evt.source || 'someone'} left`)
+    if (evt.source && mode() !== 'passive') toModel({ kind: 'proximity', player: evt.source, state: 'leave' }).catch(() => {})
   }
 }).catch(err => warn(`proximity subscription: ${err?.message || err}`))
 
 // ─── Settings changes ────────────────────────────────────────────────────
 konf.beiAenderung((key) => {
   for (const t of TICKS) t.retime()
-  if (key === 'persona.mode') log(`mode → ${mode()}${mode() === 'basic' ? '' : ' (model not wired yet — behaves like basic)'}`)
+  if (key === 'persona.mode') log(`mode → ${mode()}${mode() === 'basic' ? '' : modelOn() ? '' : ' (no model key — behaves like basic)'}`)
+  if (key.startsWith('persona.llm.')) ensureLlm().catch(() => {})
   if (key === 'persona.publish_area') refreshArea().catch(() => {})
   if (key === 'persona.home') {
     // The agent writes this key itself after a summon; the subscription then
@@ -588,5 +767,6 @@ konf.beiAenderung((key) => {
   }
 })
 
-log(`ready — @${NAME} as „${figure.name}", mode ${mode()}${mode() === 'basic' ? '' : ' (model not wired yet — behaves like basic)'}, `
-  + `${stills ? 'stands still' : `roams ${num('roam_radius_m')} m around home`}, interest area ${publishArea() ? 'on' : 'off'}`)
+log(`ready — @${NAME} as „${figure.name}", mode ${mode()}`
+  + (mode() === 'basic' ? '' : modelOn() ? ` (model ${llmCfg().provider} ${llmCfg().model})` : ' (NO MODEL — behaves like basic until a key is in the env)')
+  + `, ${stills ? 'stands still' : `roams ${num('roam_radius_m')} m around home`}, interest area ${publishArea() ? 'on' : 'off'}`)

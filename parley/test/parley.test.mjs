@@ -138,5 +138,40 @@ wirft(() => new Parley({ name: 'z', rules: [{ when: ['x'] }] }), 'Regel ohne the
 wirft(() => new Parley({ name: 'z', rules: [{ when: ['(a'], then: 'x' }] }).chain('z'), 'unvollständige Klammer wird abgelehnt')
 wirft(() => new Parley({ name: 'z', rules: [] }).open('gibtesnicht', 's'), 'unbekannter Dialogsatz wird abgelehnt')
 
+// ── binding: verbindliche Antworten ──────────────────────────────────────
+// Spricht ein Sprachmodell die Figur, formuliert es frei — ausser bei
+// Regeln, die als verbindlich markiert sind. Die Maschine muss das Merkmal
+// durchreichen, sonst kann der Agent es nicht auswerten.
+console.log('\nbinding:')
+{
+  const p = new Parley({
+    name: 'b',
+    rules: [
+      { label: 'frei', when: ['hallo'], then: 'Tag.' },
+      { label: 'fest', when: ['wo ist der turm'], then: 'Im Norden, hinter der Linde.', binding: true },
+    ],
+    fallback: [{ then: 'Hm.' }],
+  })
+  const c = p.open('b', 's1')
+  const frei = c.say('hallo')
+  assert(frei.matched && frei.binding === false, 'ohne Feld ist eine Antwort nicht verbindlich')
+  const fest = c.say('wo ist der turm')
+  assert(fest.matched && fest.binding === true, 'binding: true kommt bei der Antwort an')
+  assert(fest.text === 'Im Norden, hinter der Linde.', 'der verbindliche Text bleibt wörtlich')
+  const nix = c.say('xyzzy')
+  assert(nix.binding === false, 'der Fallback ist nie verbindlich')
+  const p2 = new Parley({ name: 'b2', rules: [{ when: ['x'], then: 'y', binding: 'ja' }] })
+  assert(p2.open('b2', 's').say('x').binding === false, 'nur ein echtes true zählt, keine Zeichenkette')
+  // same_as erbt die Antwort — und damit die Verbindlichkeit.
+  const p3 = new Parley({ name: 'b3', rules: [
+    { label: 'quelle', when: ['wo ist der turm'], then: 'Im Norden.', binding: true },
+    { label: 'alias', when: ['turm'], same_as: 'quelle' },
+    { label: 'eigen', when: ['eigene antwort'], then: 'Anders.', same_as: 'quelle' },
+  ] })
+  const c3 = p3.open('b3', 's')
+  assert(c3.say('turm').binding === true, 'ein same_as-Alias ohne eigene Antwort erbt binding')
+  assert(c3.say('eigene antwort').binding === false, 'ein Alias mit eigener Antwort erbt binding NICHT')
+}
+
 console.log(failures === 0 ? '\nAll Parley tests passed.' : `\n${failures} test(s) FAILED.`)
 process.exit(failures === 0 ? 0 : 1)

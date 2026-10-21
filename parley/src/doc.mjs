@@ -61,7 +61,9 @@ export function compileDoc(roh) {
     const quelle = nachEtikett.get(r.same_as)
     if (!quelle) throw new TypeError(`Parley[${name}]: same_as "${r.same_as}" gibt es in diesem Dokument nicht`)
     if (quelle.same_as) throw new TypeError(`Parley[${name}]: same_as darf nicht auf same_as zeigen ("${r.same_as}")`)
-    if (!r.then.length) r.then = quelle.then
+    // Wer die Antwort erbt, erbt auch ihre Verbindlichkeit — sonst dürfte ein
+    // Sprachmodell denselben Satz über den Umweg des Alias frei umformulieren.
+    if (!r.then.length) { r.then = quelle.then; if (quelle.binding) r.binding = true }
     if (!r.do.length) r.do = quelle.do
     if (!Object.keys(r.set).length) r.set = quelle.set
     if (!r.choices) r.choices = quelle.choices
@@ -111,6 +113,10 @@ function leseRegel(roh, idx, docName, wo) {
     after: roh.after === undefined ? null : ALS_ARRAY(roh.after).map(String),
     topic: roh.topic === undefined ? null : String(roh.topic),
     once: roh.once === true,
+    // Verbindlich: Die Antwort geht wörtlich raus, auch wenn ein Sprachmodell
+    // die Figur spricht — Quest-Auskünfte, Zusagen, alles, was später
+    // nachgeprüft wird. Ohne das Feld darf das Modell frei formulieren.
+    binding: roh.binding === true,
     then: antworten,
     set: { ...(roh.set || {}) },
     do: leseAktionen(roh.do),

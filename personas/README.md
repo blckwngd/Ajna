@@ -84,8 +84,47 @@ aus; eine dauerhaft stehende Figur hielte sonst still eine Gegend am Leben.
 | `home` | `PERSONA_HOME` (`"lat,lon"` oder JSON) | aus der Datei |
 | `call_walk_m` | `PERSONA_CALL_WALK_M` | 400 |
 | `call_allow` | `PERSONA_CALL_ALLOW` | `*` |
+| `llm.provider` | `PERSONA_LLM_PROVIDER` | `anthropic` (oder `openai` für Ollama/vLLM) |
+| `llm.model` | `PERSONA_LLM_MODEL` | `claude-opus-5-5` |
+| `llm.effort` | `PERSONA_LLM_EFFORT` | `low` |
+| `llm.max_output` | `PERSONA_LLM_MAX_OUTPUT` | 1024 |
+| `llm.rate_per_min` | `PERSONA_LLM_RATE_PER_MIN` | 6 |
+| `llm.timeout_ms` | `PERSONA_LLM_TIMEOUT_MS` | 20000 |
+| `llm.bundle_ms` | `PERSONA_LLM_BUNDLE_MS` | 1500 |
+| `llm.idle_s` | `PERSONA_LLM_IDLE_S` | 180 (`active`/`debug`: Eigeninitiative, 0 = nie) |
 
 Ein leerer Eintrag heißt: es gilt die `.env`.
+
+## Das Sprachmodell
+
+**Der Schlüssel steht nur in der Umgebung** — `agents/.env.persona-<name>`:
+
+```
+ANTHROPIC_API_KEY=sk-ant-…          # Anthropic
+OPENAI_API_KEY=…  OPENAI_BASE_URL=http://127.0.0.1:11434/v1   # OpenAI-kompatibel, z. B. Ollama
+```
+
+Nie in der Datenbank: `konfig.mjs` legt keinen Regler an, dessen Name `key`
+oder `token` enthält (deshalb heißt die Obergrenze `max_output`). Modell und
+Anbieter stehen als Regler in `agent_settings` und lassen sich dort **im
+Betrieb** umstellen — pro Persona, weil jede ihr eigenes Konto hat.
+
+Ohne Schlüssel in einem Modell-Modus sagt die Figur es beim Start einmal und
+verhält sich wie `basic`. Sie startet immer, und sie verstummt nie.
+
+**Wie ein Zug abläuft** (`agents/lib/persona-llm.mjs`): Das Modell wird nie
+pro Takt gefragt, nur bei Ereignissen — jemand spricht, jemand kommt näher,
+„Sprechen" im Menü, Ankunft, und in `active`/`debug` alle `llm.idle_s`
+Sekunden aus eigenem Antrieb. Ereignisse innerhalb von `llm.bundle_ms` werden
+zu einem Zug gebündelt. **Parley läuft immer zuerst**: eine Regel mit
+`"binding": true` antwortet wörtlich, das Modell wird dafür nicht gefragt;
+alles andere bekommt es als Material. Es handelt ausschließlich über die
+Werkzeuge des Aktionsregisters, jeder Aufruf geht durch den Wächter; ein
+verweigerter Aufruf kommt als Ergebnis zurück. Zeitüberschreitung,
+Rate-Limit, Anbieterfehler, Ablehnung: die Figur antwortet aus Parley.
+
+Was sie mit einem Spieler besprochen hat, merkt sie sich — begrenzt je
+Spieler und insgesamt, nur im Arbeitsspeicher (Schritt 5 schreibt es fort).
 
 ## Die Figur woandershin schicken
 

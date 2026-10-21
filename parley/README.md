@@ -80,6 +80,7 @@ sie über die allgemeine.
   "after":   "name",               // nur direkt nach dieser Regel
   "topic":   "markt",              // nur, solange vars.topic == "markt"
   "once":    true,                 // höchstens einmal je Gespräch
+  "binding": true,                 // Antwort geht WÖRTLICH raus, auch wenn ein Sprachmodell spricht
   "then":    ["Hallo!", { "text": "Tag auch.", "weight": 3 }],
   "set":     { "kennt_mich": true, "laune": { "+": 1 } },
   "do":      ["anim:wave"],
@@ -202,6 +203,14 @@ eine schönere Beschriftung setzen oder sich mit `"suggest": false` heraushalten
 - `"text"` — nur Freitext (Vorgabe)
 - `"choice"` — nur die Knöpfe
 - `"auto"` — Knöpfe **und** Freitext
+
+**Verbindlich** — `"binding": true` — markiert eine Regel, deren Antwort
+wörtlich rausgeht, auch wenn ein Sprachmodell die Figur spricht (Personas in
+den Modi `passive`/`active`/`debug`). Das Modell bekommt diese Zeile gar nicht
+erst zu formulieren. Gedacht für alles, was später nachgeprüft wird oder
+zusagt: Wegbeschreibungen, Preise, Bedingungen, Regeln mit `do`. Ein
+`same_as`-Alias ohne eigene Antwort erbt die Verbindlichkeit. `say()` gibt sie
+als `binding` zurück; der Fallback ist nie verbindlich.
 
 ## Aktionen
 
