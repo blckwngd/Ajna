@@ -40,7 +40,11 @@ fasst das Passwort nicht an; `--reset-password` vergibt ein neues.
 ```
 
 Alles bis `appearance` ist das Figur-Format aus `figuren/README.md`; `id`
-entfällt, der Dateiname ist der Anker. Dazu:
+entfällt, der Dateiname ist der Anker. Eine Persona trägt ihren Namen
+**dauerhaft über dem Kopf**: `appearance.label` ist als Vorgabe `{name}` — der
+Client zeichnet die Tafel für jedes Objekt mit Vorlage (die 25 nächsten binnen
+1,5 km, nach Entfernung skaliert). Wer mehr will, setzt die Vorlage in der
+Datei, etwa `"label": "{name}\n{distance}"`. Dazu:
 
 | Feld | |
 |---|---|

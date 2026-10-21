@@ -116,6 +116,12 @@ export function toObject(persona, modelBase = '/models/') {
   // ACE (authorisation) — see the agent's ensureAce. A figure without them
   // could be looked at but never addressed.
   o.state.actions = MENU_ACTIONS[persona.figure.type] || MENU_ACTIONS.npc
+  // The name above the head, always. `appearance.label` is a template the
+  // client renders for every object that has one (LabelLayer: the 25
+  // nearest within 1.5 km, scaled by distance). A persona is a character
+  // players should recognise from afar — a passer-by from the director is
+  // not. The file may override it, e.g. "{name}\n{distance}".
+  if (!o.appearance.label) o.appearance.label = '{name}'
   return o
 }
 

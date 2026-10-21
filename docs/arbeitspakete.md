@@ -639,6 +639,16 @@ aus JOSM oder QGIS importiert, spart den Editor und ist bei ~7 Tagen.
 
 ## Kleiner, wartet auf eine Entscheidung
 
+### Der Director adoptiert Objekte, die ihm nicht mehr gehören
+
+Beim Start sammelt er alles mit `state.director = true` ein — auch Beute, die
+ein Spieler eingesammelt hat (`/pickup` überträgt den Besitz). Für die
+schlägt dann jedes Schreiben fehl: `ACE für … fehlgeschlagen`,
+`state.actions … wasn't found`, bei jedem Start, 11 Zeilen am 21.10. Harmlos,
+aber Rauschen — und die Stücke zählen zum Soll-Bestand, obwohl sie die Welt
+verlassen haben. Beim Adoptieren nach `owner === eigenes Konto` filtern; dann
+spawnt der Director Ersatz, was richtig ist.
+
 ### 9 · Kommentar-Bestand übersetzen
 
 Neue Kommentare sind englisch (`CLAUDE.md`), der Bestand ist deutsch: 10.790 von

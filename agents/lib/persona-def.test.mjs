@@ -64,6 +64,16 @@ test('the object carries the persona source and NOT the director marker — and 
   assert.equal(o.appearance.gltf, '/models/quaternius_men/Adventurer.gltf')
 })
 
+test('the name is always above the head — a label template by default, the file may override it', () => {
+  const { persona } = validatePersona(RAW, 'wanderer')
+  assert.equal(toObject(persona).appearance.label, '{name}')
+  const own = validatePersona({ ...RAW, appearance: { ...RAW.appearance, label: '{name}\n{distance}' } }, 'wanderer').persona
+  assert.equal(toObject(own).appearance.label, '{name}\n{distance}')
+  // and objectDiff brings an old figure without a label up to date
+  const old = { ...toObject(persona), appearance: { gltf: '/models/quaternius_men/Adventurer.gltf', emoji: '🧭' } }
+  assert.equal(objectDiff(persona, old).appearance.label, '{name}')
+})
+
 test('objectDiff is null when the world already matches', () => {
   const { persona } = validatePersona(RAW, 'wanderer')
   const o = toObject(persona)
