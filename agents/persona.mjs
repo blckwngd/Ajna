@@ -46,7 +46,8 @@ import { yawFuerKurs } from '../client/core/yaw.js'
 import { npcParley } from './lib/dialogs.mjs'
 import { dialogNameFor, dialogVarsFor, talkSessionId } from '../client/core/Parley.js'
 import { createLlmClient } from './lib/llm.mjs'
-import { LlmBehaviour } from './lib/persona-llm.mjs'
+import { LlmBehaviour, Memory } from './lib/persona-llm.mjs'
+import { Journal, personaDataDir, readFindings, formatFindings } from './lib/journal.mjs'
 import { Weltkontext, zelleFuer } from './lib/weltkontext.mjs'
 import { wetterAnbieter } from './lib/wetter.mjs'
 
@@ -59,7 +60,7 @@ const YES = argv.includes('--yes')
 const RESET_PW = argv.includes('--reset-password')
 
 if (!NAME) {
-  console.error('Usage: node agents/persona.mjs --persona <name> [--setup [--yes] [--reset-password]]')
+  console.error('Usage: node agents/persona.mjs --persona <name> [--setup [--yes] [--reset-password]] [--findings]')
   console.error('       <name> is personas/<name>.persona.json and becomes the account handle.')
   process.exit(2)
 }
@@ -79,6 +80,20 @@ maybeReexecWithSystemCa(URL)
 const loaded = loadPersona(NAME)
 if (loaded.error) die(loaded.error)
 const persona = loaded.persona
+
+// ─── Findings export: no login, no network — just the file ────────────────
+//
+//   node agents/persona.mjs --persona wanderer --findings
+//
+// Grouped by type and title with counts; nothing is filtered. The raw lines
+// are in agents/data/personas/<name>/findings.jsonl, the evidence next to
+// them in journal.jsonl.
+if (argv.includes('--findings')) {
+  const dir = personaDataDir(NAME)
+  console.log(formatFindings(readFindings(dir), { name: NAME }))
+  console.log(`(Dateien: ${dir})`)
+  process.exit(0)
+}
 
 // ─── Setup: an account of its own ────────────────────────────────────────
 //
@@ -638,8 +653,20 @@ every(refreshWorld, () => 10 * 60_000)
 // ever arrive — only ids and words.
 const people = new Map()       // userId → { id, near, lastSaid, seenAt }
 const person = (id) => { if (!people.has(id)) people.set(id, { id, near: false, lastSaid: '', seenAt: 0 }); return people.get(id) }
-const findings = []            // step 5 moves this to a file; for now in memory + log
 const recent = []              // last journal lines for the situation description
+
+// Evidence, findings and memory on disk — agents/data/personas/<name>/.
+// Read them with `--findings`, or open the JSONL files directly.
+const journal = new Journal(personaDataDir(NAME), { warn })
+const memory = new Memory()
+{
+  const n = memory.load(journal.loadMemory())
+  if (n) log(`memory: ${n} conversation(s) remembered from before the restart`)
+}
+const saveMemory = () => journal.saveMemory(memory.dump())
+every(saveMemory, () => 5 * 60_000)
+process.on('exit', () => { try { saveMemory() } catch {} })
+log(`journal: ${journal.dir}`)
 
 /** Everything an action may touch — rebuilt per turn, so perception is fresh. */
 function buildCtx() {
@@ -662,10 +689,11 @@ function buildCtx() {
     stop: () => stopHere({ holdMs: 5000 }),
     wait: (seconds) => { c.attendUntil = Math.max(c.attendUntil, Date.now() + seconds * 1000); return true },
     recordFinding: (f) => {
-      const entry = { at: new Date().toISOString(), persona: NAME, ...f, context: recent.slice(-6) }
-      findings.push(entry)
+      // The model's judgement, with the evidence that led to it. Written
+      // as it comes — nothing here decides whether it is "really" a finding.
+      journal.finding({ ...f, persona: NAME, context: recent.slice(-8) })
       log(`📝 FINDING [${f.type}] ${f.title} — ${String(f.description).slice(0, 120)}`)
-      return { recorded: findings.length }
+      return { recorded: true }
     },
   }
 }
@@ -677,7 +705,12 @@ const behaviour = new LlmBehaviour({
   log: (m) => log(`🧠 ${m}`),
   warn: (m) => warn(`🧠 ${m}`),
   bundleMs: num('llm.bundle_ms'),
-  onJournal: (e) => { recent.push(`${e.action}(${JSON.stringify(e.input).slice(0, 60)}) → ${e.outcome.ok ? 'ok' : 'FEHLER ' + e.outcome.error}`); if (recent.length > 40) recent.shift() },
+  memory,
+  onJournal: (e) => {
+    journal.entry(e)
+    recent.push(`${e.action}(${JSON.stringify(e.input).slice(0, 60)}) → ${e.outcome.ok ? 'ok' : 'FEHLER ' + e.outcome.error}`)
+    if (recent.length > 40) recent.shift()
+  },
 })
 await ensureLlm()
 onArrived = () => {

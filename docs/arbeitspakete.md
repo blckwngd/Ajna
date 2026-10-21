@@ -101,7 +101,7 @@ Sammeln der Beweise (Erwartung → Beobachtung).
 | 2 | `agents/persona.mjs` **ohne** Modell: Konto, Figur, Manifest, ACE, Parley, Laufen, Näherung | ✅ live geprüft, 21 Tests |
 | 3 | `agents/lib/llm.mjs` + Adapter Anthropic (offizielles SDK) / OpenAI-kompatibel (Ollama, vLLM — roher `fetch`), offline gegen Attrappen getestet | ✅ 34 Tests |
 | 4 | Ereignisse → Bündelung → Rate-Limit → Tool-Calls → Wächter → Rückfall; Modi basic/passive/active/debug (`agents/lib/persona-llm.mjs`, Einbau in `persona.mjs`) | ✅ 19 Tests gegen Attrappen; der Einbau in `persona.mjs` ist syntaxgeprüft, der Live-Lauf steht aus (Persona läuft beim Betreiber, Neustart nötig) |
-| 5 | Journal (Beweise) + Befunde (Urteil des Modells) + CLI-Export, JSONL neben dem Agenten | offen |
+| 5 | Journal (Beweise) + Befunde (Urteil des Modells) + Gedächtnis auf Platte, `agents/data/personas/<name>/`, Export `--findings` (gruppiert, nicht gefiltert) | ✅ 9 Tests |
 | 6 | Modi active/debug | offen |
 | 7 | Doku | offen |
 

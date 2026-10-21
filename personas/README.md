@@ -124,7 +124,30 @@ verweigerter Aufruf kommt als Ergebnis zurück. Zeitüberschreitung,
 Rate-Limit, Anbieterfehler, Ablehnung: die Figur antwortet aus Parley.
 
 Was sie mit einem Spieler besprochen hat, merkt sie sich — begrenzt je
-Spieler und insgesamt, nur im Arbeitsspeicher (Schritt 5 schreibt es fort).
+Spieler und insgesamt, und über einen Neustart hinweg (siehe unten).
+
+## Journal, Befunde, Gedächtnis
+
+Drei Dateien je Persona unter `agents/data/personas/<name>/` — gitignored,
+sie enthalten, was Spieler zur Figur gesagt haben:
+
+| Datei | Inhalt |
+|---|---|
+| `journal.jsonl` | **Beweise.** Eine Zeile je Aktion: Absicht, Aufruf, Erwartung, Ergebnis. Schreibt der Takt, urteilt niemand. Rotiert ab 8 MB (eine Vorgängerdatei bleibt) |
+| `findings.jsonl` | **Urteil des Modells.** Eine Zeile je `report_finding`, mit den Journalzeilen, die dazu führten. Rotiert nie |
+| `memory.json` | das Kurzzeitgedächtnis je Spieler; alle 5 Minuten und beim Beenden geschrieben |
+
+Befunde lesen, ohne Login und ohne Netz:
+
+```
+node agents/persona.mjs --persona wanderer --findings
+```
+
+Gruppiert nach Art und Titel mit Zähler — **gruppiert, nicht gefiltert**:
+nichts wird unterschlagen, man sieht nur, wie oft etwas kam. Die rohen
+Zeilen stehen in der Datei; `journal.jsonl` daneben sagt, was die Figur
+davor getan hat. Kein HTTP-Endpunkt, mit Absicht: Eine Datei liest, wer
+Shell-Zugang hat, und sonst niemand.
 
 ## Die Figur woandershin schicken
 

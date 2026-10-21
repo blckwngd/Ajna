@@ -147,11 +147,25 @@ export class Memory {
     this.cache.set(playerId, list)
     return list
   }
-  /** Everything, for persistence (step 5) or diagnosis. */
+  /** Everything, for persistence or diagnosis. */
   dump() {
     const out = {}
-    for (const [k, v] of this.cache._map?.entries?.() || []) out[k] = v?.value ?? v
+    for (const [k, v] of this.cache._map?.entries?.() || []) {
+      const list = Array.isArray(v) ? v : (Array.isArray(v?.value) ? v.value : null)
+      if (list) out[k] = list
+    }
     return out
+  }
+  /** The inverse of dump() — what a restart reads back. Bad input is ignored, not fatal. */
+  load(obj) {
+    if (!obj || typeof obj !== 'object') return 0
+    let n = 0
+    for (const [k, list] of Object.entries(obj)) {
+      if (!Array.isArray(list)) continue
+      this.cache.set(k, list.slice(-this.maxEntries))
+      n++
+    }
+    return n
   }
 }
 

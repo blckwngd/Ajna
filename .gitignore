@@ -91,6 +91,10 @@ web_modules/
 .env.*
 !.env.example
 
+# Persona records: journal, findings, memory — per server, contain what
+# players said to a figure. Never in the repo.
+agents/data/
+
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache

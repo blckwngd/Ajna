@@ -216,6 +216,23 @@ test('Memory is bounded per player', () => {
   assert.deepEqual(m.get('p').map(e => e.text), ['7', '8', '9'])
 })
 
+test('Memory round-trips through dump/load and ignores garbage', () => {
+  const m = new Memory({ maxEntries: 2 })
+  m.push('p1', { role: 'user', text: 'a' }); m.push('p1', { role: 'assistant', text: 'b' })
+  m.push('p2', { role: 'user', text: 'c' })
+  const d = m.dump()
+  assert.deepEqual(Object.keys(d).sort(), ['p1', 'p2'])
+  const m2 = new Memory({ maxEntries: 2 })
+  assert.equal(m2.load(d), 2)
+  assert.deepEqual(m2.get('p1').map(e => e.text), ['a', 'b'])
+  assert.equal(m2.load(null), 0)
+  assert.equal(m2.load({ p3: 'kein array' }), 0)
+  // longer lists on disk are clipped to the bound on load
+  const m3 = new Memory({ maxEntries: 1 })
+  m3.load({ p: [{ text: 'x' }, { text: 'y' }] })
+  assert.deepEqual(m3.get('p').map(e => e.text), ['y'])
+})
+
 // ── Bundling ─────────────────────────────────────────────────────────────
 
 test('events within the bundle window share one turn', async () => {
