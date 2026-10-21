@@ -85,11 +85,35 @@ export function strictTools(tools) {
     name: t.name,
     description: t.description,
     input_schema: {
-      ...t.input_schema,
+      ...sanitizeSchema(t.input_schema),
       additionalProperties: false,
       required: t.input_schema?.required || [],
     },
   }))
+}
+
+// Keywords a strict tool schema may carry. Measured on the first live call:
+// `tools.7.custom: For 'number' type, properties maximum, minimum are not
+// supported` — the register's `wait` tool has a 1–120 s range. The range
+// still holds, in `validateArgs` on our side; the model gets the shape and
+// the words, not the constraint keywords.
+const SCHEMA_KEYWORDS = new Set(['type', 'description', 'enum', 'properties', 'required', 'items', 'additionalProperties'])
+
+/** Strip schema keywords the strict mode rejects, recursively. */
+export function sanitizeSchema(schema) {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return schema
+  const out = {}
+  for (const [k, v] of Object.entries(schema)) {
+    if (!SCHEMA_KEYWORDS.has(k)) continue
+    if (k === 'properties' && v && typeof v === 'object') {
+      out.properties = Object.fromEntries(Object.entries(v).map(([n, p]) => [n, sanitizeSchema(p)]))
+    } else if (k === 'items') {
+      out.items = sanitizeSchema(v)
+    } else {
+      out[k] = v
+    }
+  }
+  return out
 }
 
 /**

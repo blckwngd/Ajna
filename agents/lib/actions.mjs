@@ -253,7 +253,9 @@ export const ACTIONS = [
     modes: ['passive', 'active', 'debug'],
     parameters: {
       type: 'object',
-      properties: { seconds: { type: 'number', minimum: 1, maximum: 120 } },
+      // The range lives in the description as well: strict tool schemas
+      // reject minimum/maximum, the guard still enforces them.
+      properties: { seconds: { type: 'number', minimum: 1, maximum: 120, description: 'Sekunden, 1 bis 120.' } },
       required: ['seconds'],
     },
     check() { return null },

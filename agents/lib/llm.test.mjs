@@ -39,6 +39,39 @@ test('strictTools adds additionalProperties:false and a required list', () => {
   assert.equal(t[0].name, 'x')
 })
 
+test('strictTools strips minimum/maximum and other keywords the strict mode rejects — measured on the first live call', () => {
+  const t = strictTools([{ name: 'wait', description: 'd', input_schema: {
+    type: 'object',
+    properties: {
+      seconds: { type: 'number', minimum: 1, maximum: 120, description: 'Sekunden' },
+      kind: { type: 'string', enum: ['a', 'b'], format: 'x', pattern: 'y' },
+      nested: { type: 'object', properties: { n: { type: 'number', minimum: 0 } } },
+      list: { type: 'array', items: { type: 'number', maximum: 9 } },
+    },
+    required: ['seconds'],
+  } }])
+  const p = t[0].input_schema.properties
+  assert.deepEqual(p.seconds, { type: 'number', description: 'Sekunden' })
+  assert.deepEqual(p.kind, { type: 'string', enum: ['a', 'b'] })
+  assert.deepEqual(p.nested.properties.n, { type: 'number' })
+  assert.deepEqual(p.list.items, { type: 'number' })
+  assert.deepEqual(t[0].input_schema.required, ['seconds'])
+})
+
+test('the register as a whole survives sanitising — no tool carries a rejected keyword', async () => {
+  const { toolDefinitions } = await import('./actions.mjs')
+  const bad = new Set(['minimum', 'maximum', 'format', 'pattern', 'default', 'minLength', 'maxLength'])
+  const walk = (s, path) => {
+    if (!s || typeof s !== 'object') return
+    for (const k of Object.keys(s)) {
+      assert.ok(!bad.has(k), `${path}.${k} would be rejected`)
+      if (k === 'properties') for (const [n, p] of Object.entries(s[k])) walk(p, `${path}.${n}`)
+      if (k === 'items') walk(s[k], `${path}[]`)
+    }
+  }
+  for (const t of strictTools(toolDefinitions('debug'))) walk(t.input_schema, t.name)
+})
+
 // ── LlmClient ────────────────────────────────────────────────────────────
 
 function fakeAdapter(result, { delayMs = 0, name = 'fake', model = 'fake-1' } = {}) {
