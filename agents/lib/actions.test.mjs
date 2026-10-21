@@ -145,6 +145,22 @@ test('THE important one: an object that is not perceived cannot be named', () =>
   assert.match(r.reason, /cannot see/)
 })
 
+test('a bare record id matches a composite one in the perception — found by the persona itself', async () => {
+  const { rawId } = await import('./actions.mjs')
+  assert.equal(rawId('default:km3j35hyz14k47h'), 'km3j35hyz14k47h')
+  assert.equal(rawId('km3j35hyz14k47h'), 'km3j35hyz14k47h')
+  assert.equal(rawId(''), '')
+  // perception lists composite ids; the model hands back the bare id
+  const ctx = makeCtx({ perception: { objects: [{ ...BENCH, id: 'default:bench1' }], players: [{ id: 'player1' }], inventory: [] } })
+  assert.equal(guard('debug', 'walk_to', { object_id: 'bench1' }, ctx).ok, true)
+  assert.equal(guard('debug', 'walk_to', { object_id: 'default:bench1' }, ctx).ok, true)
+  // the other way round too, and an unrelated id is still refused
+  const ctx2 = makeCtx({ perception: { objects: [BENCH], players: [], inventory: [] } })
+  assert.equal(guard('debug', 'use', { object_id: 'default:bench1', action: 'examine' }, ctx2).ok, true)
+  assert.equal(guard('debug', 'use', { object_id: 'default:bench9', action: 'examine' }, ctx2).ok, false)
+  assert.equal(guard('debug', 'use', { object_id: '', action: 'examine' }, ctx2).ok, false)
+})
+
 test('and a person who is not present cannot be spoken to', () => {
   const r = guard('debug', 'say', { to: 'fremder9', text: 'hallo' }, makeCtx())
   assert.equal(r.ok, false)

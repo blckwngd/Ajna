@@ -86,11 +86,19 @@ export function distanceM(lat1, lon1, lat2, lon2) {
 // looks around and reacts" and "a player typed an id into the chat and the
 // character obeyed".
 
+// Ids in the situation are composite (`default:km3j…`); a model will hand
+// back the bare record id as often as not. Found by the persona itself:
+// "walk_to verweigert Objekt, das in der Lage als in Reichweite gelistet
+// ist". Compare on the record id, so the prefix is a convenience, not a
+// trap — the guard still refuses anything that is not in the perception.
+export const rawId = (id) => { const s = String(id ?? '').trim(); const i = s.indexOf(':'); return i >= 0 ? s.slice(i + 1) : s }
+const sameId = (a, b) => rawId(a) !== '' && rawId(a) === rawId(b)
+
 const perceivedObject = (ctx, id) =>
-  (ctx?.perception?.objects || []).find(o => String(o.id) === String(id)) || null
+  (ctx?.perception?.objects || []).find(o => sameId(o.id, id)) || null
 
 const perceivedPlayer = (ctx, id) =>
-  (ctx?.perception?.players || []).find(p => String(p.id) === String(id)) || null
+  (ctx?.perception?.players || []).find(p => sameId(p.id, id)) || null
 
 function withinLeash(ctx, lat, lon) {
   const leash = ctx?.limits?.roam
@@ -238,7 +246,7 @@ export const ACTIONS = [
       required: ['object_id'],
     },
     check(ctx, args) {
-      const carried = (ctx?.perception?.inventory || []).some(o => String(o.id) === String(args.object_id))
+      const carried = (ctx?.perception?.inventory || []).some(o => sameId(o.id, args.object_id))
       return carried ? null : 'you are not carrying that'
     },
     expect(ctx, args) { return { kind: 'no_longer_carried', object_id: args.object_id } },
