@@ -199,8 +199,10 @@ Gegend kostet eine Anfrage; Director und Persona teilen Budget und Ablage.
 Dialogregel `wo_echt`; Jorin sieht `stadt`/`land` in seiner Lage. 24 Tests,
 Einzelheiten in `welt-kontext.md`.
 
-Noch klein offen: Luftqualität (zweiter Open-Meteo-Endpunkt, ein Anbieter
-mehr) und Abfahrten als 30-Minuten-Vorrat.
+Luftqualität und Pollen ebenfalls seit 22.10. (`agents/lib/luft.mjs`, zweiter
+Open-Meteo-Endpunkt, Regeln `luft_echt`/`luft_pollen`). Noch offen: Abfahrten
+als 30-Minuten-Vorrat — braucht eine Datenquelle, die es für Deutschland frei
+und flächendeckend nicht gibt; vorerst zurückgestellt.
 
 ### 2 · Objekte lassen sich über ACE-Rechte nicht ändern — **behoben am 20.10.**
 

@@ -13,6 +13,7 @@ was davon steht und was noch offen ist.
 | `agents/lib/weltkontext.mjs` | Der Vorrat: Zelle als Schlüssel, Gültigkeit je Eintrag, `Quellcache` auf Platte darunter |
 | `agents/lib/wetter.mjs` | Anbieter für Open-Meteo (kein Schlüssel nötig) samt Übersetzung der WMO-Codes in deutsche Wendungen |
 | `agents/lib/ort.mjs` | **Stadt / Kreis / Bundesland / Staat** (`ort.*`) aus der öffentlichen Nominatim-API — punktgenau mit Gemeinde-Umriss, siehe unten (22.10.) |
+| `agents/lib/luft.mjs` | **Luftqualität und Pollen** (`luft.*`) aus dem zweiten Open-Meteo-Endpunkt: EAQI in Worten (`gut` … `extrem schlecht`), `schlecht` ab 60, `pollen`/`pollen_text` nur über 20 Körnern/m³. Stündlich. Regeln `luft_echt`, `luft_pollen` (22.10.) |
 | `agents/lib/himmel.mjs` | Mondphase und Tageszeit — reine Arithmetik, ohne Netz |
 | `world-director.mjs` | Auffrischen auf dem Puls des Reconcile-Laufs, Einsetzen in `dialogVarsFor` |
 | `dialogs/basis.parley.json` | Regeln, die es benutzen: `wetter_gewitter`, `wetter_regen`, `wetter_echt`, `zeit_echt`, `mond_*` |
@@ -76,8 +77,6 @@ deren Nähe, die Persona ihren Standort. Dialogregel: `wo_echt` in
 ## Was noch offen ist
 
 * **Abfahrten** als 30-Minuten-Vorrat (Schritt 6) — eigene Datenquelle.
-* **Luftqualität** — Open-Meteo hat einen eigenen Endpunkt dafür; ein zweiter
-  Anbieter, mehr nicht.
 * **Die `world_context`-Collection.** Erst fällig, wenn ein **Client** die Werte
   anzeigen soll. Solange nur Agents lesen, genügt Arbeitsspeicher plus
   `Quellcache` — und der teilt seine Dateien bereits zwischen Agent-Prozessen.

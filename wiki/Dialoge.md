@@ -123,9 +123,12 @@ Figur steht:
 | `{ort.stadt}` · `{ort.land}` · `{ort.staat}` | `Koblenz` · `Rheinland-Pfalz` · `Deutschland` (seit 22.10., aus Nominatim, mit Gemeindegrenze) |
 | `{ort.kreis}` · `{ort.ortsteil}` | `Landkreis Mayen-Koblenz` · `Ehrenbreitstein` — nicht immer gesetzt |
 | `{ort.text}` | `Koblenz, Rheinland-Pfalz` |
+| `{luft.text}` · `{luft.aqi}` | `gut`, `mäßig`, `schlecht` · `21` (Europäischer Luftqualitätsindex, stündlich) |
+| `{luft.pm10}` · `{luft.pm25}` · `{luft.ozon}` | `7` · `4` · `61` (µg/m³) |
+| `{luft.pollen_text}` | `Birke, Gräser` — leer, wenn nichts fliegt |
 
-Als Bedingung gibt es dazu `wetter.regen`, `wetter.schnee`, `wetter.gewitter`
-und `himmel.nacht` — alle vier wahr oder falsch:
+Als Bedingung gibt es dazu `wetter.regen`, `wetter.schnee`, `wetter.gewitter`,
+`himmel.nacht`, `luft.schlecht` und `luft.pollen` — alle wahr oder falsch:
 
 ```jsonc
 { "when": ["* wetter *"],

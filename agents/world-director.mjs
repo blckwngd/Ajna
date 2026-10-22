@@ -74,6 +74,7 @@ import { npcParley } from './lib/dialogs.mjs'
 import { dialogNameFor, dialogVarsFor, talkSessionId } from '../client/core/Parley.js'
 import { Weltkontext, zelleFuer } from './lib/weltkontext.mjs'
 import { ortAnbieter, NOMINATIM_URL } from './lib/ort.mjs'
+import { luftAnbieter } from './lib/luft.mjs'
 import { wetterAnbieter } from './lib/wetter.mjs'
 
 // Login + geschichtete .env (Env > agents/.env.director > Root-.env) + System-CA.
@@ -1945,6 +1946,7 @@ const ORT_AN = KONTEXT_AN && envStr('WD_ORT', 'on').toLowerCase() !== 'off'
 const weltkontext = KONTEXT_AN
   ? new Weltkontext({ anbieter: [
       wetterAnbieter({ ttlMs: KONTEXT_TTL_MS }),
+      luftAnbieter(),
       ...(ORT_AN ? [ortAnbieter({ basis: envStr('NOMINATIM_URL', NOMINATIM_URL), kontakt: envStr('NOMINATIM_CONTACT', '') })] : []),
     ] })
   : null

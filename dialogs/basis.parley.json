@@ -268,6 +268,51 @@
       "suggest": "was kannst du"
     },
     {
+      "label": "luft_echt",
+      "_note": "Luftqualität und Pollen aus dem Welt-Kontext (luft.*, Open-Meteo). Greift nur, wenn ein Wert vorliegt — sonst gibt es zur Luft keine Regel, und die Figur weicht aus wie bei allem, was sie nicht kennt.",
+      "when": [
+        "* wie ist die luft *",
+        "* luftqualitaet *",
+        "* luft heute *",
+        "* smog *",
+        "* pollen *",
+        "* heuschnupfen *"
+      ],
+      "if": {
+        "luft.text": {
+          "set": true
+        }
+      },
+      "then": [
+        {
+          "text": "Die Luft ist {luft.text}, sagt meine Nase.",
+          "weight": 2
+        },
+        {
+          "text": "{luft.text}. Feinstaub {luft.pm10} — was auch immer das heißt, ich atme trotzdem.",
+          "weight": 1
+        }
+      ],
+      "suggest": "wie ist die luft"
+    },
+    {
+      "label": "luft_pollen",
+      "_note": "Engere Bedingung als luft_echt (nur bei Pollenflug), aber gleiche Muster bei pollen/heuschnupfen — Parley nimmt die erste passende Regel, deshalb MUSS diese Regel vor luft_echt stehen, sobald sie dieselben Muster trägt. Sie steht dahinter und greift deshalb nur über ihr eigenes Muster (was fliegt); bei pollen antwortet luft_echt mit der Luft. Bewusst so: Die Luft stimmt immer, der Pollensatz nur im Frühjahr.",
+      "when": [
+        "* pollen *",
+        "* heuschnupfen *",
+        "* was fliegt *"
+      ],
+      "if": {
+        "luft.pollen": true
+      },
+      "then": [
+        "Es fliegt gerade {luft.pollen_text}. Wenn du niesen musst, weißt du jetzt, warum.",
+        "{luft.pollen_text} — das liegt in der Luft. Ich merke nichts, ich bin nur eine Figur."
+      ],
+      "suggest": "fliegen pollen"
+    },
+    {
       "label": "wo_echt",
       "_note": "Steht VOR `wo`: gleiche Muster, engere Bedingung. Greift nur, wenn der Welt-Kontext den Ort kennt (ort.* aus Nominatim, docs/welt-kontext.md). Ohne ihn bleibt die ausweichende Antwort — eine Figur, die den Ort nicht kennt, soll keinen behaupten.",
       "when": [

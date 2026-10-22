@@ -53,6 +53,7 @@ import { clipsOf, gesturesFor } from './lib/model-clips.mjs'
 import { Weltkontext, zelleFuer } from './lib/weltkontext.mjs'
 import { wetterAnbieter } from './lib/wetter.mjs'
 import { ortAnbieter, NOMINATIM_URL } from './lib/ort.mjs'
+import { luftAnbieter } from './lib/luft.mjs'
 
 // ─── Arguments ───────────────────────────────────────────────────────────
 const argv = process.argv.slice(2)
@@ -658,6 +659,7 @@ const modelOn = () => MODEL_MODES.has(mode()) && !!llm
 // two together ask once per municipality.
 const world = new Weltkontext({ anbieter: [
   wetterAnbieter({ ttlMs: 15 * 60_000 }),
+  luftAnbieter(),
   ortAnbieter({ basis: process.env.NOMINATIM_URL || NOMINATIM_URL, kontakt: process.env.NOMINATIM_CONTACT || '', warn }),
 ], warn })
 async function refreshWorld() {
