@@ -66,6 +66,12 @@ export function zellenMitte(zelle) {
  * Ein Anbieter ist `{ name, ttlMs, hole(ort), abgeleitet? }` und liefert ein
  * Objekt sprechfertiger Werte. Er läuft je Zelle, nicht je Gespräch.
  *
+ * Ein PUNKTGENAUER Anbieter (`punktgenau: true`, `kennt(lat, lon)`,
+ * `vorbereiten({lat, lon})`, `lies(lat, lon)`) führt seinen Vorrat selbst —
+ * für Tatsachen mit amtlichen Grenzen (Stadt, Bundesland), bei denen eine
+ * Rasterzelle das Falsche sagte. `frischen()` reicht ihm die Punkte, nicht
+ * die Zellen; `varsFuer()` fragt ihn für den genauen Punkt.
+ *
  * `abgeleitet(werte)` ist der Ausweg für alles, was sich SCHNELLER ändert als
  * der Takt: Es wird beim Zugriff gerechnet, nicht beim Holen, und darf eigene
  * Namensräume beisteuern. Tageszeit und Mondphase gehen diesen Weg — sie aus
@@ -120,12 +126,13 @@ export class Weltkontext {
    * stehen, bis er abläuft — danach fehlt das Wetter, und die Figur sagt eben
    * nichts darüber.
    */
-  async frischen(zellen) {
+  async frischen(zellen, punkte = []) {
     const arbeit = []
     for (const zelle of new Set(zellen)) {
       const ort = zellenMitte(zelle)
       if (!ort) continue
       for (const a of this.anbieter) {
+        if (a.punktgenau) continue
         const k = this._schluessel(zelle, a)
         if (this.hatFrisches(zelle, a) || this.laufend.has(k)) continue
         this.laufend.add(k)
@@ -133,7 +140,20 @@ export class Weltkontext {
       }
     }
     if (arbeit.length) await Promise.all(arbeit)
-    return arbeit.length
+    // PUNKTGENAUE Anbieter (Stadt, Bundesland — amtliche Grenzen, kein
+    // Raster) bekommen die Punkte selbst, nicht Zellenmitten: Die Mitte einer
+    // 11-km-Zelle liegt oft in einer anderen Gemeinde als die Figur. Nach-
+    // einander, nicht parallel — die Quelle erlaubt eine Anfrage je Sekunde,
+    // und der Anbieter entscheidet selbst, was er schon kennt.
+    let geholt = arbeit.length
+    for (const a of this.anbieter.filter(x => x.punktgenau && typeof x.vorbereiten === 'function')) {
+      for (const p of punkte) {
+        if (!p || !Number.isFinite(p.lat) || !Number.isFinite(p.lon)) continue
+        try { if (await a.vorbereiten(p)) geholt++ }
+        catch (err) { this.warn(`[weltkontext] ${a.name} für ${p.lat.toFixed(3)},${p.lon.toFixed(3)}: ${err?.message || err}`) }
+      }
+    }
+    return geholt
   }
 
   async _holen(zelle, ort, anbieter, k) {
@@ -162,6 +182,12 @@ export class Weltkontext {
     const zelle = zelleFuer(lat, lon)
     const raus = {}
     for (const a of this.anbieter) {
+      if (a.punktgenau) {
+        // Aus dem Bekannten des Anbieters, für GENAU diesen Punkt.
+        try { const w = typeof a.lies === 'function' ? a.lies(lat, lon) : null; if (w) raus[a.name] = w }
+        catch (err) { this.warn(`[weltkontext] ${a.name}.lies: ${err?.message || err}`) }
+        continue
+      }
       const e = this.eintraege.get(this._schluessel(zelle, a))
       if (!e || e.bis <= this.jetzt()) continue   // abgelaufen = nicht vorhanden
       raus[a.name] = { ...e.werte }

@@ -73,6 +73,7 @@ import { Konfig } from './lib/konfig.mjs'
 import { npcParley } from './lib/dialogs.mjs'
 import { dialogNameFor, dialogVarsFor, talkSessionId } from '../client/core/Parley.js'
 import { Weltkontext, zelleFuer } from './lib/weltkontext.mjs'
+import { ortAnbieter, NOMINATIM_URL } from './lib/ort.mjs'
 import { wetterAnbieter } from './lib/wetter.mjs'
 
 // Login + geschichtete .env (Env > agents/.env.director > Root-.env) + System-CA.
@@ -1936,9 +1937,16 @@ async function fetchCenters() {
 // ─────────────────────────────────────────────────────────────────────────
 const KONTEXT_AN = envStr('WD_KONTEXT', 'on').toLowerCase() !== 'off'
 const KONTEXT_TTL_MS = envNum('WD_KONTEXT_TTL_S', 900) * 1000
+// Ort (Stadt, Bundesland) aus Nominatim — die öffentliche API, kein eigener
+// Server. Eine Anfrage je Sekunde, ein Kontakt im User-Agent, Ergebnisse
+// aufgehoben (lib/ort.mjs). `WD_ORT=off` schaltet nur diesen Teil ab.
+const ORT_AN = KONTEXT_AN && envStr('WD_ORT', 'on').toLowerCase() !== 'off'
 
 const weltkontext = KONTEXT_AN
-  ? new Weltkontext({ anbieter: [wetterAnbieter({ ttlMs: KONTEXT_TTL_MS })] })
+  ? new Weltkontext({ anbieter: [
+      wetterAnbieter({ ttlMs: KONTEXT_TTL_MS }),
+      ...(ORT_AN ? [ortAnbieter({ basis: envStr('NOMINATIM_URL', NOMINATIM_URL), kontakt: envStr('NOMINATIM_CONTACT', '') })] : []),
+    ] })
   : null
 
 /**
@@ -1962,11 +1970,28 @@ function kontextZellen(centers) {
  * Ein zweiter Zeitgeber daneben wäre ein zweiter Ort, an dem eine Zahl steht,
  * und die beiden liefen früher oder später auseinander.
  */
+/**
+ * Die PUNKTE für den Ort: die aktiven Zentren und die eigenen Figuren in
+ * ihrer Nähe. Eine Figur sagt, wo SIE steht — und an einer Gemeindegrenze
+ * ist das nicht die Gegend des Zentrums. Die Punkte kosten nichts, solange
+ * sie in einer bekannten Gemeinde liegen (lib/ort.mjs).
+ */
+function kontextPunkte(centers) {
+  const punkte = []
+  for (const c of centers) {
+    punkte.push({ lat: c.lat, lon: c.lon })
+    for (const o of managed) {
+      if (Number.isFinite(o?.lat) && haversine(c.lat, c.lon, o.lat, o.lon) <= DESPAWN_RADIUS_M) punkte.push({ lat: o.lat, lon: o.lon })
+    }
+  }
+  return punkte
+}
+
 async function kontextFrischen(centers) {
   if (!weltkontext) return
   const zellen = kontextZellen(centers)
   if (!zellen.length) return
-  const geholt = await weltkontext.frischen(zellen)
+  const geholt = await weltkontext.frischen(zellen, kontextPunkte(centers))
   weltkontext.aufraeumen()
   if (geholt) console.log(`[kontext] ${geholt} Abfrage(n) für ${zellen.length} Zelle(n) · Vorrat: ${weltkontext.bestand}`)
 }

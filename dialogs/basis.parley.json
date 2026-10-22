@@ -268,6 +268,38 @@
       "suggest": "was kannst du"
     },
     {
+      "label": "wo_echt",
+      "_note": "Steht VOR `wo`: gleiche Muster, engere Bedingung. Greift nur, wenn der Welt-Kontext den Ort kennt (ort.* aus Nominatim, docs/welt-kontext.md). Ohne ihn bleibt die ausweichende Antwort — eine Figur, die den Ort nicht kennt, soll keinen behaupten.",
+      "when": [
+        "* wo bin ich *",
+        "* wo sind wir *",
+        "* was ist das hier fuer ein ort *",
+        "* wie heisst dieser ort *",
+        "* welche stadt *",
+        "* welches bundesland *"
+      ],
+      "if": {
+        "ort.stadt": {
+          "set": true
+        }
+      },
+      "then": [
+        {
+          "text": "In {ort.stadt}, wenn mich nicht alles täuscht. {ort.land}, also.",
+          "weight": 2
+        },
+        {
+          "text": "Das hier ist {ort.text}. Mehr Karte habe ich nicht im Kopf.",
+          "weight": 1
+        },
+        {
+          "text": "{ort.stadt}. Frag mich nicht nach der Straße — nach der Stadt kannst du mich fragen.",
+          "weight": 1
+        }
+      ],
+      "suggest": "wo sind wir hier"
+    },
+    {
       "label": "wo",
       "when": [
         "* wo bin ich *",

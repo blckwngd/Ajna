@@ -187,20 +187,20 @@ Figur ist der richtige Rückfall Parley, den gibt es, und ein Beta-Schalter
 bleibt dem Spiel erspart. Regler-Namen dürfen kein `token`/`key` enthalten
 (`konfig.mjs` weigert sich) — also `llm.max_output`, nicht `max_tokens`.
 
-### 1 · Welt-Kontext: der Ort fehlt noch
+### 1 · Welt-Kontext: der Ort — **steht seit 22.10.**, Rest klein
 
-Wetter, Sonne, Mond und Tageszeit stehen (23.09., siehe `welt-kontext.md`).
-Offen ist der zweite Bereichstyp: **Stadt / Bundesland / Land** über
-Rückwärts-Geokodierung. Genau dort lohnt der geteilte Vorrat am meisten —
-Nominatim erlaubt eine Anfrage je Sekunde, und ohne Vorrat löste jedes Gespräch
-eine aus.
+Wetter, Sonne, Mond und Tageszeit stehen (23.09.), **Stadt / Kreis /
+Bundesland / Staat** seit dem 22.10. (`agents/lib/ort.mjs`): die öffentliche
+Nominatim-API, kein eigener Server, eine Anfrage je Sekunde, Kontakt im
+User-Agent (`NOMINATIM_CONTACT`). Das Rasterproblem ist ohne eigene Grenzdaten
+gelöst — Nominatim liefert den Gemeinde-Umriss mit, der wird aufgehoben, und
+jeder weitere Punkt wird lokal gegen die bekannten Umrisse geprüft. Eine
+Gegend kostet eine Anfrage; Director und Persona teilen Budget und Ablage.
+Dialogregel `wo_echt`; Jorin sieht `stadt`/`land` in seiner Lage. 24 Tests,
+Einzelheiten in `welt-kontext.md`.
 
-Braucht ein eigenes Bereichsmodell: amtliche Grenzen statt Raster. Eine Zelle
-liegt irgendwann auf einer Landesgrenze, und dann sagt die Figur das falsche
-Bundesland.
-
-Dazu kleiner: Luftqualität (zweiter Open-Meteo-Endpunkt, ein Anbieter mehr) und
-Abfahrten als 30-Minuten-Vorrat.
+Noch klein offen: Luftqualität (zweiter Open-Meteo-Endpunkt, ein Anbieter
+mehr) und Abfahrten als 30-Minuten-Vorrat.
 
 ### 2 · Objekte lassen sich über ACE-Rechte nicht ändern — **behoben am 20.10.**
 

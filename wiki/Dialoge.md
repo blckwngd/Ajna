@@ -120,6 +120,9 @@ Figur steht:
 | `{himmel.tageszeit}` | `Morgen`, `Mittag`, `Abend`, `Nacht` |
 | `{himmel.mond}` · `{himmel.mond_anteil}` | `zunehmender Halbmond` · `52` |
 | `{himmel.sonnenaufgang}` · `{himmel.sonnenuntergang}` | `07:17` · `19:26` |
+| `{ort.stadt}` · `{ort.land}` · `{ort.staat}` | `Koblenz` · `Rheinland-Pfalz` · `Deutschland` (seit 22.10., aus Nominatim, mit Gemeindegrenze) |
+| `{ort.kreis}` · `{ort.ortsteil}` | `Landkreis Mayen-Koblenz` · `Ehrenbreitstein` — nicht immer gesetzt |
+| `{ort.text}` | `Koblenz, Rheinland-Pfalz` |
 
 Als Bedingung gibt es dazu `wetter.regen`, `wetter.schnee`, `wetter.gewitter`
 und `himmel.nacht` — alle vier wahr oder falsch:

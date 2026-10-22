@@ -52,6 +52,7 @@ import { duplicateOf, failureKey, questDone } from './lib/actions.mjs'
 import { clipsOf, gesturesFor } from './lib/model-clips.mjs'
 import { Weltkontext, zelleFuer } from './lib/weltkontext.mjs'
 import { wetterAnbieter } from './lib/wetter.mjs'
+import { ortAnbieter, NOMINATIM_URL } from './lib/ort.mjs'
 
 // ─── Arguments ───────────────────────────────────────────────────────────
 const argv = process.argv.slice(2)
@@ -652,9 +653,15 @@ const modelOn = () => MODEL_MODES.has(mode()) && !!llm
 
 // World context (weather, daylight) for the situation description —
 // refreshed for the figure's cell, synchronous to read.
-const world = new Weltkontext({ anbieter: [wetterAnbieter({ ttlMs: 15 * 60_000 })], warn })
+// Place (city, state) comes from the public Nominatim API with a municipality
+// outline per hit (lib/ort.mjs) — shared on disk with the director, so the
+// two together ask once per municipality.
+const world = new Weltkontext({ anbieter: [
+  wetterAnbieter({ ttlMs: 15 * 60_000 }),
+  ortAnbieter({ basis: process.env.NOMINATIM_URL || NOMINATIM_URL, kontakt: process.env.NOMINATIM_CONTACT || '', warn }),
+], warn })
 async function refreshWorld() {
-  try { await world.frischen([zelleFuer(c.lat, c.lon)]); world.aufraeumen() } catch (err) { warn(`world context: ${err?.message || err}`) }
+  try { await world.frischen([zelleFuer(c.lat, c.lon)], [{ lat: c.lat, lon: c.lon }]); world.aufraeumen() } catch (err) { warn(`world context: ${err?.message || err}`) }
 }
 refreshWorld().catch(() => {})
 every(refreshWorld, () => 10 * 60_000)

@@ -12,6 +12,7 @@ was davon steht und was noch offen ist.
 |---|---|
 | `agents/lib/weltkontext.mjs` | Der Vorrat: Zelle als Schlüssel, Gültigkeit je Eintrag, `Quellcache` auf Platte darunter |
 | `agents/lib/wetter.mjs` | Anbieter für Open-Meteo (kein Schlüssel nötig) samt Übersetzung der WMO-Codes in deutsche Wendungen |
+| `agents/lib/ort.mjs` | **Stadt / Kreis / Bundesland / Staat** (`ort.*`) aus der öffentlichen Nominatim-API — punktgenau mit Gemeinde-Umriss, siehe unten (22.10.) |
 | `agents/lib/himmel.mjs` | Mondphase und Tageszeit — reine Arithmetik, ohne Netz |
 | `world-director.mjs` | Auffrischen auf dem Puls des Reconcile-Laufs, Einsetzen in `dialogVarsFor` |
 | `dialogs/basis.parley.json` | Regeln, die es benutzen: `wetter_gewitter`, `wetter_regen`, `wetter_echt`, `zeit_echt`, `mond_*` |
@@ -47,12 +48,33 @@ Takt — aus einem Viertelstunden-Vorrat bedient, sagt eine Figur um 19:59
 ganzen Tag); Tageszeit und Mondphase rechnet `abgeleitet()` im Moment des
 Sprechens. Kostet nichts und ist immer richtig.
 
+### Der Ort: amtliche Grenzen ohne eigene Grenzdaten (22.10.2026)
+
+`ort.stadt`, `ort.ortsteil`, `ort.kreis`, `ort.land`, `ort.staat`,
+`ort.staat_code`, `ort.text` („Koblenz, Rheinland-Pfalz") — aus der
+**öffentlichen** Nominatim-API, kein eigener Server. Deren Bedingungen stehen
+im Code: eine Anfrage je Sekunde (Mindestabstand im Quellcache, über
+`_budget.json` zwischen Director und Persona geteilt), ein User-Agent mit
+Kontakt (`NOMINATIM_CONTACT`), Tagesbudget 400, Ergebnisse aufgehoben.
+
+**Das Rasterproblem ist gelöst, ohne Grenzdaten zu halten:** Nominatim gibt
+mit `polygon_geojson=1` den **Umriss der getroffenen Gemeinde** mit (Koblenz:
+97 Punkte, 2,4 KB bei `polygon_threshold=0.001`). Der wird aufgehoben, und
+jeder weitere Punkt wird zuerst gegen die bekannten Umrisse geprüft — Punkt im
+Polygon, Arithmetik, kein Netz. Gefragt wird nur für Punkte, die in keiner
+bekannten Gemeinde liegen. Eine Gegend kostet so **eine** Anfrage. Ein Treffer
+ohne Umriss gilt nur 1,5 km um den Abfragepunkt; jenseits einer Grenze sagt
+die Figur lieber nichts als das Falsche.
+
+Dafür ist der Anbieter **punktgenau** (`punktgenau: true`): `frischen()`
+reicht ihm Punkte statt Zellenmitten — die Mitte einer 11-km-Zelle liegt oft
+in einer anderen Gemeinde als die Figur —, `varsFuer()` fragt ihn für den
+genauen Punkt. Der Director reicht die aktiven Zentren und seine Figuren in
+deren Nähe, die Persona ihren Standort. Dialogregel: `wo_echt` in
+`dialogs/basis.parley.json`. Abschaltbar mit `WD_ORT=off`.
+
 ## Was noch offen ist
 
-* **Stadt / Bundesland / Land** (`ort.*`) — Rückwärts-Geokodierung. Genau der
-  Fall, für den sich der geteilte Vorrat am meisten lohnt (Nominatim erlaubt
-  eine Anfrage je Sekunde), aber er braucht eine eigene Quelle mit eigenem
-  Bereichsmodell: amtliche Grenzen, kein Raster.
 * **Abfahrten** als 30-Minuten-Vorrat (Schritt 6) — eigene Datenquelle.
 * **Luftqualität** — Open-Meteo hat einen eigenen Endpunkt dafür; ein zweiter
   Anbieter, mehr nicht.
