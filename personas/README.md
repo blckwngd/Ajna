@@ -148,6 +148,18 @@ Anfragen, nicht Züge; darüber hinaus antwortet die Figur aus Parley.
 Was sie mit einem Spieler besprochen hat, merkt sie sich — begrenzt je
 Spieler und insgesamt, und über einen Neustart hinweg (siehe unten).
 
+## Gesten
+
+Die Figur kann zu einem Satz eine Geste machen — `say` nimmt `do` in der
+Schreibweise der Dialogregeln: `["anim:Wave"]`. Welche Namen sie hat, liest
+sie beim Start aus ihrem Modell (`appearance.gltf`, glTF wie GLB) und
+bekommt sie einmal im Systemprompt genannt; dazu die allgemeinen Gesten
+`wave`, `dance`, `jump`, `think`, `idle`, die der Client auf das jeweilige
+Modell abbildet. Alles andere weist der Wächter ab, mit der Liste — ein
+Clip, den das Modell nicht hat, fiele sonst auf den ersten zurück und sähe
+aus wie ein Fehler. Kein eingebautes „emote": Regeln und Modell sprechen
+dieselbe Sprache, und was eine Geste ist, entscheidet die Figur.
+
 ## Journal, Befunde, Gedächtnis
 
 Drei Dateien je Persona unter `agents/data/personas/<name>/` — gitignored,

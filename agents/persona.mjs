@@ -49,6 +49,7 @@ import { createLlmClient } from './lib/llm.mjs'
 import { LlmBehaviour, Memory } from './lib/persona-llm.mjs'
 import { Journal, personaDataDir, readFindings, formatFindings } from './lib/journal.mjs'
 import { duplicateOf, failureKey } from './lib/actions.mjs'
+import { clipsOf, gesturesFor } from './lib/model-clips.mjs'
 import { Weltkontext, zelleFuer } from './lib/weltkontext.mjs'
 import { wetterAnbieter } from './lib/wetter.mjs'
 
@@ -738,6 +739,8 @@ function buildCtx() {
     failed,
     noteFailure,
     noteSaid: (id) => { const p = person(String(id)); p.saidAt = Date.now() },
+    gestures,
+    playAnimation: async (clip) => { await ajna.setAnimation(figure.id, String(clip)); c.anim = String(clip) },
     ajna,
     walkTo: (lat, lon) => planWalk({ lat, lon }),
     stop: () => stopHere({ holdMs: 5000 }),
@@ -762,9 +765,14 @@ function buildCtx() {
   }
 }
 
+// What the figure can play — read from its model file once. The model
+// gets the list in its system prompt, the guard holds it to the list.
+const gestures = gesturesFor(clipsOf(figure.appearance?.gltf))
+log(`gestures: ${gestures.join(', ')}`)
+
 const behaviour = new LlmBehaviour({
   llm: { async complete(req) { const cl = await ensureLlm(); if (!cl) throw new Error('model off'); return cl.complete(req) } },
-  persona: { name: figure.name, prompt: persona.prompt },
+  persona: { name: figure.name, prompt: persona.prompt, gestures },
   mode: () => (modelOn() ? mode() : 'basic'),
   log: (m) => log(`🧠 ${m}`),
   warn: (m) => warn(`🧠 ${m}`),

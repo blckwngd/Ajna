@@ -124,7 +124,7 @@ export function distanceM(lat1, lon1, lat2, lon2) {
 }
 
 /** The fixed part of the system prompt — the rules of the game, in the figure's language. */
-export function systemPrompt({ prompt, name, mode, parleyNote = true }) {
+export function systemPrompt({ prompt, name, mode, parleyNote = true, gestures = null }) {
   const parts = [
     prompt.trim(),
     '',
@@ -135,6 +135,12 @@ export function systemPrompt({ prompt, name, mode, parleyNote = true }) {
     '- Wird dir eine Aktion verweigert, versuche etwas anderes oder sag, dass es nicht geht. Behaupte nie, etwas getan zu haben, das verweigert wurde.',
     '- Sprich kurz, in deiner Rolle, auf Deutsch. Keine Listen, keine Erklärungen über dich als Programm.',
   ]
+  // The figure's gestures, once: `say` takes `do: ["anim:<Name>"]`, the
+  // same notation as the dialogue rules. Listed here instead of per turn —
+  // the system prompt is cached, the situation is not.
+  if (Array.isArray(gestures) && gestures.length) {
+    parts.push(`- Gesten: Bei \`say\` kannst du \`do\` mitgeben, z. B. ["anim:${gestures[0]}"]. Deine Gesten: ${gestures.join(', ')}. Andere hast du nicht.`)
+  }
   if (parleyNote) {
     parts.push('- Manchmal steht dabei, was deine vorbereiteten Antworten sagen würden. Das ist Material für dich, kein Zwang — aber widersprich ihm nicht.')
   }
@@ -278,7 +284,7 @@ export class LlmBehaviour {
 
     // ── The model ─────────────────────────────────────────────────────
     const tools = toolDefinitions(mode)
-    const system = systemPrompt({ prompt: this.persona.prompt, name: this.persona.name, mode })
+    const system = systemPrompt({ prompt: this.persona.prompt, name: this.persona.name, mode, gestures: this.persona.gestures || null })
     const messages = speaker ? this.memory.get(speaker).slice() : []
     messages.push({ role: 'user', text: this.narrate(events, parleyAnswers, ctx) })
 

@@ -4,7 +4,14 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { LlmBehaviour, describeState } from './persona-llm.mjs'
+import { LlmBehaviour, describeState, systemPrompt } from './persona-llm.mjs'
+
+test('the system prompt names the gestures once, and only when there are any', () => {
+  const p = systemPrompt({ prompt: 'Du bist Jorin.', name: 'Jorin', mode: 'passive', gestures: ['wave', 'Idle_Weapon'] })
+  assert.match(p, /Gesten: Bei `say` kannst du `do` mitgeben, z\. B\. \["anim:wave"\]\. Deine Gesten: wave, Idle_Weapon\./)
+  assert.doesNotMatch(systemPrompt({ prompt: 'x', name: 'J', mode: 'passive' }), /Gesten:/)
+  assert.doesNotMatch(systemPrompt({ prompt: 'x', name: 'J', mode: 'passive', gestures: [] }), /Gesten:/)
+})
 
 const SELF = { id: 'self1', lat: 50.3569, lon: 7.5890 }
 const BENCH = { id: 'bench1', name: 'Bank', type: 'poi', lat: 50.3570, lon: 7.5891, state: { actions: [{ key: 'examine' }] } }

@@ -65,8 +65,21 @@ export function validateArgs(schema, args) {
     if (prop.enum && !prop.enum.includes(value)) {
       return `"${name}" must be one of: ${prop.enum.join(', ')}`
     }
+    if (prop.type === 'array') {
+      if (!Array.isArray(value)) return `"${name}" must be an array`
+      if (prop.items?.type === 'string' && !value.every(v => typeof v === 'string')) return `"${name}" must contain strings only`
+      if (prop.maxItems !== undefined && value.length > prop.maxItems) return `"${name}" may hold at most ${prop.maxItems} entries`
+    }
   }
   return null
+}
+
+// Gestures travel in Parley's notation (`anim:<clip>`), so the rules and
+// the model speak one language. Only this one verb for now.
+const GESTURE = /^anim:(.+)$/
+export function parseGesture(entry) {
+  const m = GESTURE.exec(String(entry || '').trim())
+  return m ? m[1].trim() : null
 }
 
 /** Metres between two WGS84 points. Local copy: this module stays free of imports. */
@@ -177,6 +190,13 @@ export function replyFor(o, action, result = null) {
 
 const FAILURE_KEY = (objectId, action) => `${rawId(objectId)}|${action}`
 
+/** Case-insensitive: the model writes "wave", the clip is "Wave". Local copy — this module stays import-free. */
+function matchGestureName(name, gestures) {
+  const n = String(name || '').trim().toLowerCase()
+  if (!n) return null
+  return (gestures || []).find(g => String(g).toLowerCase() === n) || null
+}
+
 /**
  * Near-duplicate of an earlier finding? Same type and either the same
  * title in other words (word overlap) or the same set of object ids. The
@@ -283,31 +303,53 @@ export const ACTIONS = [
 
   {
     key: 'say',
-    description: 'Jemandem etwas sagen, der mit dir gesprochen hat oder bei dir steht.',
+    description: 'Jemandem etwas sagen, der mit dir gesprochen hat oder bei dir steht. '
+      + 'Mit `do` kannst du dazu eine Geste machen, in der Schreibweise der Dialogregeln: "anim:<Name>".',
     modes: ['passive', 'active', 'debug'],
     parameters: {
       type: 'object',
       properties: {
         to: { type: 'string', description: 'Konto-Kennung aus deiner Wahrnehmung.' },
         text: { type: 'string', description: 'Was du sagst. Deutsch, höchstens ein paar Sätze.' },
+        do: {
+          type: 'array', items: { type: 'string' }, maxItems: 3,
+          description: 'Gesten dazu, z. B. ["anim:Wave"]. Nur Namen aus deiner Liste der Gesten.',
+        },
       },
       required: ['to', 'text'],
     },
     check(ctx, args) {
       if (!perceivedPlayer(ctx, args.to)) return 'you are not talking to that person'
       if (args.text.length > 800) return 'that is too long for a spoken line'
+      // A gesture the model does not have falls back to its first clip —
+      // which looks like a glitch. Only what the figure knows it can do.
+      for (const entry of args.do || []) {
+        const clip = parseGesture(entry)
+        if (!clip) return `"${entry}" is not a gesture — write anim:<name>`
+        if (Array.isArray(ctx.gestures) && !matchGestureName(clip, ctx.gestures)) {
+          return `you have no gesture "${clip}" — yours: ${ctx.gestures.join(', ')}`
+        }
+      }
       return null
     },
     expect() { return null },
     async run(ctx, args) {
       const r = await ctx.ajna.sendChat(args.to, { text: args.text, object: ctx.self.id })
       try { ctx.noteSaid?.(args.to) } catch {}
+      const played = []
+      for (const entry of args.do || []) {
+        const clip = parseGesture(entry)
+        const name = Array.isArray(ctx.gestures) ? matchGestureName(clip, ctx.gestures) : clip
+        if (!name) continue
+        try { await ctx.playAnimation?.(name); played.push(name) } catch { /* the words went out, the gesture is extra */ }
+      }
+      const gesture = played.length ? ` (Geste: ${played.join(', ')})` : ''
       // delivered === 0 used to come back bare; the persona then reported
       // "I spoke, nobody answered" as a defect. Say what it means.
       if (Number(r?.delivered) === 0) {
-        return r?.stored ? 'gesagt — die Person ist gerade nicht da, sie liest es später' : 'gesagt — aber niemand hört gerade zu'
+        return (r?.stored ? 'gesagt — die Person ist gerade nicht da, sie liest es später' : 'gesagt — aber niemand hört gerade zu') + gesture
       }
-      return 'gesagt'
+      return 'gesagt' + gesture
     },
   },
 

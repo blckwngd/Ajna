@@ -172,7 +172,7 @@ Sammeln der Beweise (Erwartung → Beobachtung).
 | 7 | Doku | offen |
 | 8 | Lehren aus dem ersten Lauf (50 Befunde, 8 Ursachen): Werkzeuge antworten beschreibend und mit dem Fehlertext des Servers, `use` nur für Angebotenes und nicht zweimal in dieselbe Wand, Befunde werden nicht doppelt geschrieben, Namen aus der Anwesenheit, ein Gruß je Besuch | ✅ 22.10., 13 Tests |
 | 9 | **Welt aufräumen (vorgemerkt):** verwaiste Anwesenheiten (eine vom 31.08. steht noch) per Cron löschen; erledigte Aufträge der Figur nicht mehr als Objekt anbieten | offen |
-| 10 | **Gesten aus der Antwort (Vorschlag):** `say` bekommt ein optionales `do` in Parley-Schreibweise (`anim:<clip>`), die Figur kennt ihre Clips aus dem Modell und steht im Systemprompt — kein eingebautes `emote` nötig | offen |
+| 10 | Gesten aus der Antwort: `say` nimmt `do` in Parley-Schreibweise (`anim:<clip>`), die Figur liest ihre Clips aus dem Modell (`lib/model-clips.mjs`, glTF und GLB), der Systemprompt nennt sie einmal, der Wächter hält sie daran — kein eingebautes `emote` | ✅ 22.10., 7 Tests |
 
 Parley bleibt die Quelle für Verbindliches: eine als `binding: true` markierte
 Regel geht wörtlich raus, ohne Modell. Das Feld gibt es seit Schritt 4

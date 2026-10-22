@@ -125,6 +125,27 @@ test('say tells the figure when the person is away and reads it later', async ()
   assert.equal(await byKey('say').run(ctx, { to: 'player1', text: 'Hallo' }), 'gesagt')
 })
 
+test('say may carry a gesture in Parley notation — only one the figure has', async () => {
+  const played = []
+  const ctx = makeCtx({ gestures: ['wave', 'dance', 'Idle_Weapon', 'Spell1'], playAnimation: async (c) => played.push(c) })
+  assert.equal(guard('debug', 'say', { to: 'player1', text: 'Hallo', do: ['anim:wave'] }, ctx).ok, true)
+  const g = guard('debug', 'say', { to: 'player1', text: 'Hallo', do: ['anim:Tanz'] }, ctx)
+  assert.equal(g.ok, false)
+  assert.match(g.reason, /no gesture "Tanz"/)
+  assert.match(g.reason, /Idle_Weapon/)
+  assert.match(guard('debug', 'say', { to: 'player1', text: 'Hallo', do: ['winken'] }, ctx).reason, /anim:<name>/)
+  assert.match(guard('debug', 'say', { to: 'player1', text: 'Hallo', do: 'anim:wave' }, ctx).reason, /must be an array/)
+  const r = await byKey('say').run(ctx, { to: 'player1', text: 'Hallo', do: ['anim:spell1', 'anim:wave'] })
+  assert.deepEqual(played, ['Spell1', 'wave'], 'played under the model’s own spelling')
+  assert.match(r, /Geste: Spell1, wave/)
+  assert.equal(ctx.calls.filter(c => c[0] === 'sendChat').length, 1)
+})
+
+test('without a gesture list the guard trusts the model — the client resolves aliases', () => {
+  const ctx = makeCtx()
+  assert.equal(guard('debug', 'say', { to: 'player1', text: 'Hallo', do: ['anim:wave'] }, ctx).ok, true)
+})
+
 test('duplicateOf finds the same finding in other words, or about the same objects', () => {
   const known = [
     { type: 'bug', title: 'TestQuest4: Aktion „call" schlägt fehl', description: 'use auf default:jukd1ck00jeaiev …' },
