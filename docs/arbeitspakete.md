@@ -335,15 +335,18 @@ Wegräumen, sobald eine neue App draußen ist. Kein Zeitdruck, aber auch nichts,
 was man vergessen sollte: Doppelt gelesene Felder verstecken den nächsten
 Tippfehler.
 
-### 4 · Karma-Inflation durch Absprache
+### 4 · Karma-Inflation durch Absprache — **aufgeschrieben am 22.10., Entscheidung offen**
 
 Zwei Konten können sich gegenseitig Aufträge bestätigen und Karma aus dem Nichts
 erzeugen. Die **Selbst**-Bestätigung ist geschlossen, die Absprache zu zweit
-nicht.
+nicht: A stellt aus, B erledigt, A nimmt ab, dann umgekehrt — je Durchgang 5
+Punkte, zwanzig Durchgänge bis Stufe 5, ohne Nachweis, ohne Ort, ohne Wartezeit.
 
-Stand September 2026: **nirgends im Repo dokumentiert** — der Punkt lebte nur in
-Gesprächen. Erster Schritt ist deshalb, ihn aufzuschreiben (zu `world-objects.md`
-oder einer eigenen Datei), bevor er wieder verlorengeht.
+Befund, Gegenmittel mit Preis und Empfehlung stehen in
+**`docs/karma-absprache.md`**. Empfohlen: zuerst ein Kassenbuch
+(`karma_ledger` — heute lässt sich nicht einmal eine Beschwerde prüfen), dann
+Gegenseitigkeit dämpfen (30 Tage), Tagesdeckel, Aussteller braucht Stufe 1.
+Erster Test beim Umsetzen: die Absprache zu zweit, rot vorher.
 
 ### 5 · Blitzeinschläge als Fundorte (Umwelt-Agent)
 
