@@ -131,7 +131,13 @@ Rate-Limit, Anbieterfehler, Ablehnung: die Figur antwortet aus Parley.
 Wird die Figur angesprochen, bleibt sie stehen (`talk_halt_s`) — als
 Haltplan geschrieben, damit sie auch beim Betrachter steht und nicht
 weiterläuft. Solange das Modell rechnet, spielt sie `think` (bei den
-Alltagsleuten „Interact", bei den Helden „Spell", sonst ruhiges Stehen).
+Alltagsleuten „Interact", bei den Helden „Spell", sonst ruhiges Stehen). Ist
+das für ein Modell zu viel, legt die Datei den Clip selbst fest — ein Eintrag
+in der Alias-Karte des Aussehens, der Name muss im Modell vorkommen:
+
+```json
+"appearance": { "gltf": "quaternius_characters/Wizard.gltf", "anim": { "think": "Idle_Weapon" } }
+```
 
 **Was Anfragen kostet.** Ein Zug besteht aus bis zu `llm.max_rounds`
 Anfragen; jede schickt den ganzen Verlauf erneut, das Modell kann mehrere
