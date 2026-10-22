@@ -171,6 +171,26 @@ Zeilen stehen in der Datei; `journal.jsonl` daneben sagt, was die Figur
 davor getan hat. Kein HTTP-Endpunkt, mit Absicht: Eine Datei liest, wer
 Shell-Zugang hat, und sonst niemand.
 
+**Was der erste Lauf gelehrt hat (22.10.2026).** Fünfzig Befunde, acht
+Ursachen, die Hälfte davon in den Werkzeugen selbst. Seitdem gilt:
+
+* Werkzeuge antworten in Sätzen, nicht mit Datensätzen: `look_at` beschreibt
+  das Ziel (vorher kam der eigene Datensatz zurück), `use` sagt, was ein
+  Spieler sähe (bei `examine` den Hinweistext), `walk_to` nennt Weg und
+  Dauer, `say` sagt, ob jemand zuhört oder es später liest.
+* Der Server spricht selbst: Eine Ablehnung kommt mit ihrem Text und dem
+  HTTP-Status an, nicht als „Something went wrong".
+* `use` erlaubt nur, was das Objekt anbietet (plus `examine`), schickt
+  „sprechen" zu `say` und verweigert eine Stunde lang, was gerade erst
+  fehlgeschlagen ist. Typen stehen in der Lage als Wort (`Auftrag`, nicht
+  `call`), erledigte Aufträge als solche.
+* Ein Befund, der schon da ist — gleicher Titel in anderen Worten oder
+  dieselben Objekte —, wird nicht noch einmal geschrieben, sondern gezählt,
+  und die Figur bekommt die letzten acht Titel in jeder Lage gezeigt.
+* Leute heißen, wie ihre Anwesenheit heißt; einmal Begrüßen je Besuch
+  (Hinzutreten ist zehn Minuten nach dem letzten Wort kein Ereignis mehr,
+  Weggehen nie).
+
 ## Die Figur woandershin schicken
 
 **Nicht** über die Datenbank oder Drag & Drop auf der Karte: Der Agent ist die

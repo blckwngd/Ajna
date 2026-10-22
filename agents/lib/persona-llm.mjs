@@ -28,7 +28,9 @@
 // `report_finding` tool and the journal of what happened; whether something
 // is worth reporting is its judgement alone.
 
-import { actionsFor, toolDefinitions, guard, byKey } from './actions.mjs'
+import { actionsFor, toolDefinitions, guard, byKey, typeWord, questDone, offeredActions } from './actions.mjs'
+
+const hhmm = (ms) => { try { return new Date(ms).toTimeString().slice(0, 5) } catch { return '' } }
 import { LlmError } from './llm.mjs'
 import { BoundedCache } from './bounded-cache.mjs'
 
@@ -63,8 +65,13 @@ export function describeState(s) {
     lines.push('In Reichweite:')
     for (const o of objects.slice(0, 25)) {
       const d = (s.self && Number.isFinite(o.lat)) ? ` · ${Math.round(distanceM(s.self.lat, s.self.lon, o.lat, o.lon))} m` : ''
-      const acts = (o.state?.actions || []).map(a => a.key || a).filter(Boolean)
-      const extra = [o.type ? o.type : null, acts.length ? `Aktionen: ${acts.join(', ')}` : null, o.state?.portable ? 'tragbar' : null]
+      // The type as a WORD and the actions as "Aktionen: …", always — the
+      // bare key `call` was read as an action, and a missing list as "no
+      // actions" (there is always examine).
+      const tw = typeWord(o.type)
+      const extra = [tw ? (questDone(o) ? `${tw} (erledigt)` : tw) : null,
+                     `Aktionen: ${offeredActions(o).join(', ')}`,
+                     o.state?.portable ? 'tragbar' : null]
         .filter(Boolean).join(' · ')
       lines.push(`- ${o.name || '(ohne Namen)'} [${o.id}]${d}${extra ? ' · ' + extra : ''}`)
     }
@@ -76,13 +83,22 @@ export function describeState(s) {
   if (players.length) {
     lines.push('Leute:')
     for (const p of players) {
-      lines.push(`- ${p.name || 'jemand'} [${p.id}]${p.near ? ' · steht bei dir' : ''}${p.lastSaid ? ` · sagte zuletzt: „${p.lastSaid}"` : ''}`)
+      // When the figure last spoke to them: the model greeted the same
+      // person five times in a row because nothing told it that it had.
+      const said = Number(p.saidAt) > 0 ? ` · von dir angesprochen um ${hhmm(p.saidAt)}` : ''
+      lines.push(`- ${p.name || 'jemand'} [${p.id}]${p.near ? ' · steht bei dir' : ''}${p.lastSaid ? ` · sagte zuletzt: „${p.lastSaid}"` : ''}${said}`)
     }
   }
   const inv = (s.inventory || []).filter(o => o && o.id)
   // With the type: a figure that carries an "enemy" should be able to notice
   // that something is off — it cannot, if all it sees is a name.
-  if (inv.length) lines.push(`Du trägst: ${inv.map(o => `${o.name || '?'} [${o.id}]${o.type ? ` (${o.type})` : ''}`).join(', ')}.`)
+  if (inv.length) lines.push(`Du trägst: ${inv.map(o => `${o.name || '?'} [${o.id}]${o.type ? ` (${typeWord(o.type)})` : ''}`).join(', ')}.`)
+  // What is already on record — so it is not recorded again.
+  const known = (s.findings || []).filter(f => f && f.title)
+  if (known.length) {
+    lines.push('Schon festgehalten (nicht noch einmal melden):')
+    for (const f of known.slice(-8)) lines.push(`- ${f.title}${Number(f.count) > 1 ? ` (×${f.count})` : ''}`)
+  }
   if (s.world && Object.keys(s.world).length) {
     const w = []
     for (const [k, v] of Object.entries(s.world)) {
@@ -125,7 +141,7 @@ export function systemPrompt({ prompt, name, mode, parleyNote = true }) {
   if (mode === 'debug') {
     parts.push('', 'ZUSÄTZLICH, weil du im Prüfmodus bist:',
       '- Du probierst aus, was die Welt dir anbietet, und achtest darauf, ob es tut, was es verspricht.',
-      '- Was dir als Spieler an deiner Stelle auffiele — kaputt, widersprüchlich, verwirrend, verbesserungswürdig —, hältst du mit `report_finding` fest. Du entscheidest, was zählt; es gibt keine Liste.',
+      '- Was dir als Spieler an deiner Stelle auffiele — kaputt, widersprüchlich, verwirrend, verbesserungswürdig —, hältst du mit `report_finding` fest. Du entscheidest, was zählt; es gibt keine Liste. Was schon festgehalten ist, meldest du nicht noch einmal, und was einmal fehlschlug, probierst du nicht gleich wieder.',
       '- Beschreibe in jedem Befund, was du versucht hast, was du erwartet hast und was stattdessen geschah. Nenne Kennungen.')
   }
   return parts.join('\n')
@@ -308,7 +324,19 @@ export class LlmBehaviour {
             // twice in the chat).
             if (call.name === 'say') said.push({ to: call.input.to, text: call.input.text, sent: true })
           } catch (err) {
-            outcome = { ok: false, error: String(err?.response?.data?.message || err?.message || err).slice(0, 200) }
+            // THE SERVER'S OWN WORDS. Ajna's routes answer `{error: "…"}`,
+            // PocketBase's built-ins `{message: "…"}`; the SDK's `.message`
+            // is a generic sentence whenever it finds neither where it
+            // looks. The persona saw "Something went wrong while
+            // processing your request" sixty times and never the 403
+            // "not allowed to perform 'call'" behind it.
+            const body = err?.response || err?.data || null
+            const text = body?.error || body?.message || body?.data?.message || err?.message || String(err)
+            const status = Number(err?.status) > 0 ? ` (HTTP ${err.status})` : ''
+            outcome = { ok: false, error: `${String(text).slice(0, 200)}${status}` }
+            if (call.input?.object_id && call.input?.action) {
+              try { ctx.noteFailure?.(call.input.object_id, call.input.action, outcome.error) } catch {}
+            }
           }
           const entry = { at: this.now(), action: call.name, input: call.input, expect, outcome }
           journal.push(`${call.name}(${shortArgs(call.input)}) → ${outcome.ok ? 'ok' : 'FEHLER: ' + outcome.error}`)
@@ -363,7 +391,8 @@ export class LlmBehaviour {
 
 function compact(r) {
   if (r === undefined || r === null) return 'ok'
-  if (typeof r === 'string') return r.slice(0, 300)
+  // A description (look_at) is prose and worth its length; records stay short.
+  if (typeof r === 'string') return r.slice(0, 700)
   try {
     const s = JSON.stringify(r)
     return s.length > 300 ? s.slice(0, 300) + '…' : s

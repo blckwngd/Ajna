@@ -97,6 +97,107 @@ const sameId = (a, b) => rawId(a) !== '' && rawId(a) === rawId(b)
 const perceivedObject = (ctx, id) =>
   (ctx?.perception?.objects || []).find(o => sameId(o.id, id)) || null
 
+// What the figure carries is in its hands, not in its field of view —
+// looking at it must work, walking to it makes no sense. Only `look_at`
+// uses this wider match.
+const perceivedAny = (ctx, id) =>
+  perceivedObject(ctx, id)
+  || (ctx?.perception?.inventory || []).find(o => sameId(o.id, id)) || null
+
+// ── Words for the figure, not keys ───────────────────────────────────────
+// `call` is a quest, not an action — the persona read "TestQuest3 · call"
+// as something it could trigger and reported the refusal thirty times. A
+// type is shown as a word; the key stays available to the tools via the id.
+const TYPE_WORDS = {
+  npc: 'Figur', enemy: 'Gegner', animal: 'Tier', dragon: 'Drache', hint: 'Hinweis',
+  item: 'Gegenstand', diamond: 'Diamant', call: 'Auftrag', player: 'Spieler',
+  poi: 'Ort', wifi: 'WLAN', uwb_anchor: 'Anker', aircraft: 'Flugzeug', ship: 'Schiff',
+  rover: 'Rover', marker: 'Marke', building: 'Gebäude',
+}
+export function typeWord(type) {
+  const t = String(type || '').toLowerCase()
+  return TYPE_WORDS[t] || (t ? t : '')
+}
+
+/** A quest that is over is still an object — but nothing to do any more. */
+export const questDone = (o) => {
+  const st = o?.state?.call?.status
+  return String(o?.type || '').toLowerCase() === 'call' && (st === 'done' || st === 'closed' || st === 'expired')
+}
+
+/** Actions an object offers to a player: its own list plus "examine", as the client does. */
+export function offeredActions(o) {
+  const own = (o?.state?.actions || []).map(a => (a && typeof a === 'object') ? a.key : a).filter(Boolean)
+  return own.includes('examine') ? own : ['examine', ...own]
+}
+
+/**
+ * What a player would see on looking at the object. Plain text for the
+ * model — a record dump made the persona mistake its OWN record for the
+ * target (the old `look_at` returned the result of its turn, i.e. itself).
+ */
+export function describeObject(o, self = null) {
+  if (!o) return ''
+  const parts = [`${o.name || '(ohne Namen)'} [${o.id}]`]
+  const tw = typeWord(o.type)
+  if (tw) parts.push(questDone(o) ? `${tw} (erledigt)` : tw)
+  if (self && Number.isFinite(o.lat) && Number.isFinite(self.lat)) parts.push(`${Math.round(distanceM(self.lat, self.lon, o.lat, o.lon))} m entfernt`)
+  if (o.carried_by) parts.push('in deiner Hand')
+  if (o.state?.portable) parts.push('tragbar')
+  const lines = [parts.join(' · ')]
+  const desc = String(o.description || '').trim()
+  if (desc) lines.push(desc.length > 300 ? desc.slice(0, 299) + '…' : desc)
+  const hint = String(o.state?.hint || '').trim()
+  if (hint) lines.push(`Darauf steht: „${hint.length > 300 ? hint.slice(0, 299) + '…' : hint}"`)
+  const task = String(o.state?.call?.task || o.state?.call?.summary || '').trim()
+  if (task) lines.push(`Aufgabe: ${task.length > 200 ? task.slice(0, 199) + '…' : task}`)
+  const hp = o.state?.hp
+  if (Number.isFinite(Number(hp?.ist)) && Number(hp?.max) > 0) lines.push(`Zustand: ${hp.ist} von ${hp.max}`)
+  lines.push(`Aktionen: ${offeredActions(o).join(', ')}`)
+  return lines.join('\n')
+}
+
+/**
+ * What the player's client would show after an interaction — the figure
+ * gets the same. `examine` on a hint returned `{delivered: 0}` before; the
+ * text lives in the object, the client rendered it, the persona saw nothing.
+ */
+export function replyFor(o, action, result = null) {
+  const delivered = Number(result?.delivered)
+  if (action === 'examine') {
+    const hint = String(o?.state?.hint || '').trim()
+    const desc = String(o?.description || '').trim()
+    return hint ? `Darauf steht: „${hint}"` : (desc || 'Nichts Besonderes zu sehen.')
+  }
+  const who = Number.isFinite(delivered)
+    ? (delivered > 0 ? 'Wer das Objekt betreibt, hat es bemerkt.' : 'Niemand, der darauf reagieren könnte, ist gerade da.')
+    : ''
+  return `${action} ausgelöst. ${who}`.trim()
+}
+
+const FAILURE_KEY = (objectId, action) => `${rawId(objectId)}|${action}`
+
+/**
+ * Near-duplicate of an earlier finding? Same type and either the same
+ * title in other words (word overlap) or the same set of object ids. The
+ * persona reported "TestQuest4: call fails" eighteen times in one
+ * afternoon; the export groups, but every repeat cost a model round.
+ */
+export function duplicateOf(existing, f) {
+  const words = (s) => new Set(String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').split(' ').filter(w => w.length > 2))
+  const ids = (s) => new Set(String(s || '').match(/\b[a-z0-9]{15}\b/g) || [])
+  const jaccard = (a, b) => { if (!a.size || !b.size) return 0; let n = 0; for (const x of a) if (b.has(x)) n++; return n / (a.size + b.size - n) }
+  const same = (a, b) => a.size === b.size && [...a].every(x => b.has(x))
+  const tw = words(f?.title), tid = ids(`${f?.title} ${f?.description}`)
+  for (const e of existing || []) {
+    if (e?.type !== f?.type) continue
+    if (jaccard(words(e.title), tw) >= 0.5) return e
+    const eid = ids(`${e.title} ${e.description}`)
+    if (tid.size && same(eid, tid) && jaccard(words(e.title), tw) >= 0.2) return e
+  }
+  return null
+}
+
 const perceivedPlayer = (ctx, id) =>
   (ctx?.perception?.players || []).find(p => sameId(p.id, id)) || null
 
@@ -120,14 +221,20 @@ export const ACTIONS = [
       required: ['object_id'],
     },
     check(ctx, args) {
-      return perceivedObject(ctx, args.object_id) ? null : 'you cannot see that object'
+      return perceivedAny(ctx, args.object_id) ? null : 'you cannot see that object'
     },
     expect() { return null },          // pure presentation, no state to verify
     async run(ctx, args) {
-      const target = perceivedObject(ctx, args.object_id)
-      return ctx.ajna.updateObject(ctx.self.id, {
-        rotation: { x: 0, y: bearingTo(ctx.self, target), z: 0 },
-      })
+      const target = perceivedAny(ctx, args.object_id)
+      // Turn towards it — but ANSWER with the object, not with the result
+      // of the turn (that was the figure's own record, and the persona
+      // concluded the snack bar was a wizard).
+      if (!target.carried_by && Number.isFinite(target.lat)) {
+        try {
+          await ctx.ajna.updateObject(ctx.self.id, { rotation: { x: 0, y: bearingTo(ctx.self, target), z: 0 } })
+        } catch { /* the look matters, the turn is cosmetic */ }
+      }
+      return describeObject(target, ctx.self)
     },
   },
 
@@ -156,7 +263,11 @@ export const ACTIONS = [
     },
     async run(ctx, args) {
       const target = perceivedObject(ctx, args.object_id)
-      return ctx.walkTo(target.lat, target.lon)   // routing stays with the caller
+      await ctx.walkTo(target.lat, target.lon)   // routing stays with the caller
+      // "true" told the model nothing; it asked why it had not arrived.
+      const d = distanceM(ctx.self.lat, ctx.self.lon, target.lat, target.lon)
+      const v = Number(ctx.speedMps) > 0 ? Number(ctx.speedMps) : 1.3
+      return `unterwegs zu ${target.name || args.object_id}: ${Math.round(d)} m, etwa ${Math.max(1, Math.round(d / v))} s. Du bist noch nicht dort.`
     },
   },
 
@@ -189,7 +300,14 @@ export const ACTIONS = [
     },
     expect() { return null },
     async run(ctx, args) {
-      return ctx.ajna.sendChat(args.to, { text: args.text, object: ctx.self.id })
+      const r = await ctx.ajna.sendChat(args.to, { text: args.text, object: ctx.self.id })
+      try { ctx.noteSaid?.(args.to) } catch {}
+      // delivered === 0 used to come back bare; the persona then reported
+      // "I spoke, nobody answered" as a defect. Say what it means.
+      if (Number(r?.delivered) === 0) {
+        return r?.stored ? 'gesagt — die Person ist gerade nicht da, sie liest es später' : 'gesagt — aber niemand hört gerade zu'
+      }
+      return 'gesagt'
     },
   },
 
@@ -208,16 +326,27 @@ export const ACTIONS = [
     check(ctx, args) {
       const target = perceivedObject(ctx, args.object_id)
       if (!target) return 'you cannot see that object'
-      const offered = (target.state?.actions || []).map(a => a.key || a)
-      // Deliberately NOT a hard stop when the list is empty: an object may
-      // offer actions the agent has not read. Only a contradiction counts.
-      if (offered.length && !offered.includes(args.action)) {
-        return `that object offers: ${offered.join(', ')}`
-      }
+      // Talking is `say`, not an interaction — "talk" on a presence is the
+      // client's way of opening a chat window.
+      if (args.action === 'talk' || args.action === 'sprechen') return 'to talk to someone, use say'
+      // STRICT. The old guard let anything through when the object listed
+      // nothing, "an object may offer actions the agent has not read" — and
+      // the persona then fired `call` at three finished quests, sixty times,
+      // each a 403 it could not read. The list is what the player sees.
+      const offered = offeredActions(target)
+      if (!offered.includes(args.action)) return `that object offers: ${offered.join(', ')}`
+      // Not twice into the same wall: a refusal the server gave an hour ago
+      // is the same refusal now.
+      const f = ctx.failed?.(FAILURE_KEY(args.object_id, args.action))
+      if (f) return `that failed ${f.count}× already ("${f.error}") — do not retry it`
       return null
     },
     expect(ctx, args) { return { kind: 'interaction_accepted', object_id: args.object_id, action: args.action } },
-    async run(ctx, args) { return ctx.ajna.interact(args.object_id, args.action) },
+    async run(ctx, args) {
+      const target = perceivedObject(ctx, args.object_id)
+      const r = await ctx.ajna.interact(args.object_id, args.action)
+      return replyFor(target, args.action, r)
+    },
   },
 
   {
@@ -316,6 +445,9 @@ function bearingTo(self, target) {
     - Math.sin(toRad(self.lat)) * Math.cos(toRad(target.lat)) * Math.cos(dLon)
   return Math.atan2(y, x)
 }
+
+/** Key under which a failed `use` is remembered (see `ctx.failed`). */
+export const failureKey = FAILURE_KEY
 
 export const byKey = (key) => ACTIONS.find(a => a.key === key) || null
 

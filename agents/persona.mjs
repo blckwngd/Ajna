@@ -48,6 +48,7 @@ import { dialogNameFor, dialogVarsFor, talkSessionId } from '../client/core/Parl
 import { createLlmClient } from './lib/llm.mjs'
 import { LlmBehaviour, Memory } from './lib/persona-llm.mjs'
 import { Journal, personaDataDir, readFindings, formatFindings } from './lib/journal.mjs'
+import { duplicateOf, failureKey } from './lib/actions.mjs'
 import { Weltkontext, zelleFuer } from './lib/weltkontext.mjs'
 import { wetterAnbieter } from './lib/wetter.mjs'
 
@@ -562,6 +563,7 @@ async function say(userId, text) {
     text: answer.text, object: figure.id,
     meta: answer.choices ? { choices: answer.choices, input: answer.input } : null,
   })
+  person(String(userId)).saidAt = Date.now()
   for (const a of answer.do || []) {
     if (a?.action === 'anim' && a.value) {
       try { await ajna.setAnimation(figure.id, String(a.value)); c.anim = String(a.value) } catch {}
@@ -659,12 +661,51 @@ every(refreshWorld, () => 10 * 60_000)
 // People the figure knows about: who is near, who said what. No positions
 // ever arrive — only ids and words.
 const people = new Map()       // userId → { id, near, lastSaid, seenAt }
-const person = (id) => { if (!people.has(id)) people.set(id, { id, near: false, lastSaid: '', seenAt: 0 }); return people.get(id) }
+const person = (id) => { if (!people.has(id)) people.set(id, { id, near: false, lastSaid: '', seenAt: 0, saidAt: 0 }); return people.get(id) }
 const recent = []              // last journal lines for the situation description
+
+// Refusals the server gave for (object, action), for an hour. The guard
+// reads them: the persona ran into the same 403 sixty times in an
+// afternoon, each run a model round.
+const FAILURE_TTL_MS = 60 * 60_000
+const failures = new Map()     // failureKey → { count, error, at }
+const noteFailure = (objectId, action, error) => {
+  const k = failureKey(objectId, action)
+  const f = failures.get(k) || { count: 0, error: '', at: 0 }
+  f.count++; f.error = String(error || '').slice(0, 120); f.at = Date.now()
+  failures.set(k, f)
+}
+const failed = (k) => { const f = failures.get(k); return f && Date.now() - f.at < FAILURE_TTL_MS ? f : null }
+
+// A player's name as the presence object carries it (`state.name`), the
+// newest presence per account. Nobody filled `name` before, so everyone
+// was "jemand" — while director figures had names.
+const presenceNameFor = (accountId) => {
+  let best = null
+  for (const o of ajna.getObjects()) {
+    if (String(o?.type || '').toLowerCase() !== 'player' || String(o.owner || '') !== String(accountId)) continue
+    if (!best || String(o.state?.seenAt || '') > String(best.state?.seenAt || '')) best = o
+  }
+  const n = String(best?.state?.name || '').trim()
+  return n || null
+}
 
 // Evidence, findings and memory on disk — agents/data/personas/<name>/.
 // Read them with `--findings`, or open the JSONL files directly.
 const journal = new Journal(personaDataDir(NAME), { warn })
+// What is already on record, from disk — so a restart does not start the
+// same findings over. Grouped by title like the export does.
+const knownFindings = (() => {
+  const out = []
+  try {
+    for (const f of readFindings(personaDataDir(NAME))) {
+      const dup = duplicateOf(out, f)
+      if (dup) dup.count++
+      else out.push({ type: f.type, title: f.title, description: f.description, count: 1 })
+    }
+  } catch { /* no findings yet */ }
+  return out
+})()
 const memory = new Memory()
 {
   const n = memory.load(journal.loadMemory())
@@ -683,6 +724,7 @@ function buildCtx() {
   const inventory = ajna.getObjects().filter(o => o?.carried_by && String(o.carried_by) === String(me?.id))
   const cutoff = Date.now() - 20 * 60_000
   const players = [...people.values()].filter(p => p.near || p.seenAt > cutoff)
+    .map(p => ({ ...p, name: p.name || presenceNameFor(p.id) }))
   return {
     mode: mode(),
     self: { id: figure.id, lat: c.lat, lon: c.lon, rotation: { x: 0, y: 0, z: 0 } },
@@ -691,6 +733,11 @@ function buildCtx() {
     world: world.varsFuer(c.lat, c.lon),
     activity: c.fsm === 'walking' ? 'du gehst' : 'du stehst',
     recent: recent.slice(-8),
+    findings: knownFindings.slice(-8),
+    speedMps: num('speed'),
+    failed,
+    noteFailure,
+    noteSaid: (id) => { const p = person(String(id)); p.saidAt = Date.now() },
     ajna,
     walkTo: (lat, lon) => planWalk({ lat, lon }),
     stop: () => stopHere({ holdMs: 5000 }),
@@ -698,7 +745,17 @@ function buildCtx() {
     recordFinding: (f) => {
       // The model's judgement, with the evidence that led to it. Written
       // as it comes — nothing here decides whether it is "really" a finding.
+      // Only a REPEAT is not written again: the same title in other words,
+      // or the same objects. It is counted, and the model is told.
+      const dup = duplicateOf(knownFindings, f)
+      if (dup) {
+        dup.count = (dup.count || 1) + 1
+        log(`📝 finding repeated (×${dup.count}): ${dup.title}`)
+        return { recorded: false, duplicate: true, count: dup.count,
+                 note: `schon festgehalten als „${dup.title}" — nicht noch einmal geschrieben` }
+      }
       journal.finding({ ...f, persona: NAME, context: recent.slice(-8) })
+      knownFindings.push({ type: f.type, title: f.title, description: f.description, count: 1 })
       log(`📝 FINDING [${f.type}] ${f.title} — ${String(f.description).slice(0, 120)}`)
       return { recorded: true }
     },
@@ -740,6 +797,7 @@ async function deliver(result) {
     if (s.sent) continue      // the say tool delivered it already — once is enough
     try {
       await ajna.sendChat(s.to, { text: s.text, object: figure.id })
+      person(String(s.to)).saidAt = Date.now()
       for (const a of s.do || []) if (a?.action === 'anim' && a.value) { try { await ajna.setAnimation(figure.id, String(a.value)); c.anim = String(a.value) } catch {} }
     } catch (err) { warn(`say to ${s.to}: ${err?.message || err}`) }
   }
@@ -796,16 +854,27 @@ ajna.onInteract(figure.id, (evt) => {
 // Someone stepped into the figure's vicinity (player opt-in level "Nähe").
 // No coordinates arrive — only that, and who. For now the figure stops and
 // turns attentive; in the model modes this is the main trigger.
+//
+// ONE GREETING PER VISIT. A player at the edge of the radius flaps in and
+// out; every flap was a model turn, and the figure greeted and waved
+// goodbye five times in a row. Now: entering is an event only if the
+// figure has not spoken to that person in the last ten minutes; leaving
+// is never one — a farewell to someone already walking away is noise.
+const REGREET_MS = 10 * 60_000
 ajna.onProximity(figure.id, (evt) => {
-  if (evt?.source) { const p = person(evt.source); p.near = evt.state === 'enter'; p.seenAt = Date.now() }
+  if (!evt?.source) return
+  const p = person(evt.source)
+  const wasNear = p.near
+  p.near = evt.state === 'enter'; p.seenAt = Date.now()
   lastEventAt = Date.now()
-  if (evt?.state === 'enter') {
-    log(`👀 ${evt.source || 'someone'} is near`)
+  if (evt.state === 'enter') {
+    log(`👀 ${evt.source} is near`)
     stopHere({ holdMs: 20_000 }).catch(() => {})
-    if (evt.source) toModel({ kind: 'proximity', player: evt.source, state: 'enter' }).catch(err => warn(`proximity turn: ${err?.message || err}`))
-  } else if (evt?.state === 'leave') {
-    log(`👋 ${evt.source || 'someone'} left`)
-    if (evt.source && mode() !== 'passive') toModel({ kind: 'proximity', player: evt.source, state: 'leave' }).catch(() => {})
+    const spokeRecently = Date.now() - (p.saidAt || 0) < REGREET_MS
+    if (wasNear || spokeRecently) return
+    toModel({ kind: 'proximity', player: evt.source, state: 'enter' }).catch(err => warn(`proximity turn: ${err?.message || err}`))
+  } else if (evt.state === 'leave') {
+    log(`👋 ${evt.source} left`)
   }
 }).catch(err => warn(`proximity subscription: ${err?.message || err}`))
 

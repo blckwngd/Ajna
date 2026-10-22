@@ -269,7 +269,7 @@ test('describeState names ids, distances, actions and people', () => {
   const t = describeState({ self: SELF, home: { lat: SELF.lat, lon: SELF.lon, radius_m: 150 }, objects: [BENCH, COIN], players: [{ id: 'p1', name: 'Mara', near: true, lastSaid: 'hi' }], inventory: [COIN], activity: 'läuft', world: { himmel: { tageszeit: 'Abend' } }, recent: ['use(bench1) → ok'] })
   assert.match(t, /Gerade: läuft/)
   assert.match(t, /Revier: 150 m/)
-  assert.match(t, /Bank \[bench1\] · \d+ m · poi · Aktionen: examine/)
+  assert.match(t, /Bank \[bench1\] · \d+ m · Ort · Aktionen: examine/)   // the type as a word (22.10.)
   assert.match(t, /Münze \[coin1\].*tragbar/)
   assert.match(t, /Mara \[p1\] · steht bei dir · sagte zuletzt: „hi"/)
   assert.match(t, /Du trägst: Münze \[coin1\]/)
