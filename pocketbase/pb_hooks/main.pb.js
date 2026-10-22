@@ -1027,6 +1027,34 @@ cronAdd("object_expiry", "23 * * * *", () => {
 })
 
 
+// =====================================================================
+// Postfach aufräumen — `chat_inbox` (siehe 1792700000_chat_inbox.js).
+//
+// Eine Nachricht liegt dort nur, weil ihr Empfänger nicht da war, und nur,
+// bis er sie abholt. Holt er sie nie ab (Konto verwaist, Agent nie wieder
+// gestartet), räumt dieser Lauf sie nach `chat.inbox_days` Tagen weg.
+// Vorgabe 14; 0 oder weniger heißt: nie löschen (dann bleibt es beim Client,
+// der abgeholte Nachrichten sofort entfernt).
+// =====================================================================
+cronAdd("chat_inbox_expiry", "37 * * * *", () => {
+  const { einstellung } = require(`${__hooks}/gastkonten.js`)
+  let tage = Number(einstellung($app, "chat.inbox_days", 14))
+  if (!isFinite(tage) || tage <= 0) return
+  // PocketBase-Datumsformat: "YYYY-MM-DD HH:MM:SS.sssZ"
+  const grenze = new Date(Date.now() - tage * 86400000).toISOString().replace("T", " ")
+  let weg = 0
+  try {
+    const alt = $app.findRecordsByFilter("chat_inbox", "created < {:t}", "created", 500, 0, { t: grenze })
+    for (let i = 0; i < alt.length; i++) {
+      try { $app.delete(alt[i]); weg++ } catch (err) { /* nächster */ }
+    }
+  } catch (err) {
+    console.log("[chat_inbox_expiry] " + (err && err.message ? err.message : err))
+  }
+  if (weg) console.log(`[chat_inbox_expiry] ${weg} nicht abgeholte Nachricht(en) älter als ${tage} Tage entfernt`)
+})
+
+
 routerAdd("POST", "/api/objects/{id}/quest/publish", (e) => {
   try {
     const { parseState, activeEscrowOf, callDataOf, idList, validateSpecs } = require(`${__hooks}/quests.js`)
@@ -2539,9 +2567,13 @@ routerAdd("POST", "/api/proximity", (e) => {
 // Nachricht an deren KONTO (`objects.owner`) — der Agent erfährt über `object`,
 // welche seiner Figuren gemeint war. Für eine Direktnachricht bleibt das Feld leer.
 //
-// Ephemer wie `interact`: kein Datenbankschreibvorgang. Wer offline ist, bekommt
-// nichts — für Gespräche vor Ort richtig, für Direktnachrichten später zu wenig.
-// Dann kommt eine Ablage dazu, ohne dass sich der Client-Aufruf ändert.
+// Ephemer wie `interact`, SOLANGE JEMAND ZUHÖRT: kein Datenbankschreibvorgang.
+// Erreicht die Nachricht niemanden (`delivered === 0`), wandert sie ins
+// Postfach `chat_inbox` (seit 22.10.2026) — nur sie, und nur bis der Empfänger
+// sie abholt (AjnaClient.onChat holt beim Abonnieren ab und löscht). Ein
+// vollständiger Gesprächsmitschnitt entsteht so nicht: Was zugestellt wurde,
+// steht nirgends. Flüchtige Nachrichten (`ephemeral: true`) werden nie
+// abgelegt, auch nicht für einen abwesenden Empfänger.
 //
 // `ephemeral: true` — DIE BITTE, NICHTS AUFZUHEBEN. Der Absender kennzeichnet
 // damit Inhalte, die der Empfänger anzeigen, aber nicht speichern soll: von
@@ -2578,19 +2610,22 @@ routerAdd("POST", "/api/chat/send", (e) => {
     }
 
     const topic = "chat:" + to
+    const ephemeral = body.ephemeral === true
+    const objectId = typeof body.object === "string" ? body.object : null
+    const ts = new Date().toISOString()
     const message = new SubscriptionMessage({
       name: topic,
       data: JSON.stringify({
         from: user.id,               // serverseitig — nicht fälschbar
         to: to,
-        object: typeof body.object === "string" ? body.object : null,
+        object: objectId,
         text: text,
         meta: body.meta || null,     // z. B. Auswahlantworten
         // Immer gesetzt, nie undefined: Ein Empfänger soll `ephemeral === true`
         // prüfen können, ohne zwischen "nicht flüchtig" und "altes Feld fehlt"
         // raten zu müssen.
-        ephemeral: body.ephemeral === true,
-        ts: new Date().toISOString()
+        ephemeral: ephemeral,
+        ts: ts
       })
     })
 
@@ -2600,8 +2635,33 @@ routerAdd("POST", "/api/chat/send", (e) => {
       const c = clients[id]
       if (c.hasSubscription(topic)) { c.send(message); delivered++ }
     }
-    // delivered === 0 heisst: Empfänger gerade nicht verbunden.
-    return e.json(200, { ok: true, delivered: delivered })
+
+    // Niemand da → ins Postfach, sofern der Absender nichts dagegen hat und
+    // der Empfänger ein Konto ist. (`to` darf eine beliebige Kennung sein; ein
+    // Postfach gibt es nur für Konten — die Relation würde sonst scheitern.)
+    let stored = false
+    if (delivered === 0 && !ephemeral) {
+      try {
+        $app.findRecordById("users", to)
+        const col = $app.findCollectionByNameOrId("chat_inbox")
+        const rec = new Record(col)
+        rec.set("from", user.id)
+        rec.set("to", to)
+        rec.set("object", objectId || "")
+        rec.set("text", text)
+        rec.set("meta", body.meta || null)
+        rec.set("ts", ts)
+        $app.save(rec)
+        stored = true
+      } catch (err) {
+        // Kein Konto oder Ablage gescheitert: die Nachricht ist dann wirklich
+        // weg — das sagt `stored: false`, und der Client meldet es.
+        console.log("[chat.send] inbox: " + (err && err.message ? err.message : err))
+      }
+    }
+    // delivered === 0 heisst: Empfänger gerade nicht verbunden; `stored` sagt,
+    // ob die Nachricht auf ihn wartet.
+    return e.json(200, { ok: true, delivered: delivered, stored: stored })
   } catch (err) {
     console.log("[chat.send] error: " + (err && err.message ? err.message : err))
     return e.json(500, { error: "internal error" })

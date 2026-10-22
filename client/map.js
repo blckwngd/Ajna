@@ -489,6 +489,7 @@ function addMarker(obj) {
 }
 
 function removeMarker(id) {
+  removeSpeechBubble(id)
   const marker = markerLayer.get(id)
   if (marker) {
     window.map.removeLayer(marker)
@@ -552,6 +553,57 @@ function updateHighlightLine() {
       interactive: false
     }).addTo(window.map)
   }
+}
+
+// ── Sprechblasen ───────────────────────────────────────────────────────────
+//
+// Ein Leaflet-Tooltip je sprechender Figur, der dem Marker folgt (die
+// Positions-Glättung setzt die Marker per setLatLng, das feuert `move`).
+// Text als Textknoten, nie als HTML: er kommt von Agenten und fremden Servern.
+const speechBubbles = new Map()   // objectId → { tip, onMove, timer }
+const BUBBLE_MIN_MS = 3500, BUBBLE_MAX_MS = 12000, BUBBLE_MS_PER_CHAR = 55, BUBBLE_MAX_CHARS = 160
+
+function showSpeechBubble(objectId, text) {
+  const marker = markerLayer.get(objectId)
+  const satz = String(text ?? '').trim()
+  if (!marker || !satz || !window.L || !window.map) return
+  injectSpeechStyles()
+  removeSpeechBubble(objectId)
+  const kurz = satz.length > BUBBLE_MAX_CHARS ? satz.slice(0, BUBBLE_MAX_CHARS - 1) + '…' : satz
+  const inhalt = document.createElement('div')
+  inhalt.textContent = kurz
+  const tip = window.L.tooltip({
+    permanent: true, direction: 'top', offset: [0, -30], interactive: false,
+    className: 'ajna-speech-bubble', opacity: 1,
+  }).setContent(inhalt).setLatLng(marker.getLatLng()).addTo(window.map)
+  const onMove = (e) => { try { tip.setLatLng(e.latlng) } catch {} }
+  marker.on('move', onMove)
+  const dauer = Math.max(BUBBLE_MIN_MS, Math.min(BUBBLE_MAX_MS, kurz.length * BUBBLE_MS_PER_CHAR))
+  const timer = setTimeout(() => removeSpeechBubble(objectId), dauer)
+  speechBubbles.set(objectId, { tip, marker, onMove, timer })
+}
+
+function removeSpeechBubble(objectId) {
+  const b = speechBubbles.get(objectId)
+  if (!b) return
+  clearTimeout(b.timer)
+  try { b.marker.off('move', b.onMove) } catch {}
+  try { window.map.removeLayer(b.tip) } catch {}
+  speechBubbles.delete(objectId)
+}
+
+function injectSpeechStyles() {
+  if (document.getElementById('mapSpeechStyles')) return
+  const style = document.createElement('style')
+  style.id = 'mapSpeechStyles'
+  style.textContent = `
+    .ajna-speech-bubble {
+      background: rgba(255,255,255,.95); color: #15151a; border: none; border-radius: 10px;
+      padding: 6px 10px; max-width: 240px; white-space: normal; font: 500 13px system-ui, sans-serif;
+      box-shadow: 0 4px 16px rgba(0,0,0,.35);
+    }
+    .ajna-speech-bubble::before { border-top-color: rgba(255,255,255,.95); }`
+  document.head.appendChild(style)
 }
 
 function injectHighlightStyles() {
@@ -963,6 +1015,10 @@ async function init() {
 
   // UWB-Anker-Debug-Sichtbarkeit umgeschaltet (Einstellungen) → Marker neu rendern.
   window.addEventListener('ajna:uwb-anchors', () => mapUpdateMarkers(ajna.getObjectList()))
+
+  // Eine Figur hat etwas gesagt (MessageLogPanel._onChat): Sprechblase am
+  // Marker, zusätzlich zum Toast — so sieht man, WER gesprochen hat.
+  window.addEventListener('ajna:speech', ev => showSpeechBubble(ev.detail?.objectId, ev.detail?.text))
 
   // Manifeste selbst aktuell halten: Erst-Load (deckt persistierte Session ab, wo
   // onAuthChanged nicht feuert) + Auth-Wechsel + periodisch. window.agentFilters

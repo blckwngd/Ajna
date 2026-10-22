@@ -49,6 +49,15 @@ function hpFarbe(anteil) {
 const UPDATE_MS = 250          // schwerer Durchlauf: 4×/s reicht fürs Auge
 const MAX_DISTANCE_M = 1500    // darüber: ausblenden
 
+// Sprechblase: wie lange ein Satz über der Figur steht. Lesezeit wächst mit
+// der Länge, bleibt aber begrenzt — eine Blase, die eine Minute hängt, ist
+// kein Satz mehr, sondern ein Schild.
+const BUBBLE_MIN_MS = 3500
+const BUBBLE_MAX_MS = 12000
+const BUBBLE_MS_PER_CHAR = 55
+const BUBBLE_MAX_CHARS = 160   // längere Sätze werden gekürzt; der Chat hat den Rest
+const BUBBLE_WIDTH_PX = 260
+
 // Schriftgröße und Tafelzahl hängen an der BREITE DER GUI-TEXTUR, nicht an
 // festen Pixeln. Grund: Babylon rechnet Schriftgrößen in Textur-Pixeln, und die
 // Textur ist so breit wie der Renderpuffer. Auf einem Telefon sind das gut 390
@@ -94,12 +103,74 @@ class LabelLayer {
   constructor(scene) {
     this.scene = scene
     this.entries = new Map()      // GameObject → { text, record, scale, target, dist }
+    this.bubbles = new Map()      // GameObject → { rect, text, until }
     this.texture = null
     this._lastPass = 0
     this._focus = null
 
     this._onFrame = () => this._frame()
     scene.onBeforeRenderObservable.add(this._onFrame)
+  }
+
+  /**
+   * Sprechblase: ein Satz über der Figur, für ein paar Sekunden.
+   *
+   * Warum zusätzlich zum Toast: Der Toast sagt, WAS gesagt wurde — die Blase
+   * sagt, WER. Steht man vor drei Figuren, ist das der Unterschied zwischen
+   * Lesen und Verstehen. Unabhängig von der Beschriftung: Auch eine Figur
+   * ohne `appearance.label` bekommt die Blase, sie hängt direkt am Objekt
+   * (oder an der Mastspitze, wenn es einen Mast gibt).
+   *
+   * Eine zweite Blase ersetzt die erste — eine Figur spricht einen Satz nach
+   * dem anderen, nicht zwei übereinander.
+   *
+   * @param {object} gameObject
+   * @param {string} text
+   */
+  say(gameObject, text) {
+    const satz = String(text ?? '').trim()
+    if (!gameObject?.root || !satz) return
+    const kurz = satz.length > BUBBLE_MAX_CHARS ? satz.slice(0, BUBBLE_MAX_CHARS - 1) + '…' : satz
+    let b = this.bubbles.get(gameObject)
+    if (!b) {
+      const rect = new GUI.Rectangle(`bubble_${gameObject.id}`)
+      rect.width = `${BUBBLE_WIDTH_PX}px`
+      rect.adaptHeightToChildren = true
+      rect.cornerRadius = 10
+      rect.thickness = 0
+      rect.background = 'rgba(255,255,255,0.93)'
+      rect.paddingTop = rect.paddingBottom = '6px'
+      rect.isPointerBlocker = false
+      rect.zIndex = 20
+      const t = new GUI.TextBlock(`bubbletext_${gameObject.id}`)
+      t.color = '#15151a'
+      t.fontWeight = '500'
+      t.textWrapping = GUI.TextWrapping.WordWrap
+      t.resizeToFit = true
+      t.paddingLeft = t.paddingRight = '10px'
+      t.paddingTop = t.paddingBottom = '6px'
+      t.isPointerBlocker = false
+      rect.addControl(t)
+      this._ensureTexture().addControl(rect)
+      const anchor = this.entries.get(gameObject)?.pole?.tip || gameObject.root
+      rect.linkWithMesh(anchor)
+      // Über der Namenstafel, nicht auf ihr: die Tafel bleibt lesbar.
+      rect.linkOffsetY = this.entries.has(gameObject) ? -64 : -40
+      b = { rect, text: t, until: 0 }
+      this.bubbles.set(gameObject, b)
+    }
+    b.text.text = kurz
+    b.text.fontSize = Math.max(FONT_MIN_PX + 3, this._basisFontPx())
+    b.rect.isVisible = true
+    b.until = performance.now()
+      + Math.max(BUBBLE_MIN_MS, Math.min(BUBBLE_MAX_MS, kurz.length * BUBBLE_MS_PER_CHAR))
+  }
+
+  _removeBubble(gameObject) {
+    const b = this.bubbles.get(gameObject)
+    if (!b) return
+    try { b.rect.linkWithMesh(null); this.texture?.removeControl(b.rect); b.rect.dispose() } catch { /* Szene evtl. weg */ }
+    this.bubbles.delete(gameObject)
   }
 
   /** Zeichenfläche erst anlegen, wenn wirklich eine Tafel gebraucht wird. */
@@ -240,6 +311,8 @@ class LabelLayer {
     if (!e) return
     try { e.text.linkWithMesh(null); this.texture?.removeControl(e.text); e.text.dispose() } catch { /* Szene evtl. weg */ }
     try { e.bar?.linkWithMesh(null); this.texture?.removeControl(e.bar); e.bar?.dispose() } catch {}
+    // Die Blase hing womöglich an der Mastspitze, die gleich verschwindet.
+    this._removeBubble(gameObject)
     try { e.pole?.mesh.dispose(false, true); e.pole?.tip.dispose() } catch {}
     this.entries.delete(gameObject)
     if (this._focus === gameObject) this._focus = null
@@ -248,6 +321,7 @@ class LabelLayer {
   dispose() {
     this.scene.onBeforeRenderObservable.removeCallback(this._onFrame)
     for (const go of [...this.entries.keys()]) this.unregister(go)
+    for (const go of [...this.bubbles.keys()]) this._removeBubble(go)
     try { this.texture?.dispose() } catch {}
     this.texture = null
     layers.delete(this.scene)
@@ -256,7 +330,14 @@ class LabelLayer {
   // ── pro Frame: nur die Fokus-Größe weich nachziehen ────────────────────
   _frame() {
     const now = performance.now()
-    if (now - this._lastPass >= UPDATE_MS) { this._lastPass = now; this._pass() }
+    if (now - this._lastPass >= UPDATE_MS) {
+      this._lastPass = now
+      this._pass()
+      // Abgelaufene Blasen wegräumen — im getakteten Lauf, nicht je Frame.
+      for (const [go, b] of this.bubbles) {
+        if (now >= b.until || !go.root || go.root.isDisposed?.()) this._removeBubble(go)
+      }
+    }
 
     for (const e of this.entries.values()) {
       if (!e.text.isVisible) continue

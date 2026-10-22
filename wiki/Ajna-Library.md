@@ -212,8 +212,8 @@ Ablage. Wer nicht verbunden ist, bekommt nichts.
 
 | Methode | Beschreibung |
 |---|---|
-| `await sendChat(to, { text, object?, meta?, ephemeral?, serverId? })` | → `{ ok, delivered }`; `delivered = 0` heißt: Empfänger nicht verbunden |
-| `await onChat(cb)` | Rückruf `{ from, to, object, text, meta, ephemeral, ts, _origin }`; über alle angemeldeten Server |
+| `await sendChat(to, { text, object?, meta?, ephemeral?, serverId? })` | → `{ ok, delivered, stored }`; `delivered = 0` heißt: Empfänger nicht verbunden — dann wartet die Nachricht im Postfach (`stored = true`), außer sie ist `ephemeral` |
+| `await onChat(cb, { inbox? })` | Rückruf `{ from, to, object, text, meta, ephemeral, ts, stored, _origin }`; über alle angemeldeten Server. Nach dem Abo wird das Postfach geleert: wartende Nachrichten kommen mit `stored: true` und werden danach gelöscht (`inbox: false` lässt sie liegen). Agents antworten auf `stored` besser nicht — der Spieler ist längst weiter |
 
 `to` ist eine **Konto-ID**, nicht die eines Objekts. Wer eine Figur anspricht,
 schreibt deren Besitzer (`record.owner`) und legt die Figur als `object` bei —

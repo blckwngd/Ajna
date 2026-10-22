@@ -153,8 +153,20 @@ export class MessageLogPanel {
     // eine Auskunft im Auftrag des Spielers nicht tun darf.
     if (!this._letzteAntwort) this._letzteAntwort = new Map()
     this._letzteAntwort.set(String(m.from || ''), Date.now())
+    // Aus dem Postfach: Die Zeile ist alt, das sieht man ihr an. Sie bekommt
+    // kein Echo in der Szene — die Figur hat es nicht JETZT gesagt.
+    const wartete = m.stored === true
     messageLog.push(`${name}: ${m.text}`, 'dialog',
-      { ephemeral: m.ephemeral === true, partner: m.from })
+      { ephemeral: m.ephemeral === true, partner: m.from, t: wartete ? m.ts : undefined })
+    // Sprechblase über der Figur — die Ansichten (AR, Karte) hören auf dieses
+    // Ereignis, das Fenster weiß nichts von Szene oder Markern. Der Toast
+    // sagt, WAS gesagt wurde, die Blase, WER.
+    if (m.object && !wartete) {
+      try {
+        window.dispatchEvent(new CustomEvent('ajna:speech',
+          { detail: { objectId: m.object, text: m.text, from: m.from } }))
+      } catch {}
+    }
     // `log: false` — die Zeile steht schon als Gespräch im Verlauf.
     // Antippen öffnet das Gespräch — der Toast ist der Weg hinein, nicht nur
     // eine Meldung. Das Fenster drängt sich dafür nicht mehr selbst auf.
@@ -164,7 +176,7 @@ export class MessageLogPanel {
     // und erst danach, worauf.
     try {
       this._toast?.show(m.text, {
-        title: name, log: false,
+        title: wartete ? `${name} (${t('während du weg warst')})` : name, log: false,
         hinweis: this._partner?.userId === m.from ? t('Antippen zum Antworten') : null,
         onClick: () => this.oeffneGespraech(),
       })
@@ -245,15 +257,17 @@ export class MessageLogPanel {
     const btn = document.createElement('button')
     btn.className = 'ajna-msglog-launcher'
     btn.type = 'button'
-    btn.setAttribute('aria-label', 'Verlauf')
+    btn.setAttribute('aria-label', 'Chat')
     btn.innerHTML = '<span class="mlg-ico">💬</span><span class="mlg-badge" hidden>0</span>'
     this.parent.appendChild(btn)
     this._launcher = btn
     this._badge = btn.querySelector('.mlg-badge')
     // Verschiebbar (Position gemerkt); Tap ohne Bewegung öffnet/schließt.
     this._dragCleanup = makeDraggable(btn, { key: 'ajna.msglog.pos', onClick: () => this.toggle() })
+    // „Chat (C)" — das Fenster ist in erster Linie das Gespräch, der Verlauf
+    // steckt als Reiter darin. Die Taste schaltet es an und aus.
     this._fabUnreg = getFabBar().register({
-      id: 'log', el: btn, label: 'Verlauf', hotkey: 'v',
+      id: 'log', el: btn, label: 'Chat', hotkey: 'c',
       toggle: () => this.toggle(), close: () => this.close(),
     })
   }
@@ -310,9 +324,9 @@ export class MessageLogPanel {
     const ov = document.createElement('div')
     ov.className = 'ajna-msglog-overlay'
     ov.innerHTML = `
-      <div class="ajna-msglog" role="dialog" aria-modal="true" aria-label="Verlauf">
+      <div class="ajna-msglog" role="dialog" aria-modal="true" aria-label="Chat">
         <header>
-          <h3>Verlauf</h3>
+          <h3>Chat</h3>
           <div class="mlg-filter" role="group">
             <button type="button" data-f="player" class="${this._filter === 'player' ? 'on' : ''}">${t('Allgemein')}</button>
             <button type="button" data-f="all" class="${this._filter === 'all' ? 'on' : ''}">${t('Alle')}</button>
@@ -626,10 +640,13 @@ export class MessageLogPanel {
       border:1px solid #3a78b6;border-radius:999px;padding:8px 14px;
       font:inherit;font-size:14px;cursor:pointer;text-align:left}
     .ajna-msglog .mlg-choice:active{background:rgba(44,93,143,.5)}
-    .ajna-msglog-overlay{position:fixed;inset:0;z-index:6100;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center}
-    .ajna-msglog{width:100%;max-width:560px;max-height:min(70vh,560px);display:flex;flex-direction:column;
-      background:rgba(18,18,22,.98);color:#eaeaea;border:1px solid #34343e;border-bottom:none;border-radius:14px 14px 0 0;
-      box-shadow:0 -8px 40px rgba(0,0,0,.5);padding-bottom:calc(var(--safe-bottom,env(safe-area-inset-bottom,0px)))}
+    /* Der Schleier fängt nur den Klick daneben — er dunkelt nichts ab. Und das
+       Fenster ist flach und durchscheinend: Die Szene dahinter soll zu erahnen
+       bleiben, der Chat ist eine Zeile im Spiel, kein Bildschirm darüber. */
+    .ajna-msglog-overlay{position:fixed;inset:0;z-index:6100;background:transparent;display:flex;align-items:flex-end;justify-content:center}
+    .ajna-msglog{width:100%;max-width:560px;max-height:min(42vh,400px);display:flex;flex-direction:column;
+      background:rgba(18,18,22,.72);color:#eaeaea;border:1px solid rgba(80,80,92,.6);border-bottom:none;border-radius:14px 14px 0 0;
+      box-shadow:0 -8px 40px rgba(0,0,0,.45);padding-bottom:calc(var(--safe-bottom,env(safe-area-inset-bottom,0px)))}
     .ajna-msglog header{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #2b2b33}
     .ajna-msglog header h3{margin:0;font:600 15px system-ui,sans-serif;flex:0 0 auto}
     .ajna-msglog .mlg-filter{margin-left:auto;display:flex;border:1px solid #3a3a44;border-radius:8px;overflow:hidden}

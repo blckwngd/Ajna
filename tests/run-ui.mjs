@@ -1774,7 +1774,10 @@ console.log('\n── Flüchtige Daten')
   // Die Kette muss durchgehend sein — an jeder Stelle, an der das Kennzeichen
   // verloren ginge, wäre es wirkungslos.
   const hook = readFileSync(new URL('../pocketbase/pb_hooks/main.pb.js', import.meta.url), 'utf8')
-  check('der Server sendet das Kennzeichen mit', /ephemeral: body\.ephemeral === true/.test(hook))
+  check('der Server sendet das Kennzeichen mit',
+    /const ephemeral = body\.ephemeral === true/.test(hook) && /ephemeral: ephemeral,/.test(hook))
+  // Und er hebt Flüchtiges nie auf — auch nicht für einen abwesenden Empfänger.
+  check('und legt Flüchtiges nie ins Postfach', /if \(delivered === 0 && !ephemeral\)/.test(hook))
   check('und immer als echtes true/false', !/ephemeral: body\.ephemeral,/.test(hook))
 
   const cl = readFileSync(new URL('../client/core/AjnaClient.js', import.meta.url), 'utf8')
@@ -4352,7 +4355,8 @@ console.log('\n── Erweiterte Funktionen')
     ['InventoryUI', '../client/core/InventoryUI.js', 'inventory', 'i'],
     ['Minimap', '../client/core/Minimap.js', 'minimap', 'm'],
     ['QuestPanel', '../client/core/QuestPanel.js', 'quests', 'a'],
-    ['MessageLogPanel', '../client/core/MessageLogPanel.js', 'log', 'v'],
+    // „Chat (C)" seit 22.10. — das Fenster ist das Gespräch, der Verlauf ein Reiter.
+    ['MessageLogPanel', '../client/core/MessageLogPanel.js', 'log', 'c'],
   ]
   for (const [name, pfad, id, taste] of erwartet) {
     const src = readFileSync(new URL(pfad, import.meta.url), 'utf8')

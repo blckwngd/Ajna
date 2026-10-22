@@ -71,9 +71,12 @@ class MessageLog {
    *   trennen — im Verlauf steht nur „Name: Text", und zwei Figuren können
    *   gleich heissen. Die Kennung ist eindeutig, der Name nicht.
    */
-  push(text, cat = 'system', { ephemeral = false, partner = null } = {}) {
+  push(text, cat = 'system', { ephemeral = false, partner = null, t = null } = {}) {
     if (text == null || text === '') return null
-    const entry = { t: Date.now(), text: String(text), cat: CATS[cat] ? cat : 'system' }
+    // `t`: Zeitpunkt des Geschehens, wenn er nicht „jetzt" ist — eine Nachricht
+    // aus dem Postfach trägt die Uhrzeit, zu der sie geschrieben wurde.
+    const wann = typeof t === 'string' ? Date.parse(t) : Number(t)
+    const entry = { t: Number.isFinite(wann) && wann > 0 ? wann : Date.now(), text: String(text), cat: CATS[cat] ? cat : 'system' }
     if (ephemeral) entry.ephemeral = true
     if (partner) entry.partner = String(partner)
     const ziel = ephemeral ? this._fluechtig : this._entries

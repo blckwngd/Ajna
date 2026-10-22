@@ -120,7 +120,7 @@ export class Toast {
     el.classList.add('klickbar')
     el.setAttribute('role', 'button')
     el.setAttribute('tabindex', '0')
-    el.title = 'Öffnet den Verlauf'
+    el.title = 'Öffnet den Chat'
     const oeffnen = () => {
       el.classList.remove('show')
       setTimeout(() => el.remove(), 200)

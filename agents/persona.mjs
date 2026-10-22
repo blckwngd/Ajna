@@ -574,6 +574,9 @@ ajna.onChat(async (msg) => {
     const from = msg?.from, text = String(msg?.text || '').trim()
     if (!from || !text) return
     if (msg.object && msg.object !== figure.id) return      // addressed to another object of this account? there is none
+    // A note that waited in the inbox while this process was down: the player
+    // has long walked on. Answering now would be a figure talking to nobody.
+    if (msg.stored) { log(`📬 ${from} wrote while I was away: "${text.slice(0, 40)}" — not answering`); return }
     const now = Date.now()
     if (now - (lastLine.get(from) || 0) < 400) return
     lastLine.set(from, now)

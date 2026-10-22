@@ -2272,6 +2272,9 @@ if (parley) {
       const von = msg?.from
       const text = String(msg?.text || '').trim()
       if (!von || !text) return
+      // Aus dem Postfach (der Director war nicht da): Der Spieler ist längst
+      // weiter. Eine Figur, die Stunden später antwortet, spricht ins Leere.
+      if (msg.stored) return
 
       // Bremse: eine Antwort je Spieler und TALK_MIN_MS. Reicht gegen
       // versehentliche Schleifen; gegen gezielten Missbrauch muss der Server

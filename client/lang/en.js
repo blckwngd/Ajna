@@ -227,6 +227,7 @@ export const texte = {
   'Verlauf wirklich leeren?': 'Really clear the history?',
   'Diese Figur hat kein Konto — niemand kann antworten.': 'This character has no account — nobody can reply.',
   'Antippen zum Antworten': 'Tap to reply',
+  'während du weg warst': 'while you were away',
   'Allgemein': 'General',
   'Beenden': 'End',
   'Gespräch beenden': 'End conversation',

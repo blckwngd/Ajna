@@ -19,6 +19,7 @@ window.BABYLON = BABYLON
 
 import { World } from "./engine/World.js"
 import { GameObject } from "./engine/GameObject.js"
+import { labelLayerFor } from "./engine/LabelLayer.js"
 import { GeoTransformer } from "./core/GeoTransformer.js"
 import { UwbManager } from "./core/UwbManager.js"
 import { WandManager } from "./core/WandManager.js"
@@ -407,6 +408,12 @@ async function init() {
   // Bewegung davon weiter, bis Zeit-/Distanz-Budget erschöpft ist.
   let _markerAnchor = null
   window.addEventListener('ajna:slam-realign', () => { _slamTheta = null; _slamOrigin = null })   // Nord + Ursprung neu
+  // Eine Figur hat etwas gesagt (MessageLogPanel._onChat): Sprechblase über
+  // ihr, zusätzlich zum Toast — so sieht man, WER gesprochen hat.
+  window.addEventListener('ajna:speech', ev => {
+    const go = objectMap.get(ev.detail?.objectId)
+    if (go) { try { labelLayerFor(scene).say(go, ev.detail.text) } catch (err) { console.warn('[speech]', err?.message || err) } }
+  })
   // SLAM-Debug-HUD (on-screen, da DevTools gerade schwierig): rohe SLAM-Δ pro Achse
   // (zeigt welche Achse bei Vorwärts/Seitwärts reagiert), angewandter Offset, θ/Konfig,
   // und Distanz zum nächsten Objekt (für die Skala-Kalibrierung).

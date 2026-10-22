@@ -58,9 +58,51 @@ schickt bei jeder Änderung seine GANZE Themenliste — eine abgelehnte Anfrage
 nähme die erlaubten Themen derselben Anfrage mit. Der Filter entfernt nur das
 beanstandete.
 
-**Nicht angefasst:** ob Umstehende ein Gespräch mithören *sollen* (Reichweite
-statt Geheimnis) und Missbrauchsschutz auf `/api/chat/send` (jeder Angemeldete
-darf jedem schreiben) — beides offene Entwurfsfragen, keine Lecks.
+**Entschieden (22.10.):** Umstehende hören ein Gespräch mit einer Figur
+**nicht** mit. Für Nachrichten in der Umgebung kommt ein eigener Weltchat
+(Paket 0d). Offen bleibt der Missbrauchsschutz auf `/api/chat/send` (jeder
+Angemeldete darf jedem schreiben) — eine Entwurfsfrage, kein Leck.
+
+**Postfach (22.10.).** Eine Nachricht an jemanden, der nicht verbunden ist,
+ging verloren. Jetzt legt `/api/chat/send` sie in `chat_inbox` ab — **nur**
+bei `delivered === 0`, **nie** bei `ephemeral`, und nur bis der Empfänger sie
+abholt: `AjnaClient.onChat` leert das Postfach nach dem Abo und löscht jede
+übergebene Zeile (Rückruf mit `stored: true`). Lesen und löschen darf allein
+der Empfänger, nicht einmal der Absender; schreiben kann nur der Server.
+Nicht Abgeholtes räumt der Cron `chat_inbox_expiry` nach `chat.inbox_days`
+Tagen (Vorgabe 14) weg. Kein Mitschnitt: Was zugestellt wurde, steht
+nirgends. Netz: `tests/privacy/postfach.mjs` (15 Prüfungen). Director und
+Persona antworten auf wartende Nachrichten nicht — der Spieler ist längst
+weiter; der Client zeigt sie mit dem Zusatz „während du weg warst".
+
+**Sprechblasen und Chatfenster (22.10.).** Sagt eine Figur etwas, steht der
+Satz einige Sekunden über ihr — in AR als Tafel an der Mastspitze
+(`LabelLayer.say`), auf der Karte als Tooltip am Marker; der Toast bleibt.
+Beide Ansichten hören auf das Fensterereignis `ajna:speech`, das
+`MessageLogPanel` auslöst. Das Fenster ist flacher (42 % der Höhe) und
+durchscheinend, der Schleier dunkelt nicht mehr ab; der Knopf heißt
+„Chat (C)" und schaltet das Fenster an und aus.
+
+### 0c · Freundesliste — *eigenes Paket, nicht jetzt*
+
+Spieler zu einer Freundesliste hinzufügen; Freunde sind auch dann
+anschreibbar, wenn sie nicht in der Nähe sind (der Transport kann es schon:
+`sendChat` an ein Konto, das Postfach fängt Abwesende auf). Dazu ein
+eigener schwebender Knopf mit Verwaltungsfenster: Freunde sehen und
+entfernen, Einladungen sehen und annehmen oder ablehnen, Gespräch starten.
+Offen zu entwerfen: Sammlung für Freundschaften (gegenseitig, mit Status
+„eingeladen"/„angenommen"), wer wen finden darf (Handle? QR vor Ort?),
+und wie eine Einladung den anderen erreicht (Postfach-Nachricht mit `meta`).
+
+### 0d · Weltchat in der Umgebung — *eigenes Paket, nicht jetzt*
+
+Nachrichten von Spielern in der eigenen Umgebung lesen, ohne Gespräch und
+ohne Figur. Entschieden ist schon: ein **eigenes Thema**, ausdrücklich
+öffentlich — die Regel für gerichtete Nachrichten (`chat:<konto>`) wird dafür
+nicht aufgeweicht (siehe Paket 0). Offen: Reichweite (Raster der
+Interest-Area oder Umkreis), ob der Weltchat ein Postfach braucht (eher
+nicht: wer nicht da war, war nicht da), Drosselung, und ob Figuren dort
+mitreden dürfen.
 
 <details>
 <summary>Der ursprüngliche Befund</summary>

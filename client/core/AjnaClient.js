@@ -867,20 +867,45 @@ export class AjnaClient {
    * @param {(msg: {from:string, to:string, object:string|null, text:string, meta:any, ephemeral:boolean, ts:string}) => void} callback
    * @returns {Promise<() => void>} unsubscribe
    */
-  async onChat(callback) {
+  async onChat(callback, { inbox = true } = {}) {
     const me = this.currentUserRaw()
     if (!me) throw new Error('onChat: not logged in')
     const topic = `chat:${me.id}`
-    return this.pb.realtime.subscribe(topic, (evt) => {
+    const deliver = (d, extra) => callback({
+      ...d,
+      // Objekt-Kontext in composite Form, damit Aufrufer ihn direkt
+      // gegen getObjectById() halten können.
+      object: d.object ? `${this.id}:${d.object}` : null,
+      _origin: this.id,
+      ...extra,
+    })
+    const off = await this.pb.realtime.subscribe(topic, (evt) => {
       try {
         const d = typeof evt === 'string' ? JSON.parse(evt) : evt
-        // Objekt-Kontext in composite Form, damit Aufrufer ihn direkt
-        // gegen getObjectById() halten können.
-        callback({ ...d, object: d.object ? `${this.id}:${d.object}` : null, _origin: this.id })
+        deliver(d, { stored: false })
       } catch (err) {
         console.warn('[chat] Ereignis nicht lesbar:', err?.message || err)
       }
     })
+    // POSTFACH LEEREN — nach dem Abo, nicht davor: Was zwischen Abholen und
+    // Abo einträfe, läge sonst unbemerkt bis zum nächsten Start. Jede Zeile
+    // wird nach der Übergabe gelöscht; der Empfänger ist der Einzige, der das
+    // darf (deleteRule). `stored: true` sagt dem Aufrufer, dass die Nachricht
+    // gewartet hat — ein Agent antwortet auf einen drei Stunden alten Gruß
+    // besser nicht, ein Spieler will ihn trotzdem lesen.
+    if (inbox) this._drainInbox(deliver).catch(err => console.warn('[chat] Postfach:', err?.message || err))
+    return off
+  }
+
+  async _drainInbox(deliver) {
+    const rows = await this.pb.collection('chat_inbox').getFullList({ sort: 'created' })
+    for (const r of rows) {
+      try {
+        deliver({ from: r.from, to: r.to, object: r.object || null, text: r.text,
+                  meta: r.meta ?? null, ephemeral: false, ts: r.ts || r.created }, { stored: true })
+      } catch (err) { console.warn('[chat] Postfach-Zeile:', err?.message || err) }
+      try { await this.pb.collection('chat_inbox').delete(r.id) } catch (err) { console.warn('[chat] Postfach löschen:', err?.message || err) }
+    }
   }
 
   /**
