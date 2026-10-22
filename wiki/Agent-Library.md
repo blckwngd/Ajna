@@ -133,6 +133,8 @@ await publishManifest(ajna, {
 
 `/api/agents/{source}/command` nimmt Kommandos von **jedem angemeldeten Konto** entgegen — der Server prüft nur, dass überhaupt jemand angemeldet ist. Immerhin setzt er `evt.source` auf die Konto-ID des Absenders, und die ist nicht fälschbar.
 
+**Hören** darf dagegen nur, wem der Name gehört: das Konto mit dem ältesten Manifest dieser Quelle und seine `delegates` (Realtime-Wächter, seit 22.10.2026). Deshalb **erst `publishManifest()`, dann `onAgentCommand()`** — in der anderen Reihenfolge filtert der Wächter das Abo still heraus. Ein Name ohne Manifest bleibt offen, dort liest jedes Konto mit.
+
 ```js
 import { commandAllowed, envStr } from './lib/agent-base.mjs'
 
@@ -162,7 +164,7 @@ await ajna.onAgentCommand('mein-agent', (evt) => {
 }, { public: true })
 ```
 
-Wozu: Links in E-Mails (die Freigabe eines Eintrags, eine Bestätigung) haben keinen angemeldeten Absender. Der Server kennt kein Geheimnis und braucht keine anwendungsspezifische Route — er reicht durch, und `commandAllowed()` greift für anonyme Aufrufer nicht (leere Liste liesse sie durch, also im Zweifel ein Token verlangen). Für eine Rückmeldung an den anonymen Aufrufer taugt `sendChat(<zufällige Kennung>, …)`: Der Aufrufer hört auf `chat:<kennung>`, ein Konto muss dahinter nicht stehen.
+Wozu: Links in E-Mails (die Freigabe eines Eintrags, eine Bestätigung) haben keinen angemeldeten Absender. Der Server kennt kein Geheimnis und braucht keine anwendungsspezifische Route — er reicht durch, und `commandAllowed()` greift für anonyme Aufrufer nicht (leere Liste liesse sie durch, also im Zweifel ein Token verlangen). Eine Rückmeldung an den anonymen Aufrufer über `chat:<zufällige Kennung>` gibt es **nicht mehr**: Seit dem Realtime-Wächter hört ein Konto nur sein eigenes Postfach, und ohne Konto keines. Wer eine Antwort braucht, lässt den Link auf eine Seite zeigen, die nach dem Kommando den Stand per HTTP nachliest.
 
 ## Konfigurationsdateien — `lib/env.mjs`
 

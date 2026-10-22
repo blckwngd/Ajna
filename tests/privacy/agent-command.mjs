@@ -87,6 +87,24 @@ async function kanaltrennung(t, user) {
     ? EventSource
     : (await import('eventsource')).EventSource
 
+  // EIGENER Name, EIGENES Manifest: Seit der Realtime-Wächter `agent:<quelle>`
+  // auf den Inhaber des Manifests beschränkt (tests/privacy/realtime-themen.mjs),
+  // hörte dieser Nutzer auf `agent:world-director` nichts mehr — der Name
+  // gehört dem Director. Also tritt er hier selbst als Agent auf.
+  //
+  // VOR dem Öffnen der Verbindung: PB_CONNECT kommt sofort, und ein Lauscher,
+  // der erst nach einem weiteren Request angehängt wird, verpasst es.
+  const source = `cmd-probe-${Date.now().toString(36)}`
+  const { req } = await import('../_harness.mjs')
+  const manifest = await req('/api/collections/agent_manifests/records', {
+    method: 'POST', token: user.token,
+    body: { source, agent_name: 'Prüf-Agent (Kanaltrennung)', owner: user.id, layers: [] },
+  })
+  if (manifest.status !== 200) {
+    t.check('Kanaltrennung geprüft', false, `Manifest fehlgeschlagen — status ${manifest.status}`)
+    return
+  }
+
   const privat = []
   const oeffentlich = []
   const es = new Quelle(PB + '/api/realtime')
@@ -102,15 +120,15 @@ async function kanaltrennung(t, user) {
       es.onerror = () => { clearTimeout(uhr); scheitern(new Error('Realtime-Verbindung fehlgeschlagen')) }
     })
 
-    es.addEventListener('agent:world-director', (ev) => privat.push(JSON.parse(ev.data)))
-    es.addEventListener('agent:world-director:public', (ev) => oeffentlich.push(JSON.parse(ev.data)))
+    es.addEventListener(`agent:${source}`, (ev) => privat.push(JSON.parse(ev.data)))
+    es.addEventListener(`agent:${source}:public`, (ev) => oeffentlich.push(JSON.parse(ev.data)))
 
     const ab = await fetch(PB + '/api/realtime', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: user.token },
       body: JSON.stringify({
         clientId,
-        subscriptions: ['agent:world-director', 'agent:world-director:public'],
+        subscriptions: [`agent:${source}`, `agent:${source}:public`],
       }),
     })
     if (ab.status !== 204 && ab.status !== 200) {
@@ -118,7 +136,7 @@ async function kanaltrennung(t, user) {
       return
     }
 
-    const senden = (token) => fetch(PB + '/api/agents/world-director/command', {
+    const senden = (token) => fetch(PB + `/api/agents/${source}/command`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: token } : {}) },
       body: JSON.stringify({ command: 'ping', payload: { probe: token ? 'auth' : 'anon' } }),
@@ -133,7 +151,7 @@ async function kanaltrennung(t, user) {
 
     t.check('anonymes Kommando erreicht NICHT den normalen Kanal',
       privat.every((m) => m.payload?.probe !== 'anon'),
-      `${privat.length} Nachricht(en) auf agent:world-director`)
+      `${privat.length} Nachricht(en) auf agent:${source}`)
     t.check('anonymes Kommando erreicht den öffentlichen Kanal', anonAngekommen.length === 1)
     t.check('anonym: source ist null, Kennzeichen gesetzt',
       anonAngekommen[0]?.source === null && anonAngekommen[0]?.anonymous === true,
@@ -148,5 +166,9 @@ async function kanaltrennung(t, user) {
     t.check('Kanaltrennung geprüft', false, err.message)
   } finally {
     es.close()
+    // Kein Objekt, also nicht in der Aufräumliste des Harness — sonst stünde
+    // „Prüf-Agent" fortan im Inhaltsfilter jedes Spielers.
+    await req(`/api/collections/agent_manifests/records/${manifest.data.id}`,
+      { method: 'DELETE', token: user.token })
   }
 }

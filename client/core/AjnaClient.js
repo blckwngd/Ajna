@@ -763,15 +763,41 @@ export class AjnaClient {
     return this.pb.send(`/api/objects/${raw}/interact`, { method: 'POST', body })
   }
 
-  /** Subscribed auf `interact:<rawId>`-Events. */
-  async onInteract(objectId, callback) {
+  /**
+   * Interaktionen an einem Objekt abonnieren.
+   *
+   * EIN Ereignis, ZWEI Themen (Server: /api/objects/{id}/interact):
+   *   `interact:<id>:owner` — die volle Fassung `{ action, source, ts, payload }`,
+   *     nur für den Betreiber des Objekts (Besitzer oder ACE-Recht `owner`);
+   *     der Realtime-Wächter lässt sonst niemanden darauf.
+   *   `interact:<id>` — `{ action, ts }` für alle, die das Objekt sehen;
+   *     `source` steht nur im Echo an den Auslöser selbst, damit sein Viewer
+   *     die Reaktion nicht doppelt zeigt. `payload` kommt hier nie an.
+   * Der Server stellt je Client genau EINE der beiden zu; wer beide Themen
+   * hält, bekommt die volle Fassung.
+   *
+   * `owner: true` (Vorgabe, für Agents) abonniert beide — ist das Konto nicht
+   * Betreiber, filtert der Wächter das Betreiber-Thema still heraus und es
+   * bleibt die öffentliche Fassung. Viewer, die je Weltobjekt ein Abo halten,
+   * setzen `owner: false` (AjnaManager.subscribeInteract): sie brauchen nur
+   * `action`, und jedes Betreiber-Thema kostete dem Wächter eine Abfrage.
+   *
+   * @param {string} objectId
+   * @param {(evt: {action:string, source?:string|null, ts:string, payload?:any}) => void} callback
+   * @param {{owner?: boolean}} [opts]
+   * @returns {Promise<() => void>} unsubscribe (für beide Themen)
+   */
+  async onInteract(objectId, callback, { owner = true } = {}) {
     const raw = this._toRaw(objectId)
-    return this.pb.realtime.subscribe(`interact:${raw}`, msg => {
+    const subscribe = (topic) => this.pb.realtime.subscribe(topic, msg => {
       let data
       try { data = typeof msg === 'string' ? JSON.parse(msg) : msg }
       catch { data = { action: '?', raw: msg } }
       callback(data)
     })
+    const offs = [await subscribe(`interact:${raw}`)]
+    if (owner) offs.push(await subscribe(`interact:${raw}:owner`))
+    return () => { for (const off of offs) { try { off() } catch {} } }
   }
 
   // ===================================================================

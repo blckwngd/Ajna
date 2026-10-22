@@ -468,18 +468,22 @@ export class AjnaManager {
     return this._clientFor(compositeId).interact(compositeId, action, payload)
   }
 
-  async onInteract(compositeId, callback) {
-    return this._clientFor(compositeId).onInteract(compositeId, callback)
+  /** Für Agents: volle Ereignisse (mit Absender und Nutzlast) am eigenen Objekt. */
+  async onInteract(compositeId, callback, opts) {
+    return this._clientFor(compositeId).onInteract(compositeId, callback, opts)
   }
 
   /**
-   * Subscribed auf `interact:*`-Events für ein einzelnes Objekt.
-   * Wird vom AR/Map-Client genutzt, um pro Welt-Objekt einen Listener
-   * für Broker-Events zu halten. Gibt den Unsubscribe-Callback zurück
-   * (genauer: einen Promise<unsubscribe>).
+   * Für Viewer: ein Abo je Weltobjekt, NUR das öffentliche Thema.
+   *
+   * Der AR-/Karten-Client hält für jedes sichtbare Objekt einen Listener und
+   * braucht daraus nur `action` (Reaktion zeigen) und `source` im eigenen
+   * Echo (nicht doppelt zeigen). Das Betreiber-Thema wäre für fremde Objekte
+   * ohnehin gefiltert — aber jedes kostete dem Wächter eine Abfrage, bei
+   * hunderten Objekten je Anmeldung.
    */
   async subscribeInteract(compositeId, callback) {
-    return this._clientFor(compositeId).onInteract(compositeId, callback)
+    return this._clientFor(compositeId).onInteract(compositeId, callback, { owner: false })
   }
 
   /**

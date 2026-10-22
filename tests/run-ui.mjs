@@ -4550,10 +4550,46 @@ process.on('exit', (code) => {
     /e\.subscriptions = kept/.test(g) && !/e\.json\(403/.test(g))
   // Die Konstante MUSS im Callback stehen — JSVM-Hooks teilen keinen Scope.
   check('die Obergrenze steht IM Callback',
-    /onRealtimeSubscribeRequest\(\(e\) => \{[\s\S]{0,900}const MAX_PROXIMITY_LOOKUPS/.test(g))
-  check('ein Fehler im Wächter lässt chat/proximity NICHT durch',
-    /guard error[\s\S]{0,260}filter\(t => !\/\^\(chat\|proximity\):\//.test(g))
+    /onRealtimeSubscribeRequest\(\(e\) => \{[\s\S]{0,1200}const MAX_LOOKUPS/.test(g))
+  check('ein Fehler im Wächter lässt chat/proximity/agent/interact-owner NICHT durch',
+    /guard error[\s\S]{0,300}filter\(t => !\/\^\(\(chat\|proximity\|agent\):\|interact:\.\*:owner\$\)\//.test(g))
   check('Collection-Themen bleiben unberührt', /return true/.test(g))
+
+  // 22.10.: Interaktion und Agent-Kanal. Die volle Fassung einer Interaktion
+  // (Absender, Nutzlast — „Rufen" trägt die Position) nur an den Betreiber;
+  // der Agent-Kanal nur an den Inhaber des Namens, nach DERSELBEN Regel wie
+  // `state.source` (sources.js), damit zwei Stellen nicht verschieden antworten.
+  check('interact:<id>:owner nur für den Betreiber',
+    /name\.indexOf\("interact:"\) === 0 && \/:owner\$\/\.test\(name\)/.test(g)
+    && /operatesObject\(name\.slice\("interact:"\.length, -":owner"\.length\)\)/.test(g))
+  check('agent:<source> nach der Manifest-Regel aus sources.js',
+    /require\(`\$\{__hooks\}\/sources\.js`\)/.test(g) && /mayActForSource\(source, uid\)/.test(g)
+    && /replace\(\/:public\$\/, ""\)/.test(g))
+  const sources = readFileSync(
+    new URL('../pocketbase/pb_hooks/sources.js', import.meta.url), 'utf8')
+  check('sources.js: der ÄLTESTE Manifest-Eintrag hält den Namen',
+    /"agent_manifests", "source = \{:s\}", "created"/.test(sources))
+  check('sources.js: ein unbeanspruchter Name ist offen',
+    /if \(!h\) return true/.test(sources))
+  const main = readFileSync(
+    new URL('../pocketbase/pb_hooks/main.pb.js', import.meta.url), 'utf8')
+  check('der Objekt-Hook fragt dieselbe Regel',
+    /mayActForSource\(src, owner\)/.test(main)
+    && !/findRecordsByFilter\(\s*"agent_manifests"/.test(main))
+  check('die Interact-Route trennt Betreiber- und öffentliche Fassung',
+    /const ownerTopic = topic \+ ":owner"/.test(main)
+    && /client\.hasSubscription\(ownerTopic\)/.test(main)
+    && /data: JSON\.stringify\(\{ action: action, ts: ts \}\)/.test(main))
+  check('… und nennt den Absender öffentlich nur dem Auslöser selbst',
+    /client\.get\("auth"\)/.test(main) && /self \? echoMessage : publicMessage/.test(main))
+
+  const client = readFileSync(new URL('../client/core/AjnaClient.js', import.meta.url), 'utf8')
+  const manager = readFileSync(new URL('../client/core/AjnaManager.js', import.meta.url), 'utf8')
+  check('AjnaClient.onInteract abonniert beide Themen (Vorgabe owner: true)',
+    /async onInteract\(objectId, callback, \{ owner = true \} = \{\}\)/.test(client)
+    && /if \(owner\) offs\.push\(await subscribe\(`interact:\$\{raw\}:owner`\)\)/.test(client))
+  check('Viewer-Abos bleiben beim öffentlichen Thema',
+    /onInteract\(compositeId, callback, \{ owner: false \}\)/.test(manager))
 
   check('die Suite läuft in npm test mit', /realtimeThemen/.test(priv))
   check('sie prüft BEIDE Richtungen, nicht nur das Verbot',
@@ -4561,4 +4597,10 @@ process.on('exit', (code) => {
     && /ein fremdes Postfach bleibt STUMM/.test(suite))
   check('sie prüft, dass das erlaubte Thema derselben Anfrage überlebt',
     /das eigene Postfach derselben Anfrage funktioniert weiter/.test(suite))
+  check('sie prüft die Interaktion aus drei Blickwinkeln (Betreiber, Dritter, Auslöser)',
+    /der Betreiber bekommt das Ereignis GENAU EINMAL/.test(suite)
+    && /aber weder Position noch Absender/.test(suite)
+    && /der Auslöser erkennt sein eigenes Echo/.test(suite))
+  check('sie misst, dass ein unbeanspruchter Agent-Name offen bleibt',
+    /ein Name ohne Manifest bleibt offen/.test(suite))
 }

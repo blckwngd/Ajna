@@ -31,6 +31,12 @@ angemeldete Topic `agent:<source>` — auch dort liest jedes Konto mit
 erweitert, keinen geöffnet. Custom-Topics des Subscription-Brokers unterliegen
 keiner Regel; PocketBase prüft dort nichts.
 
+> **Stand 22.10.2026:** geschlossen. `pb_hooks/realtime-guard.pb.js` lässt
+> `agent:<source>` und `agent:<source>:public` nur noch das Konto abonnieren,
+> dem das älteste Manifest der Quelle gehört, plus dessen `delegates`. Ein
+> Name **ohne** Manifest bleibt offen (Arbeitspaket 0). Das HMAC-Token im
+> Transport ist damit nur noch für den Agenten lesbar.
+
 **Folge für den Freigabe-Link:** Das signierte Token ist im Transport **kein
 Geheimnis**. Wer mitliest, kann es weiterverwenden, bevor der Agent es sieht.
 Der Entwurf trägt trotzdem, wenn der Agent das Token **einmalig** macht — beim

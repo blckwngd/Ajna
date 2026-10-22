@@ -13,30 +13,54 @@ Stand: 29. September 2026 (Handbuch-Webseite, C-ITS-Brücke)
 
 ## Als Nächstes
 
-### 0 · Jedes Konto kann jedes Gespräch mitlesen — **behoben am 20.10.**
-#### offen bleibt: `agent:<source>`
+### 0 · Jedes Konto kann jedes Gespräch mitlesen — **behoben am 20.10., Rest am 22.10.**
 
 Behoben durch `pb_hooks/realtime-guard.pb.js`, Netz dagegen:
-`tests/privacy/realtime-themen.mjs` (10 Prüfungen). **Gegen eine ungeschützte
-Instanz schlägt die Suite rot aus — nachgemessen, bevor der Wächter stand.**
-Geschlossen sind `chat:<id>` (nur das eigene Postfach) und
-`proximity:<objectId>` (nur der Betreiber des Objekts oder ein ACE-Recht
-`owner`); dass auch die Näherung leckte, hat erst die Suite gezeigt.
+`tests/privacy/realtime-themen.mjs` (25 Prüfungen). **Gegen eine ungeschützte
+Instanz schlägt die Suite rot aus — beide Male nachgemessen, bevor der Wächter
+stand** (20.10.: Chat und Näherung; 22.10.: Interaktion und Agent-Kanal, fünf
+rote Prüfungen an der Wegwerf-Instanz mit den alten Hooks).
+
+| Thema | wer hören darf |
+|---|---|
+| `chat:<konto>` | nur das Konto selbst |
+| `proximity:<objekt>` | der Betreiber (Besitzer oder ACE-Recht `owner`) |
+| `interact:<objekt>:owner` | der Betreiber — volle Fassung mit Absender und Nutzlast |
+| `interact:<objekt>` | alle, die das Objekt sehen — nur noch `{ action, ts }` |
+| `agent:<quelle>`, `agent:<quelle>:public` | Inhaber des ältesten Manifests der Quelle plus Delegierte (`pb_hooks/sources.js`, dieselbe Regel wie für `state.source`) |
+
+**Interaktion: ein Ereignis, zwei Themen (22.10.).** Das öffentliche Thema
+trug Absender und Nutzlast — „Rufen" enthält die Position des Rufenden. Wer
+ein beliebiges Objekt abonnierte, erfuhr, wer wo mit wem spricht. Die Viewer
+lesen aus dem Ereignis nur `action` (Reaktion zeigen) und `source` zum
+Erkennen des eigenen Echos; `payload` liest allein der Betreiber (Director,
+Persona, Adress-Lupe). Also schickt der Server die volle Fassung nur noch auf
+`interact:<id>:owner`, und `source` im öffentlichen Ereignis nur an den
+Auslöser selbst (`client.get("auth")` im Broker — gemessen, funktioniert).
+`AjnaClient.onInteract` abonniert beide Themen (Vorgabe `owner: true`),
+`AjnaManager.subscribeInteract` für Viewer nur das öffentliche; der Server
+stellt je Client genau eines zu. **Die laufende Instanz muss neu starten**,
+PocketBase lädt Hooks nicht nach.
+
+**Agent-Kanal: ein unbeanspruchter Name bleibt offen — bewusst.** Ein Agent,
+der kein Manifest veröffentlicht, soll nicht aus seinem eigenen Kanal fallen;
+das wäre schlimmer als das Leck. Unsere beiden Kommando-Empfänger
+(World-Director, Robot-Agent) veröffentlichen ihr Manifest VOR dem Abo
+(geprüft 22.10.). Die Suite misst beides: Dritte hören bei beanspruchtem
+Namen nichts, bei unbeanspruchtem alles. Nebenwirkung, sichtbar im
+PocketBase-Log: Der Director adoptiert Objekte, die ihm nicht mehr gehören,
+und bekommt für sie `interact:<id>:owner` verweigert (siehe Notiz unten) —
+auf solchen Figuren wirken „Rufen" und „Angreifen" nicht mehr, bis der
+Adoptionsfilter steht.
 
 **Gefiltert, nicht abgelehnt.** Beides wirkt (gemessen), aber ein Client
 schickt bei jeder Änderung seine GANZE Themenliste — eine abgelehnte Anfrage
 nähme die erlaubten Themen derselben Anfrage mit. Der Filter entfernt nur das
 beanstandete.
 
-**Was noch offen ist: `agent:<source>`.** Der Kanal trägt Kommandos samt
-Koordinaten (`payload.at`), ein Mitlesender erfährt also, wo jemand etwas
-angefordert hat. Die Regel wäre „das Konto, dem das Manifest dieser Quelle
-gehört, plus seine Delegierten". Dafür braucht es eine Manifest-Abfrage im
-Wächter und — wichtiger — eine Prüfung aller neun Agents, ob einer sein
-Kommando-Abo VOR dem Veröffentlichen seines Manifests aufsetzt. Der
-World-Director macht es in der richtigen Reihenfolge, die übrigen sind
-ungeprüft. Einen Agenten aus seinem eigenen Kanal auszusperren wäre schlimmer
-als das Leck, deshalb ein eigener Durchgang.
+**Nicht angefasst:** ob Umstehende ein Gespräch mithören *sollen* (Reichweite
+statt Geheimnis) und Missbrauchsschutz auf `/api/chat/send` (jeder Angemeldete
+darf jedem schreiben) — beides offene Entwurfsfragen, keine Lecks.
 
 <details>
 <summary>Der ursprüngliche Befund</summary>

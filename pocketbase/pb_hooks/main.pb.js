@@ -86,43 +86,19 @@ function pruefeQuellenanspruch(e) {
       // Auf CREATE setzt der Owner-Hook oben bereits `owner`; als Netz der
       // Aufrufer, falls die Reihenfolge einmal wechselt.
       const owner = e.record.get("owner") || (e.auth ? e.auth.id : "")
-      // WER HAELT DEN NAMEN? Der AELTESTE Eintrag, nicht der erstbeste.
+      // WER HAELT DEN NAMEN? Der AELTESTE Eintrag, nicht der erstbeste — und
+      // seine Delegierten. Die Regel steht in sources.js, weil der Realtime-
+      // Wächter (`agent:<source>`) dieselbe Frage stellt; zwei Stellen, die
+      // dieselbe Frage verschieden beantworten, sind schlimmer als eine
+      // falsche Antwort.
       //
-      // `agent_manifests` ist eindeutig ueber (source, owner) — NICHT ueber
-      // source allein. Ein zweites Konto darf denselben Namen also anlegen, und
-      // sein Upsert meldet Erfolg. Ohne Sortierung entschied hier die Laune der
-      // Abfrage, welcher der beiden Ansprueche gilt; der Client sortiert nach
-      // `created` (AgentFilters.js) und kaeme dann zu einem anderen Ergebnis
-      // als der Server. Zwei Stellen, die dieselbe Frage verschieden
-      // beantworten, sind schlimmer als eine falsche Antwort.
-      let inhaber = null
-      let delegates = []
-      try {
-        const treffer = $app.findRecordsByFilter(
-          "agent_manifests", "source = {:s}", "created", 50, 0, { s: src })
-        const m = treffer && treffer.length ? treffer[0] : null
-        if (m) {
-          inhaber = m.get("owner")
-          // JSON-Felder kommen im JSVM als Objekt, als STRING oder als
-          // BYTE-ARRAY an. `jsonArray` deckt alle drei ab — selbst geparst
-          // hatte ich den dritten Fall vergessen, und die Delegation blieb
-          // wirkungslos, obwohl die Liste richtig gefuellt war.
-          const { jsonArray } = require(`${__hooks}/utf8.js`)
-          delegates = jsonArray(m.get("delegates"))
-        }
-      } catch (err) { inhaber = null }   // 404 = niemand hat den Namen
-
-      // DELEGATION GILT AUCH HIER, NICHT NUR IN DER ANZEIGE.
-      //
-      // Der Client liess ein delegiertes Konto bereits als echt durchgehen und
-      // riet in seiner Warnung ausdruecklich dazu ("trage <id> bei delegates
-      // ein") — der Server wies dessen Objekte aber weiter ab. Die Funktion war
-      // damit auf halbem Weg stehengeblieben: sichtbar versprochen, nie
-      // durchgesetzt. Eintragen kann sie nur der Namensinhaber selbst
-      // (updateRule), die Vertrauenskette bleibt also beim Inhaber.
-      if (inhaber && inhaber !== owner && delegates.indexOf(owner) >= 0) { e.next(); return }
-
-      if (inhaber && inhaber !== owner) {
+      // DELEGATION GILT AUCH HIER, NICHT NUR IN DER ANZEIGE: Der Client liess
+      // ein delegiertes Konto bereits als echt durchgehen und riet in seiner
+      // Warnung ausdruecklich dazu ("trage <id> bei delegates ein") — der
+      // Server wies dessen Objekte aber weiter ab. Eintragen kann sie nur der
+      // Namensinhaber selbst (updateRule), die Vertrauenskette bleibt bei ihm.
+      const { mayActForSource } = require(`${__hooks}/sources.js`)
+      if (!mayActForSource(src, owner)) {
         throw new ForbiddenError(
           `Die Quelle "${src}" gehört einem anderen Konto. `
           + `Registriere einen eigenen Namen über das Agent-Manifest.`)
@@ -523,8 +499,25 @@ onRecordAfterDeleteSuccess((e) => {
 // Workflow:
 //   1) Objekt laden (404 wenn unbekannt)
 //   2) Permission-Check via resolveEffective + canInteract (403 wenn nicht erlaubt)
-//   3) Broker-Broadcast an alle Subscriber von "interact:<objectId>"
+//   3) Broker-Broadcast — EIN Ereignis, ZWEI Themen:
+//        interact:<objectId>:owner  → { action, source, ts, payload }
+//        interact:<objectId>        → { action, ts }  (+ source nur an den
+//                                      Auslöser selbst, s. u.)
 //      → KEIN DB-Write für den Trigger selbst
+//
+// WARUM ZWEI THEMEN (22.10.2026, Arbeitspaket 0): Das öffentliche Thema
+// erreicht jeden, der das Objekt sieht — Umstehende sollen die Reaktion
+// sehen, dafür ist es da. Aber es trug auch, WER es war und WAS er
+// mitschickte: „Rufen" enthält die Position des Rufenden (`payload.at`).
+// Wer ein beliebiges Objekt abonnierte, erfuhr so, wer wo mit wem spricht.
+// Die Viewer (AR, Karte) lesen aus dem Ereignis nur `action` und — zum
+// Erkennen des eigenen Echos — `source`; `payload` liest nur der Betreiber
+// (Director, Persona, Adress-Lupe). Also bekommt er es allein, auf einem
+// Thema, das der Realtime-Wächter auf ihn beschränkt (realtime-guard.pb.js).
+//
+// Das eigene Echo: Der Auslöser sieht im öffentlichen Ereignis seine
+// Kennung, sonst zeigte sein Viewer die Reaktion doppelt (einmal aus dem
+// Menü, einmal aus dem Broker). Alle anderen sehen keine Kennung.
 // =====================================================================
 routerAdd("POST", "/api/objects/{id}/interact", (e) => {
   try {
@@ -560,24 +553,41 @@ routerAdd("POST", "/api/objects/{id}/interact", (e) => {
 
     // -- Broker-Broadcast --
     const topic = "interact:" + objectId
-    const payload = JSON.stringify({
-      action: action,
-      source: user ? user.id : null,
-      ts: new Date().toISOString(),
-      payload: body.payload || null
-    })
+    const ownerTopic = topic + ":owner"
+    const ts = new Date().toISOString()
+    const actor = user ? String(user.id) : null
 
-    const message = new SubscriptionMessage({
+    const ownerMessage = new SubscriptionMessage({
+      name: ownerTopic,
+      data: JSON.stringify({ action: action, source: actor, ts: ts, payload: body.payload || null })
+    })
+    const publicMessage = new SubscriptionMessage({
       name: topic,
-      data: payload
+      data: JSON.stringify({ action: action, ts: ts })
+    })
+    const echoMessage = new SubscriptionMessage({
+      name: topic,
+      data: JSON.stringify({ action: action, source: actor, ts: ts })
     })
 
+    // Wer das Betreiber-Thema hält, ist Betreiber — der Wächter lässt es
+    // sonst niemanden abonnieren. Er bekommt NUR die volle Fassung, nicht
+    // zusätzlich die öffentliche: ein Ereignis, eine Zustellung.
     let delivered = 0
     const clients = $app.subscriptionsBroker().clients()
     for (const id in clients) {
       const client = clients[id]
-      if (client.hasSubscription(topic)) {
-        client.send(message)
+      if (client.hasSubscription(ownerTopic)) {
+        client.send(ownerMessage)
+        delivered++
+      } else if (client.hasSubscription(topic)) {
+        // Die Anmeldung des Realtime-Clients liegt in seinem Kontext
+        // (Schlüssel "auth", wie in PocketBase selbst).
+        let self = false
+        if (actor) {
+          try { const a = client.get("auth"); self = !!a && String(a.id) === actor } catch (err) { self = false }
+        }
+        client.send(self ? echoMessage : publicMessage)
         delivered++
       }
     }

@@ -101,9 +101,10 @@ Adresse→Person *ist* eine Profildatenbank, gleich woher die Einzelteile stamme
 Ortsdaten dürfen in `server/geo.js` liegen; Personendaten nur im Arbeitsspeicher,
 nur für die Dauer einer Sitzung.
 
-**Sichtbar nur für den Auslöser.** `sendChat` geht an ein Konto. Wer stattdessen
-über `interact:<objekt>` antwortet, verteilt an **alle** Abonnenten dieses
-Objekts — für Auskünfte im Auftrag einer Person ist das falsch.
+**Sichtbar nur für den Auslöser.** `sendChat` geht an ein Konto. Eine Antwort
+über `interact:<objekt>` gibt es nicht — der Server verteilt dort nur, was der
+Spieler ausgelöst hat (`action`), an alle, die das Objekt sehen; Absender und
+Nutzlast gehen allein an den Betreiber (`interact:<objekt>:owner`).
 
 ## Geprüft durch
 

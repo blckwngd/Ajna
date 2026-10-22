@@ -162,8 +162,8 @@ Kurzlebige Ereignisse ohne Datenbankschreibung — der Weg, auf dem ein Spieler 
 | Methode | Beschreibung |
 |---|---|
 | `await interact(id, action, payload?)` | Aktion auslösen. Server prüft `interact_actions` und verteilt |
-| `await onInteract(id, cb)` → `unsubscribe` | Rückruf `{ action, source, ts, payload }` |
-| `await subscribeInteract(id, cb)` | Wie `onInteract`, für Clients mit einem Abo je Weltobjekt |
+| `await onInteract(id, cb, { owner? })` → `unsubscribe` | Rückruf `{ action, source, ts, payload }` — die volle Fassung bekommt nur der **Betreiber** des Objekts (Besitzer oder ACE-Recht `owner`, Thema `interact:<id>:owner`). Alle anderen erhalten `{ action, ts }`; `source` steht darin nur im Echo an den Auslöser selbst, `payload` nie |
+| `await subscribeInteract(id, cb)` | Für Viewer mit einem Abo je Weltobjekt: nur das öffentliche Thema (`owner: false`) |
 
 ```js
 // Client

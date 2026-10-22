@@ -106,7 +106,7 @@ export async function run(t) {
     method: 'POST', token: opfer.token,
     body: {
       object: figur.id, subject_type: 'authenticated', subject: '',
-      rights: ['view'], interact_actions: ['examine'],
+      rights: ['view'], interact_actions: ['examine', 'call'],
     },
   })
 
@@ -128,8 +128,108 @@ export async function run(t) {
 
   vBesitzer.zu(); vFremder.zu()
 
+  // ── Interaktion: ein Ereignis, zwei Themen ──────────────────────────────
+  // `interact:<objektId>` erreicht jeden, der das Objekt sieht — Umstehende
+  // sollen die Reaktion sehen. Was dort NICHT hingehört: wer es war und was
+  // er mitschickte („Rufen" trägt die Position des Rufenden). Das bekommt
+  // allein der Betreiber, auf `interact:<objektId>:owner`. Der Auslöser
+  // selbst sieht im öffentlichen Echo seine eigene Kennung — so erkennt sein
+  // Viewer das Echo und zeigt die Reaktion nicht doppelt.
+  const topicPublic = `interact:${figur.id}`
+  const topicOwner = `${topicPublic}:owner`
+  const cOwner = await verbindung(Quelle, opfer.token, [topicPublic, topicOwner])
+  const cEaves = await verbindung(Quelle, lauscher.token, [topicPublic, topicOwner])
+  const cActor = await verbindung(Quelle, sender.token, [topicPublic, topicOwner])
+  t.check('die Anmeldung mit dem fremden Betreiber-Thema wird angenommen (gefiltert)',
+    cEaves.status === 204 || cEaves.status === 200, `status ${cEaves.status}`)
+
+  const call = await req(`/api/objects/${figur.id}/interact`, {
+    method: 'POST', token: sender.token,
+    body: { action: 'call', payload: { at: { lat: 50.4467, lon: 7.5972, precise: true } } },
+  })
+  t.check('„Rufen" mit Position angenommen', call.status === 200,
+    `status ${call.status} ${JSON.stringify(call.data)}`)
+  await new Promise(r => setTimeout(r, 1000))
+
+  const ownerPriv = cOwner.eingang.get(topicOwner), ownerPub = cOwner.eingang.get(topicPublic)
+  const eavesPriv = cEaves.eingang.get(topicOwner), eavesPub = cEaves.eingang.get(topicPublic)
+  const actorPriv = cActor.eingang.get(topicOwner), actorPub = cActor.eingang.get(topicPublic)
+
+  t.check('der Betreiber bekommt das Ereignis GENAU EINMAL, auf seinem Thema',
+    ownerPriv.length === 1 && ownerPub.length === 0,
+    `${ownerPriv.length} Betreiber-Thema / ${ownerPub.length} öffentlich`)
+  t.check('… mit Absender und Position',
+    ownerPriv[0]?.source === sender.id && ownerPriv[0]?.payload?.at?.lat === 50.4467,
+    JSON.stringify(ownerPriv[0] ?? null))
+  t.check('ein Dritter sieht die Reaktion', eavesPub.length === 1, `${eavesPub.length} öffentlich`)
+  t.check('… aber weder Position noch Absender',
+    eavesPub.length === 1 && eavesPub[0].payload == null && eavesPub[0].source == null,
+    JSON.stringify(eavesPub[0] ?? null))
+  t.check('das Betreiber-Thema bleibt für ihn STUMM', eavesPriv.length === 0,
+    `${eavesPriv.length} mitgelesen`)
+  t.check('der Auslöser erkennt sein eigenes Echo (source = er selbst), ohne Betreiber zu sein',
+    actorPub.length === 1 && actorPub[0].source === sender.id && actorPub[0].payload == null
+      && actorPriv.length === 0,
+    `${JSON.stringify(actorPub[0] ?? null)} / ${actorPriv.length} auf dem Betreiber-Thema`)
+
+  cOwner.zu(); cEaves.zu(); cActor.zu()
+
+  // ── Agent-Kommandos ─────────────────────────────────────────────────────
+  // `agent:<quelle>` trägt Kommandos samt Koordinaten. Hören darf, wem der
+  // Name gehört: das Konto mit dem ÄLTESTEN Manifest dieser Quelle und seine
+  // Delegierten — dieselbe Regel, nach der `state.source` an ein Konto
+  // gebunden ist. Ein Name ohne Manifest bleibt offen: Ein Agent, der keines
+  // veröffentlicht, soll nicht aus seinem eigenen Kanal fallen.
+  const delegate = await t.user('rt-vertreter')
+  const source = `rt-agent-${Date.now().toString(36)}`
+  const manifest = await req('/api/collections/agent_manifests/records', {
+    method: 'POST', token: opfer.token,
+    body: { source, agent_name: 'Prüf-Agent', owner: opfer.id, layers: [], delegates: [delegate.id] },
+  })
+  t.check('Manifest angelegt', manifest.status === 200,
+    `status ${manifest.status} ${JSON.stringify(manifest.data)}`)
+  try {
+    const priv = `agent:${source}`, pub = `agent:${source}:public`
+    const unclaimed = `agent:${source}-niemand`
+    const aOwner = await verbindung(Quelle, opfer.token, [priv, pub])
+    const aDelegate = await verbindung(Quelle, delegate.token, [priv])
+    const aEaves = await verbindung(Quelle, lauscher.token, [priv, pub, unclaimed])
+
+    const command = (src, token) => req(`/api/agents/${src}/command`, {
+      method: 'POST', token, body: { command: 'spawn', payload: { at: { lat: 50.44, lon: 7.59 } } },
+    })
+    const r1 = await command(source, sender.token)
+    const r2 = await command(source, undefined)
+    const r3 = await command(`${source}-niemand`, sender.token)
+    t.check('Kommandos angenommen (angemeldet, anonym, unbeanspruchter Name)',
+      r1.status === 200 && r2.status === 200 && r3.status === 200, `${r1.status}/${r2.status}/${r3.status}`)
+    await new Promise(r => setTimeout(r, 1000))
+
+    t.check('der Inhaber des Namens bekommt das Kommando',
+      aOwner.eingang.get(priv).length === 1, `${aOwner.eingang.get(priv).length} Kommando(s)`)
+    t.check('… und das anonyme auf dem öffentlichen Thema',
+      aOwner.eingang.get(pub).length === 1, `${aOwner.eingang.get(pub).length} Kommando(s)`)
+    t.check('ein Delegierter hört ebenfalls',
+      aDelegate.eingang.get(priv).length === 1, `${aDelegate.eingang.get(priv).length} Kommando(s)`)
+    t.check('ein Dritter hört NICHTS — weder angemeldete noch anonyme Kommandos',
+      aEaves.eingang.get(priv).length === 0 && aEaves.eingang.get(pub).length === 0,
+      `${aEaves.eingang.get(priv).length}/${aEaves.eingang.get(pub).length} mitgelesen`)
+    t.check('ein Name ohne Manifest bleibt offen (gemessen und so gewollt)',
+      aEaves.eingang.get(unclaimed).length === 1, `${aEaves.eingang.get(unclaimed).length} Kommando(s)`)
+
+    aOwner.zu(); aDelegate.zu(); aEaves.zu()
+  } finally {
+    // Das Manifest ist kein Objekt — die Aufräumliste des Harness kennt es
+    // nicht. Bliebe es liegen, stünde „Prüf-Agent" im Inhaltsfilter jedes
+    // Spielers.
+    if (manifest.data?.id) {
+      await req(`/api/collections/agent_manifests/records/${manifest.data.id}`,
+        { method: 'DELETE', token: opfer.token })
+    }
+  }
+
   // ── Gewöhnliche Collection-Themen bleiben unberührt ─────────────────────
-  // Der Wächter darf nur die beiden Namensräume anfassen. Ginge hier etwas
+  // Der Wächter darf nur die eigenen Namensräume anfassen. Ginge hier etwas
   // verloren, bliebe die halbe Anwendung stehen, ohne dass es auffiele.
   const vListe = await verbindung(Quelle, lauscher.token, ['objects'])
   t.check('das Collection-Thema „objects" wird weiter angenommen',
