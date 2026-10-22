@@ -148,6 +148,24 @@ Anfragen, nicht Züge; darüber hinaus antwortet die Figur aus Parley.
 Was sie mit einem Spieler besprochen hat, merkt sie sich — begrenzt je
 Spieler und insgesamt, und über einen Neustart hinweg (siehe unten).
 
+## Dauerbetrieb
+
+Was es kostet, steht im Log: jede Modellanfrage eine Zeile `🧠` mit Anlass,
+Runden und Tokens, am Ende eines Zuges die Summe. Die Kostenregler in der
+Reihenfolge ihrer Wirkung: `llm.max_rounds` (Anfragen je Zug), `llm.idle_s`
+(Eigeninitiative und Ankunfts-Züge), `llm.rate_per_min` (harte Obergrenze,
+darüber antwortet Parley), `mode` (`passive` fragt nur, wenn jemand spricht).
+Ein `debug`-Lauf am belebten Ort liegt bei einigen Dutzend Anfragen je Stunde;
+nachts bei null, weil ohne Ereignis nichts geschieht — außer dem Leerlauf-Zug
+alle `llm.idle_s` Sekunden in `active`/`debug`. Wer eine Figur über Nacht
+stehen lässt, setzt `mode` auf `passive` oder `llm.idle_s` auf 0.
+
+Was man sonst im Log sieht: `📬` wartende Nachrichten aus dem Postfach (die
+Figur antwortet darauf nicht), `📝` neue Befunde, `📝 finding repeated` für
+gezählte Wiederholungen, `👀`/`👋` Näherung, `🚩 relocated` beim Umzug über
+`persona.home`. Die Dateien unter `agents/data/personas/<name>/` wachsen
+begrenzt: das Journal rotiert ab 8 MB, Befunde wachsen nur um Neues.
+
 ## Gesten
 
 Die Figur kann zu einem Satz eine Geste machen — `say` nimmt `do` in der

@@ -913,8 +913,17 @@ const existingByArch = {}
 for (const a of Object.keys(ARCHETYPES)) existingByArch[a] = 0
 const managed = []   // alle vom Director verwalteten Objekte (adoptiert + neu)
 let despawned = 0
+// NUR EIGENE. Beute, die ein Spieler eingesammelt hat, gehört ihm
+// (`/pickup` überträgt den Besitz) — sie trägt aber weiter `state.director`.
+// Adoptiert zählte sie zum Soll-Bestand, obwohl sie die Welt verlassen hat,
+// und jedes Schreiben scheiterte (bei jedem Start elf Zeilen „ACE … failed").
+// Seit dem Realtime-Wächter hat es Folgen: Für fremde Objekte gibt es kein
+// Betreiber-Thema, „Rufen" und „Angreifen" kämen dort nie an.
+const meineKennung = String(ajna.currentUser()?.id || '')
+let fremde = 0
 for (const obj of await ladeBestand(ajna, { tag: 'director' })) {
   if (obj?.state?.director !== true) continue
+  if (meineKennung && String(obj.owner || '') !== meineKennung) { fremde++; continue }
   const a = obj.state.archetype
   if (!(a in existingByArch)) continue
   // Bestand ans Soll angleichen: fehlendes state.source (Agent-Filter) und
@@ -967,7 +976,7 @@ for (const obj of await ladeBestand(ajna, { tag: 'director' })) {
   existingByArch[a]++; managed.push(obj)
 }
 const summary = Object.entries(existingByArch).map(([a, n]) => `${a}:${n}`).join(' ')
-console.log(`[director] vorhanden — ${summary}${despawned ? ` · ${despawned} außerhalb despawnt` : ''}`)
+console.log(`[director] vorhanden — ${summary}${despawned ? ` · ${despawned} außerhalb despawnt` : ''}${fremde ? ` · ${fremde} fremde (eingesammelt) nicht adoptiert` : ''}`)
 
 // ─── Fehlende Objekte bis zum Soll-Bestand anlegen ───────────────────────
 async function spawnOne(archetype, center, opts = {}) {

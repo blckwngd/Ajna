@@ -41,23 +41,27 @@ Ajna hat ein NTFS-artiges Berechtigungssystem auf Objekt-Ebene: pro Objekt eine 
 |---|---|
 | `view` | Objekt ist im Client sichtbar (List/Get/Realtime) |
 | `edit` | Beliebige Felder (Name, Animation, Position) änderbar |
-| `move` | **Noch ohne Wirkung — siehe unten.** Gedacht: nur Position (`lat`/`lon`/`altitude`) änderbar |
+| `move` | Nur die Lage änderbar: `lat`/`lon`/`altitude` und `rotation`. Jedes andere Feld → 403 |
 | `owner` | Darf ACEs verwalten (Eigentümer-Recht). Nur für `user`/`group`-Subjekte zulässig |
 
-### `move` ist bislang nur ein Vorsatz
+### `move`: bewegen, nicht umschreiben
 
-`move` steht im Vokabular (`ALL_RIGHTS`), lässt sich in jeder ACE setzen und
-taucht in den effektiven Rechten auf — **durchgesetzt wird es nirgends.** Die
-`updateRule` der `objects`-Collection verlangt `edit`, auch für `lat`/`lon`.
-Daraus folgt beides:
+Seit dem 22.10.2026 (Arbeitspaket 2a) wirkt `move` — vorher stand es nur im
+Vokabular, und wer **nur** `move` hatte, konnte gar nichts. Zwei Teile:
 
-* Wer `edit` hat, darf verschieben, ganz ohne `move`.
-* Wer **nur** `move` hat, kann gar nichts — jedes Update scheitert an der Rule.
+* `objects.updateRule` lässt `move` zusätzlich zu `edit` durch
+  (`1792900000_update_rule_move.js`, in der `?=`-Fassung).
+* Der Hook `moveNurPosition` in `main.pb.js` vergleicht jedes Feld gegen den
+  gespeicherten Stand. Geändert sein dürfen nur `lat`, `lon`, `altitude` und
+  `rotation`; alles andere beantwortet er mit 403 und nennt das Feld.
 
-Wer heute Verschieben erlauben will, gibt `edit`. Das ist die ehrliche Auskunft;
-die Trennung ist sinnvoll (ein Spieler darf ein Schwert ablegen, aber ihm keine
-Trefferpunkte geben) und ist als Arbeitspaket vorgemerkt — bis dahin bitte keine
-ACE bauen, die sich auf `move` verlässt.
+Er greift nur, wenn `move` das **einzige** Schreibrecht ist. Besitzer und
+`edit`-Inhaber verschieben weiterhin ohne `move`. Die Drehung gehört dazu,
+weil „einen Wegweiser gerade ziehen" ohne sie nicht geht.
+
+Wozu: ein Schwert ablegen und mitnehmen — ja; ihm Trefferpunkte geben — nein.
+Marker einer Geokodierung korrigieren, Möbel in einem Raumplan schieben,
+fremde Dinge an fester Welt ordnen. Netz: `tests/privacy/ace-schreiben.mjs`.
 
 `interact_actions` ist ein eigenes Set: erlaubte Action-Keys wie `["attack","pet"]` oder `["*"]` für alles. Wird in `/api/objects/:id/interact` gegen den Action-Parameter geprüft.
 
@@ -305,7 +309,8 @@ AJNA_URL=http://127.0.0.1:8090 node tools/acl-selftest.mjs     # an Caddy vorbei
   `tests/privacy/ace-schreiben.mjs`
 - ✅ `GET /api/objects/{id}/owner` — Kontaktdaten des Eintragenden über die
   Interaktion `contact`
-- ⛔ `move` steht im Vokabular, wird aber nirgends durchgesetzt (Paket 2a)
+- ✅ `move` wirkt: Lage und Drehung, sonst nichts (Hook `moveNurPosition`,
+  Regel `1792900000`; Paket 2a, 22.10.)
 - 🚧 Self-Leave: Member verlässt eine Gruppe selbst
 - 🚧 Default-Permissions-Editor im User-Profil
 - ✅ `objects.viewRule` deckt die impliziten Zielgruppen ab — über die Spalten

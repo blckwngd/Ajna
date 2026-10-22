@@ -4459,8 +4459,8 @@ console.log('\n── Erweiterte Funktionen')
   check('der Manager reicht an den richtigen Server weiter',
     /async getObjectOwner\(compositeId, opts\) \{[\s\S]{0,120}_clientFor\(compositeId\)/.test(mg))
 
-  check('die Doku nennt move als noch nicht durchgesetzt',
-    /`move` ist bislang nur ein Vorsatz/.test(doc))
+  check('die Doku beschreibt move als „bewegen, nicht umschreiben"',
+    /`move`: bewegen, nicht umschreiben/.test(doc) && /nur, wenn `move` das \*\*einzige\*\* Schreibrecht ist/.test(doc))
   check('die Doku erklärt contact und die Ausnahme',
     /zählen hier absichtlich nicht/.test(doc))
 }
@@ -4526,8 +4526,22 @@ process.on('exit', (code) => {
   check('sie prüft den Gruppenpfad', /eine Gruppen-ACE mit edit darf schreiben/.test(suite))
   check('sie prüft, dass nichts über Zeilen hinweg vermischt wird',
     /Alice kommt NICHT an Bobs Objekt/.test(suite))
-  check('sie hält fest, dass move noch nicht wirkt',
-    /move allein verschiebt \(noch\) NICHT/.test(suite))
+  // 22.10.: `move` wirkt — Lage und Drehung ja, jedes andere Feld nein
+  // (Hook `moveNurPosition`, Regel 1792900000). Der frühere Wecker „move
+  // allein verschiebt (noch) NICHT" hat geklingelt und ist ersetzt.
+  check('sie prüft, dass move verschiebt und dreht, aber nicht umschreibt',
+    /move allein verschiebt'/.test(suite) && /aber benennt NICHT um/.test(suite)
+    && /Lage plus Zustand → abgelehnt/.test(suite))
+  const hook = readFileSync(new URL('../pocketbase/pb_hooks/main.pb.js', import.meta.url), 'utf8')
+  check('der Hook greift nur, wenn move das einzige Schreibrecht ist',
+    /rights\.indexOf\("edit"\) !== -1 \|\| rights\.indexOf\("owner"\) !== -1\) \{ e\.next\(\); return \}/.test(hook)
+    && /rights\.indexOf\("move"\) === -1\) \{ e\.next\(\); return \}/.test(hook))
+  check('erlaubt sind Lage und Drehung, verglichen gegen den gespeicherten Stand',
+    /const ERLAUBT = \["lat", "lon", "altitude", "rotation"\]/.test(hook)
+    && /const alt = \$app\.findRecordById\("objects", e\.record\.id\)/.test(hook))
+  const moveMig = readFileSync(new URL('../pocketbase/pb_migrations/1792900000_update_rule_move.js', import.meta.url), 'utf8')
+  check('die Regel lässt move in der ?=-Fassung durch',
+    /CACHE\('move'\)/.test(moveMig) && /\?= id/.test(moveMig) && !/\.object = id/.test(moveMig))
 }
 
 // ---------------------------------------------------------------------------

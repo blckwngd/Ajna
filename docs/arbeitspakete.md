@@ -168,10 +168,10 @@ Sammeln der Beweise (Erwartung → Beobachtung).
 | 3 | `agents/lib/llm.mjs` + Adapter Anthropic (offizielles SDK) / OpenAI-kompatibel (Ollama, vLLM — roher `fetch`), offline gegen Attrappen getestet | ✅ 34 Tests |
 | 4 | Ereignisse → Bündelung → Rate-Limit → Tool-Calls → Wächter → Rückfall; Modi basic/passive/active/debug (`agents/lib/persona-llm.mjs`, Einbau in `persona.mjs`) | ✅ 19 Tests gegen Attrappen; der Einbau in `persona.mjs` ist syntaxgeprüft, der Live-Lauf steht aus (Persona läuft beim Betreiber, Neustart nötig) |
 | 5 | Journal (Beweise) + Befunde (Urteil des Modells) + Gedächtnis auf Platte, `agents/data/personas/<name>/`, Export `--findings` (gruppiert, nicht gefiltert) | ✅ 9 Tests |
-| 6 | Modi active/debug | offen |
-| 7 | Doku | offen |
+| 6 | Modi active/debug | ✅ im Betrieb abgenommen (Testlauf 22.10., Befunde gelesen) |
+| 7 | Doku | ✅ `personas/README.md`: Gesten, Dauerbetrieb, Lehren aus dem ersten Lauf |
 | 8 | Lehren aus dem ersten Lauf (50 Befunde, 8 Ursachen): Werkzeuge antworten beschreibend und mit dem Fehlertext des Servers, `use` nur für Angebotenes und nicht zweimal in dieselbe Wand, Befunde werden nicht doppelt geschrieben, Namen aus der Anwesenheit, ein Gruß je Besuch | ✅ 22.10., 13 Tests |
-| 9 | **Welt aufräumen (vorgemerkt):** verwaiste Anwesenheiten (eine vom 31.08. steht noch) per Cron löschen; erledigte Aufträge der Figur nicht mehr als Objekt anbieten | offen |
+| 9 | Welt aufräumen: Cron `presence_cleanup` löscht Anwesenheiten ohne Lebenszeichen nach `presence.stale_days` (7); erledigte Aufträge fallen aus der Wahrnehmung der Figur | ✅ 22.10. |
 | 10 | Gesten aus der Antwort: `say` nimmt `do` in Parley-Schreibweise (`anim:<clip>`), die Figur liest ihre Clips aus dem Modell (`lib/model-clips.mjs`, glTF und GLB), der Systemprompt nennt sie einmal, der Wächter hält sie daran — kein eingebautes `emote` | ✅ 22.10., 7 Tests |
 
 Parley bleibt die Quelle für Verbindliches: eine als `binding: true` markierte
@@ -245,7 +245,17 @@ kein** Schreiben — auch als einzige Klausel nicht, während dieselbe
 Konstruktion in der view-Regel wirkt. Das ist so gewollt (`UPDATE_RULE` kennt
 die Audiences nicht), nur nirgends sonst notiert.
 
-### 2a · `move` durchsetzen
+### 2a · `move` durchsetzen — **behoben am 22.10.**
+
+Umgesetzt wie unten entworfen: Regel `1792900000_update_rule_move.js` lässt
+`move` in der `?=`-Fassung durch, der Hook `moveNurPosition` in `main.pb.js`
+erlaubt nur `lat`/`lon`/`altitude` — **und `rotation`**, die eine Abweichung
+vom Entwurf: Einen Wegweiser gerade ziehen heißt ihn drehen. Netz:
+`tests/privacy/ace-schreiben.mjs` (verschiebt, dreht, benennt nicht um, auch
+nicht nebenbei). `docs/permissions.md` nachgezogen.
+
+<details>
+<summary>Der ursprüngliche Befund und Entwurf</summary>
 
 **Heute ist `move` ein Wort ohne Wirkung** (gemessen, Prüfung in
 `tests/privacy/ace-schreiben.mjs`). Es steht in `ALL_RIGHTS`, lässt sich
@@ -304,6 +314,8 @@ sie wurde in der ALL-Match-Form geschrieben und konnte nicht treffen).
 Beim Umsetzen schlägt die Prüfung „move allein verschiebt (noch) NICHT" in
 `tests/privacy/ace-schreiben.mjs` fehl — das ist der Wecker. Dann dort und in
 `docs/permissions.md` nachziehen.
+
+</details>
 
 ### 3 · Übergangszeit der Schlüssel-Umstellung abbauen
 
@@ -708,9 +720,13 @@ aus JOSM oder QGIS importiert, spart den Editor und ist bei ~7 Tagen.
 
 ## Kleiner, wartet auf eine Entscheidung
 
-### Der Director adoptiert Objekte, die ihm nicht mehr gehören
+### Der Director adoptiert Objekte, die ihm nicht mehr gehören — **behoben am 22.10.**
 
-Beim Start sammelt er alles mit `state.director = true` ein — auch Beute, die
+Beim Adoptieren wird jetzt nach `owner === eigenes Konto` gefiltert; die
+Startzeile zählt „n fremde (eingesammelt) nicht adoptiert". Nötig geworden
+durch den Realtime-Wächter: Für fremde Objekte gäbe es kein Betreiber-Thema.
+
+Beim Start sammelte er alles mit `state.director = true` ein — auch Beute, die
 ein Spieler eingesammelt hat (`/pickup` überträgt den Besitz). Für die
 schlägt dann jedes Schreiben fehl: `ACE für … fehlgeschlagen`,
 `state.actions … wasn't found`, bei jedem Start, 11 Zeilen am 21.10. Harmlos,

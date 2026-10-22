@@ -112,14 +112,24 @@ export async function run(t) {
   r = await patch(nur.token, A)
   t.check('view allein erlaubt KEIN Schreiben', r.status === 404, `status ${r.status}`)
 
-  // ── `move` ist noch nicht durchgesetzt ─────────────────────────────────
-  // Festgehalten, damit die Doku nicht wieder etwas anderes behauptet als die
-  // Instanz tut: Wer NUR `move` hat, kann gar nichts. Wird `move` eines Tages
-  // umgesetzt (Arbeitspaket 2a), schlägt diese Prüfung fehl und erinnert
-  // daran, sie hier und in `docs/permissions.md` nachzuziehen.
+  // ── `move`: Lage ja, alles andere nein (Paket 2a, 22.10.) ──────────────
+  // Die Regel lässt `move` durch, der Hook `moveNurPosition` zieht die
+  // Grenze: Position und Drehung dürfen sich ändern, kein anderes Feld.
+  // Bis hierher stand hier „move allein verschiebt (noch) NICHT" — der
+  // Wecker, der beim Umsetzen klingeln sollte. Er hat.
   const mover = await t.user('ace-mover')
   await ace(B, { subject_type: 'user', subject: mover.id, rights: ['view', 'move'], interact_actions: [] })
   r = await patch(mover.token, B, { lat: 50.4480, lon: 7.5980 })
-  t.check('move allein verschiebt (noch) NICHT — siehe Paket 2a',
-    r.status === 404, `status ${r.status}`)
+  t.check('move allein verschiebt', r.status === 200, `status ${r.status} ${JSON.stringify(r.data?.error || '')}`)
+  r = await patch(mover.token, B, { rotation: { x: 0, y: 1.57, z: 0 } })
+  t.check('… und dreht (einen Wegweiser gerade ziehen)', r.status === 200, `status ${r.status}`)
+  r = await patch(mover.token, B, { name: 'Umgeschrieben' })
+  t.check('… aber benennt NICHT um', r.status === 403, `status ${r.status}`)
+  t.check('… und sagt, welches Feld es war', /name/.test(String(r.data?.error || r.data?.message || '')),
+    JSON.stringify(r.data))
+  r = await patch(mover.token, B, { lat: 50.4481, state: { hp: { ist: 999, max: 999 } } })
+  t.check('… auch nicht nebenbei: Lage plus Zustand → abgelehnt', r.status === 403, `status ${r.status}`)
+  const nachher = await req(`/api/collections/objects/records/${B}`, { token: mover.token })
+  t.check('der abgelehnte Schreibversuch hat nichts verändert',
+    nachher.data?.name !== 'Umgeschrieben' && nachher.data?.state?.hp?.ist !== 999, JSON.stringify(nachher.data?.name))
 }

@@ -48,7 +48,7 @@ import { dialogNameFor, dialogVarsFor, talkSessionId } from '../client/core/Parl
 import { createLlmClient } from './lib/llm.mjs'
 import { LlmBehaviour, Memory } from './lib/persona-llm.mjs'
 import { Journal, personaDataDir, readFindings, formatFindings } from './lib/journal.mjs'
-import { duplicateOf, failureKey } from './lib/actions.mjs'
+import { duplicateOf, failureKey, questDone } from './lib/actions.mjs'
 import { clipsOf, gesturesFor } from './lib/model-clips.mjs'
 import { Weltkontext, zelleFuer } from './lib/weltkontext.mjs'
 import { wetterAnbieter } from './lib/wetter.mjs'
@@ -720,7 +720,9 @@ log(`journal: ${journal.dir}`)
 /** Everything an action may touch — rebuilt per turn, so perception is fresh. */
 function buildCtx() {
   const me = ajna.currentUser()
-  const objects = ajna.getObjects().filter(o => o?.id && o.id !== figure.id && !o.carried_by
+  // A finished quest is still a record, but nothing a figure could do; it
+  // tried `call` on three of them, sixty times. Out of the perception.
+  const objects = ajna.getObjects().filter(o => o?.id && o.id !== figure.id && !o.carried_by && !questDone(o)
     && Number.isFinite(o.lat) && Number.isFinite(o.lon) && haversine(c.lat, c.lon, o.lat, o.lon) <= PERCEPTION_M)
   const inventory = ajna.getObjects().filter(o => o?.carried_by && String(o.carried_by) === String(me?.id))
   const cutoff = Date.now() - 20 * 60_000

@@ -179,6 +179,69 @@ onRecordUpdateRequest(stampeAnwesenheit, "objects")
 
 
 // ---------------------------------------------------------------------
+// `move` erlaubt nur die Lage — Arbeitspaket 2a (22.10.2026).
+//
+// Bis hierher war `move` ein Wort ohne Wirkung: Es stand im Vokabular,
+// liess sich in jeder ACE setzen, und wer NUR `move` hatte, konnte gar
+// nichts, weil `objects.updateRule` `edit` verlangte. Seit 1792900000 lässt
+// die Regel `move` durch — und dieser Hook zieht die Grenze, die eine Regel
+// nicht ziehen kann: Position und Drehung ja, jedes andere Feld nein.
+//
+// Wozu die Trennung: Ein Schwert ablegen und mitnehmen — ja; ihm höhere
+// Trefferpunkte geben — nein. Wegweiser gerade ziehen (DESHALB auch die
+// Drehung), Marker einer Geokodierung korrigieren, Möbel im Raumplan
+// schieben: alles Fälle, in denen jemand bewegen, aber nicht umschreiben
+// darf.
+//
+// Besitzer und `edit`-Inhaber gehen unverändert durch; der Hook greift nur,
+// wenn `move` das EINZIGE Schreibrecht ist. Verglichen wird gegen den
+// gespeicherten Stand, Feld für Feld; JSON-Felder über `jsonText`, weil
+// sie im JSVM als Objekt, Zeichenkette oder Byte-Array ankommen.
+// ---------------------------------------------------------------------
+function moveNurPosition(e) {
+  try {
+    const user = e.auth || null
+    if (!user) { e.next(); return }
+    if (String(e.record.get("owner")) === String(user.id)) { e.next(); return }
+    const istSuper = !!(user.collection && user.collection().name === "_superusers")
+    if (istSuper) { e.next(); return }
+
+    const { resolveEffective } = require(`${__hooks}/permissions.js`)
+    const rights = (resolveEffective(user, e.record).rights || [])
+    if (rights.indexOf("edit") !== -1 || rights.indexOf("owner") !== -1) { e.next(); return }
+    if (rights.indexOf("move") === -1) { e.next(); return }   // die Regel lehnt ohnehin ab
+
+    const ERLAUBT = ["lat", "lon", "altitude", "rotation"]
+    const EGAL = ["id", "created", "updated"]
+    const { jsonText } = require(`${__hooks}/utf8.js`)
+    const alt = $app.findRecordById("objects", e.record.id)
+    const wert = (rec, name) => {
+      const v = rec.get(name)
+      if (v === null || v === undefined) return ""
+      if (typeof v === "object") { try { return JSON.stringify(JSON.parse(jsonText(v) || "null")) } catch (err) { return String(v) } }
+      return String(v)
+    }
+    const felder = e.record.collection().fields
+    const geaendert = []
+    for (let i = 0; i < felder.length; i++) {
+      const f = felder[i]
+      const name = typeof f.getName === "function" ? f.getName() : f.name
+      if (!name || ERLAUBT.indexOf(name) !== -1 || EGAL.indexOf(name) !== -1) continue
+      if (wert(e.record, name) !== wert(alt, name)) geaendert.push(name)
+    }
+    if (geaendert.length) {
+      throw new ForbiddenError(`move erlaubt nur ${ERLAUBT.join("/")} — geändert: ${geaendert.join(", ")}`)
+    }
+  } catch (err) {
+    if (err instanceof ForbiddenError) throw err
+    console.log("[objects.move] " + (err && err.message ? err.message : err))
+  }
+  e.next()
+}
+onRecordUpdateRequest(moveNurPosition, "objects")
+
+
+// ---------------------------------------------------------------------
 // agent_manifests: Identität des Eigentümers EINSTEMPELN (BEFORE).
 //
 // `owner_handle` und `owner_sealed` sind abgeleitet — sie kommen aus dem
@@ -1052,6 +1115,43 @@ cronAdd("chat_inbox_expiry", "37 * * * *", () => {
     console.log("[chat_inbox_expiry] " + (err && err.message ? err.message : err))
   }
   if (weg) console.log(`[chat_inbox_expiry] ${weg} nicht abgeholte Nachricht(en) älter als ${tage} Tage entfernt`)
+})
+
+
+// =====================================================================
+// Verwaiste Anwesenheiten — `objects.type = player` ohne Lebenszeichen.
+//
+// Ein laufender Client schreibt seine Anwesenheit alle paar Sekunden, und
+// der Hook `stampeAnwesenheit` setzt dabei `state.seenAt`. Was tagelang
+// unberührt bleibt, gehört einem Client, der weg ist. Solche Geister
+// sammeln sich (eine vom 31.08. stand neben der lebenden Anwesenheit
+// desselben Kontos, ohne Aktionen — eine Persona hat es gemeldet).
+// `presence.stale_days`, Vorgabe 7, 0 = nie. Wie bei object_expiry:
+// der Filter schränkt ein, die Schleife entscheidet.
+// =====================================================================
+cronAdd("presence_cleanup", "49 * * * *", () => {
+  const { einstellung } = require(`${__hooks}/gastkonten.js`)
+  const { jsonObject } = require(`${__hooks}/utf8.js`)
+  let tage = Number(einstellung($app, "presence.stale_days", 7))
+  if (!isFinite(tage) || tage <= 0) return
+  const grenzeIso = new Date(Date.now() - tage * 86400000).toISOString()
+  let weg = 0, uebersprungen = 0
+  try {
+    const kandidaten = $app.findRecordsByFilter("objects",
+      "type = 'player' && state.seenAt < {:t}", "created", 200, 0, { t: grenzeIso })
+    for (let i = 0; i < kandidaten.length; i++) {
+      let seen
+      try { seen = jsonObject(kandidaten[i].get("state"), {}).seenAt } catch (err) { uebersprungen++; continue }
+      if (typeof seen !== "string" || !/^\d{4}-\d{2}-\d{2}T/.test(seen) || seen >= grenzeIso) { uebersprungen++; continue }
+      try { $app.delete(kandidaten[i]); weg++ } catch (err) { uebersprungen++ }
+    }
+  } catch (err) {
+    console.log("[presence_cleanup] " + (err && err.message ? err.message : err))
+  }
+  if (weg || uebersprungen) {
+    console.log(`[presence_cleanup] ${weg} verwaiste Anwesenheit(en) älter als ${tage} Tage entfernt`
+      + (uebersprungen ? `, ${uebersprungen} übersprungen` : ""))
+  }
 })
 
 
