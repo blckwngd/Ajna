@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { blickfeld, beschreibeBlickfeld, sektor, richtungsWort, neueBlickrichtung, lokal, peilung } from './blickfeld.mjs'
+import { blickfeld, beschreibeBlickfeld, sektor, richtungsWort, neueBlickrichtung, lokal, peilung, naechsteStrasse } from './blickfeld.mjs'
 
 const HERE = { lat: 50.3569, lon: 7.5890 }
 // a point N metres north / east of HERE
@@ -64,6 +64,20 @@ test('a big object hides a small one behind it; a small one hides nothing', () =
   assert.equal(b.eintraege.find(e => e.id === 'm').verdecktVon, 'Drache')
   const b2 = blickfeld({ self: { ...HERE, headingDeg: 0 }, objects: [{ ...muenze, ...bei(10, 0) }, { ...drache, ...bei(20, 0) }] })
   assert.equal(b2.eintraege.find(e => e.id === 'd').sichtbar, true, 'a coin does not hide a dragon')
+})
+
+test('the nearest named street — unnamed paths do not count, far streets neither', () => {
+  const ways = [
+    { name: 'Löhrstraße', coordinates: [[bei(10, -50).lat, bei(10, -50).lon], [bei(10, 50).lat, bei(10, 50).lon]] },
+    { tags: { name: 'Am Plan' }, coordinates: [[bei(40, -50).lat, bei(40, -50).lon], [bei(40, 50).lat, bei(40, 50).lon]] },
+    { tags: { highway: 'footway' }, coordinates: [[bei(2, -50).lat, bei(2, -50).lon], [bei(2, 50).lat, bei(2, 50).lon]] },
+    { name: 'Fernstraße', coordinates: [[bei(500, -50).lat, bei(500, -50).lon], [bei(500, 50).lat, bei(500, 50).lon]] },
+  ]
+  const s = naechsteStrasse(HERE.lat, HERE.lon, ways)
+  assert.equal(s.name, 'Löhrstraße')
+  assert.equal(s.distM, 10)
+  assert.equal(naechsteStrasse(HERE.lat, HERE.lon, [ways[3]]), null)
+  assert.equal(naechsteStrasse(HERE.lat, HERE.lon, []), null)
 })
 
 test('turning the head: words and degrees', () => {

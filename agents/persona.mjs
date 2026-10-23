@@ -50,7 +50,7 @@ import { LlmBehaviour, Memory } from './lib/persona-llm.mjs'
 import { Journal, personaDataDir, readFindings, formatFindings } from './lib/journal.mjs'
 import { duplicateOf, failureKey, questDone } from './lib/actions.mjs'
 import { clipsOf, gesturesFor } from './lib/model-clips.mjs'
-import { blickfeld, beschreibeBlickfeld, neueBlickrichtung } from './lib/blickfeld.mjs'
+import { blickfeld, beschreibeBlickfeld, neueBlickrichtung, naechsteStrasse } from './lib/blickfeld.mjs'
 import { ModelSizes } from './lib/model-extents.mjs'
 import { buildingHeightM } from '../client/core/buildingHeight.js'
 import { Weltkontext, zelleFuer } from './lib/weltkontext.mjs'
@@ -354,11 +354,13 @@ const stills = persona.figure.movement === 'still'
 let onArrived = null           // set by the model block below
 
 let graph = null, graphAt = 0, geoWarned = 0
+let ways = []
 async function wayGraph() {
   if (graph && Date.now() - graphAt < 30 * 60_000) return graph
   try {
     const res = await withTimeout(geo.waysNear(home.lat, home.lon, Math.min(2000, num('roam_radius_m') + 300), 'walkable'), 10_000, 'way graph')
-    const g = buildWayGraph(res?.features || [])
+    ways = res?.features || []       // kept raw: the street NAMES are the figure's address
+    const g = buildWayGraph(ways)
     if (g.nodes.size >= 2) { graph = g; graphAt = Date.now(); log(`way graph: ${g.nodes.size} nodes`) }
   } catch (err) {
     if (Date.now() - geoWarned > 5 * 60_000) { geoWarned = Date.now(); warn(`geo unavailable (${err?.message || err}) — walking straight lines`) }
@@ -822,6 +824,10 @@ function buildCtx() {
     recent: recent.slice(-8),
     findings: knownFindings.slice(-8),
     view: { richtung: view.richtung, headingDeg: view.headingDeg },
+    location: (() => {
+      const s = naechsteStrasse(c.lat, c.lon, ways)
+      return { lat: c.lat, lon: c.lon, street: s?.name || null, streetDistM: s?.distM ?? null }
+    })(),
     turnTo: (bearingRad) => turnHeading(bearingRad * 180 / Math.PI),
     lookAround: async (direction) => {
       const h = neueBlickrichtung(c.headingDeg, direction)

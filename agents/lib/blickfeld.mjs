@@ -177,6 +177,34 @@ export function beschreibeBlickfeld(b, { max = 12 } = {}) {
   return zeilen.join('\n')
 }
 
+/** Distance (m) from a local point to a segment a→b. */
+function abstandZuStrecke(p, a, b) {
+  const dx = b.x - a.x, dz = b.z - a.z
+  const l2 = dx * dx + dz * dz
+  const t = l2 > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.z - a.z) * dz) / l2)) : 0
+  return Math.hypot(p.x - (a.x + t * dx), p.z - (a.z + t * dz))
+}
+
+/**
+ * The nearest NAMED way to a point — "an der Löhrstraße (12 m)". Ways as
+ * the geo API delivers them: `{ name?, tags?, coordinates: [[lat, lon], …] }`.
+ * @returns {{name:string, distM:number}|null}
+ */
+export function naechsteStrasse(lat, lon, ways, { maxM = 80 } = {}) {
+  let best = null
+  for (const w of ways || []) {
+    const name = String(w?.name || w?.tags?.name || '').trim()
+    const pts = w?.coordinates
+    if (!name || !Array.isArray(pts) || pts.length < 2) continue
+    const loc = pts.map(([la, lo]) => lokal(lat, lon, la, lo))
+    for (let i = 1; i < loc.length; i++) {
+      const d = abstandZuStrecke({ x: 0, z: 0 }, loc[i - 1], loc[i])
+      if (d <= maxM && (!best || d < best.distM)) best = { name, distM: d }
+    }
+  }
+  return best ? { name: best.name, distM: Math.round(best.distM) } : null
+}
+
 /**
  * Turn instructions a model may give: words or degrees.
  * @returns {number|null} new heading in degrees, or null when not understood

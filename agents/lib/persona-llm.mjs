@@ -61,6 +61,17 @@ export function describeState(s) {
     lines.push(`Dein Revier: ${s.home.radius_m} m um deinen Heimatort${d !== null ? `, du bist ${d} m davon entfernt` : ''}.`)
   }
   const objects = (s.objects || []).filter(o => o && o.id)
+  // Where the figure IS, in the world's terms: coordinates (so it can name
+  // them), the nearest street, the place. Without it the figure knew its
+  // surroundings but not its address — a tester cannot report "at the
+  // corner of X" without X.
+  if (s.location && Number.isFinite(s.location.lat)) {
+    const teile = [`${s.location.lat.toFixed(5)}, ${s.location.lon.toFixed(5)}`]
+    if (s.location.street) teile.push(`an der ${s.location.street}${Number.isFinite(s.location.streetDistM) ? ` (${s.location.streetDistM} m)` : ''}`)
+    const ort = s.world?.ort?.text || [s.world?.ort?.stadt, s.world?.ort?.land].filter(Boolean).join(', ')
+    if (ort) teile.push(ort)
+    lines.push(`Standort: ${teile.join(' · ')}.`)
+  }
   // The view: heading first, then each object with where it is relative
   // to the figure — "vorn", "links", "hinten", "verdeckt hinter Haus".
   if (s.view?.richtung) lines.push(`Du blickst nach ${s.view.richtung}.`)

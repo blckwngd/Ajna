@@ -33,6 +33,18 @@ test('describeState: type words, action list, finished quest, spoken-to time, fi
   assert.match(t, /Schon festgehalten \(nicht noch einmal melden\):\n- Imbiss sieht aus wie ein Wizard \(×3\)/)
 })
 
+test('describeState names the location: coordinates, street, place', () => {
+  const t = describeState({
+    self: SELF, objects: [], location: { lat: 50.35691, lon: 7.58904, street: 'Löhrstraße', streetDistM: 12 },
+    world: { ort: { stadt: 'Koblenz', land: 'Rheinland-Pfalz', text: 'Koblenz, Rheinland-Pfalz' } },
+    view: { richtung: 'Westen', headingDeg: 270 },
+  })
+  assert.match(t, /Standort: 50\.35691, 7\.58904 · an der Löhrstraße \(12 m\) · Koblenz, Rheinland-Pfalz\./)
+  assert.match(t, /Du blickst nach Westen\./)
+  const ohne = describeState({ self: SELF, objects: [], location: { lat: 50.1, lon: 7.1 } })
+  assert.match(ohne, /Standort: 50\.10000, 7\.10000\./, 'without street and place: the coordinates alone')
+})
+
 test('describeState without findings or spoken-to times stays as it was', () => {
   const t = describeState({ self: SELF, objects: [BENCH], players: [{ id: 'p1' }] })
   assert.match(t, /Bank \[bench1\] · \d+ m · Ort · Aktionen: examine/)

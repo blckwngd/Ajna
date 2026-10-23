@@ -169,8 +169,10 @@ begrenzt: das Journal rotiert ab 8 MB, Befunde wachsen nur um Neues.
 
 ## Blickfeld
 
-Die Figur bekommt ihre Umgebung nicht nur als Liste mit Entfernungen,
-sondern als **Blick**: „Du blickst nach Nordwesten." und zu jedem Objekt,
+Jede Lage nennt zuerst den **Standort**: Koordinaten mit fünf Stellen, die
+nächste benannte Straße aus dem Wegenetz („an der Löhrstraße (12 m)") und
+den Ort aus dem Welt-Kontext („Koblenz, Rheinland-Pfalz"). Dann den
+**Blick**: „Du blickst nach Nordwesten." und zu jedem Objekt,
 wo es relativ zu ihr steht — `vorn`, `halb links`, `rechts`, `hinten`,
 `nicht im Blick` (außerhalb von 120°) oder `verdeckt hinter Haus`. Mit
 `look_around` sieht sie sich um, wahlweise nach einer Drehung (`links`,
