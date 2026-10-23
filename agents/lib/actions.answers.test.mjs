@@ -116,6 +116,26 @@ test('look_at tells what the players see: model file, symbol, colour', () => {
   assert.ok(!/Aussehen/.test(describeObject({ id: 'x', name: 'Nichts' })), 'no line when nothing is set')
 })
 
+test('a landmark beyond reach can be looked at, not walked to', async () => {
+  const schloss = { id: 'w1', name: 'Schloss Sayn', type: 'poi', lat: 50.4505, lon: 7.5971, description: 'Ein Schloss.', state: { source: 'wikipedia' } }
+  const ctx = makeCtx({ perception: { objects: [], players: [], inventory: [], landmarks: [schloss] } })
+  assert.equal(guard('debug', 'look_at', { object_id: 'w1' }, ctx).ok, true)
+  assert.match(await byKey('look_at').run(ctx, { object_id: 'w1' }), /Schloss Sayn \[w1\]/)
+  assert.equal(guard('debug', 'walk_to', { object_id: 'w1' }, ctx).ok, false)
+  assert.equal(guard('debug', 'use', { object_id: 'w1', action: 'examine' }, ctx).ok, false)
+})
+
+test('look_at on a Wikipedia place gives the article lead and the source; on a café, what the sign says', () => {
+  const schloss = { id: 's1', name: 'Schloss Sayn', type: 'poi', description: 'A'.repeat(500), state: { source: 'wikipedia', url: 'https://de.wikipedia.org/wiki/Schloss_Sayn' } }
+  const r = describeObject(schloss)
+  assert.match(r, /A{500}/, 'the lead is not cut at 300 for a Wikipedia place')
+  assert.match(r, /Bekannt: Wikipedia: https:\/\/de\.wikipedia\.org\/wiki\/Schloss_Sayn/)
+  const cafe = { id: 'c1', name: 'Café Rhein', type: 'poi', state: { osm_tags: { amenity: 'cafe', cuisine: 'coffee_shop', opening_hours: 'Mo-Fr 08:00-18:00', website: 'https://cafe.example' } } }
+  assert.match(describeObject(cafe), /Bekannt: amenity: cafe · Küche: coffee_shop · Öffnungszeiten: Mo-Fr 08:00-18:00 · Web: https:\/\/cafe\.example/)
+  const denkmal = { id: 'd1', name: 'Alte Burg', type: 'poi', state: { monument_kind: 'Einzeldenkmal', monument_place: 'Koblenz-Altstadt' } }
+  assert.match(describeObject(denkmal), /Denkmal: Einzeldenkmal, Koblenz-Altstadt/)
+})
+
 test('walk_to says how far and that the figure is not there yet', async () => {
   const ctx = makeCtx({ speedMps: 1.3 })
   const r = await byKey('walk_to').run(ctx, { object_id: 'bench1' })

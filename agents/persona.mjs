@@ -50,7 +50,8 @@ import { LlmBehaviour, Memory } from './lib/persona-llm.mjs'
 import { Journal, personaDataDir, readFindings, formatFindings, readTranscript, formatTranscript } from './lib/journal.mjs'
 import { duplicateOf, failureKey, questDone } from './lib/actions.mjs'
 import { clipsOf, gesturesFor } from './lib/model-clips.mjs'
-import { blickfeld, beschreibeBlickfeld, neueBlickrichtung, naechsteStrasse } from './lib/blickfeld.mjs'
+import { blickfeld, beschreibeBlickfeld, neueBlickrichtung, naechsteStrasse, lokal, peilung, richtungsWort } from './lib/blickfeld.mjs'
+import { typeWord } from './lib/actions.mjs'
 import { ModelSizes } from './lib/model-extents.mjs'
 import { buildingHeightM } from '../client/core/buildingHeight.js'
 import { Weltkontext, zelleFuer } from './lib/weltkontext.mjs'
@@ -336,6 +337,21 @@ async function loadBuildings() {
   } catch (err) { warn(`buildings: ${err?.message || err}`) }
 }
 const toRad = (d) => (d * Math.PI) / 180
+/** How far "the area" reaches beyond the perception radius (landmarks the figure may talk about). */
+const GEGEND_M = 800
+
+/** A NAMED building the figure stands at or next to (footprint within ~20 m). Unnamed houses are not news. */
+function namedBuildingNear(lat, lon) {
+  let best = null
+  for (const b of buildings) {
+    if (!b.name || b.name === 'Gebäude' || !Array.isArray(b.coordinates)) continue
+    let cx = 0, cy = 0
+    for (const [la, lo] of b.coordinates) { cx += la; cy += lo }
+    const d = haversine(lat, lon, cx / b.coordinates.length, cy / b.coordinates.length)
+    if (d <= 60 && (!best || d < best.d)) best = { name: b.name, d }
+  }
+  return best?.name || null
+}
 
 /** Turn the figure to a compass heading (degrees) and tell the world. */
 async function turnHeading(deg) {
@@ -828,6 +844,17 @@ function buildCtx() {
   const view = currentView(nearby)
   const byId = new Map(view.eintraege.map(e => [e.id, e]))
   const objects = nearby.map(o => ({ ...o, _view: byId.get(o.id) || null }))
+  // Beyond the perception radius: what Ajna knows about the area —
+  // Wikipedia places and monuments from the POI bridge, open quests,
+  // named figures. Not items or enemies: those are found, not known.
+  // They can be looked at (the article lead), not walked to or used.
+  const landmarks = ajna.getObjects()
+    .filter(o => o?.id && o.id !== figure.id && o.name && !o.carried_by && !questDone(o)
+      && ['poi', 'call', 'npc'].includes(String(o.type || '').toLowerCase())
+      && Number.isFinite(o.lat) && Number.isFinite(o.lon))
+    .map(o => ({ o, d: haversine(c.lat, c.lon, o.lat, o.lon) }))
+    .filter(x => x.d > PERCEPTION_M && x.d <= GEGEND_M)
+    .sort((a, b) => a.d - b.d).slice(0, 8)
   const inventory = ajna.getObjects().filter(o => o?.carried_by && String(o.carried_by) === String(me?.id))
   const cutoff = Date.now() - 20 * 60_000
   const players = [...people.values()].filter(p => p.near || p.seenAt > cutoff)
@@ -835,17 +862,26 @@ function buildCtx() {
   return {
     mode: mode(),
     self: { id: figure.id, lat: c.lat, lon: c.lon, rotation: { x: 0, y: 0, z: 0 } },
-    perception: { objects, players, inventory },
+    perception: { objects, players, inventory, landmarks: landmarks.map(x => x.o) },
     limits: { roam: { lat: home.lat, lon: home.lon, radius_m: num('roam_radius_m') } },
     world: world.varsFuer(c.lat, c.lon),
     activity: activityText(),
     recent: recent.slice(-8),
     findings: knownFindings.slice(-8),
     view: { richtung: view.richtung, headingDeg: view.headingDeg },
+    now: Date.now(),
     location: (() => {
       const s = naechsteStrasse(c.lat, c.lon, ways)
-      return { lat: c.lat, lon: c.lon, street: s?.name || null, streetDistM: s?.distM ?? null }
+      return { lat: c.lat, lon: c.lon, street: s?.name || null, streetDistM: s?.distM ?? null, building: namedBuildingNear(c.lat, c.lon) }
     })(),
+    // Beyond the perception radius: what Ajna knows about the area —
+    // Wikipedia places and monuments from the POI bridge, open quests,
+    // named figures. Not items or enemies: those are found, not known.
+    gegend: landmarks.map(({ o, d }) => ({
+      id: o.id, name: o.name, distM: Math.round(d),
+      richtung: richtungsWort(peilung(lokal(c.lat, c.lon, o.lat, o.lon))),
+      typ: o.state?.source === 'wikipedia' ? 'Wikipedia' : o.state?.monument_kind ? 'Denkmal' : typeWord(o.type),
+    })),
     turnTo: (bearingRad) => turnHeading(bearingRad * 180 / Math.PI),
     lookAround: async (direction) => {
       const h = neueBlickrichtung(c.headingDeg, direction)

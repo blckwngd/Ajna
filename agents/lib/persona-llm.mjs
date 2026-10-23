@@ -65,12 +65,31 @@ export function describeState(s) {
   // them), the nearest street, the place. Without it the figure knew its
   // surroundings but not its address — a tester cannot report "at the
   // corner of X" without X.
+  // Date and clock — the model has no idea what day it is unless told, and
+  // "Mittwochnachmittag" or "kurz vor Ladenschluss" is part of knowing
+  // where you are.
+  if (Number.isFinite(s.now)) {
+    const d = new Date(s.now)
+    const tage = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag']
+    const monate = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember']
+    const hh = String(d.getHours()).padStart(2, '0'), mm = String(d.getMinutes()).padStart(2, '0')
+    lines.push(`Heute ist ${tage[d.getDay()]}, der ${d.getDate()}. ${monate[d.getMonth()]} ${d.getFullYear()}, ${hh}:${mm} Uhr.`)
+  }
   if (s.location && Number.isFinite(s.location.lat)) {
     const teile = [`${s.location.lat.toFixed(5)}, ${s.location.lon.toFixed(5)}`]
     if (s.location.street) teile.push(`an der ${s.location.street}${Number.isFinite(s.location.streetDistM) ? ` (${s.location.streetDistM} m)` : ''}`)
+    if (s.location.building) teile.push(`bei ${s.location.building}`)
     const ort = s.world?.ort?.text || [s.world?.ort?.stadt, s.world?.ort?.land].filter(Boolean).join(', ')
     if (ort) teile.push(ort)
     lines.push(`Standort: ${teile.join(' · ')}.`)
+  }
+  // Landmarks beyond arm's reach: what Ajna knows about the area — Wikipedia
+  // places, monuments, open quests — with direction and distance, so the
+  // figure can talk about the castle on the hill without walking there.
+  const gegend = (s.gegend || []).filter(g => g && g.name)
+  if (gegend.length) {
+    lines.push('In der Gegend (weiter weg): ' + gegend.map(g =>
+      `${g.name} [${g.id}] ${g.distM} m ${g.richtung}${g.typ ? ` (${g.typ})` : ''}`).join(' · '))
   }
   // The view: heading first, then each object with where it is relative
   // to the figure — "vorn", "links", "hinten", "verdeckt hinter Haus".

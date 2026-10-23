@@ -110,12 +110,14 @@ const sameId = (a, b) => rawId(a) !== '' && rawId(a) === rawId(b)
 const perceivedObject = (ctx, id) =>
   (ctx?.perception?.objects || []).find(o => sameId(o.id, id)) || null
 
-// What the figure carries is in its hands, not in its field of view —
-// looking at it must work, walking to it makes no sense. Only `look_at`
-// uses this wider match.
+// What the figure carries is in its hands, not in its field of view, and a
+// landmark across town is known, not seen — looking at either must work
+// (the article lead of the castle), walking to or using them does not go
+// through this. Only `look_at` uses this wider match.
 const perceivedAny = (ctx, id) =>
   perceivedObject(ctx, id)
-  || (ctx?.perception?.inventory || []).find(o => sameId(o.id, id)) || null
+  || (ctx?.perception?.inventory || []).find(o => sameId(o.id, id))
+  || (ctx?.perception?.landmarks || []).find(o => sameId(o.id, id)) || null
 
 // ── Words for the figure, not keys ───────────────────────────────────────
 // `call` is a quest, not an action — the persona read "TestQuest3 · call"
@@ -159,7 +161,24 @@ export function describeObject(o, self = null) {
   if (o.state?.portable) parts.push('tragbar')
   const lines = [parts.join(' · ')]
   const desc = String(o.description || '').trim()
-  if (desc) lines.push(desc.length > 300 ? desc.slice(0, 299) + '…' : desc)
+  // A Wikipedia place carries its article's lead as description — worth
+  // more room than a figure's one-liner.
+  const descMax = String(o.state?.source || '') === 'wikipedia' || o.state?.monument_kind ? 600 : 300
+  if (desc) lines.push(desc.length > descMax ? desc.slice(0, descMax - 1) + '…' : desc)
+  // What the POI bridge knows: the source article, the monument record,
+  // the OSM tags a visitor would read off the sign — kind, cuisine, hours.
+  const st = (o.state && typeof o.state === 'object') ? o.state : {}
+  const wissen = []
+  if (st.source === 'wikipedia' && st.url) wissen.push(`Wikipedia: ${st.url}`)
+  if (st.monument_kind) wissen.push(`Denkmal: ${st.monument_kind}${st.monument_place ? `, ${st.monument_place}` : ''}`)
+  const tags = (st.osm_tags && typeof st.osm_tags === 'object') ? st.osm_tags : {}
+  for (const k of ['amenity', 'shop', 'tourism', 'historic', 'leisure', 'natural']) if (tags[k]) { wissen.push(`${k}: ${tags[k]}`); break }
+  if (tags.cuisine) wissen.push(`Küche: ${tags.cuisine}`)
+  if (tags.opening_hours) wissen.push(`Öffnungszeiten: ${tags.opening_hours}`)
+  if (tags.website) wissen.push(`Web: ${tags.website}`)
+  if (tags.wikipedia) wissen.push(`Wikipedia: ${tags.wikipedia}`)
+  if (tags.ele) wissen.push(`Höhe: ${tags.ele} m`)
+  if (wissen.length) lines.push(`Bekannt: ${wissen.join(' · ')}`)
   // What the players SEE: the model file, the emoji, the colour. A persona
   // judging its surroundings could not tell a chest from a key when both
   // said "ein Gegenstand" — the clients knew, the figure did not.

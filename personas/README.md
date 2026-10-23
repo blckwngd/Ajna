@@ -170,9 +170,18 @@ begrenzt: das Journal rotiert ab 8 MB, Befunde wachsen nur um Neues.
 
 ## Blickfeld
 
-Jede Lage nennt zuerst den **Standort**: Koordinaten mit fünf Stellen, die
-nächste benannte Straße aus dem Wegenetz („an der Löhrstraße (12 m)") und
-den Ort aus dem Welt-Kontext („Koblenz, Rheinland-Pfalz"). Dann den
+Jede Lage nennt zuerst **Datum und Uhrzeit** („Heute ist Freitag, der 23.
+Oktober 2026, 15:12 Uhr") und den **Standort**: Koordinaten mit fünf Stellen,
+die nächste benannte Straße aus dem Wegenetz („an der Löhrstraße (12 m)"),
+ein benanntes Gebäude daneben („bei Kirche St. Kastor") und den Ort aus dem
+Welt-Kontext („Koblenz, Rheinland-Pfalz"). Dazu **die Gegend**: bis zu acht
+benannte Orte zwischen 120 und 800 m — Wikipedia-Orte und Denkmäler der
+POI-Brücke, offene Aufträge, benannte Figuren — mit Richtung und Entfernung.
+Die kann die Figur **ansehen** (`look_at` liefert dann die Einleitung des
+Wikipedia-Artikels oder den Denkmal-Eintrag, bei Läden Küche, Öffnungszeiten
+und Web aus den OSM-Tags), aber nicht hingehen oder benutzen: Was man weiß,
+ist nicht, was man sieht. Kein Netz dafür — alles kommt aus Ajna selbst,
+so wie das Wetter. Dann den
 **Blick**: „Du blickst nach Nordwesten." und zu jedem Objekt,
 wo es relativ zu ihr steht — `vorn`, `halb links`, `rechts`, `hinten`,
 `nicht im Blick` (außerhalb von 120°) oder `verdeckt hinter Haus`. Mit

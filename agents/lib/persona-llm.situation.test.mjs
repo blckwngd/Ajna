@@ -88,6 +88,18 @@ test('narrate hands location, view and findings to the model — not only the fi
   assert.match(text, /Schon festgehalten[\s\S]*Imbiss sieht aus wie ein Wizard \(×2\)/)
 })
 
+test('describeState: date and clock, the building next door, and the area beyond reach', () => {
+  const t = describeState({
+    self: SELF, objects: [], now: Date.parse('2026-10-23T13:12:00+02:00'),
+    location: { lat: 50.1, lon: 7.1, building: 'Kirche St. Kastor' },
+    gegend: [{ id: 'w1', name: 'Schloss Sayn', distM: 450, richtung: 'Nordosten', typ: 'Wikipedia' }, { id: 'q1', name: 'Botengang', distM: 300, richtung: 'Süden', typ: 'Auftrag' }],
+  })
+  assert.match(t, /Heute ist Freitag, der 23\. Oktober 2026, \d\d:12 Uhr\./)
+  assert.match(t, /Standort: 50\.10000, 7\.10000 · bei Kirche St\. Kastor\./)
+  assert.match(t, /In der Gegend \(weiter weg\): Schloss Sayn \[w1\] 450 m Nordosten \(Wikipedia\) · Botengang \[q1\] 300 m Süden \(Auftrag\)/)
+  assert.ok(!/Heute ist/.test(describeState({ self: SELF, objects: [] })), 'no clock line without a time')
+})
+
 test('describeState without findings or spoken-to times stays as it was', () => {
   const t = describeState({ self: SELF, objects: [BENCH], players: [{ id: 'p1' }] })
   assert.match(t, /Bank \[bench1\] · \d+ m · Ort · Aktionen: examine/)
