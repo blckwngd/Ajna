@@ -61,6 +61,9 @@ export function describeState(s) {
     lines.push(`Dein Revier: ${s.home.radius_m} m um deinen Heimatort${d !== null ? `, du bist ${d} m davon entfernt` : ''}.`)
   }
   const objects = (s.objects || []).filter(o => o && o.id)
+  // The view: heading first, then each object with where it is relative
+  // to the figure — "vorn", "links", "hinten", "verdeckt hinter Haus".
+  if (s.view?.richtung) lines.push(`Du blickst nach ${s.view.richtung}.`)
   if (objects.length) {
     lines.push('In Reichweite:')
     for (const o of objects.slice(0, 25)) {
@@ -69,7 +72,10 @@ export function describeState(s) {
       // bare key `call` was read as an action, and a missing list as "no
       // actions" (there is always examine).
       const tw = typeWord(o.type)
-      const extra = [tw ? (questDone(o) ? `${tw} (erledigt)` : tw) : null,
+      const v = o._view
+      const lage = v ? (v.imBlick ? (v.sichtbar ? v.sektor : `${v.sektor}, verdeckt hinter ${v.verdecktVon}`) : `${v.sektor}, nicht im Blick`) : null
+      const extra = [lage,
+                     tw ? (questDone(o) ? `${tw} (erledigt)` : tw) : null,
                      `Aktionen: ${offeredActions(o).join(', ')}`,
                      o.state?.portable ? 'tragbar' : null]
         .filter(Boolean).join(' · ')

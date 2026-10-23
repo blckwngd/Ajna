@@ -50,6 +50,9 @@ import { LlmBehaviour, Memory } from './lib/persona-llm.mjs'
 import { Journal, personaDataDir, readFindings, formatFindings } from './lib/journal.mjs'
 import { duplicateOf, failureKey, questDone } from './lib/actions.mjs'
 import { clipsOf, gesturesFor } from './lib/model-clips.mjs'
+import { blickfeld, beschreibeBlickfeld, neueBlickrichtung } from './lib/blickfeld.mjs'
+import { ModelSizes } from './lib/model-extents.mjs'
+import { buildingHeightM } from '../client/core/buildingHeight.js'
 import { Weltkontext, zelleFuer } from './lib/weltkontext.mjs'
 import { wetterAnbieter } from './lib/wetter.mjs'
 import { ortAnbieter, NOMINATIM_URL } from './lib/ort.mjs'
@@ -295,6 +298,41 @@ every(publishManifest, () => num('heartbeat_s') * 1000)
 // within `roam_radius_m` of the figure's home, and a figure declared
 // `movement: still` never moves at all.
 const geo = new AjnaGeo(ajna)
+
+// ─── The view: what stands between the figure and what it sees ───────────
+// Buildings around home as footprints with a height (OSM via the geo API,
+// the same height rule as the client's wireframe), model sizes measured by
+// Babylon's NullEngine in the background (lib/model-extents.mjs). Both feed
+// lib/blickfeld.mjs, which turns a list with distances into "vorn", "links",
+// "hinter dem Haus".
+const modelSizes = new ModelSizes({ warn })
+let buildings = []
+async function loadBuildings() {
+  try {
+    const r = await geo.buildingsNear(home.lat, home.lon, Math.min(1500, num('roam_radius_m') + 200), 'all')
+    const feats = Array.isArray(r) ? r : (r?.features || [])
+    buildings = feats
+      .filter(f => Array.isArray(f?.coordinates) && f.coordinates.length >= 3)
+      .map(f => ({ name: f.name || (f.tags?.building && f.tags.building !== 'yes' ? f.tags.building : 'Gebäude'), hoehe: buildingHeightM(f.tags || {}), coordinates: f.coordinates }))
+    log(`buildings: ${buildings.length} within reach`)
+  } catch (err) { warn(`buildings: ${err?.message || err}`) }
+}
+const toRad = (d) => (d * Math.PI) / 180
+
+/** Turn the figure to a compass heading (degrees) and tell the world. */
+async function turnHeading(deg) {
+  c.headingDeg = ((Number(deg) % 360) + 360) % 360
+  try { await ajna.updateObject(c.id, { rotation: { x: 0, y: yawFuerKurs(toRad(c.headingDeg)), z: 0 } }) } catch { /* the look matters */ }
+}
+
+/** The view from where the figure stands, for a heading. */
+function currentView(objects, headingDeg = c.headingDeg) {
+  return blickfeld({
+    self: { lat: c.lat, lon: c.lon, headingDeg },
+    objects: objects.map(o => ({ id: o.id, name: o.name, type: o.type, lat: o.lat, lon: o.lon, size: modelSizes.sizeFor(o) })),
+    buildings,
+  })
+}
 let home = { ...effectiveHome() }
 const c = {
   id: figure.id,
@@ -305,6 +343,9 @@ const c = {
   lastTickAt: Date.now(),
   busy: false,
   anim: figure.animation_state || 'idle', animOpen: false,
+  // Compass heading the figure faces (0 = north). From the stored yaw at
+  // start (yaw = π − heading, core/yaw.js), then from every step.
+  headingDeg: ((180 - (Number(figure.rotation?.y) || 0) * 180 / Math.PI) % 360 + 360) % 360,
   attendUntil: 0,
   plan: new Bewegungsplan({ kursSchwelleGrad: 8, driftM: 4 }),
 }
@@ -435,6 +476,7 @@ async function relocate(to, reason) {
     c.path = null; c.fsm = 'idle'; c.summonTarget = null
     c.nextPlanAt = Date.now() + 8000
     graph = null                     // the way graph belongs to the old place
+    loadBuildings().catch(() => {})  // and so do the houses
     setAnim('idle')
     c.plan.zuruecksetzen()
     const halt = c.plan.haltAn({ lat: c.lat, lon: c.lon, altitude: 0, trk: 0 })
@@ -500,6 +542,7 @@ async function advance() {
     const step = stepAlongPath(c.path, c.cursor, num('speed') * dt)
     c.lat = step.lat; c.lon = step.lon
     c.cursor = { segIdx: step.segIdx, segT: step.segT }
+    c.headingDeg = headingDeg(step.headingRad)
     await writeMotion({
       lat: c.lat, lon: c.lon, v: num('speed'), trk: headingDeg(step.headingRad),
       rotation: { x: 0, y: yawFuerKurs(step.headingRad), z: 0 },
@@ -555,6 +598,7 @@ async function refreshArea() {
 }
 await refreshArea()
 every(refreshArea, () => num('area_refresh_s') * 1000)
+loadBuildings().catch(() => {})
 
 // ─── Talking (Parley) ────────────────────────────────────────────────────
 //
@@ -754,11 +798,16 @@ function buildCtx() {
   // not the 25 that matter.
   const ignore = new Set(konf.text('perceive_ignore', R.perceive_ignore[0], R.perceive_ignore[1])
     .split(',').map(s => s.trim().toLowerCase()).filter(Boolean))
-  const objects = ajna.getObjects()
+  const nearby = ajna.getObjects()
     .filter(o => o?.id && o.id !== figure.id && !o.carried_by && !questDone(o)
       && !ignore.has(String(o.type || '').toLowerCase())
       && Number.isFinite(o.lat) && Number.isFinite(o.lon) && haversine(c.lat, c.lon, o.lat, o.lon) <= PERCEPTION_M)
     .sort((a, b) => haversine(c.lat, c.lon, a.lat, a.lon) - haversine(c.lat, c.lon, b.lat, b.lon))
+  // The view attaches where each thing is relative to the figure — copies,
+  // the records belong to the client's cache.
+  const view = currentView(nearby)
+  const byId = new Map(view.eintraege.map(e => [e.id, e]))
+  const objects = nearby.map(o => ({ ...o, _view: byId.get(o.id) || null }))
   const inventory = ajna.getObjects().filter(o => o?.carried_by && String(o.carried_by) === String(me?.id))
   const cutoff = Date.now() - 20 * 60_000
   const players = [...people.values()].filter(p => p.near || p.seenAt > cutoff)
@@ -772,6 +821,14 @@ function buildCtx() {
     activity: activityText(),
     recent: recent.slice(-8),
     findings: knownFindings.slice(-8),
+    view: { richtung: view.richtung, headingDeg: view.headingDeg },
+    turnTo: (bearingRad) => turnHeading(bearingRad * 180 / Math.PI),
+    lookAround: async (direction) => {
+      const h = neueBlickrichtung(c.headingDeg, direction)
+      if (h === null) throw new Error('unknown direction — use links, rechts, um, Norden/Osten/Süden/Westen or degrees')
+      if (direction !== '' && direction !== undefined && direction !== null && h !== c.headingDeg) await turnHeading(h)
+      return beschreibeBlickfeld(currentView(nearby, c.headingDeg))
+    },
     speedMps: num('speed'),
     failed,
     noteFailure,

@@ -8,20 +8,10 @@ import { ENC_STYLE, encCategory } from "../core/wifiStyle.js"
 import { appearanceOf, arViewOf, gltfUrlOf } from "../core/Appearance.js"
 import { gangartFuer, tempoAusSpruengen } from "../core/gangart.js"
 import { ANIM_ALIASES } from "../core/animAliases.js"
+import { MODEL_TARGET_HEIGHT, zielHoeheFuerPfad } from "../core/modelSizes.js"
 
-// Ziel-Welthöhe (Meter) pro Modell-Datei. Manche GLBs (three.js-Tiere, der
-// Khronos-Fox) sind in Eigen-Einheiten riesig → ohne Normierung füllen sie die
-// halbe Szene. Nach dem Laden wird das Modell auf diese Höhe skaliert (das
-// Record-`scale` wirkt weiterhin als Multiplikator obendrauf). Nicht gelistete
-// Modelle bleiben unverändert (1:1). Werte sind bewusst einfach justierbar.
-const MODEL_TARGET_HEIGHT = {
-  "Fox.glb": 0.6,
-  "Horse.glb": 1.7,
-  "Flamingo.glb": 1.3,
-  "Stork.glb": 1.1,
-  "Parrot.glb": 0.35,
-  "Diamond.glb": 0.4,
-}
+// Ziel-Welthöhe (Meter) pro Modell-Datei: core/modelSizes.js — eine Quelle
+// für Client und Agents (die Persona rechnet damit ihr Blickfeld).
 
 // Per-Modell-Yaw-Korrektur (rad): manche GLBs schauen entlang +Z statt −Z —
 // die Figur liefe zur Blickrichtung des Directors „rückwärts". Der Offset wird
@@ -40,9 +30,7 @@ const MODEL_TARGET_HEIGHT = {
  * vergessen. Ausserdem gibt es „Adventurer.gltf" zweimal (Männer und Frauen) —
  * ein Dateiname allein taugt hier nicht als Schlüssel.
  */
-function zielHoeheFuerPfad(pfad) {
-  return /\/quaternius_/.test(pfad) ? 1.8 : undefined
-}
+// (zielHoeheFuerPfad kommt aus core/modelSizes.js — siehe oben.)
 
 const MODEL_YAW_RAD = {
   "Soldier.glb": Math.PI,

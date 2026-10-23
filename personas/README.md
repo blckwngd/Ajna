@@ -167,6 +167,31 @@ gezählte Wiederholungen, `👀`/`👋` Näherung, `🚩 relocated` beim Umzug �
 `persona.home`. Die Dateien unter `agents/data/personas/<name>/` wachsen
 begrenzt: das Journal rotiert ab 8 MB, Befunde wachsen nur um Neues.
 
+## Blickfeld
+
+Die Figur bekommt ihre Umgebung nicht nur als Liste mit Entfernungen,
+sondern als **Blick**: „Du blickst nach Nordwesten." und zu jedem Objekt,
+wo es relativ zu ihr steht — `vorn`, `halb links`, `rechts`, `hinten`,
+`nicht im Blick` (außerhalb von 120°) oder `verdeckt hinter Haus`. Mit
+`look_around` sieht sie sich um, wahlweise nach einer Drehung (`links`,
+`rechts`, `um`, `Norden` … oder Grad); `look_at` dreht sie zum Objekt.
+
+Woher das kommt, in drei Teilen (`agents/lib/blickfeld.mjs` und
+`agents/lib/model-extents.mjs`):
+
+* **Gebäude** aus der Geo-API um die Heimat herum, als Grundrisse mit Höhe
+  (dieselbe Höhenregel wie das Drahtgitter im Client). Ein Haus verdeckt,
+  was dahintersteht, wenn es höher ist als die Sichtlinie dort.
+* **Modellgrößen** misst Babylons NullEngine in Node — der echte glTF-Lader,
+  ohne WebGL, einmal je Modell, im Hintergrund, auf Platte gemerkt
+  (`.cache/agents/modelle/`). Mit der Normierung des Clients: Quaternius-
+  Figuren 1,8 m, der Fuchs 0,6 m. Große Dinge verdecken kleine dahinter;
+  bis die Messung da ist, gilt eine plausible Größe je Typ.
+* **Die Sicht selbst** ist reine 2-D-Geometrie: Richtung, Sichtkegel,
+  Schnitt der Sichtlinie mit Grundrissen. Ebenes Gelände — Höhenunterschiede
+  innerhalb von 120 m zählen nicht. Kein Bild, keine Pixel; was das Modell
+  bekommt, ist Text, und der sagt mehr als ein Bild für 1500 Token.
+
 ## Gesten
 
 Die Figur kann zu einem Satz eine Geste machen — `say` nimmt `do` in der

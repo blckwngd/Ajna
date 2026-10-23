@@ -102,8 +102,21 @@ Chatfenster nennt Freunde beim Namen. Nur Standard-Server. Netz:
 `tests/privacy/freunde.mjs` (28 Prüfungen). Was eine Freundschaft NICHT
 hergibt: Position oder Zugriff — dafür sind Gruppen und Rechte da.
 
-### 0e · Die Sicht der Figur: Bilder aus ihren Augen — *Vorschlag, Entscheidung offen*
+### 0e · Die Sicht der Figur — **Blickfeld steht seit 23.10.**, Bilder offen
 
+**Gebaut: das Blickfeld ohne Bild.** Jede Lage sagt, wohin die Figur blickt
+und wo jedes Objekt relativ zu ihr steht (`vorn`, `links`, `hinten`, `nicht
+im Blick`, `verdeckt hinter Haus`); `look_around` dreht und beschreibt,
+`look_at` dreht zum Objekt (vorher schrieb es die Peilung roh als Yaw —
+falsche Richtung). Gebäude kommen als Grundrisse mit Höhe aus der Geo-API,
+Modellgrößen misst **Babylons NullEngine** in Node (echter glTF-Lader,
+gemessen: 1,8 s Import, dann 12–74 ms je Modell), normiert wie im Client
+(`core/modelSizes.js`, jetzt eine Quelle). Die Sicht selbst ist 2-D-
+Geometrie — für Schnitt mit Grundrissen braucht es keine Engine, und
+NullEngine hätte dafür Polygon-Extrusion gebraucht. Ebenes Gelände,
+hingenommen. `agents/lib/blickfeld.mjs`, `model-extents.mjs`; 9 Tests.
+
+**Offen: echte Bilder.** Erst, wenn das Blickfeld nicht reicht. Dann:
 Jorin urteilt über seine Umgebung aus Listen. Ein Bild aus seiner Position
 und Blickrichtung — gerendert vom bestehenden AR-Client, nicht von einem
 zweiten Renderer — gäbe ihm, was die Spieler sehen: Modelle, Abstände,

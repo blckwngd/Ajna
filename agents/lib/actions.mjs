@@ -260,14 +260,34 @@ export const ACTIONS = [
       const target = perceivedAny(ctx, args.object_id)
       // Turn towards it — but ANSWER with the object, not with the result
       // of the turn (that was the figure's own record, and the persona
-      // concluded the snack bar was a wizard).
+      // concluded the snack bar was a wizard). The caller converts the
+      // bearing into the client's yaw convention and keeps its heading
+      // (`turnTo`); without it, the bare bearing goes out — which the
+      // client reads as a different direction.
       if (!target.carried_by && Number.isFinite(target.lat)) {
         try {
-          await ctx.ajna.updateObject(ctx.self.id, { rotation: { x: 0, y: bearingTo(ctx.self, target), z: 0 } })
+          const bearing = bearingTo(ctx.self, target)
+          if (typeof ctx.turnTo === 'function') await ctx.turnTo(bearing)
+          else await ctx.ajna.updateObject(ctx.self.id, { rotation: { x: 0, y: bearing, z: 0 } })
         } catch { /* the look matters, the turn is cosmetic */ }
       }
       return describeObject(target, ctx.self)
     },
+  },
+
+  {
+    key: 'look_around',
+    description: 'Dich umsehen: was vor dir, neben dir und hinter dir ist, und was ein Haus verdeckt. '
+      + 'Ohne Angabe in deine Blickrichtung; sonst drehst du dich erst: links, rechts, um, Norden/Osten/Süden/Westen oder Grad.',
+    modes: ['passive', 'active', 'debug'],
+    parameters: {
+      type: 'object',
+      properties: { direction: { type: 'string', description: 'links | rechts | um | Norden | Osten | Süden | Westen | Zahl in Grad — oder leer' } },
+      required: [],
+    },
+    check(ctx) { return typeof ctx?.lookAround === 'function' ? null : 'you cannot look around here' },
+    expect() { return null },
+    async run(ctx, args) { return ctx.lookAround(args.direction || '') },
   },
 
   {
