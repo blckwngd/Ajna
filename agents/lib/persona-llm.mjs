@@ -227,7 +227,7 @@ export class Memory {
  * @param {() => number} [deps.now]
  */
 export class LlmBehaviour {
-  constructor({ llm, persona, mode, log, warn, onJournal = null, maxToolCalls = 6, maxRounds = 3, bundleMs = 1200, memory = null, now = () => Date.now() } = {}) {
+  constructor({ llm, persona, mode, log, warn, onJournal = null, onTrace = null, maxToolCalls = 6, maxRounds = 3, bundleMs = 1200, memory = null, now = () => Date.now() } = {}) {
     if (!llm) throw new Error('LlmBehaviour: llm is required')
     this.llm = llm
     this.persona = persona
@@ -235,6 +235,9 @@ export class LlmBehaviour {
     this.log = log || (() => {})
     this.warn = warn || this.log
     this.onJournal = onJournal
+    // Called once per turn with everything the turn consisted of — for the
+    // transcript on disk (journal.mjs). Nothing here depends on it.
+    this.onTrace = onTrace
     this.maxToolCalls = maxToolCalls
     // Rounds = model requests per turn. Each one resends the whole transcript,
     // so this is the cost lever: one turn used to allow up to seven. The model
@@ -287,6 +290,8 @@ export class LlmBehaviour {
     const mode = this.mode()
     const chats = events.filter(e => e.kind === 'chat' && e.player && e.text)
     const speaker = chats.length ? chats[chats.length - 1].player : null
+    // The transcript of this turn — filled as it goes, handed out at the end.
+    const trace = { kind_of: events.map(e => e.kind).join('+'), events: this.eventLines(events), situation: null, system: null, rounds: [], outcome: null }
 
     // ── Parley first ──────────────────────────────────────────────────
     // Each utterance through the rules. A binding answer short-circuits.
@@ -295,6 +300,8 @@ export class LlmBehaviour {
       const a = c.parley || null       // { text, binding, do } — the agent ran Parley already
       if (a?.binding && a.text) {
         this.log(`binding answer for ${c.player}: „${a.text.slice(0, 50)}"`)
+        trace.outcome = { source: 'parley-binding', said: [{ to: c.player, text: a.text }] }
+        this._emitTrace(trace)
         return { handled: true, source: 'parley-binding', say: [{ to: c.player, text: a.text, do: a.do || [] }] }
       }
       if (a?.text) parleyAnswers.push({ player: c.player, text: a.text })
@@ -305,6 +312,8 @@ export class LlmBehaviour {
     const system = systemPrompt({ prompt: this.persona.prompt, name: this.persona.name, mode, gestures: this.persona.gestures || null })
     const messages = speaker ? this.memory.get(speaker).slice() : []
     messages.push({ role: 'user', text: this.narrate(events, parleyAnswers, ctx) })
+    trace.situation = messages[messages.length - 1].text
+    trace.system = system
 
     const said = []
     const journal = []
@@ -322,6 +331,8 @@ export class LlmBehaviour {
 
         if (res.text) lastText = res.text
         messages.push({ role: 'assistant', text: res.text || undefined, toolCalls: res.toolCalls })
+        const runde = { model: res.model, stopReason: res.stopReason, text: res.text || '', usage: res.usage, latencyMs: res.latencyMs, calls: [] }
+        trace.rounds.push(runde)
         if (!res.toolCalls.length) break
 
         const results = []
@@ -368,6 +379,10 @@ export class LlmBehaviour {
           results.push({ id: call.id, name: call.name, content: outcome.ok ? (outcome.result ?? 'ok') : `Fehler: ${outcome.error}`, isError: !outcome.ok })
         }
         messages.push({ role: 'tool', results })
+        runde.calls = res.toolCalls.map(c => {
+          const r = results.find(x => x.id === c.id)
+          return { name: c.name, input: c.input, result: r?.content, isError: !!r?.isError }
+        })
       }
     } catch (err) {
       // ── Fallback: the rules ─────────────────────────────────────────
@@ -375,6 +390,8 @@ export class LlmBehaviour {
       this.stats.fallbacks++
       this.warn(`model unavailable (${kind}: ${err?.message || err}) — answering from Parley`)
       const fallback = parleyAnswers.map(a => ({ to: a.player, text: a.text }))
+      trace.outcome = { source: `parley-fallback:${kind}`, reason: String(err?.message || err), said: fallback }
+      this._emitTrace(trace)
       return { handled: fallback.length > 0, source: `parley-fallback:${kind}`, say: fallback, journal }
     }
 
@@ -390,11 +407,18 @@ export class LlmBehaviour {
       for (const c of chats) this.memory.push(speaker, { role: 'user', text: `${c.player} sagt: „${c.text}"` })
       for (const s of said) if (s.to === speaker) this.memory.push(speaker, { role: 'assistant', text: s.text })
     }
+    trace.outcome = { source: 'model', said: said.map(s => ({ to: s.to, text: s.text, coerced: s.coerced === true })), calls }
+    this._emitTrace(trace)
     return { handled: true, source: 'model', say: said, calls, journal }
   }
 
-  /** The user message for a bundle of events. */
-  narrate(events, parleyAnswers, ctx) {
+  _emitTrace(trace) {
+    if (!this.onTrace) return
+    try { this.onTrace(trace) } catch (err) { this.warn(`trace: ${err?.message || err}`) }
+  }
+
+  /** What happened, one line per event — the first part of the user message, and the transcript's header. */
+  eventLines(events) {
     const lines = []
     for (const e of events) {
       if (e.kind === 'chat') lines.push(`${e.player} sagt zu dir: „${e.text}"`)
@@ -404,6 +428,12 @@ export class LlmBehaviour {
       else if (e.kind === 'idle') lines.push('Nichts passiert gerade. Du hast Zeit.')
       else if (e.text) lines.push(e.text)
     }
+    return lines
+  }
+
+  /** The user message for a bundle of events. */
+  narrate(events, parleyAnswers, ctx) {
+    const lines = this.eventLines(events)
     for (const a of parleyAnswers) lines.push(`(Deine vorbereiteten Antworten würden ${a.player} sagen: „${a.text}")`)
     lines.push('', 'LAGE:', describeState(ctx?.describe ? ctx.describe() : {
       self: ctx?.self, home: ctx?.limits?.roam, objects: ctx?.perception?.objects,

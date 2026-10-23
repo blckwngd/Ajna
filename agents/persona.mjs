@@ -47,7 +47,7 @@ import { npcParley } from './lib/dialogs.mjs'
 import { dialogNameFor, dialogVarsFor, talkSessionId } from '../client/core/Parley.js'
 import { createLlmClient } from './lib/llm.mjs'
 import { LlmBehaviour, Memory } from './lib/persona-llm.mjs'
-import { Journal, personaDataDir, readFindings, formatFindings } from './lib/journal.mjs'
+import { Journal, personaDataDir, readFindings, formatFindings, readTranscript, formatTranscript } from './lib/journal.mjs'
 import { duplicateOf, failureKey, questDone } from './lib/actions.mjs'
 import { clipsOf, gesturesFor } from './lib/model-clips.mjs'
 import { blickfeld, beschreibeBlickfeld, neueBlickrichtung, naechsteStrasse } from './lib/blickfeld.mjs'
@@ -99,6 +99,23 @@ if (argv.includes('--findings')) {
   const dir = personaDataDir(NAME)
   console.log(formatFindings(readFindings(dir), { name: NAME }))
   console.log(`(Dateien: ${dir})`)
+  process.exit(0)
+}
+
+// ─── Transcript export: the model's turns, readable ──────────────────────
+//
+//   node agents/persona.mjs --persona wanderer --log        last 20 turns
+//   node agents/persona.mjs --persona wanderer --log 50     last 50
+//   node agents/persona.mjs --persona wanderer --log --full with the full situation text
+//
+// What the figure was told, what it answered, which tools it called and what
+// came back, tokens and latency — from agents/data/personas/<name>/transcript.jsonl.
+if (argv.includes('--log')) {
+  const dir = personaDataDir(NAME)
+  const n = Number(argv[argv.indexOf('--log') + 1])
+  const last = Number.isFinite(n) && n > 0 ? n : 20
+  console.log(formatTranscript(readTranscript(dir, { last }), { full: argv.includes('--full') }))
+  console.log(`\n(Datei: ${dir}/transcript.jsonl — letzte ${last} Züge)`)
   process.exit(0)
 }
 
@@ -193,6 +210,7 @@ const R = {
   'llm.provider':     ['PERSONA_LLM_PROVIDER',     'anthropic',     'anthropic | openai (OpenAI-compatible: Ollama, vLLM — needs OPENAI_BASE_URL in the env)'],
   'llm.model':        ['PERSONA_LLM_MODEL',        'claude-opus-5-5', 'model id; the persona file does not know about models'],
   'llm.effort':       ['PERSONA_LLM_EFFORT',       'low',           'thinking depth: low | medium | high (a character does not need to deliberate)'],
+  'llm.transcript':   ['PERSONA_LLM_TRANSCRIPT',   'on',            'on | off — write every model turn (situation, answer, tool calls) to transcript.jsonl'],
   'llm.max_output':   ['PERSONA_LLM_MAX_OUTPUT',   1024,            'max output tokens per model call'],
   'llm.rate_per_min': ['PERSONA_LLM_RATE_PER_MIN', 6,               'model calls per minute; beyond that the figure answers from Parley'],
   'llm.timeout_ms':   ['PERSONA_LLM_TIMEOUT_MS',   20000,           'per call; a slow model is a Parley answer, not a frozen figure'],
@@ -895,6 +913,12 @@ const behaviour = new LlmBehaviour({
   bundleMs: num('llm.bundle_ms'),
   maxRounds: num('llm.max_rounds'),
   memory,
+  // The transcript: what the model was told and what it answered, per turn.
+  // Read with `--log`. Off with `llm.transcript = off`.
+  onTrace: (t) => {
+    if (konf.text('llm.transcript', R['llm.transcript'][0], R['llm.transcript'][1]).toLowerCase() === 'off') return
+    journal.trace(t)
+  },
   onJournal: (e) => {
     journal.entry(e)
     recent.push(`${e.action}(${JSON.stringify(e.input).slice(0, 60)}) → ${e.outcome.ok ? 'ok' : 'FEHLER ' + e.outcome.error}`)

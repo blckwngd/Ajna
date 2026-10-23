@@ -98,6 +98,7 @@ aus; eine dauerhaft stehende Figur hielte sonst still eine Gegend am Leben.
 | `llm.bundle_ms` | `PERSONA_LLM_BUNDLE_MS` | 1500 |
 | `llm.idle_s` | `PERSONA_LLM_IDLE_S` | 180 (`active`/`debug`: Eigeninitiative und Mindestabstand der Ankunfts-Züge, 0 = nie) |
 | `llm.max_rounds` | `PERSONA_LLM_MAX_ROUNDS` | 3 — **der Kostenregler:** Modellanfragen je Zug, jede schickt den ganzen Verlauf erneut |
+| `llm.transcript` | `PERSONA_LLM_TRANSCRIPT` | `on` — jeden Zug nach `transcript.jsonl` schreiben (`--log` liest es) |
 
 Ein leerer Eintrag heißt: es gilt die `.env`.
 
@@ -216,12 +217,26 @@ sie enthalten, was Spieler zur Figur gesagt haben:
 | `journal.jsonl` | **Beweise.** Eine Zeile je Aktion: Absicht, Aufruf, Erwartung, Ergebnis. Schreibt der Takt, urteilt niemand. Rotiert ab 8 MB (eine Vorgängerdatei bleibt) |
 | `findings.jsonl` | **Urteil des Modells.** Eine Zeile je `report_finding`, mit den Journalzeilen, die dazu führten. Rotiert nie |
 | `memory.json` | das Kurzzeitgedächtnis je Spieler; alle 5 Minuten und beim Beenden geschrieben |
+| `transcript.jsonl` | **Was das Modell gesagt bekam und was es antwortete** — je Zug: Ereignisse, die ganze Lage, jede Runde mit Antworttext, Werkzeugaufrufen und Ergebnissen, Tokens und Dauer; der Systemprompt einmal als eigene Zeile, wenn er sich ändert. Rotiert ab 8 MB. Regler `llm.transcript` (Vorgabe `on`) |
 
 Befunde lesen, ohne Login und ohne Netz:
 
 ```
 node agents/persona.mjs --persona wanderer --findings
 ```
+
+Und die Züge des Modells lesen — die letzten 20, oder 50, oder mit der
+ganzen Lage, die das Modell gesehen hat:
+
+```
+node agents/persona.mjs --persona wanderer --log
+node agents/persona.mjs --persona wanderer --log 50
+node agents/persona.mjs --persona wanderer --log --full
+```
+
+Je Zug eine Kopfzeile (Zeit, Anlass, Modell, Runden, Tokens, Dauer, Ausgang),
+die Ereignisse, dann `🗣` für den Antworttext und `↳` für jeden
+Werkzeugaufruf mit Ergebnis (`✗`, wenn er scheiterte).
 
 Gruppiert nach Art und Titel mit Zähler — **gruppiert, nicht gefiltert**:
 nichts wird unterschlagen, man sieht nur, wie oft etwas kam. Die rohen

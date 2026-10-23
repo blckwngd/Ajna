@@ -45,6 +45,34 @@ test('describeState names the location: coordinates, street, place', () => {
   assert.match(ohne, /Standort: 50\.10000, 7\.10000\./, 'without street and place: the coordinates alone')
 })
 
+test('every turn hands a trace to onTrace: events, situation, rounds with calls and results, outcome', async () => {
+  const traces = []
+  const base = { usage: { input: 1, output: 1 }, latencyMs: 1, model: 'fake-1' }
+  const llm = { name: 'fake', model: 'fake-1', async complete(req) {
+    const last = req.messages[req.messages.length - 1]
+    if (last.role === 'tool') return { ...base, text: 'Fertig.', toolCalls: [], stopReason: 'end_turn' }
+    return { ...base, text: 'Ich sehe nach.', toolCalls: [{ id: 't1', name: 'look_at', input: { object_id: 'bench1' } }], stopReason: 'tool_use' }
+  } }
+  const b = new LlmBehaviour({ llm, persona: { name: 'J', prompt: 'p' }, mode: () => 'debug', bundleMs: 1, maxRounds: 3, log() {}, warn() {}, onTrace: (t) => traces.push(t) })
+  const ctx = { mode: 'debug', self: SELF, perception: { objects: [BENCH], players: [{ id: 'p1', name: 'Mara' }], inventory: [] }, ajna: { updateObject: async () => ({}) } }
+  await b.turn([{ kind: 'chat', player: 'p1', text: 'was ist das' }], ctx)
+  assert.equal(traces.length, 1)
+  const t = traces[0]
+  assert.equal(t.kind_of, 'chat')
+  assert.deepEqual(t.events, ['p1 sagt zu dir: „was ist das"'])
+  assert.match(t.situation, /LAGE:/)
+  assert.match(t.system, /REGELN/)
+  assert.equal(t.rounds.length, 2)
+  assert.equal(t.rounds[0].calls[0].name, 'look_at')
+  assert.match(t.rounds[0].calls[0].result, /Bank \[bench1\]/)
+  assert.equal(t.rounds[1].text, 'Fertig.')
+  assert.equal(t.outcome.source, 'model')
+  // a binding Parley answer is a turn too — without rounds
+  await b.turn([{ kind: 'chat', player: 'p1', text: 'hallo', parley: { text: 'Hallo!', binding: true } }], ctx)
+  assert.equal(traces[1].outcome.source, 'parley-binding')
+  assert.equal(traces[1].rounds.length, 0)
+})
+
 test('describeState without findings or spoken-to times stays as it was', () => {
   const t = describeState({ self: SELF, objects: [BENCH], players: [{ id: 'p1' }] })
   assert.match(t, /Bank \[bench1\] · \d+ m · Ort · Aktionen: examine/)
