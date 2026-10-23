@@ -67,6 +67,9 @@ const KORREKTUR_ANTEIL = 0.25
 // Grenzen der Korrekturdauer (ms) — winzige Versätze sofort, große nicht endlos.
 const KORREKTUR_MIN_MS = 200
 const KORREKTUR_MAX_MS = 3000
+// Beim Anhalten (v = 0) kürzer: Eine stehende Figur, die noch sekundenlang
+// gleitet, sieht aus wie ein Fehler — und war einer.
+const HALT_KORREKTUR_MAX_MS = 800
 
 // Ab dieser Entfernung ist es kein Versatz mehr, sondern ein Ortswechsel —
 // dann wird gesprungen (Meter).
@@ -118,8 +121,17 @@ export class PositionSmoother {
         // eine Korrektur von 1,2 m/s arbeitet, bleibt fast stehen.
         const eigen = Math.max(0.3, Number(snap.dr.v) || 0)
         const tempo = Math.min(KORREKTUR_TEMPO, eigen * KORREKTUR_ANTEIL)
-        const dauer = Math.min(KORREKTUR_MAX_MS,
+        let dauer = Math.min(KORREKTUR_MAX_MS,
           Math.max(KORREKTUR_MIN_MS, (weitM / tempo) * 1000))
+        // EIN HALT WIRD NICHT EINGESCHLICHEN. Mit v = 0 ergab die Formel
+        // 0,075 m/s — eine Figur, die stehen bleibt und „Idle" spielt, rutschte
+        // noch drei Sekunden über den Boden zu ihrem Haltepunkt (gemeldet
+        // 23.10. an einer Persona: „rutscht weiter über den Boden"). Eine
+        // stehende Figur darf den kleinen Rest in Schrittgeschwindigkeit
+        // zurücklegen, und zwar kurz: unter einer Sekunde.
+        if (!(snap.dr.v > 0)) {
+          dauer = Math.min(HALT_KORREKTUR_MAX_MS, Math.max(KORREKTUR_MIN_MS, (weitM / KORREKTUR_TEMPO) * 1000))
+        }
         snap.fix = { lat: dLat, lon: dLon, altitude: dAlt, t: now, dauer }
       }
     }

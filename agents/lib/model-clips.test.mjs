@@ -21,11 +21,23 @@ test('an unreadable, remote or escaping reference yields nothing — never a thr
   assert.deepEqual(clipsOf(''), [])
 })
 
-test('gestures are the generic ones plus the model’s own, matched regardless of case', () => {
+test('gestures: only the generic ones the model can really play, then its own clips', () => {
   const g = gesturesFor(['Idle', 'Wave', 'Spell1'])
-  assert.deepEqual(g.slice(0, GENERIC_GESTURES.length), GENERIC_GESTURES)
+  assert.ok(g.includes('wave'), 'Wave resolves wave')
+  assert.ok(g.includes('think'), 'Spell1 resolves think')
+  assert.ok(g.includes('idle'))
+  assert.ok(!g.includes('dance'), 'no dance clip, no dance promise')
+  assert.ok(!g.includes('jump'))
   assert.ok(g.includes('Spell1'))
   assert.equal(g.filter(x => x.toLowerCase() === 'wave').length, 1, 'a model clip that is a generic gesture is not listed twice')
   assert.equal(matchGesture('spell1', g), 'Spell1')
   assert.equal(matchGesture('tanz', g), null)
+  assert.deepEqual(gesturesFor([]), [], 'a model without clips has no gestures — not even idle')
+  assert.ok(GENERIC_GESTURES.includes('dance'), 'dance stays a known alias for models that have one')
+})
+
+test('the Wizard has no dance — and the list says so', () => {
+  const g = gesturesFor(clipsOf('/models/quaternius_characters/Wizard.gltf'))
+  assert.ok(!g.includes('dance'))
+  assert.ok(g.includes('Idle_Weapon') && g.includes('Spell1') && g.includes('Roll'))
 })

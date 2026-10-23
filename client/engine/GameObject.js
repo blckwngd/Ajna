@@ -7,6 +7,7 @@ import { tagMeshOwner } from "./meshOwner.js"
 import { ENC_STYLE, encCategory } from "../core/wifiStyle.js"
 import { appearanceOf, arViewOf, gltfUrlOf } from "../core/Appearance.js"
 import { gangartFuer, tempoAusSpruengen } from "../core/gangart.js"
+import { ANIM_ALIASES } from "../core/animAliases.js"
 
 // Ziel-Welthöhe (Meter) pro Modell-Datei. Manche GLBs (three.js-Tiere, der
 // Khronos-Fox) sind in Eigen-Einheiten riesig → ohne Normierung füllen sie die
@@ -59,42 +60,9 @@ const INTERACTION_ANIM = {
   "füttern": ["eat", "chew"],
 }
 
-// Logische Animationszustände → Prioritätsliste von Namens-Teilstrings. So mappt
-// derselbe Director-State auf modell-spezifische Clip-Namen: ein fliegendes Wesen
-// nutzt für „fly" FlapFlight, für „glide" GlideFlight; ein Vogel mit nur einem
-// Clip fällt auf dessen erste Group zurück. Deckt Groß-/Kleinschreibung ab.
-// Zusätzliche Teilstrings decken abweichende/fehlerbehaftete Clip-Namen ab:
-// „idol" (wyvern.glb, Tippfehler für idle), „flying" (wyvern glide-Clip). Der
-// Präfix „metarig|" ist egal — gematcht wird per includes(). Reihenfolge =
-// Priorität; die spezifischen Namen (glideflight/flapflight) stehen VORNE, damit
-// sie beim Dragon.glb weiterhin zuerst greifen.
-const ANIM_ALIASES = {
-  walk:  ["walk", "move", "trot", "flapflight", "fly", "run"],
-  run:   ["run", "gallop", "sprint", "flapflight", "fly", "walk"],
-  idle:  ["idle", "idol", "survey", "rest", "stand", "glideflight", "glide", "hover"],
-  fly:   ["flapflight", "flap", "fly", "flight", "wing", "walk", "run", "move"],
-  glide: ["glideflight", "glide", "flying", "soar", "hover", "idle", "flight", "flapflight"],
-  // Abheben: der wyvern hat „metarig|take off"; Modelle ohne eigenen Takeoff-Clip
-  // (z. B. Dragon.glb) fallen sauber auf ihre Flap-/Flug-Animation zurück.
-  takeoff: ["take off", "takeoff", "take_off", "launch", "flapflight", "flap", "fly", "flight"],
-  // Gesten aus Dialogen (Parley). Letzter Eintrag ist immer "idle": Modelle
-  // ohne passenden Clip sollen ruhig stehen bleiben statt irgendeine Animation
-  // zu erwischen (der Fallback auf groups[0] greift sonst).
-  // Kampf. Dragon.glb bringt „Hit" mit, MawGooey und RobotExpressive „Death";
-  // Soldier und Slime haben nichts dergleichen. Für die steht der nachgebaute
-  // Ersatz bereit (siehe #kampfGeste) — deshalb dürfen diese beiden Zustände
-  // NICHT auf groups[0] zurückfallen: Ein zufälliger Clip als „Tod" sähe aus
-  // wie ein Fehler, und der Ersatz käme nie zum Zug.
-  hit:   ["hit", "damage", "hurt", "flinch", "recoil", "impact"],
-  death: ["death", "die", "dead", "defeat"],
-  wave:  ["wave", "waving", "greet", "salute", "yes", "idle"],
-  dance: ["dance", "dancing", "idle"],
-  jump:  ["jump", "hop", "idle"],
-  // Nachdenken — eine Figur, die auf ihr Sprachmodell wartet, soll nicht
-  // wie eingefroren wirken. Die Alltagsleute haben „Interact", die Helden
-  // „Spell"; wer nichts dergleichen hat, steht ruhig.
-  think: ["think", "thinking", "ponder", "interact", "spell", "idle"],
-}
+// Logische Animationszustände → Clip-Namen: die Tabelle liegt in
+// core/animAliases.js, weil die Agents sie ebenfalls brauchen (welche
+// Gesten hat eine Figur WIRKLICH — nicht bloß als Rückfall auf idle).
 
 // Typen, die als „Figur" einen Blob-Schatten bekommen (Objekte mit 3D-Modell
 // ebenfalls, siehe loadFromData).

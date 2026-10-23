@@ -14,11 +14,17 @@
 import { readFileSync } from 'node:fs'
 import { resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { clipForAlias } from '../../client/core/animAliases.js'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 export const MODELS_DIR = resolve(HERE, '..', '..', 'client', 'models')
 
-/** Generic gestures the client resolves by alias — see GameObject.js ANIM_ALIASES. */
+/**
+ * Generic gestures the client resolves by alias (core/animAliases.js) — but
+ * ONLY where the model has a real clip for them. "dance" was always on the
+ * list; the Wizard has no dance clip, the alias chain ended at idle, and the
+ * figure stood still while claiming to dance. A player asked three times.
+ */
 export const GENERIC_GESTURES = ['wave', 'dance', 'jump', 'think', 'idle']
 
 /**
@@ -55,14 +61,18 @@ function glbJson(buf) {
 }
 
 /**
- * What a figure may play: its own clips plus the generic gestures. Order:
- * generic first (they always work), then the model's own.
+ * What a figure may play: the generic gestures the model can actually
+ * resolve, then its own clips. Nothing on this list is a promise the
+ * client cannot keep — the model decides which of its real clips passes
+ * for a dance when it has none.
  * @param {string[]} clips
  * @returns {string[]}
  */
 export function gesturesFor(clips) {
-  const own = (clips || []).filter(c => !GENERIC_GESTURES.includes(String(c).toLowerCase()))
-  return [...GENERIC_GESTURES, ...own]
+  const own = clips || []
+  const generic = GENERIC_GESTURES.filter(g => !!clipForAlias(g, own))
+  const rest = own.filter(c => !generic.includes(String(c).toLowerCase()))
+  return [...generic, ...rest]
 }
 
 /** Case-insensitive lookup: the model writes "wave", the clip is "Wave". */

@@ -765,7 +765,16 @@ function buildCtx() {
     noteFailure,
     noteSaid: (id) => { const p = person(String(id)); p.saidAt = Date.now() },
     gestures,
-    playAnimation: async (clip) => { await ajna.setAnimation(figure.id, String(clip)); c.anim = String(clip) },
+    playAnimation: async (clip) => {
+      const name = String(clip)
+      await ajna.setAnimation(figure.id, name); c.anim = name
+      // A gesture is a moment, not a state: the client loops a clip until
+      // the next change, and a figure picking something up for ten minutes
+      // looks broken. Back to idle after a while — unless it moved on.
+      setTimeout(() => {
+        if (c.anim === name && c.fsm !== 'walking') { ajna.setAnimation(figure.id, 'idle').then(() => { c.anim = 'idle' }).catch(() => {}) }
+      }, GESTURE_MS).unref?.()
+    },
     ajna,
     walkTo: (lat, lon) => planWalk({ lat, lon }),
     stop: () => stopHere({ holdMs: 5000 }),
@@ -792,7 +801,10 @@ function buildCtx() {
 
 // What the figure can play — read from its model file once. The model
 // gets the list in its system prompt, the guard holds it to the list.
+// Only gestures the model can really resolve are on it: no "dance" for a
+// figure without a dance clip (lib/model-clips.mjs).
 const gestures = gesturesFor(clipsOf(figure.appearance?.gltf))
+const GESTURE_MS = 8000
 log(`gestures: ${gestures.join(', ')}`)
 
 const behaviour = new LlmBehaviour({

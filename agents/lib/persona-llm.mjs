@@ -139,7 +139,7 @@ export function systemPrompt({ prompt, name, mode, parleyNote = true, gestures =
   // same notation as the dialogue rules. Listed here instead of per turn —
   // the system prompt is cached, the situation is not.
   if (Array.isArray(gestures) && gestures.length) {
-    parts.push(`- Gesten: Bei \`say\` kannst du \`do\` mitgeben, z. B. ["anim:${gestures[0]}"]. Deine Gesten: ${gestures.join(', ')}. Andere hast du nicht.`)
+    parts.push(`- Gesten: Bei \`say\` kannst du \`do\` mitgeben, z. B. ["anim:${gestures[0]}"]. Deine Gesten: ${gestures.join(', ')}. Andere hast du nicht — verlangt jemand eine, die fehlt (tanzen, hinfallen), nimm die passendste aus der Liste und sag dazu, was du tust, oder sag, dass du das nicht kannst. Behaupte nie eine Geste, die nicht auf der Liste steht.`)
   }
   if (parleyNote) {
     parts.push('- Manchmal steht dabei, was deine vorbereiteten Antworten sagen würden. Das ist Material für dich, kein Zwang — aber widersprich ihm nicht.')
