@@ -102,6 +102,20 @@ test('use on a hint answers with the text a player would read', async () => {
   assert.equal(replyFor({}, 'pet', { delivered: 2 }), 'pet ausgelöst. Wer das Objekt betreibt, hat es bemerkt.')
 })
 
+test('walk_to admits when no way was found — instead of claiming to be on the way', async () => {
+  const ctx = makeCtx({ walkTo: async () => false })
+  const r = await byKey('walk_to').run(ctx, { object_id: 'bench1' })
+  assert.match(r, /kein Weg zu Bank gefunden/)
+  assert.ok(!/unterwegs/.test(r))
+})
+
+test('look_at tells what the players see: model file, symbol, colour', () => {
+  const chest = { id: 'c1', name: 'Truhe', type: 'item', description: 'Ein Gegenstand.', appearance: { gltf: '/models/chest.glb', emoji: '📦', color: '#c08a35', glow: '#ffcc00' } }
+  const r = describeObject(chest)
+  assert.match(r, /Aussehen: Modell chest\.glb, Symbol 📦, Farbe #c08a35, leuchtet/)
+  assert.ok(!/Aussehen/.test(describeObject({ id: 'x', name: 'Nichts' })), 'no line when nothing is set')
+})
+
 test('walk_to says how far and that the figure is not there yet', async () => {
   const ctx = makeCtx({ speedMps: 1.3 })
   const r = await byKey('walk_to').run(ctx, { object_id: 'bench1' })

@@ -160,6 +160,18 @@ export function describeObject(o, self = null) {
   const lines = [parts.join(' · ')]
   const desc = String(o.description || '').trim()
   if (desc) lines.push(desc.length > 300 ? desc.slice(0, 299) + '…' : desc)
+  // What the players SEE: the model file, the emoji, the colour. A persona
+  // judging its surroundings could not tell a chest from a key when both
+  // said "ein Gegenstand" — the clients knew, the figure did not.
+  const ap = (o.appearance && typeof o.appearance === 'object') ? o.appearance : {}
+  const look = []
+  const gltf = String(ap.gltf || o.model_url || '').trim()
+  if (gltf) look.push(`Modell ${gltf.split('/').pop()}`)
+  if (ap.emoji) look.push(`Symbol ${ap.emoji}`)
+  if (ap.shape) look.push(`Form ${ap.shape}`)
+  if (ap.color) look.push(`Farbe ${ap.color}`)
+  if (ap.glow) look.push('leuchtet')
+  if (look.length) lines.push(`Aussehen: ${look.join(', ')}`)
   const hint = String(o.state?.hint || '').trim()
   if (hint) lines.push(`Darauf steht: „${hint.length > 300 ? hint.slice(0, 299) + '…' : hint}"`)
   const task = String(o.state?.call?.task || o.state?.call?.summary || '').trim()
@@ -283,7 +295,11 @@ export const ACTIONS = [
     },
     async run(ctx, args) {
       const target = perceivedObject(ctx, args.object_id)
-      await ctx.walkTo(target.lat, target.lon)   // routing stays with the caller
+      const ok = await ctx.walkTo(target.lat, target.lon)   // routing stays with the caller
+      // The planner may find no way (no graph, off the leash of the roads).
+      // Saying "unterwegs" then — as this did — made the figure claim a walk
+      // it never started. The model needs the refusal to say it, too.
+      if (ok === false) return `kein Weg zu ${target.name || args.object_id} gefunden — du bleibst stehen`
       // "true" told the model nothing; it asked why it had not arrived.
       const d = distanceM(ctx.self.lat, ctx.self.lon, target.lat, target.lon)
       const v = Number(ctx.speedMps) > 0 ? Number(ctx.speedMps) : 1.3

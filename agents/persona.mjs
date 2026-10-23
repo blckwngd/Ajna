@@ -732,6 +732,18 @@ every(saveMemory, () => 5 * 60_000)
 process.on('exit', () => { try { saveMemory() } catch {} })
 log(`journal: ${journal.dir}`)
 
+/** What the figure is doing, with the rest of the way — "du gehst" alone told the model nothing. */
+function activityText() {
+  if (c.fsm === 'planning') return 'du brichst gerade auf'
+  if (c.fsm === 'walking' && Array.isArray(c.path) && c.path.length) {
+    const [zl, zo] = c.path[c.path.length - 1]
+    const rest = Math.round(haversine(c.lat, c.lon, zl, zo))
+    return `du gehst, noch etwa ${rest} m bis zum Ziel`
+  }
+  if (Date.now() < c.attendUntil) return 'du stehst und wartest'
+  return 'du stehst'
+}
+
 /** Everything an action may touch — rebuilt per turn, so perception is fresh. */
 function buildCtx() {
   const me = ajna.currentUser()
@@ -757,7 +769,7 @@ function buildCtx() {
     perception: { objects, players, inventory },
     limits: { roam: { lat: home.lat, lon: home.lon, radius_m: num('roam_radius_m') } },
     world: world.varsFuer(c.lat, c.lon),
-    activity: c.fsm === 'walking' ? 'du gehst' : 'du stehst',
+    activity: activityText(),
     recent: recent.slice(-8),
     findings: knownFindings.slice(-8),
     speedMps: num('speed'),
@@ -776,7 +788,11 @@ function buildCtx() {
       }, GESTURE_MS).unref?.()
     },
     ajna,
-    walkTo: (lat, lon) => planWalk({ lat, lon }),
+    // An explicit "go there" beats the conversational halt: with attendUntil
+    // still set, the plan was written (clients animated the walk) while the
+    // tick refused to move the figure — the player saw Jorin walking, Jorin
+    // reported "du stehst", and both were right. Found by the persona.
+    walkTo: (lat, lon) => { c.attendUntil = 0; return planWalk({ lat, lon }) },
     stop: () => stopHere({ holdMs: 5000 }),
     wait: (seconds) => { c.attendUntil = Math.max(c.attendUntil, Date.now() + seconds * 1000); return true },
     recordFinding: (f) => {

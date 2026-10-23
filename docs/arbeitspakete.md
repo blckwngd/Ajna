@@ -102,6 +102,26 @@ Chatfenster nennt Freunde beim Namen. Nur Standard-Server. Netz:
 `tests/privacy/freunde.mjs` (28 Prüfungen). Was eine Freundschaft NICHT
 hergibt: Position oder Zugriff — dafür sind Gruppen und Rechte da.
 
+### 0e · Die Sicht der Figur: Bilder aus ihren Augen — *Vorschlag, Entscheidung offen*
+
+Jorin urteilt über seine Umgebung aus Listen. Ein Bild aus seiner Position
+und Blickrichtung — gerendert vom bestehenden AR-Client, nicht von einem
+zweiten Renderer — gäbe ihm, was die Spieler sehen: Modelle, Abstände,
+Verdeckung, Beschriftungen. Machbar, in drei Schritten, der erste ist eine
+Messung:
+
+1. **Rendert der AR-Client kopflos?** Chromium ohne Fenster (Playwright) mit
+   Software-WebGL (SwiftShader) gegen `index-ar.html`; Dummy-Position und
+   Kamerablick über die vorhandenen localStorage-Schalter. Wenn ja: Dauer
+   und Bildgröße messen (erwartet: 3–10 s, ein Bild um 1500 Token beim
+   Modell).
+2. **Zuschauer-Modus** im Client: Position, Höhe und Blickrichtung aus der
+   URL, keine Kamera, kein GPS, keine Oberfläche — ein Bild, dann Schluss.
+3. **Werkzeug `look_around`** im Aktionsregister (nur `debug`, nur alle
+   `llm.idle_s`, weil teuer): startet die Seite, schreibt das Bild nach
+   `agents/data/personas/<name>/bilder/`, gibt es dem Modell als Bild mit.
+   Vorher Schritt 1 — ohne gemessenes Rendern ist der Rest Papier.
+
 ### 0d · Weltchat in der Umgebung — *eigenes Paket, nicht jetzt*
 
 Nachrichten von Spielern in der eigenen Umgebung lesen, ohne Gespräch und
