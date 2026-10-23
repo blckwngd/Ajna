@@ -121,24 +121,51 @@ export function ortAnbieter({
   const datei = ablage ? join(ablage, 'orte.json') : null
   const ua = `Ajna/1.0 (+https://github.com/blckwngd/Ajna${kontakt ? `; ${kontakt}` : ''})`
 
-  /** @type {Array<{schluessel:string, werte:object, umriss:object|null, punkt:{lat:number,lon:number}, ts:number}>} */
+  /**
+   * @type {Array<{schluessel:string, werte:object, umriss:object|null, punkte:Array<{lat:number,lon:number}>, ts:number}>}
+   * `punkte`: every point this place was the answer for. A simplified
+   * outline does not always contain the very point Nominatim answered for
+   * (Weißenthurm: 16 points, the query point outside) — without this list
+   * the same point asked again every round: 191 requests in one morning.
+   */
   let orte = []
   let geladen = null
 
+  const normalisiere = (o) => {
+    if (!o || !o.werte) return null
+    const punkte = Array.isArray(o.punkte) ? o.punkte : (o.punkt ? [o.punkt] : [])
+    return { ...o, punkte: punkte.filter(p => Number.isFinite(p?.lat) && Number.isFinite(p?.lon)) }
+  }
+  const liesDatei = async () => {
+    if (!datei) return []
+    try {
+      const roh = JSON.parse(await readFile(datei, 'utf8'))
+      return Array.isArray(roh) ? roh.map(normalisiere).filter(Boolean) : []
+    } catch { return [] }   // noch nichts aufgehoben
+  }
+  /** Two lists → one: by key, the newer wins, query points are joined. */
+  const verschmelze = (a, b) => {
+    const m = new Map()
+    for (const o of [...a, ...b]) {
+      const alt = m.get(o.schluessel)
+      if (!alt) { m.set(o.schluessel, { ...o, punkte: [...o.punkte] }); continue }
+      const neu = (o.ts || 0) >= (alt.ts || 0) ? { ...o } : { ...alt }
+      neu.punkte = [...alt.punkte, ...o.punkte].filter((p, i, arr) => arr.findIndex(q => q.lat === p.lat && q.lon === p.lon) === i).slice(-50)
+      m.set(o.schluessel, neu)
+    }
+    return [...m.values()].sort((x, y) => (y.ts || 0) - (x.ts || 0))
+  }
   const laden = () => {
     if (geladen) return geladen
-    geladen = (async () => {
-      if (!datei) return
-      try {
-        const roh = JSON.parse(await readFile(datei, 'utf8'))
-        if (Array.isArray(roh)) orte = roh.filter(o => o && o.werte && o.punkt)
-      } catch { /* noch nichts aufgehoben */ }
-    })()
+    geladen = (async () => { orte = verschmelze(orte, await liesDatei()) })()
     return geladen
   }
+  // Director and persona share this file. Each used to write its own list
+  // and overwrite the other's — merge with what is on disk first.
   const speichern = async () => {
     if (!datei) return
     try {
+      orte = verschmelze(orte, await liesDatei()).filter(gueltig).slice(0, MAX_ORTE)
       await mkdir(ablage, { recursive: true })
       await writeFile(datei, JSON.stringify(orte), 'utf8')
     } catch (err) { warn(`[ort] Ablage: ${err?.message || err}`) }
@@ -147,8 +174,8 @@ export function ortAnbieter({
   const gueltig = (o) => jetzt() - (o.ts || 0) < ttlMs
   const trifft = (o, lat, lon) => {
     if (!gueltig(o)) return false
-    if (o.umriss) return punktInGeometrie(o.umriss, lat, lon)
-    return abstandM(o.punkt.lat, o.punkt.lon, lat, lon) <= NAEHE_OHNE_UMRISS_M
+    if (o.umriss && punktInGeometrie(o.umriss, lat, lon)) return true
+    return o.punkte.some(p => abstandM(p.lat, p.lon, lat, lon) <= NAEHE_OHNE_UMRISS_M)
   }
   const finde = (lat, lon) => orte.find(o => trifft(o, lat, lon)) || null
 
@@ -181,7 +208,9 @@ export function ortAnbieter({
         return false
       }
       const url = `${basis.replace(/\/+$/, '')}/reverse?format=jsonv2&lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}`
-        + '&zoom=10&addressdetails=1&polygon_geojson=1&polygon_threshold=0.001&accept-language=de'
+        // threshold 0.0002° (~20 m): 0.001 gave Weißenthurm 16 points and left
+        // the query point outside its own outline.
+        + '&zoom=10&addressdetails=1&polygon_geojson=1&polygon_threshold=0.0002&accept-language=de'
       await budget.buche(1)   // die ANFRAGE zählt, nicht die gelungene Antwort
       const r = await abruf(url, { signal: AbortSignal.timeout(timeoutMs), headers: { 'User-Agent': ua, 'Accept': 'application/json' } })
       if (!r.ok) throw new Error(`Nominatim antwortet ${r.status}`)
@@ -192,8 +221,10 @@ export function ortAnbieter({
       const g = antwort.geojson
       const umriss = g && (g.type === 'Polygon' || g.type === 'MultiPolygon') ? g : null
       const schluessel = antwort.osm_type && antwort.osm_id ? `${antwort.osm_type}:${antwort.osm_id}` : `p:${lat.toFixed(3)},${lon.toFixed(3)}`
+      const alt = orte.find(o => o.schluessel === schluessel)
+      const punkte = [...(alt?.punkte || []), { lat, lon }].slice(-50)
       orte = orte.filter(o => o.schluessel !== schluessel && gueltig(o))
-      orte.unshift({ schluessel, werte, umriss, punkt: { lat, lon }, ts: jetzt() })
+      orte.unshift({ schluessel, werte, umriss, punkte, ts: jetzt() })
       if (orte.length > MAX_ORTE) orte.length = MAX_ORTE
       await speichern()
       return true

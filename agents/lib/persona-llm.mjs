@@ -436,9 +436,14 @@ export class LlmBehaviour {
   narrate(events, parleyAnswers, ctx) {
     const lines = this.eventLines(events)
     for (const a of parleyAnswers) lines.push(`(Deine vorbereiteten Antworten würden ${a.player} sagen: „${a.text}")`)
+    // EVERYTHING the context offers for the situation. This list once
+    // stopped at `recent` — findings, the view and the location were built,
+    // tested in describeState, and never reached the model (the persona
+    // said it did not know the town while the place sat in the context).
     lines.push('', 'LAGE:', describeState(ctx?.describe ? ctx.describe() : {
       self: ctx?.self, home: ctx?.limits?.roam, objects: ctx?.perception?.objects,
       players: ctx?.perception?.players, inventory: ctx?.perception?.inventory, world: ctx?.world, activity: ctx?.activity, recent: ctx?.recent,
+      findings: ctx?.findings, view: ctx?.view, location: ctx?.location,
     }))
     return lines.join('\n')
   }

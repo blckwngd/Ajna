@@ -120,6 +120,35 @@ test('ohne Umriss gilt ein Treffer nur in der Nähe des Abfragepunkts', async ()
   assert.equal(a.kennt(50.3569 + (NAEHE_OHNE_UMRISS_M * 2) / 111_000, 7.5890), false, 'drei Kilometer: nein')
 })
 
+test('ein Abfragepunkt außerhalb seines (vereinfachten) Umrisses gilt trotzdem als bekannt — sonst fragt er jede Runde neu', async () => {
+  // Nominatim ordnet den Punkt der Gemeinde zu, der vereinfachte Umriss schließt ihn aber nicht ein.
+  const ohneDenPunkt = { ...DORF, geojson: { type: 'Polygon', coordinates: [[[7.62, 50.41], [7.66, 50.41], [7.66, 50.44], [7.62, 50.44], [7.62, 50.41]]] } }
+  const d = doppel([ohneDenPunkt, ohneDenPunkt])
+  const a = ortAnbieter({ abruf: d.abruf, dir: false, warn: () => {} })
+  assert.equal(await a.vorbereiten({ lat: 50.405, lon: 7.61 }), true)
+  assert.equal(a.kennt(50.405, 7.61), true, 'der Punkt selbst')
+  assert.equal(a.kennt(50.406, 7.611), true, 'und seine Nachbarschaft')
+  assert.equal(await a.vorbereiten({ lat: 50.405, lon: 7.61 }), false, 'keine zweite Anfrage')
+  assert.equal(d.aufrufe.length, 1)
+  assert.equal(a.kennt(50.43, 7.64), true, 'im Umriss sowieso')
+})
+
+test('zwei Prozesse teilen die Ablage, ohne sich zu überschreiben', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ort-'))
+  try {
+    const a = ortAnbieter({ abruf: doppel([KOBLENZ]).abruf, dir, warn: () => {} })
+    const b = ortAnbieter({ abruf: doppel([DORF]).abruf, dir, warn: () => {} })
+    assert.equal(await a.vorbereiten({ lat: 50.3569, lon: 7.5890 }), true)
+    await new Promise(r => setTimeout(r, 1150))
+    assert.equal(await b.vorbereiten({ lat: 50.42, lon: 7.62 }), true)   // b kannte Koblenz nicht im Speicher — schreibt aber nicht darüber
+    const c = ortAnbieter({ abruf: async () => { throw new Error('kein Netz') }, dir, warn: () => {} })
+    await c.vorbereiten({ lat: 0, lon: 0 }).catch(() => {})
+    assert.equal(c.lies(50.37, 7.60)?.stadt, 'Koblenz', 'Koblenz hat die zweite Schreibung überlebt')
+    assert.equal(c.lies(50.42, 7.62)?.stadt, 'Vallendar')
+    assert.equal(c.bestand, 2)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
 test('im Weltkontext: punktgenau geholt und für den genauen Punkt gelesen', async () => {
   const d = doppel([KOBLENZ])
   const a = ortAnbieter({ abruf: d.abruf, dir: false, warn: () => {} })
