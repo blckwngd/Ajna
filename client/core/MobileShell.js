@@ -30,6 +30,7 @@ import { interactionReply, protokolliereInteraktion } from './InteractionReply.j
 import { privacy } from './PrivacyPolicy.js'
 import { messageLog, CATS } from './MessageLog.js'
 import { MessageLogPanel } from './MessageLogPanel.js'
+import { FriendsDialog } from './FriendsDialog.js'
 import { Minimap } from './Minimap.js'
 import { QuestPanel } from './QuestPanel.js'
 import { QuestEditor } from './QuestEditor.js'
@@ -105,6 +106,12 @@ export class MobileShell {
     // Ohne diesen Haken könnte ein Toast aus der Karten- oder AR-Ansicht das
     // Gespräch nicht öffnen (siehe Bündel-Falle bei window.ajnaLog).
     window.ajnaLogPanel = this._logPanel
+    // Freundesliste: eigener Knopf (👥), Fenster mit Einladungen, Freunden
+    // und „Gespräch" — das öffnet den Chat mit dem Konto, auch aus der Ferne.
+    // Global wie das Chatfenster: Es liefert Namen für Nachrichten von
+    // Freunden (MessageLogPanel._nameFor), und das in jedem Bündel.
+    this._friends = new FriendsDialog({ ajna: this.ajna, logPanel: this._logPanel })
+    window.ajnaFriends = this._friends
     // Inhaltsfilter als schwebender Knopf. Er wird oft gebraucht; über
     // Einstellungen → Verwaltung sind es drei Antipper.
     //

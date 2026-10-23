@@ -4622,3 +4622,34 @@ process.on('exit', (code) => {
   check('sie misst, dass ein unbeanspruchter Agent-Name offen bleibt',
     /ein Name ohne Manifest bleibt offen/.test(suite))
 }
+
+// ---------------------------------------------------------------------------
+// Freundesliste (Arbeitspaket 0c, 23.10.). Das Verhalten prüft
+// tests/privacy/freunde.mjs am Server; hier die Eigenschaften, die beim
+// Umbauen still verlorengehen könnten.
+console.log('\n── Freundesliste')
+{
+  const fd = readFileSync(new URL('../client/core/FriendsDialog.js', import.meta.url), 'utf8')
+  const shell = readFileSync(new URL('../client/core/MobileShell.js', import.meta.url), 'utf8')
+  const panel = readFileSync(new URL('../client/core/MessageLogPanel.js', import.meta.url), 'utf8')
+  const hook = readFileSync(new URL('../pocketbase/pb_hooks/main.pb.js', import.meta.url), 'utf8')
+  const mig = readFileSync(new URL('../pocketbase/pb_migrations/1793000000_friendships.js', import.meta.url), 'utf8')
+  const priv = readFileSync(new URL('./run-privacy.mjs', import.meta.url), 'utf8')
+
+  check('der Knopf meldet sich an der Leiste an, mit Taste E',
+    /createLauncher\(\{[\s\S]{0,120}id: 'friends'[\s\S]{0,80}hotkey: 'e'/.test(fd))
+  check('„Gespräch" öffnet den Chat mit dem Konto, ohne Figur',
+    /panel\.talkTo\(\{ userId: f\.userId, name: f\.name, objectId: null \}, \{ open: true \}\)/.test(fd))
+  check('die Namen kommen aus den Zeilen, nicht aus fremden Nutzerdatensätzen',
+    /nameFor\(userId\)/.test(fd) && /f\.from_name/.test(fd) && !/collection\('users'\)/.test(fd))
+  check('die Shell stellt die Liste global bereit', /window\.ajnaFriends = this\._friends/.test(shell))
+  check('das Chatfenster nennt Freunde beim Namen', /window\.ajnaFriends\?\.nameFor\?\.\(m\?\.from\)/.test(panel))
+  // Server: nur zwischen den beiden, Namen gestempelt, Gegenrichtung ist Annahme.
+  check('lesen dürfen nur die beiden Seiten', /listRule:\s+'from = @request\.auth\.id \|\| to = @request\.auth\.id'/.test(mig))
+  check('anlegen nur als Einladung und als man selbst', /createRule: '@request\.auth\.id != "" && from = @request\.auth\.id && status = "invited"'/.test(mig))
+  check('der Hook stempelt die Anzeigenamen', /e\.record\.set\("from_name", anzeigenameVon\(user\)\)/.test(hook))
+  check('und nimmt die Gegenrichtung als Annahme', /code: "reverse_accepted"/.test(hook) && /gegen\.set\("status", "accepted"\)/.test(hook))
+  check('beim Ändern nur der Status', /code: "status_only"/.test(hook))
+  check('die Auflösung trifft nur genau', /username != '' && username = \{:q\}/.test(hook))
+  check('die Suite läuft in npm test mit', /freunde/.test(priv))
+}

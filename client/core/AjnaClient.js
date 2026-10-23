@@ -1163,6 +1163,63 @@ export class AjnaClient {
   }
 
   // ===================================================================
+  //  Freunde (Collection `friendships`, Paket 0c)
+  // ===================================================================
+  // Eine Freundschaft gibt genau eines her: das Konto als Gegenüber für
+  // `sendChat`, auch wenn es nicht in der Nähe ist. Keine Position, kein
+  // Zugriff. Die Zeilen tragen die Anzeigenamen (vom Server gestempelt),
+  // weil ein Konto fremde Nutzer nicht lesen darf.
+
+  /** Ein Konto über Handle oder E-Mail finden — nur bei genauer Übereinstimmung. */
+  async resolveUser(q) {
+    return this.pb.send(`/api/users/resolve?q=${encodeURIComponent(String(q || '').trim())}`, { method: 'GET' })
+  }
+
+  /** Alle Zeilen, an denen ich beteiligt bin (eingeladen, angenommen, abgelehnt). */
+  async listFriendships() {
+    if (!this.isLoggedIn()) return []
+    const list = await this.pb.collection('friendships').getFullList({ sort: '-updated' })
+    return this._tagOriginList(list)
+  }
+
+  /**
+   * Einladen. Antwortet der Server mit `reverse_accepted`, hatte die andere
+   * Seite schon eingeladen — dann ist man jetzt befreundet; der Aufrufer
+   * bekommt das als `{ accepted: true }` statt als Fehler.
+   */
+  async inviteFriend(userId) {
+    const me = this.currentUserRaw()
+    if (!me) throw new Error('inviteFriend: not logged in')
+    try {
+      const rec = await this.pb.collection('friendships').create({ from: me.id, to: this._toRaw(userId), status: 'invited' })
+      return { invited: true, record: this._tagOrigin(rec) }
+    } catch (err) {
+      const code = err?.response?.data?.code || err?.response?.code
+      if (code === 'reverse_accepted') return { accepted: true, id: err?.response?.data?.id || err?.response?.id }
+      if (code === 'already_friends') return { accepted: true, already: true }
+      throw err
+    }
+  }
+
+  /** Annehmen oder ablehnen — nur als eingeladene Seite. */
+  async respondFriendship(id, status) {
+    const raw = this._toRaw(id)
+    return this._tagOrigin(await this.pb.collection('friendships').update(raw, { status }))
+  }
+
+  /** Entfernen oder zurückziehen — beide Seiten dürfen. */
+  async removeFriendship(id) {
+    return this.pb.collection('friendships').delete(this._toRaw(id))
+  }
+
+  /** Änderungen an meinen Zeilen (Realtime, nach den Leseregeln gefiltert). */
+  async onFriendshipsChanged(callback) {
+    return this.pb.collection('friendships').subscribe('*', (e) => {
+      try { callback({ action: e.action, record: this._tagOrigin(e.record) }) } catch {}
+    })
+  }
+
+  // ===================================================================
   //  Öffentliche Einstellungen — lesbar VOR dem Login
   // ===================================================================
   // Manches muss ein Client wissen, bevor irgendjemand angemeldet ist: Nimmt

@@ -83,16 +83,24 @@ Beide Ansichten hören auf das Fensterereignis `ajna:speech`, das
 durchscheinend, der Schleier dunkelt nicht mehr ab; der Knopf heißt
 „Chat (C)" und schaltet das Fenster an und aus.
 
-### 0c · Freundesliste — *eigenes Paket, nicht jetzt*
+### 0c · Freundesliste — **steht seit 23.10.**
 
-Spieler zu einer Freundesliste hinzufügen; Freunde sind auch dann
-anschreibbar, wenn sie nicht in der Nähe sind (der Transport kann es schon:
-`sendChat` an ein Konto, das Postfach fängt Abwesende auf). Dazu ein
-eigener schwebender Knopf mit Verwaltungsfenster: Freunde sehen und
-entfernen, Einladungen sehen und annehmen oder ablehnen, Gespräch starten.
-Offen zu entwerfen: Sammlung für Freundschaften (gegenseitig, mit Status
-„eingeladen"/„angenommen"), wer wen finden darf (Handle? QR vor Ort?),
-und wie eine Einladung den anderen erreicht (Postfach-Nachricht mit `meta`).
+Sammlung `friendships` (eine Zeile je Beziehung, gerichtet angelegt,
+gegenseitig gelesen; `invited` → `accepted`/`declined`), lesen und löschen
+dürfen beide Seiten, anlegen nur als Einladung, ändern nur die eingeladene
+Seite und nur den Status. **Namen gestempelt der Server** in die Zeile, weil
+ein Konto fremde Nutzer nicht lesen darf. **Finden** über
+`GET /api/users/resolve?q=` — Handle oder E-Mail, nur bei genauer
+Übereinstimmung, kein Blättern — oder aus der Nähe: Das Fenster listet die
+Anwesenheiten um einen herum zum Einladen. **Gegenrichtung ist Annahme**:
+Lädt B den A ein, während A→B offen ist, ist A→B angenommen.
+
+Client: `FriendsDialog` mit eigenem Knopf (👥, Taste E, Zähler offener
+Einladungen), vier Abschnitte, „Gespräch" öffnet den Chat mit dem Konto ohne
+Figur; eingehende Einladungen und Annahmen melden sich als Toast; das
+Chatfenster nennt Freunde beim Namen. Nur Standard-Server. Netz:
+`tests/privacy/freunde.mjs` (28 Prüfungen). Was eine Freundschaft NICHT
+hergibt: Position oder Zugriff — dafür sind Gruppen und Rechte da.
 
 ### 0d · Weltchat in der Umgebung — *eigenes Paket, nicht jetzt*
 

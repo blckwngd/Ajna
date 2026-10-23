@@ -204,6 +204,8 @@ export class MessageLogPanel {
     }
     const p = this._partner
     if (p && p.userId === m?.from && p.name) return p.name
+    // Ein Freund schreibt ohne Figur — sein Name steht in der Freundesliste.
+    try { const n = window.ajnaFriends?.nameFor?.(m?.from); if (n) return n } catch {}
     return m?.from || 'Jemand'
   }
 

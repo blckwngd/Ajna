@@ -215,6 +215,19 @@ Ablage. Wer nicht verbunden ist, bekommt nichts.
 | `await sendChat(to, { text, object?, meta?, ephemeral?, serverId? })` | → `{ ok, delivered, stored }`; `delivered = 0` heißt: Empfänger nicht verbunden — dann wartet die Nachricht im Postfach (`stored = true`), außer sie ist `ephemeral` |
 | `await onChat(cb, { inbox? })` | Rückruf `{ from, to, object, text, meta, ephemeral, ts, stored, _origin }`; über alle angemeldeten Server. Nach dem Abo wird das Postfach geleert: wartende Nachrichten kommen mit `stored: true` und werden danach gelöscht (`inbox: false` lässt sie liegen). Agents antworten auf `stored` besser nicht — der Spieler ist längst weiter |
 
+### Freunde
+
+Ein Konto als Gegenüber für den Chat, auch aus der Ferne — mehr gibt eine Freundschaft nicht her (keine Position, kein Zugriff). Nur Standard-Server.
+
+| Methode | Beschreibung |
+|---|---|
+| `await resolveUser(q)` | → `{ id, name }` bei **genauer** Übereinstimmung von Handle oder E-Mail, sonst 404; sich selbst → 400 `self` |
+| `await listFriendships()` | Alle Zeilen, an denen ich beteiligt bin: `{ from, to, status, from_name, to_name }` — Namen vom Server gestempelt |
+| `await inviteFriend(userId)` | → `{ invited: true, record }`, oder `{ accepted: true }`, wenn die andere Seite schon eingeladen hatte (Gegenrichtung ist Annahme) |
+| `await respondFriendship(id, 'accepted' \| 'declined')` | nur als eingeladene Seite |
+| `await removeFriendship(id)` | Entfernen oder zurückziehen — beide Seiten dürfen |
+| `await onFriendshipsChanged(cb)` → `unsubscribe` | Realtime auf die eigenen Zeilen |
+
 `to` ist eine **Konto-ID**, nicht die eines Objekts. Wer eine Figur anspricht,
 schreibt deren Besitzer (`record.owner`) und legt die Figur als `object` bei —
 so weiß der Agent, welche seiner Figuren gemeint war. Für eine Direktnachricht

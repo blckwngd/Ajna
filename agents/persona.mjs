@@ -178,6 +178,12 @@ const R = {
   home:           ['PERSONA_HOME',           `{"lat":${persona.figure.lat},"lon":${persona.figure.lon}}`, 'JSON {"lat":…,"lon":…} — overrides the file; a summon writes it'],
   call_walk_m:    ['PERSONA_CALL_WALK_M',    400,  'summoned within this distance the figure walks; beyond it, it jumps (0 = always jump)'],
   call_allow:     ['PERSONA_CALL_ALLOW',     '*',  'who may summon ("Rufen"): * = every logged-in player, or comma-separated account ids'],
+  // WHAT THE FIGURE DOES NOT SEE. It loads every object its account may view
+  // — in a town that is hundreds of WLANs and APRS stations within 120 m,
+  // and they would push the bench and the player out of the 25 lines the
+  // situation shows. Technical layers out by default; a persona that is
+  // meant to test them lists fewer here.
+  perceive_ignore: ['PERSONA_PERCEIVE_IGNORE', 'wifi,aprs,uwb_anchor', 'object types the figure does not perceive, comma-separated (empty = everything)'],
   // THE MODEL. Keys live in the environment only (ANTHROPIC_API_KEY,
   // OPENAI_API_KEY, OPENAI_BASE_URL); `konfig.mjs` refuses to create a
   // regler whose name contains key/token — which is why it is `max_output`.
@@ -731,8 +737,16 @@ function buildCtx() {
   const me = ajna.currentUser()
   // A finished quest is still a record, but nothing a figure could do; it
   // tried `call` on three of them, sixty times. Out of the perception.
-  const objects = ajna.getObjects().filter(o => o?.id && o.id !== figure.id && !o.carried_by && !questDone(o)
-    && Number.isFinite(o.lat) && Number.isFinite(o.lon) && haversine(c.lat, c.lon, o.lat, o.lon) <= PERCEPTION_M)
+  // Ignored types out as well (perceive_ignore), and NEAREST FIRST: the
+  // situation shows 25 lines, and unsorted those were the first 25 loaded,
+  // not the 25 that matter.
+  const ignore = new Set(konf.text('perceive_ignore', R.perceive_ignore[0], R.perceive_ignore[1])
+    .split(',').map(s => s.trim().toLowerCase()).filter(Boolean))
+  const objects = ajna.getObjects()
+    .filter(o => o?.id && o.id !== figure.id && !o.carried_by && !questDone(o)
+      && !ignore.has(String(o.type || '').toLowerCase())
+      && Number.isFinite(o.lat) && Number.isFinite(o.lon) && haversine(c.lat, c.lon, o.lat, o.lon) <= PERCEPTION_M)
+    .sort((a, b) => haversine(c.lat, c.lon, a.lat, a.lon) - haversine(c.lat, c.lon, b.lat, b.lon))
   const inventory = ajna.getObjects().filter(o => o?.carried_by && String(o.carried_by) === String(me?.id))
   const cutoff = Date.now() - 20 * 60_000
   const players = [...people.values()].filter(p => p.near || p.seenAt > cutoff)

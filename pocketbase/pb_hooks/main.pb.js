@@ -241,6 +241,106 @@ function moveNurPosition(e) {
 onRecordUpdateRequest(moveNurPosition, "objects")
 
 
+// =====================================================================
+// Freundesliste — `friendships` (1793000000_friendships.js, Paket 0c).
+//
+// Die Regeln sagen, WER schreiben darf; die Hooks sagen, WAS dabei gilt.
+// Antworten mit e.json({error, code}) statt throw: PocketBase formt die
+// `data` eines geworfenen ApiError in Validierungsfehler um ("Invalid
+// value"), ein Code käme nie an. Gemessen beim ersten Lauf der Suite.
+//   • nicht sich selbst einladen
+//   • Anzeigenamen stempeln (ein Konto liest fremde Nutzer nicht)
+//   • die Gegenrichtung ist keine zweite Zeile: Lädt B den A ein, während
+//     A→B offen ist, wird A→B ANGENOMMEN und B erfährt es (409,
+//     code reverse_accepted). Besteht A→B schon, ist es already_friends.
+//   • beim Ändern nur `status`, nur von invited nach accepted/declined
+//
+// Dazu GET /api/users/resolve?q=<handle oder E-Mail>: Ein Konto finden,
+// ohne fremde Nutzer lesen zu dürfen. Antwortet nur bei GENAUER
+// Übereinstimmung mit id und Anzeigename — keine Suche, kein Blättern.
+// =====================================================================
+function pruefeFreundschaftAnlegen(e) {
+  // require() IM Callback — Hook-Callbacks teilen keinen Modul-Scope.
+  const { anzeigenameVon } = require(`${__hooks}/freunde.js`)
+  const user = e.auth
+  if (!user) throw new ForbiddenError("auth required")
+  const von = String(e.record.get("from") || "")
+  const an = String(e.record.get("to") || "")
+  if (!an || von === an) return e.json(400, { error: "you cannot befriend yourself", code: "self" })
+
+  let ziel
+  try { ziel = $app.findRecordById("users", an) }
+  catch (err) { return e.json(400, { error: "no such account", code: "unknown_user" }) }
+
+  // Gegenrichtung?
+  let gegen = null
+  try { gegen = $app.findFirstRecordByFilter("friendships", "from = {:a} && to = {:b}", { a: an, b: von }) }
+  catch (err) { gegen = null }
+  if (gegen) {
+    const st = String(gegen.get("status") || "")
+    if (st === "accepted") return e.json(409, { error: "you are friends already", code: "already_friends", id: gegen.id })
+    if (st === "invited") {
+      // Beide wollen dasselbe — das IST die Annahme.
+      gegen.set("status", "accepted")
+      $app.save(gegen)
+      return e.json(409, { error: "the other side had invited you — accepted", code: "reverse_accepted", id: gegen.id })
+    }
+    // declined: die Gegenseite hat einmal abgelehnt; eine neue Einladung in
+    // diese Richtung ist erlaubt (die abgelehnte Zeile weicht).
+    try { $app.delete(gegen) } catch (err) { /* dann bleibt sie eben */ }
+  }
+
+  e.record.set("status", "invited")
+  e.record.set("from_name", anzeigenameVon(user))
+  e.record.set("to_name", anzeigenameVon(ziel))
+  e.next()
+}
+onRecordCreateRequest(pruefeFreundschaftAnlegen, "friendships")
+
+function pruefeFreundschaftAendern(e) {
+  const user = e.auth
+  if (!user) throw new ForbiddenError("auth required")
+  let alt
+  try { alt = $app.findRecordById("friendships", e.record.id) }
+  catch (err) { return e.json(404, { error: "friendship not found" }) }
+  for (const f of ["from", "to", "from_name", "to_name"]) {
+    if (String(e.record.get(f) || "") !== String(alt.get(f) || "")) {
+      return e.json(403, { error: "only the status may change", code: "status_only", field: f })
+    }
+  }
+  const vorher = String(alt.get("status") || ""), nachher = String(e.record.get("status") || "")
+  if (vorher !== nachher) {
+    if (vorher !== "invited") return e.json(403, { error: "this invitation was answered already", code: "not_pending" })
+    if (nachher !== "accepted" && nachher !== "declined") return e.json(400, { error: "status must be accepted or declined", code: "bad_status" })
+  }
+  e.next()
+}
+onRecordUpdateRequest(pruefeFreundschaftAendern, "friendships")
+
+routerAdd("GET", "/api/users/resolve", (e) => {
+  try {
+    const { anzeigenameVon } = require(`${__hooks}/freunde.js`)
+    const info = e.requestInfo()
+    const user = info.auth
+    if (!user) return e.json(401, { error: "auth required" })
+    const q = String((info.query && info.query.q) || e.request.url.query().get("q") || "").trim()
+    if (!q || q.length > 200) return e.json(400, { error: "field 'q' (handle or email) is required" })
+    let treffer = null
+    try {
+      treffer = q.indexOf("@") !== -1
+        ? $app.findFirstRecordByFilter("users", "email = {:q}", { q: q.toLowerCase() })
+        : $app.findFirstRecordByFilter("users", "username != '' && username = {:q}", { q: q })
+    } catch (err) { treffer = null }
+    if (!treffer) return e.json(404, { error: "no account with this handle or email", code: "unknown_user" })
+    if (treffer.id === user.id) return e.json(400, { error: "that is you", code: "self" })
+    return e.json(200, { id: treffer.id, name: anzeigenameVon(treffer) || null })
+  } catch (err) {
+    console.log("[users.resolve] " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "internal error" })
+  }
+})
+
+
 // ---------------------------------------------------------------------
 // agent_manifests: Identität des Eigentümers EINSTEMPELN (BEFORE).
 //

@@ -936,6 +936,16 @@ export class AjnaManager {
   async listIncomingInvitations() { return this.defaultClient.listIncomingInvitations() }
   async listOutgoingInvitations() { return this.defaultClient.listOutgoingInvitations() }
 
+  // ── Freunde — Standard-Server. Eine Freundschaft ist eine Beziehung
+  //    zwischen zwei Konten EINES Servers; mehrere Server kommen, wenn
+  //    jemand sie braucht (dann je Server eine Liste, wie bei den Gruppen).
+  async resolveUser(q)                   { return this.defaultClient.resolveUser(q) }
+  async listFriendships()                { return this.defaultClient.listFriendships() }
+  async inviteFriend(userId)             { return this.defaultClient.inviteFriend(userId) }
+  async respondFriendship(id, status)    { return this.defaultClient.respondFriendship(id, status) }
+  async removeFriendship(id)             { return this.defaultClient.removeFriendship(id) }
+  async onFriendshipsChanged(callback)   { return this.defaultClient.onFriendshipsChanged(callback) }
+
   // ===================================================================
   //  Öffentliche Einstellungen — Default-Client (oder ein bestimmter Server)
   // ===================================================================

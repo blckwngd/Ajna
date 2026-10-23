@@ -88,6 +88,7 @@ aus; eine dauerhaft stehende Figur hielte sonst still eine Gegend am Leben.
 | `home` | `PERSONA_HOME` (`"lat,lon"` oder JSON) | aus der Datei |
 | `call_walk_m` | `PERSONA_CALL_WALK_M` | 400 |
 | `call_allow` | `PERSONA_CALL_ALLOW` | `*` |
+| `perceive_ignore` | `PERSONA_PERCEIVE_IGNORE` | `wifi,aprs,uwb_anchor` — Objekttypen, die die Figur nicht wahrnimmt. Sie lädt alles, was ihr Konto sehen darf (auch Flugzeuge, WLANs, POIs); 25 Zeilen zeigt die Lage, die nächsten zuerst |
 | `llm.provider` | `PERSONA_LLM_PROVIDER` | `anthropic` (oder `openai` für Ollama/vLLM) |
 | `llm.model` | `PERSONA_LLM_MODEL` | `claude-opus-5-5` |
 | `llm.effort` | `PERSONA_LLM_EFFORT` | `low` |
