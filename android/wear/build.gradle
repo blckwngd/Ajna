@@ -1,0 +1,49 @@
+// Ajna for Wear OS — pointing, display, haptics and buttons for the phone app.
+//
+// Generic on purpose: Wear OS 3 (API 30) and newer, any watch. What a watch
+// can do — compass, gyro, buttons, amplitude-controlled vibration — is
+// detected at runtime and announced to the phone (`hello`). A watch without
+// a compass is still a display and input device.
+//
+// The watch is a BLE peripheral speaking the wand's protocol family (Nordic
+// UART, JSON lines), so the phone needs nothing new to talk to it:
+// docs/geraete-protokoll.md.
+
+apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.android'
+apply plugin: 'org.jetbrains.kotlin.plugin.compose'
+
+android {
+    namespace = "de.blckwngd.ajna.wear"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        // Same id as the phone app: the Wear OS convention, and the condition
+        // for a Data Layer fallback should a watch be unable to advertise.
+        applicationId "de.blckwngd.ajna"
+        minSdkVersion 30
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "1.0"
+    }
+    buildFeatures { compose = true }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+    buildTypes {
+        release { minifyEnabled false }
+    }
+}
+
+dependencies {
+    implementation "androidx.core:core-ktx:$androidxCoreVersion"
+    implementation "androidx.activity:activity-compose:$androidxActivityVersion"
+    implementation "androidx.wear.compose:compose-material:1.4.1"
+    implementation "androidx.wear.compose:compose-foundation:1.4.1"
+    implementation "androidx.wear:wear:1.3.0"
+    implementation "androidx.wear:wear-input:1.1.0"   // WearableButtons: how many buttons, where
+    testImplementation "junit:junit:$junitVersion"
+    // Android's org.json is a stub in JVM unit tests ("not mocked").
+    testImplementation "org.json:json:20240303"
+}

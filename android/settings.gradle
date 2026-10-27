@@ -1,4 +1,6 @@
 include ':app'
+// Wear OS app: pointing, display, haptics, buttons (docs/geraete-anbindung.md)
+include ':wear'
 include ':capacitor-cordova-android-plugins'
 project(':capacitor-cordova-android-plugins').projectDir = new File('./capacitor-cordova-android-plugins/')
 
