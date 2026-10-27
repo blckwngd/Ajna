@@ -91,8 +91,9 @@ spielt das Einschalten eine Viertelsekunde Stille. Ob ein bestimmtes Telefon
 das mitmacht, ist **ungeprüft** — die Messung oben deckt es nicht ab, bitte mit
 der Fernbedienung bei Bildschirm aus ausprobieren.
 
-**Uhr** (`android/wear`): eigene App, Wear OS 3 und neuer, jede Uhr. Was die
-Uhr kann, erkennt sie selbst und meldet es beim Verbinden:
+**Uhr** (`android/wear`): eigene App, Wear OS 2 (Android 7.1) und neuer, jede
+Uhr — auf Wear OS 2 ungetestet, aber gebaut dafür (minSdk 25, alles Neuere
+hinter einer Versionsprüfung, Lint `NewApi` hält das). Was die Uhr kann, erkennt sie selbst und meldet es beim Verbinden:
 
 * Kompass (`TYPE_ROTATION_VECTOR`) → zeigt **absolut**,
 * nur Gyro (`TYPE_GAME_ROTATION_VECTOR`) → zeigt **relativ**, wählt erst nach

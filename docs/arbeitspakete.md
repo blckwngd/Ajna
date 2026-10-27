@@ -142,7 +142,7 @@ auch bei Bildschirm aus. Kern in `client/core/aim/` (Zustandsmaschine mit
 Hysterese und Einfrieren samt Rückblick, Geräteverwaltung mit genau einem
 Zeigegerät und beliebig vielen Eingabegeräten, Rückfall aufs Telefon,
 Kalibrierung auf Schatten/Sonne/Ort), natives Plugin `AimDevices`,
-Uhr-App `android/wear` (generisch ab Wear OS 3; eine Uhr ohne Kompass bleibt
+Uhr-App `android/wear` (generisch ab Wear OS 2; eine Uhr ohne Kompass bleibt
 Anzeige- und Eingabegerät). 27 JS- und 6 Kotlin-Tests. Bedienung und
 Einrichtung: `geraete-anbindung.md`, Protokoll: `geraete-protokoll.md`.
 

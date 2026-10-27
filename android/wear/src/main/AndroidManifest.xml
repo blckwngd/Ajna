@@ -24,6 +24,10 @@
         android:label="@string/app_name"
         android:theme="@android:style/Theme.DeviceDefault">
 
+        <!-- Ambient mode on Wear OS 2 lives in this system library; newer watches
+             do not need it, so not required. -->
+        <uses-library android:name="com.google.android.wearable" android:required="false" />
+
         <!-- Runs without a paired phone app on the watch side: the link is BLE. -->
         <meta-data android:name="com.google.android.wearable.standalone" android:value="true" />
 

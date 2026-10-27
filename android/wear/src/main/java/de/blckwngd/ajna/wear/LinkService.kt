@@ -15,6 +15,7 @@ import android.bluetooth.BluetoothGattServerCallback
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
@@ -137,10 +138,14 @@ class LinkService : Service(), SensorEventListener {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun startInForeground() {
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(CHANNEL, "Ajna", NotificationManager.IMPORTANCE_LOW))
+        // Channels exist from Android 8 (API 26); Wear OS 2 on 7.1 has none.
+        val builder = if (Build.VERSION.SDK_INT >= 26) {
+            getSystemService(NotificationManager::class.java)
+                .createNotificationChannel(NotificationChannel(CHANNEL, "Ajna", NotificationManager.IMPORTANCE_LOW))
+            Notification.Builder(this, CHANNEL)
+        } else @Suppress("DEPRECATION") Notification.Builder(this)
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-        val n: Notification = Notification.Builder(this, CHANNEL)
+        val n: Notification = builder
             .setContentTitle("Ajna")
             .setContentText("Verbindung zum Telefon")
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
@@ -236,7 +241,7 @@ class LinkService : Service(), SensorEventListener {
     private fun sendHello() {
         val buttons = try { WearableButtons.getButtonCount(this) } catch (_: Exception) { 0 }
         val vib = vibrator()
-        send(Protocol.hello("${Build.MANUFACTURER} ${Build.MODEL}", _state.value.pointing, buttons, vib?.hasAmplitudeControl() == true))
+        send(Protocol.hello("${Build.MANUFACTURER} ${Build.MODEL}", _state.value.pointing, buttons, Build.VERSION.SDK_INT >= 26 && vib?.hasAmplitudeControl() == true))
         battery()?.let { send(Protocol.status(it)) }
     }
 
@@ -265,7 +270,7 @@ class LinkService : Service(), SensorEventListener {
         val t = tx ?: return false
         val s = server ?: return false
         return if (Build.VERSION.SDK_INT >= 33) {
-            s.notifyCharacteristicChanged(d, t, false, bytes) == BluetoothGatt.GATT_SUCCESS
+            s.notifyCharacteristicChanged(d, t, false, bytes) == BluetoothStatusCodes.SUCCESS
         } else {
             @Suppress("DEPRECATION")
             run { t.value = bytes; s.notifyCharacteristicChanged(d, t, false) }
@@ -335,7 +340,9 @@ class LinkService : Service(), SensorEventListener {
     private fun vibrate(pattern: LongArray) {
         val v = vibrator() ?: return
         if (!v.hasVibrator() || pattern.isEmpty()) return
-        v.vibrate(VibrationEffect.createWaveform(pattern, -1))
+        // Same timing format either way: off, on, off, on … in ms.
+        if (Build.VERSION.SDK_INT >= 26) v.vibrate(VibrationEffect.createWaveform(pattern, -1))
+        else @Suppress("DEPRECATION") v.vibrate(pattern, -1)
     }
 
     private fun battery(): Int? = try {
