@@ -55,6 +55,18 @@ mit Ereignissen, Verzögerung und Lücken. Trägt es nicht, sind die Auswege
 (nicht gebaut): die Zielwahl nativ in den Dienst verlegen, oder einen
 Wake-Lock auf den Bildschirm-Prozess nehmen.
 
+**Gemessen am 27.10. (Fairphone 5, nicht am Ladekabel): trägt.** 1200/1200
+Ereignisse, Verzögerung Median 3 ms, 95 % 4 ms, größte Lücke 81 ms. Die
+Zielwahl bleibt in der WebView. Aber: Der JS-Takt fiel auf 126/1200, größte
+Lücke 1001 ms — Chrome drosselt Zeitgeber einer verdeckten Seite auf einmal pro
+Sekunde. **Daraus die Regel für den Zeigepfad:** alles, was schneller als eine
+Sekunde sein muss (Halten, Festhalten, Entprellen, lang gedrückt), rechnet mit
+Zeitstempeln beim Eintreffen eines Ereignisses, nie mit `setTimeout` oder
+`setInterval`. Zeitgeber nur für Dinge, denen eine Sekunde Unschärfe nichts
+ausmacht (Ausfall-Wächter, Kalibrierfenster). `tests/run-ui.mjs` hält das fest.
+Das Telefon selbst ist bei Bildschirm aus kein Zeigegerät — die Seite bekommt
+dann keine Lagesensor-Ereignisse; in der Tasche zeigt die Uhr oder der Stab.
+
 ## Geräte
 
 | Gerät | Zeigen | Eingabe | Haptik | Anzeige | Weg |
@@ -128,7 +140,6 @@ in `inputMapping.js`.
 
 ## Was noch offen ist
 
-* Die **Messung** am Gerät, und daraus: bleibt die Zielwahl in der WebView?
 * Medientasten bei Bildschirm aus mit der echten Fernbedienung.
 * Driftrate einer Uhr ohne Magnetometer.
 * Zauberstab-Tasten als semantische Aktionen, sobald die Firmware sie schickt —

@@ -4691,6 +4691,21 @@ console.log('\n── Start ohne Abbruch')
   check('kein Knopf der Leiste überschreibt ihr position:fixed', verschoben.length === 0, verschoben.join(' | '))
 }
 
+// ── Zeigepfad ohne schnelle Zeitgeber (gemessen 27.10.) ──────────────────
+// Bei Bildschirm aus kamen native Ereignisse vollständig an (1200/1200), die
+// Zeitgeber der Seite aber nur einmal pro Sekunde. Was schneller sein muss,
+// rechnet mit Zeitstempeln beim Eintreffen eines Ereignisses.
+console.log('\n── Zeigepfad bei Bildschirm aus')
+{
+  const ohneZeitgeber = ['AimController.js', 'inputMapping.js', 'devices.js', 'aimMath.js', 'haptics.js']
+    .filter(n => /\b(setTimeout|setInterval|requestAnimationFrame)\s*\(/.test(
+      readFileSync(new URL(`../client/core/aim/${n}`, import.meta.url), 'utf8')))
+  check('Zielwahl, Entprellen und Geräte kommen ohne Zeitgeber aus', ohneZeitgeber.length === 0, ohneZeitgeber.join(' | '))
+  const sess = readFileSync(new URL('../client/core/aim/AimSession.js', import.meta.url), 'utf8')
+  const takte = [...sess.matchAll(/setInterval\([^,]+,\s*(\d+)\)/g)].map(m => Number(m[1]))
+  check('Zeitgeber der Sitzung takten nicht schneller als 1 s', takte.length > 0 && takte.every(ms => ms >= 1000), takte.join(','))
+}
+
 // ---------------------------------------------------------------------------
 // Freundesliste (Arbeitspaket 0c, 23.10.). Das Verhalten prüft
 // tests/privacy/freunde.mjs am Server; hier die Eigenschaften, die beim

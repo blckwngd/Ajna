@@ -135,7 +135,7 @@ Messung:
    `agents/data/personas/<name>/bilder/`, gibt es dem Modell als Bild mit.
    Vorher Schritt 1 — ohne gemessenes Rendern ist der Rest Papier.
 
-### 0f · Zeigen unterwegs — **gebaut am 27.10., Messungen am Gerät offen**
+### 0f · Zeigen unterwegs — **gebaut am 27.10., Bildschirm-aus trägt; Gerätetests offen**
 
 Peilen, ansagen, wählen, benutzen mit Fernbedienung, Uhr oder Zauberstab,
 auch bei Bildschirm aus. Kern in `client/core/aim/` (Zustandsmaschine mit
@@ -146,8 +146,11 @@ Uhr-App `android/wear` (generisch ab Wear OS 3; eine Uhr ohne Kompass bleibt
 Anzeige- und Eingabegerät). 27 JS- und 6 Kotlin-Tests. Bedienung und
 Einrichtung: `geraete-anbindung.md`, Protokoll: `geraete-protokoll.md`.
 
-**Offen, und in dieser Reihenfolge:** die Bildschirm-aus-Messung am Telefon
-(entscheidet, ob die Zielwahl in der WebView bleibt), Medientasten bei
+**Bildschirm aus trägt** (27.10.: 1200/1200 Ereignisse, 3 ms; JS-Zeitgeber
+auf 1/s gedrosselt — der Zeigepfad rechnet deshalb mit Zeitstempeln). Die
+Zielwahl bleibt in der WebView.
+
+**Offen, und in dieser Reihenfolge:** Medientasten bei
 Bildschirm aus mit der echten Fernbedienung, die Driftrate einer Uhr ohne
 Magnetometer, Zauberstab-Tasten als semantische Aktionen.
 
