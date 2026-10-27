@@ -26,7 +26,7 @@ export function getAimSession({ ajna, hub = null, notify = () => {} } = {}) {
   const visible = (o) => (window.agentFilters?.matches ? window.agentFilters.matches(o) : true)
 
   let plugin = null
-  aimPlugin().then(p => { plugin = p })
+  aimPlugin().then(box => { plugin = box.plugin })
   const vibrate = (pattern) => {
     if (plugin) { plugin.vibrate({ pattern }).catch(() => {}); return }
     try { navigator.vibrate?.(pattern) } catch {}

@@ -14,13 +14,25 @@
 
 import { compassHeadingDeg } from '../compassHeading.js'
 
-/** The Capacitor plugin for everything native here, or null in the browser. */
-export async function aimPlugin() {
-  try {
-    const { Capacitor, registerPlugin } = await import('@capacitor/core')
-    if (!Capacitor?.isNativePlatform?.()) return null
-    return registerPlugin('AimDevices')
-  } catch { return null }
+/**
+ * The Capacitor plugin for everything native here, or null in the browser.
+ *
+ * NEVER return the plugin proxy from an async function directly: resolving a
+ * promise with it asks the proxy for `.then`, and a Capacitor proxy answers
+ * every property with a native call — "AimDevices.then() is not implemented"
+ * (measured on the phone). It travels wrapped, and is registered once.
+ */
+let pluginBox = null
+export async function aimPlugin() {   // → { plugin } — the box, never the proxy itself
+  if (!pluginBox) {
+    pluginBox = (async () => {
+      try {
+        const { Capacitor, registerPlugin } = await import('@capacitor/core')
+        return { plugin: Capacitor?.isNativePlatform?.() ? registerPlugin('AimDevices') : null }
+      } catch { return { plugin: null } }
+    })()
+  }
+  return pluginBox
 }
 
 const listeners = () => {
@@ -106,7 +118,7 @@ export function keysDevice({ win = globalThis.window, kind = 'controller' } = {}
  * and media keys arrive through a MediaSession, also with the screen off.
  */
 export async function remoteDevice() {
-  const P = await aimPlugin()
+  const P = (await aimPlugin()).plugin
   if (!P) return null
   const out = listeners()
   let sub = null
@@ -146,7 +158,7 @@ export async function remoteDevice() {
  * @param {string} [p.address]
  */
 export async function nusDevice({ name, address = null }) {
-  const P = await aimPlugin()
+  const P = (await aimPlugin()).plugin
   if (!P || !name) return null
   const id = `nus:${name}`
   const inputs = listeners()

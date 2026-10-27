@@ -1083,6 +1083,11 @@ export class MobileShell {
    * Funktionsmodul seinen Abschnitt beisteuert (docs/arbeitspakete.md, Paket 7).
    */
   _renderGeraeteSektion() {
+    // Read HERE, not in _renderSettings: the section was moved out of there
+    // and kept using a local of the old place — a ReferenceError whenever the
+    // advanced mode was on, which aborted init() and with it everything set
+    // up after the settings (the friends button, the chat window).
+    const uwbTagName = escapeHtml((() => { try { return localStorage.getItem('ajna.uwb.tag_name') || '' } catch { return '' } })())
     return `
       <!-- Geräte: nur Verbinden + Status + Tür zu den geräte-spezifischen
            Einstellungen (alles, was nur mit verbundenem Gerät sinnvoll ist,

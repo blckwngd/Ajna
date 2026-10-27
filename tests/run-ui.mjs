@@ -4624,6 +4624,22 @@ process.on('exit', (code) => {
 }
 
 // ---------------------------------------------------------------------------
+// Zwei Startfehler, gemessen am Telefon (27.10.) — beide brachen init() ab,
+// und mit ihm alles danach (Freundesliste, Chatfenster, Einstellungen).
+console.log('\n── Start ohne Abbruch')
+{
+  const shell = readFileSync(new URL('../client/core/MobileShell.js', import.meta.url), 'utf8')
+  const sektion = shell.slice(shell.indexOf('_renderGeraeteSektion() {'), shell.indexOf('_renderDebugSektion() {'))
+  check('der Geräte-Abschnitt liest den UWB-Tag selbst (ReferenceError im erweiterten Modus)',
+    /const uwbTagName = /.test(sektion))
+  const dev = readFileSync(new URL('../client/core/aim/devices.js', import.meta.url), 'utf8')
+  // Ein Capacitor-Proxy, aus einer async-Funktion zurückgegeben, wird nach
+  // `.then` gefragt — „AimDevices.then() is not implemented".
+  check('das Plugin reist in einer Schachtel, nie als Rückgabewert einer async-Funktion',
+    /return \{ plugin: /.test(dev) && /\(await aimPlugin\(\)\)\.plugin/.test(dev) && !/return registerPlugin\(/.test(dev))
+}
+
+// ---------------------------------------------------------------------------
 // Freundesliste (Arbeitspaket 0c, 23.10.). Das Verhalten prüft
 // tests/privacy/freunde.mjs am Server; hier die Eigenschaften, die beim
 // Umbauen still verlorengehen könnten.
