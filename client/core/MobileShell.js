@@ -41,6 +41,9 @@ import { RANGE_DEFS, RANGE_EVENT, readRange, writeRange, valueFromSlider, slider
   from './renderRange.js'
 import { isAdvanced, setAdvanced } from './advancedMode.js'
 import { getFabBar } from './FabBar.js'
+import { getAimSession } from './aim/AimSession.js'
+import { ACTIONS, ACTION_LABELS } from './aim/inputMapping.js'
+import { runProbe, describeProbe } from './aim/probe.js'
 
 // Wie lange auf eine Antwort gewartet wird, bevor der Hinweis doch erscheint.
 // Vier Sekunden: lang genug, dass ein laufender Agent zuerst da ist (gemessen
@@ -214,6 +217,23 @@ export class MobileShell {
     // Sichtbares Interaktions-Feedback wie im AR-Pfad: Reply-Text als Toast
     // (der Toast schreibt zugleich den Verlaufs-Eintrag) + TTS-Ansage (gegated).
     this._toast = new Toast()
+    // Pointing on the go (client/core/aim): one pointing device, several input
+    // devices, feedback to watches. Off until the player switches it on in
+    // the settings; nothing about the existing behaviour changes before that.
+    this._aim = getAimSession({
+      ajna: this.ajna, hub,
+      notify: (text) => { try { messageLog.push(text, 'interact') } catch {} ; this._toast?.show(text, { title: 'Zeigen', log: false }) },
+    })
+    let _aimRefresh = null
+    this._aim.manager.onChange(() => {
+      if (_aimRefresh || this._aimLearning) return
+      _aimRefresh = setTimeout(() => {
+        _aimRefresh = null
+        const meta = document.querySelector('[data-role="aim-status"]')
+        if (meta) meta.textContent = this._aimStatusText()
+        if (this._deviceModalOpen === 'aim' && !this._aimLearning) this._openAimModal()
+      }, 400)
+    })
     this._nearbyActions = new ObjectActions({
       ajna: this.ajna,
       getPosition: _nbPos,
@@ -1100,6 +1120,14 @@ export class MobileShell {
         <button class="settings-btn secondary" data-action="uwb" style="margin-top:8px">
           ${this.uwbConnected ? t('UWB trennen') : t('UWB verbinden')}
         </button>
+
+        <div class="settings-row" style="margin-top:14px">
+          <div class="label">
+            <div>Zeigen unterwegs</div>
+            <div class="meta" data-role="aim-status">${escapeHtml(this._aimStatusText())}</div>
+          </div>
+          <button class="settings-btn-inline" data-action="aim-settings">Einstellungen</button>
+        </div>
       </section>
 `
   }
@@ -1476,6 +1504,173 @@ export class MobileShell {
 
   _openWandModal() { this._deviceModalOpen = 'wand'; this._openDeviceModal('Zauberstab', this._wandSettingsHtml(), r => this._wireWandModal(r)) }
   _openUwbModal()  { this._deviceModalOpen = 'uwb';  this._openDeviceModal('UWB',        this._uwbSettingsHtml(),  r => this._wireUwbModal(r)) }
+  _openAimModal()  { this._deviceModalOpen = 'aim';  this._openDeviceModal('Zeigen unterwegs', this._aimSettingsHtml(), r => this._wireAimModal(r)) }
+
+  // ── Zeigen unterwegs ───────────────────────────────────────────────────
+  // Pointing device, input devices, calibration, watches, key mapping, the
+  // screen-off measurement. Logic: client/core/aim/, docs/geraete-anbindung.md.
+
+  _aimStatusText() {
+    const s = this._aim?.manager?.snapshot?.()
+    if (!s?.enabled) return 'aus'
+    const dev = (id) => s.devices.find(d => d.id === id)
+    const p = dev(s.activePointingId || s.pointingId)
+    const inputs = s.inputIds.filter(id => dev(id)).length
+    return `an · zeigt: ${p?.label || s.pointingId}${s.fallbackFrom ? ' (Ersatz)' : ''} · ${inputs} Eingabegerät${inputs === 1 ? '' : 'e'}`
+  }
+
+  _aimSettingsHtml() {
+    const m = this._aim.manager
+    const s = m.snapshot()
+    const esc = escapeHtml
+    const pointing = s.devices.filter(d => d.caps?.pointing)
+    const inputs = s.devices.filter(d => d.caps?.input)
+    const cal = (id) => {
+      const c = s.calibration[id]
+      if (!c) return ''
+      const min = Math.round((Date.now() - c.at) / 60000)
+      return ` · kalibriert vor ${min} min (${c.offsetDeg >= 0 ? '+' : ''}${Math.round(c.offsetDeg)}°)`
+    }
+    const state = (d) => d.connected ? '' : ' — nicht verbunden'
+    const relNote = (d) => d.caps?.pointing === 'relative' ? ' · ohne Kompass, braucht Kalibrierung' : ''
+    const here = this.positionSource?.getWorldPosition?.() || window.ajnaGeo?.position || null
+    const landmarks = here ? (this.ajna.getObjects?.() || [])
+      .filter(o => o?.name && Number.isFinite(o.lat) && ['poi', 'npc'].includes(String(o.type || '').toLowerCase()))
+      .map(o => ({ o, d: Math.hypot((o.lat - here.lat) * 111320, (o.lon - here.lon) * 111320 * Math.cos(here.lat * Math.PI / 180)) }))
+      .filter(x => x.d >= 30 && x.d <= 3000).sort((a, b) => a.d - b.d).slice(0, 12) : []
+    const mapDev = this._aimMapDevice && inputs.some(d => d.id === this._aimMapDevice) ? this._aimMapDevice : inputs[0]?.id
+    const mapping = mapDev ? m.mappingFor(mapDev) : {}
+    const codesFor = (action) => Object.entries(mapping).filter(([, a]) => a === action).map(([c]) => c.replace(':long', ' (lang)'))
+    return `
+      <section class="settings-section">
+        <label class="meta" style="display:flex;gap:10px;align-items:center">
+          <input type="checkbox" data-field="aim-enabled" ${s.enabled ? 'checked' : ''}> Zeigen unterwegs einschalten
+        </label>
+        <div class="meta" style="margin-top:6px">Peilen, Ziel ansagen, wählen und benutzen — mit Fernbedienung, Uhr oder Zauberstab, auch bei ausgeschaltetem Bildschirm.</div>
+      </section>
+      <section class="settings-section">
+        <h3>Zeigegerät</h3>
+        ${pointing.map(d => `<label class="meta" style="display:flex;gap:10px;align-items:center;margin:4px 0">
+          <input type="radio" name="aim-pointing" value="${esc(d.id)}" ${s.pointingId === d.id ? 'checked' : ''}>
+          <span>${esc(d.label)}${esc(state(d))}${esc(relNote(d))}${esc(cal(d.id))}</span></label>`).join('')}
+        ${s.fallbackFrom ? `<div class="meta" style="color:#e0b020">Gewähltes Gerät nicht erreichbar — das Telefon zeigt solange.</div>` : ''}
+        <label class="meta" style="display:flex;gap:10px;align-items:center;margin-top:8px">
+          <input type="checkbox" data-field="aim-raise" ${s.raiseToAim ? 'checked' : ''}> Arm heben zum Peilen, senken zum Wählen
+        </label>
+      </section>
+      <section class="settings-section">
+        <h3>Kalibrieren</h3>
+        <div class="meta">Mit dem Zeigegerät auf das Ziel zeigen, still halten, dann tippen.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+          <button class="settings-btn-inline" data-action="aim-cal" data-kind="shadow">Eigener Schatten</button>
+          <button class="settings-btn-inline" data-action="aim-cal" data-kind="sun">Sonne</button>
+        </div>
+        ${landmarks.length ? `<label class="meta" style="display:block;margin-top:8px">Bekannter Ort
+          <select class="settings-input" data-field="aim-landmark" style="margin-top:4px">
+            ${landmarks.map(({ o, d }) => `<option value="${esc(o.id)}">${esc(o.name)} (${Math.round(d)} m)</option>`).join('')}
+          </select></label>
+          <button class="settings-btn-inline" data-action="aim-cal" data-kind="landmark" style="margin-top:6px">Auf diesen Ort kalibrieren</button>` : ''}
+      </section>
+      <section class="settings-section">
+        <h3>Eingabegeräte</h3>
+        ${inputs.map(d => `<label class="meta" style="display:flex;gap:10px;align-items:center;margin:4px 0">
+          <input type="checkbox" data-field="aim-input" value="${esc(d.id)}" ${s.inputIds.includes(d.id) ? 'checked' : ''}>
+          <span>${esc(d.label)}${esc(state(d))}</span></label>`).join('')}
+        <div class="meta" style="margin-top:6px">Die Fernbedienung mit „auch bei Bildschirm aus" fängt die Eingaben externer Geräte ab — eine Tastatur tippt dann nicht mehr in Textfelder.</div>
+      </section>
+      <section class="settings-section">
+        <h3>Uhren</h3>
+        ${this._aim.watches().map(n => `<div class="settings-row"><div class="label"><div>${esc(n)}</div>
+          <div class="meta">${s.devices.find(d => d.id === 'nus:' + n)?.connected ? 'verbunden' : 'verbinde …'}</div></div>
+          <button class="settings-btn-inline" data-action="aim-watch-remove" data-name="${esc(n)}">Entfernen</button></div>`).join('') || '<div class="meta">Keine Uhr hinzugefügt.</div>'}
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <input class="settings-input" data-field="aim-watch-name" placeholder="Name der Uhr, z. B. AjnaWatch-1A2B" style="flex:1;margin:0">
+          <button class="settings-btn-inline" data-action="aim-watch-add">Hinzufügen</button>
+        </div>
+        <div class="meta" style="margin-top:4px">Den Namen zeigt die Ajna-App auf der Uhr an.</div>
+      </section>
+      ${mapDev ? `<section class="settings-section">
+        <h3>Belegung</h3>
+        <select class="settings-input" data-field="aim-map-device">
+          ${inputs.map(d => `<option value="${esc(d.id)}" ${d.id === mapDev ? 'selected' : ''}>${esc(d.label)}</option>`).join('')}
+        </select>
+        ${ACTIONS.map(a => `<div class="settings-row" style="margin-top:4px"><div class="label"><div>${esc(t(ACTION_LABELS[a]))}</div>
+          <div class="meta">${esc(codesFor(a).join(', ') || '—')}</div></div>
+          <button class="settings-btn-inline" data-action="aim-learn" data-act="${a}">Taste zuweisen</button></div>`).join('')}
+        <div class="meta" data-role="aim-learn-hint" style="margin-top:6px"></div>
+        <button class="settings-btn secondary" data-action="aim-map-reset" style="margin-top:8px">Belegung zurücksetzen</button>
+      </section>` : ''}
+      <section class="settings-section">
+        <h3>Prüfen</h3>
+        <div class="meta">Misst eine Minute lang, ob die App mit ausgeschaltetem Bildschirm schnell genug reagiert. Starten, Bildschirm ausschalten, nach einer Minute wieder an.</div>
+        <button class="settings-btn secondary" data-action="aim-probe" style="margin-top:8px">Bildschirm-aus-Messung starten</button>
+        <div class="meta" data-role="aim-probe-result" style="margin-top:6px">${esc(this._aimProbeResult || '')}</div>
+      </section>`
+  }
+
+  _wireAimModal(root) {
+    const m = this._aim.manager
+    const q = (sel) => root.querySelector(sel)
+    q('[data-field="aim-enabled"]')?.addEventListener('change', (e) => m.setEnabled(e.target.checked))
+    q('[data-field="aim-raise"]')?.addEventListener('change', (e) => m.setRaiseToAim(e.target.checked))
+    root.querySelectorAll('input[name="aim-pointing"]').forEach(el => el.addEventListener('change', () => m.setPointing(el.value)))
+    root.querySelectorAll('[data-field="aim-input"]').forEach(el => el.addEventListener('change', () => m.setInput(el.value, el.checked)))
+    root.querySelectorAll('[data-action="aim-cal"]').forEach(btn => btn.addEventListener('click', async () => {
+      const kind = btn.dataset.kind
+      let landmark = null
+      if (kind === 'landmark') {
+        const o = this.ajna.getObjectById?.(q('[data-field="aim-landmark"]')?.value)
+        if (o) landmark = { lat: o.lat, lon: o.lon, name: o.name }
+      }
+      if (!m.config.enabled) m.setEnabled(true)
+      btn.disabled = true
+      try { await m.calibrate(kind, landmark) } finally { btn.disabled = false }
+    }))
+    q('[data-action="aim-watch-add"]')?.addEventListener('click', async () => {
+      await this._aim.addWatch(q('[data-field="aim-watch-name"]')?.value)
+      this._openAimModal()
+    })
+    root.querySelectorAll('[data-action="aim-watch-remove"]').forEach(btn => btn.addEventListener('click', async () => {
+      await this._aim.removeWatch(btn.dataset.name)
+      this._openAimModal()
+    }))
+    q('[data-field="aim-map-device"]')?.addEventListener('change', (e) => { this._aimMapDevice = e.target.value; this._openAimModal() })
+    root.querySelectorAll('[data-action="aim-learn"]').forEach(btn => btn.addEventListener('click', async () => {
+      const dev = q('[data-field="aim-map-device"]')?.value
+      const hint = q('[data-role="aim-learn-hint"]')
+      if (!dev) return
+      this._aimLearning = true
+      if (hint) hint.textContent = `Jetzt die Taste für „${t(ACTION_LABELS[btn.dataset.act])}" drücken (10 s) …`
+      try {
+        const raw = await m.learn(dev)
+        if (raw?.code) m.setMapping(dev, raw.long ? `${raw.code}:long` : raw.code, btn.dataset.act)
+      } finally {
+        this._aimLearning = false
+        this._openAimModal()
+      }
+    }))
+    q('[data-action="aim-map-reset"]')?.addEventListener('click', () => {
+      const dev = q('[data-field="aim-map-device"]')?.value
+      if (dev) { m.resetMapping(dev); this._openAimModal() }
+    })
+    q('[data-action="aim-probe"]')?.addEventListener('click', async (e) => {
+      const plugin = this._aim.plugin()
+      const show = (text) => { const el = document.querySelector('[data-role="aim-probe-result"]'); if (el) el.textContent = text }
+      if (!plugin) { show('Nur in der App möglich.'); return }
+      e.target.disabled = true
+      show('Läuft — jetzt den Bildschirm ausschalten, in einer Minute wieder an.')
+      try {
+        const res = await runProbe(plugin, { hz: 20, seconds: 60 })
+        this._aimProbeResult = describeProbe(res)
+        try { messageLog.push(this._aimProbeResult, 'system') } catch {}
+        console.log('[aim] probe', JSON.stringify(res))
+      } catch (err) {
+        this._aimProbeResult = 'Messung fehlgeschlagen: ' + (err?.message || err)
+      }
+      show(this._aimProbeResult)
+      e.target.disabled = false
+    })
+  }
 
   // Bei Geräte-Statuswechsel (verbunden/getrennt) das offene Gerätefenster mit
   // frischem Zustand neu aufbauen, damit verbindungsabhängige Steuerungen
@@ -1701,6 +1896,7 @@ export class MobileShell {
     action('uwb')?.addEventListener('click', () => this._toggleUwb(root))
     action('wand-settings')?.addEventListener('click', () => this._openWandModal())
     action('uwb-settings')?.addEventListener('click', () => this._openUwbModal())
+    action('aim-settings')?.addEventListener('click', () => this._openAimModal())
 
     const audioToggle = root.querySelector('[data-field="wand-audio"]')
     audioToggle?.addEventListener('change', () => WandAudioFeedback.setEnabled(audioToggle.checked))

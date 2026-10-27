@@ -181,3 +181,20 @@ test('keys device: a press is one event on key up, long presses are marked, typi
   off()
   assert.equal(handlers.keydown, undefined, 'listeners removed with the last subscriber')
 })
+
+// ── the screen-off probe ─────────────────────────────────────────────────
+import { summarise, describeProbe } from './probe.js'
+
+test('probe verdict: steady arrivals are ok; seconds-long gaps are blocked', () => {
+  const mk = (n, dt, delay) => Array.from({ length: n }, (_, i) => ({ seq: i, sent: i * dt, got: i * dt + delay }))
+  const timer = Array.from({ length: 200 }, (_, i) => i * 50)
+  const good = summarise({ arrivals: mk(200, 50, 20), timer, expected: 200, hz: 20, seconds: 10 })
+  assert.equal(good.verdict, 'ok')
+  assert.equal(good.delayMedianMs, 20)
+  const frozen = mk(200, 50, 20).map((a, i) => i > 50 ? { ...a, got: 50 * 50 + 9000 + i } : a)
+  const bad = summarise({ arrivals: frozen, timer, expected: 200, hz: 20, seconds: 10 })
+  assert.equal(bad.verdict, 'blocked', JSON.stringify(bad))
+  assert.match(describeProbe(bad), /trägt NICHT/)
+  const sparse = summarise({ arrivals: mk(150, 66, 400), timer, expected: 200, hz: 20, seconds: 10 })
+  assert.equal(sparse.verdict, 'degraded')
+})

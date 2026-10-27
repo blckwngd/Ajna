@@ -129,10 +129,42 @@ public class WandGatt {
         return gatt != null && rxChar != null;
     }
 
-    /** Send a JSON command line to the wand's RX characteristic. */
+    // GATT allows ONE outstanding operation. Writes that arrive while one is in
+    // flight used to fail silently (fine for the wand's rare commands, not for
+    // a watch that gets a haptic pattern and a view update in the same
+    // instant). Now they queue; onCharacteristicWrite sends the next.
+    private final java.util.ArrayDeque<byte[]> writeQueue = new java.util.ArrayDeque<>();
+    private boolean writing = false;
+    private static final int MAX_QUEUE = 32;
+
+    /** Send a JSON command line to the device's RX characteristic (queued). */
     public boolean write(String json) {
         if (gatt == null || rxChar == null) return false;
         byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
+        synchronized (writeQueue) {
+            if (writing) {
+                if (writeQueue.size() >= MAX_QUEUE) writeQueue.pollFirst();   // drop the oldest, not the newest
+                writeQueue.addLast(bytes);
+                return true;
+            }
+            writing = true;
+        }
+        boolean ok = writeNow(bytes);
+        if (!ok) synchronized (writeQueue) { writing = false; }
+        return ok;
+    }
+
+    private void writeNext() {
+        byte[] next;
+        synchronized (writeQueue) {
+            next = writeQueue.pollFirst();
+            if (next == null) { writing = false; return; }
+        }
+        if (!writeNow(next)) writeNext();
+    }
+
+    private boolean writeNow(byte[] bytes) {
+        if (gatt == null || rxChar == null) return false;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             int r = gatt.writeCharacteristic(rxChar, bytes,
                     BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
@@ -154,9 +186,14 @@ public class WandGatt {
             gatt = null;
         }
         rxChar = null;
+        synchronized (writeQueue) { writeQueue.clear(); writing = false; }
     }
 
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
+        @Override public void onCharacteristicWrite(BluetoothGatt g, BluetoothGattCharacteristic ch, int status) {
+            if (NUS_RX.equals(ch.getUuid())) writeNext();
+        }
+
         @Override public void onConnectionStateChange(BluetoothGatt g, int status, int newState) {
             if (newState == BluetoothGatt.STATE_CONNECTED) {
                 listener.onLog("GATT connected (status=" + status + "), requesting MTU");

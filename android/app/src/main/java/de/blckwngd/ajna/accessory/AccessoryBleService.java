@@ -47,6 +47,14 @@ public class AccessoryBleService extends Service {
     public static final String ACTION_KEEPALIVE = "de.blckwngd.ajna.accessory.KEEPALIVE";
     // "Beenden" (Notification-Button / Wegwischen): App vollständig beenden.
     public static final String ACTION_QUIT = "de.blckwngd.ajna.accessory.QUIT";
+    // Pointing on the go (client/core/aim): BLE devices that speak the wand's
+    // protocol family (watch, combo device), keyed by id in EXTRA_ROLE …
+    public static final String ACTION_NUS_START = "de.blckwngd.ajna.accessory.NUS_START";
+    public static final String ACTION_NUS_STOP  = "de.blckwngd.ajna.accessory.NUS_STOP";
+    public static final String ACTION_NUS_SEND  = "de.blckwngd.ajna.accessory.NUS_SEND";
+    // … and its own keep-alive (media keys, measurement), separate from the
+    // user's "run in background" so neither switches the other off.
+    public static final String ACTION_AIM_KEEPALIVE = "de.blckwngd.ajna.accessory.AIM_KEEPALIVE";
 
     public static final String EXTRA_ADDRESS = "address";
     public static final String EXTRA_NAME    = "name";
@@ -64,6 +72,9 @@ public class AccessoryBleService extends Service {
     private boolean keepAlive = false;   // "run in background" — service stays up with no device
 
     private final Map<String, UwbGatt> uwbNodes = new HashMap<>();
+    private final Map<String, WandGatt> nusDevices = new HashMap<>();
+    private final Map<String, Boolean> nusConnected = new HashMap<>();
+    private boolean aimKeepAlive = false;
     private PowerManager.WakeLock wakeLock;
 
     @Override
@@ -109,6 +120,22 @@ public class AccessoryBleService extends Service {
                 keepAlive = intent.getBooleanExtra(EXTRA_ENABLED, false);
                 if (keepAlive) ensureForeground();
                 break;
+            case ACTION_AIM_KEEPALIVE:
+                aimKeepAlive = intent.getBooleanExtra(EXTRA_ENABLED, false);
+                if (aimKeepAlive) ensureForeground();
+                break;
+            case ACTION_NUS_START:
+                ensureForeground();
+                connectNus(intent);
+                break;
+            case ACTION_NUS_STOP:
+                stopNus(intent.getStringExtra(EXTRA_ROLE));
+                break;
+            case ACTION_NUS_SEND: {
+                WandGatt d = nusDevices.get(intent.getStringExtra(EXTRA_ROLE));
+                if (d != null && intent.hasExtra(EXTRA_JSON)) d.write(intent.getStringExtra(EXTRA_JSON));
+                break;
+            }
             default:
                 break;
         }
@@ -121,7 +148,38 @@ public class AccessoryBleService extends Service {
         return START_STICKY;
     }
 
-    private boolean isAnyActive() { return wandActive || !uwbNodes.isEmpty() || keepAlive; }
+    private boolean isAnyActive() { return wandActive || !uwbNodes.isEmpty() || keepAlive || aimKeepAlive || !nusDevices.isEmpty(); }
+
+    /** A watch or combo device: the same Nordic-UART client as the wand, one per id. */
+    private void connectNus(Intent intent) {
+        final String id = intent.getStringExtra(EXTRA_ROLE);
+        if (id == null || id.isEmpty()) return;
+        String address = intent.getStringExtra(EXTRA_ADDRESS);
+        String name = intent.getStringExtra(EXTRA_NAME);
+        WandGatt d = nusDevices.get(id);
+        if (d == null) {
+            d = new WandGatt(this, new WandGatt.Listener() {
+                @Override public void onConnected(String addr) {
+                    nusConnected.put(id, true); de.blckwngd.ajna.aim.AimBridge.emitNusStatus(id, true, addr); refreshNotification();
+                }
+                @Override public void onDisconnected() {
+                    nusConnected.put(id, false); de.blckwngd.ajna.aim.AimBridge.emitNusStatus(id, false, null); refreshNotification();
+                }
+                @Override public void onMessage(String json) { de.blckwngd.ajna.aim.AimBridge.emitNus(id, json); }
+                @Override public void onLog(String message) { de.blckwngd.ajna.aim.AimBridge.emitLog(id + ": " + message); }
+            });
+            nusDevices.put(id, d);
+        }
+        if (address != null && !address.isEmpty()) d.connectByAddress(address);
+        else if (name != null && !name.isEmpty()) d.connectByName(name);
+    }
+
+    private void stopNus(String id) {
+        WandGatt d = id != null ? nusDevices.remove(id) : null;
+        nusConnected.remove(id);
+        if (d != null) d.close();
+        if (id != null) de.blckwngd.ajna.aim.AimBridge.emitNusStatus(id, false, null);
+    }
 
     private String roleOf(Intent intent) {
         String r = intent != null ? intent.getStringExtra(EXTRA_ROLE) : null;
@@ -163,6 +221,8 @@ public class AccessoryBleService extends Service {
         if (wand != null) wand.close();
         for (UwbGatt n : uwbNodes.values()) n.close();
         uwbNodes.clear();
+        for (WandGatt d : nusDevices.values()) d.close();
+        nusDevices.clear();
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
@@ -177,10 +237,13 @@ public class AccessoryBleService extends Service {
      * hängendem Main-Thread greift und die Aufräumarbeiten noch propagieren.
      */
     private void quitApp() {
-        wandActive = false; wandConnected = false; keepAlive = false;
+        wandActive = false; wandConnected = false; keepAlive = false; aimKeepAlive = false;
         if (wand != null) wand.close();
         for (UwbGatt n : uwbNodes.values()) n.close();
         uwbNodes.clear();
+        for (WandGatt d : nusDevices.values()) d.close();
+        nusDevices.clear();
+        de.blckwngd.ajna.aim.AimMediaKeys.disable();
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
@@ -197,6 +260,8 @@ public class AccessoryBleService extends Service {
         if (wand != null) wand.close();
         for (UwbGatt n : uwbNodes.values()) n.close();
         uwbNodes.clear();
+        for (WandGatt d : nusDevices.values()) d.close();
+        nusDevices.clear();
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         super.onDestroy();
     }
@@ -242,7 +307,14 @@ public class AccessoryBleService extends Service {
             if (sb.length() > 0) sb.append(" · ");
             sb.append("UWB ").append(up).append('/').append(uwbNodes.size());
         }
+        if (!nusDevices.isEmpty()) {
+            int up = 0;
+            for (Boolean c : nusConnected.values()) if (Boolean.TRUE.equals(c)) up++;
+            if (sb.length() > 0) sb.append(" · ");
+            sb.append("Uhr ").append(up).append('/').append(nusDevices.size());
+        }
         if (sb.length() > 0) return sb.toString();
+        if (aimKeepAlive) return "Zeigen unterwegs aktiv";
         return keepAlive ? "Bereit – kein Gerät verbunden" : "aktiv";
     }
 
