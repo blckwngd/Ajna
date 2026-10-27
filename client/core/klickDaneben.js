@@ -21,6 +21,8 @@
 // bevor ein Klick auf einen Knopf am Rand ihn erreicht — und Markieren, das
 // daneben beginnt und im Feld endet, würde ebenfalls abgewürgt.
 
+import { registerClosable } from './backButton.js'
+
 /**
  * @param {HTMLElement} overlay  das abdunkelnde Element HINTER dem Fenster
  * @param {() => void} schliessen
@@ -43,8 +45,11 @@ export function klickDaneben(overlay, schliessen) {
 
   overlay.addEventListener('pointerdown', runter)
   overlay.addEventListener('click', klick)
+  // A window that closes beside itself also closes on Android's back key.
+  const unregister = registerClosable(overlay, schliessen)
   return () => {
     overlay.removeEventListener('pointerdown', runter)
     overlay.removeEventListener('click', klick)
+    unregister()
   }
 }

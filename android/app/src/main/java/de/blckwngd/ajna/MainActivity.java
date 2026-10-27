@@ -3,6 +3,8 @@ package de.blckwngd.ajna;
 import android.os.Bundle;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.webkit.WebView;
+import androidx.activity.OnBackPressedCallback;
 import com.getcapacitor.BridgeActivity;
 import java.lang.ref.WeakReference;
 import de.blckwngd.ajna.aim.AimDevicesPlugin;
@@ -29,7 +31,25 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(AimDevicesPlugin.class);   // pointing on the go: remote, watch, media keys
         super.onCreate(savedInstanceState);
         instanceRef = new WeakReference<>(this);
+        getOnBackPressedDispatcher().addCallback(this, backKey);
     }
+
+    // Back closes the topmost open window in the page (client/core/backButton.js).
+    // Only when nothing was open does it go back a page, and on the first page
+    // it sends the app to the background instead of ending it — the session,
+    // connections and wand stay as they are.
+    private final OnBackPressedCallback backKey = new OnBackPressedCallback(true) {
+        @Override
+        public void handleOnBackPressed() {
+            WebView web = getBridge() != null ? getBridge().getWebView() : null;
+            if (web == null) { moveTaskToBack(true); return; }
+            web.evaluateJavascript("(function(){try{return !!(window.__ajnaBack&&window.__ajnaBack())}catch(e){return false}})()", closed -> {
+                if ("true".equals(closed)) return;
+                if (web.canGoBack()) web.goBack();
+                else moveTaskToBack(true);
+            });
+        }
+    };
 
     // External input (Bluetooth remote, keyboard) is captured here, BEFORE the
     // WebView — only while pointing on the go asked for it, and only from

@@ -3535,6 +3535,50 @@ console.log('\n── Klick daneben')
   check('kein Dialog prüft mehr selbst auf „Klick auf das Overlay"', alt.length === 0, alt.join(' | '))
 }
 
+// ── Android-Zurück schließt das oberste Fenster (27.10.) ─────────────────
+// Ohne das beendete die Taste die ganze App. Jedes Fenster, das sich mit
+// klickDaneben anmeldet, ist automatisch dabei.
+console.log('\n── Zurück-Taste')
+{
+  const vorher = { window: globalThis.window, document: globalThis.document, gcs: globalThis.getComputedStyle, Node: globalThis.Node }
+  const body = { tag: 'body' }
+  globalThis.window = {}
+  globalThis.document = { body }
+  globalThis.Node = { DOCUMENT_POSITION_FOLLOWING: 4 }
+  globalThis.getComputedStyle = (el) => ({ zIndex: el.z === undefined ? 'auto' : String(el.z), visibility: el.unsichtbar ? 'hidden' : 'visible' })
+  let reihe = 0
+  const fenster = (z) => {
+    const el = {
+      z, ort: reihe++, isConnected: true, hidden: false, parentElement: body,
+      hoerer: {}, addEventListener(t, f) { this.hoerer[t] = f }, removeEventListener(t) { delete this.hoerer[t] },
+      getClientRects() { return this.hidden ? [] : [1] },
+      compareDocumentPosition(o) { return o.ort > this.ort ? 4 : 2 },
+    }
+    return el
+  }
+  try {
+    const { klickDaneben } = await import('../client/core/klickDaneben.js?zurueck')
+    const zu = []
+    const a = fenster(2000), b = fenster(2000), c = fenster(10)
+    klickDaneben(a, () => zu.push('a'))
+    const abB = klickDaneben(b, () => { zu.push('b'); b.hidden = true })
+    klickDaneben(c, () => zu.push('c'))
+    check('die Seite bietet der App window.__ajnaBack an', typeof window.__ajnaBack === 'function')
+    check('Zurück schließt das spätere von zwei gleich hohen Fenstern', window.__ajnaBack() === true && zu.join() === 'b')
+    a.isConnected = false
+    check('entfernte und versteckte Fenster zählen nicht, das nächste ist dran', window.__ajnaBack() === true && zu.join() === 'b,c')
+    c.unsichtbar = true
+    check('ist nichts offen, meldet Zurück „nichts geschlossen"', window.__ajnaBack() === false)
+    b.hidden = false; abB()
+    check('ein abgemeldetes Fenster schließt Zurück nicht mehr', window.__ajnaBack() === false && zu.length === 2)
+  } finally {
+    globalThis.window = vorher.window; globalThis.document = vorher.document
+    globalThis.getComputedStyle = vorher.gcs; globalThis.Node = vorher.Node
+  }
+  const main = readFileSync(new URL('../android/app/src/main/java/de/blckwngd/ajna/MainActivity.java', import.meta.url), 'utf8')
+  check('die App fragt bei Zurück zuerst die Seite', /__ajnaBack/.test(main) && /OnBackPressedCallback/.test(main))
+}
+
 // ── „Auftrag nur vor Ort annehmen" ───────────────────────────────────────
 //
 // Zwei Dinge werden hier scharf gehalten, und beide gehen leise kaputt:
