@@ -286,7 +286,6 @@ export class FriendsDialog {
     const el = document.createElement('style')
     el.id = STYLE_ID
     el.textContent = `
-    .ajna-fab-friends{position:relative}
     .ajna-friends-badge{position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;padding:0 4px;border-radius:9px;
       background:#e0533b;color:#fff;font:600 11px system-ui,sans-serif;display:flex;align-items:center;justify-content:center}
     .ajna-friends-badge[hidden]{display:none}

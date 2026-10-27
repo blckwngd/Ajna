@@ -4681,6 +4681,14 @@ console.log('\n── Start ohne Abbruch')
   // `.then` gefragt — „AimDevices.then() is not implemented".
   check('das Plugin reist in einer Schachtel, nie als Rückgabewert einer async-Funktion',
     /return \{ plugin: /.test(dev) && /\(await aimPlugin\(\)\)\.plugin/.test(dev) && !/return registerPlugin\(/.test(dev))
+  // The friends button had `position:relative` (for its badge) — that beat the
+  // bar's `fixed`, and once dragged it sat below the screen.
+  const { readdirSync } = await import('node:fs')
+  const verschoben = readdirSync(new URL('../client/core/', import.meta.url))
+    .filter(n => n.endsWith('.js'))
+    .filter(n => /\.ajna-fab-[a-z]+\s*\{[^}]*position\s*:\s*(relative|static|absolute)/.test(
+      readFileSync(new URL(`../client/core/${n}`, import.meta.url), 'utf8')))
+  check('kein Knopf der Leiste überschreibt ihr position:fixed', verschoben.length === 0, verschoben.join(' | '))
 }
 
 // ---------------------------------------------------------------------------

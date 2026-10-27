@@ -10,6 +10,7 @@
 
 import { t } from './i18n.js'
 import { klickDaneben } from './klickDaneben.js'
+import { Toast } from './Toast.js'
 
 const STYLE_ID = 'ajnaFilterDialogStyles'
 
@@ -69,7 +70,8 @@ export class FilterDialog {
 
   async open() {
     if (!this.ajna?.isLoggedIn()) {
-      console.warn('FilterDialog: nicht eingeloggt')
+      this._toast ??= new Toast()
+      this._toast.show(t('Bitte anmelden — die Inhalte kommen vom Server.'), { title: t('Filter') })
       return
     }
     try {
