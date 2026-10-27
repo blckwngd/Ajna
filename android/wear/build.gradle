@@ -17,9 +17,11 @@ android {
     namespace = "de.blckwngd.ajna.wear"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        // Same id as the phone app: the Wear OS convention, and the condition
-        // for a Data Layer fallback should a watch be unable to advertise.
-        applicationId "de.blckwngd.ajna"
+        // NOT the phone app's id. The Wear OS convention would be the same id
+        // (a Data Layer fallback would need it), but with one id a stray
+        // `installDebug` on the phone replaces the phone app with the watch
+        // app. The link is BLE, so nothing depends on the id today.
+        applicationId "de.blckwngd.ajna.wear"
         minSdkVersion 30
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

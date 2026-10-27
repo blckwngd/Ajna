@@ -38,6 +38,7 @@
     "mobile:sync": "webpack && cap sync android",
     "mobile:run": "webpack && node scripts/mobile-run.mjs",
     "mobile:open": "cap open android",
+    "wear:run": "node scripts/wear-run.mjs",
     "android:trust-caddy": "node scripts/android-trust-caddy.mjs",
     "deploy": "bash scripts/deploy.sh",
     "migrations": "node tools/migrations-check.mjs",

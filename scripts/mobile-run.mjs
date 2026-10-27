@@ -45,7 +45,9 @@ const gradlew = join(androidDir, isWin ? 'gradlew.bat' : 'gradlew');
 run('npx', ['cap', 'sync', 'android'], { cwd: root, shell: isWin });
 // 2) Bauen + auf verbundenes Geraet installieren (Gradle nutzt SDK-eigenes adb)
 //    shell:true noetig, weil Node .bat-Dateien nicht direkt als Prozess startet.
-run(gradlew, ['-p', androidDir, 'installDebug', '--console=plain'], { shell: isWin });
+//    NUR das Telefon-Modul: seit es android/wear gibt, installierte ein
+//    nacktes `installDebug` auch die Uhr-App auf das Telefon.
+run(gradlew, ['-p', androidDir, ':app:installDebug', '--console=plain'], { shell: isWin });
 // 3) App starten
 const adb = findAdb();
 run(adb, ['shell', 'monkey', '-p', APP_ID, '-c', 'android.intent.category.LAUNCHER', '1']);

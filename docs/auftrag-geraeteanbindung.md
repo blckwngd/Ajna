@@ -1,5 +1,9 @@
 # Auftrag: Geräteanbindung unterwegs — Zeigegerät, Eingabegeräte, Wear-OS-App
 
+> **Umgesetzt am 27.10.2026** bis auf die Messungen am Gerät. Was gebaut ist und
+> wie man es benutzt: `geraete-anbindung.md`, das Protokoll: `geraete-protokoll.md`.
+> Dieser Auftrag bleibt als Begründung stehen.
+
 Stand 27.10.2026. Überarbeitete Fassung des ersten Entwurfs, nach Abgleich mit
 dem bestehenden Code. Der Auftrag richtet sich an die Instanz, die ihn umsetzt.
 
