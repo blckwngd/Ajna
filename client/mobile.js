@@ -72,8 +72,10 @@ async function startNativeGps(ajna) {
     const { Geolocation } = await import('@capacitor/geolocation')
     const { getAccessoryHub } = await import('./core/AccessoryHub.js')
     const hub = getAccessoryHub({ ajna })
+    // GPS hardware delivers once a second; asking for more (interval 0, the
+    // WebView default) only costs battery.
     await Geolocation.watchPosition(
-      { enableHighAccuracy: true, timeout: 20000, maximumAge: 1000 },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 1000, interval: 1000, minimumUpdateInterval: 1000 },
       (pos, err) => {
         if (err) { console.warn('[mobile] native GPS error:', err?.message || err); return }
         const c = pos?.coords
@@ -81,6 +83,7 @@ async function startNativeGps(ajna) {
         hub.gps.ingest(c.latitude, c.longitude, c.altitude ?? 0, c.accuracy)
       }
     )
+    hub.gps.useExternalSource?.()   // only once the native watch runs — else keep the WebView one
     console.log('[mobile] native Capacitor GPS watch started')
   } catch (err) {
     console.warn('[mobile] native GPS watch failed:', err?.message || err)

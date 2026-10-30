@@ -86,8 +86,20 @@ export class GPSProvider {
     this._stopRealWatch()
   }
 
+  /**
+   * An external source (native GPS on Android) feeds fixes via ingest() from
+   * now on: the WebView watch stops and stays off. On Android it rarely
+   * delivers, yet Chromium registers it at interval 0 with high accuracy —
+   * a second GPS client for nothing (measured on the phone, 30.10.).
+   */
+  useExternalSource() {
+    this._external = true
+    this._stopRealWatch()
+  }
+
   _startRealWatch() {
 
+    if (this._external) return
     if (this.watchId !== null) return
     if (!("geolocation" in navigator)) return
 

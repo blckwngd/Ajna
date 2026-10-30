@@ -229,7 +229,17 @@ function feedSmoother(obj) {
   }
   // Nur wenn sich die Position tatsächlich geändert hat, wird der Marker (bis
   // zum Settling) in den Pro-Frame-Loop aufgenommen.
-  if (sm.feed(obj)) movingIds.add(obj.id)
+  if (sm.feed(obj)) { movingIds.add(obj.id); startMarkerLoop() }
+}
+
+// The loop runs only while a marker is moving. A loop that re-armed itself
+// every frame with nothing to do kept the WebView compositing at 60 fps —
+// measured on the phone (30.10.): roughly a third of the map's CPU.
+let markerLoopArmed = false
+function startMarkerLoop() {
+  if (markerLoopArmed) return
+  markerLoopArmed = true
+  requestAnimationFrame(tickMarkerSmoothers)
 }
 
 // Pro-Frame-Loop: gesampelten Position auf die Marker schreiben. Leaflet
@@ -239,7 +249,15 @@ function feedSmoother(obj) {
 // WICHTIG: während eines User-Drags wird der Marker übersprungen — sonst
 // kämpft der Smoother-Sample (alte Position) jeden Frame gegen Leaflets
 // Maus-getriebene Position, und der Marker bleibt visuell "festgenagelt".
-function tickMarkerSmoothers() {
+// 20 updates a second are plenty on a map — a marker moves a few pixels per
+// second there. At 60 the WebView repainted the marker pane every frame for
+// objects that are always moving (aircraft, dragons on dead reckoning).
+const MARKER_FRAME_MS = 50
+let lastMarkerFrame = 0
+
+function tickMarkerSmoothers(now = performance.now()) {
+  if (now - lastMarkerFrame < MARKER_FRAME_MS) { requestAnimationFrame(tickMarkerSmoothers); return }
+  lastMarkerFrame = now
   // Nur GERADE bewegte Marker anfassen — nicht alle. Ein settled-Marker wird
   // einmal final gesetzt und dann aus movingIds entfernt (kein Frame-Spam mehr).
   for (const id of movingIds) {
@@ -251,7 +269,8 @@ function tickMarkerSmoothers() {
     if (snap) marker.setLatLng([snap.lat, snap.lon])
     if (sm.isSettled()) movingIds.delete(id)
   }
-  requestAnimationFrame(tickMarkerSmoothers)
+  if (movingIds.size > 0) requestAnimationFrame(tickMarkerSmoothers)
+  else markerLoopArmed = false
 }
 
 // Type-spezifische Darstellung — neue Types hier ergänzen, damit der
@@ -1063,8 +1082,9 @@ async function init() {
     })
   })
 
-  // Marker-Smoothing-Loop starten (rAF — pausiert wenn Tab im Hintergrund).
-  requestAnimationFrame(tickMarkerSmoothers)
+  // Marker-Smoothing-Loop starten (rAF — pausiert wenn Tab im Hintergrund);
+  // er hält von selbst an, sobald nichts mehr in Bewegung ist.
+  startMarkerLoop()
 }
 
 window.addEventListener('DOMContentLoaded', init)

@@ -150,6 +150,26 @@ public class AccessoryBleService extends Service {
 
     private boolean isAnyActive() { return wandActive || !uwbNodes.isEmpty() || keepAlive || aimKeepAlive || !nusDevices.isEmpty(); }
 
+    // The CPU stays awake only while a device is CONNECTED and streams, or
+    // the player aims. Searching and reconnecting need no awake CPU — the
+    // Bluetooth controller scans on its own and wakes us with a result.
+    // "Run in background" alone keeps the PROCESS alive (the foreground
+    // service does that) and lets the CPU sleep between events. Before, the
+    // lock was held from the first UWB search at app start, with no device in
+    // reach, and the phone never suspended (measured 30.10.).
+    private boolean needsCpu() {
+        if (wandConnected || aimKeepAlive) return true;
+        for (String role : uwbNodes.keySet()) if (UwbBridge.isConnected(role)) return true;
+        for (Boolean c : nusConnected.values()) if (Boolean.TRUE.equals(c)) return true;
+        return false;
+    }
+
+    private void updateWakeLock() {
+        if (wakeLock == null) return;
+        if (needsCpu()) { if (!wakeLock.isHeld()) wakeLock.acquire(); }
+        else if (wakeLock.isHeld()) wakeLock.release();
+    }
+
     /** A watch or combo device: the same Nordic-UART client as the wand, one per id. */
     private void connectNus(Intent intent) {
         final String id = intent.getStringExtra(EXTRA_ROLE);
@@ -214,7 +234,6 @@ public class AccessoryBleService extends Service {
 
     private void ensureForeground() {
         startForegroundCompat(statusText());
-        if (wakeLock != null && !wakeLock.isHeld()) wakeLock.acquire();
     }
 
     private void stopEverything() {
@@ -369,7 +388,9 @@ public class AccessoryBleService extends Service {
         }
     }
 
+    // Called on every connect / disconnect, so the wake lock follows the links.
     private void refreshNotification() {
+        updateWakeLock();
         NotificationManager nm = getSystemService(NotificationManager.class);
         if (nm != null) nm.notify(NOTIFICATION_ID, buildNotification(statusText()));
     }

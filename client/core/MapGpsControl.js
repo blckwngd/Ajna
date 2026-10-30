@@ -300,12 +300,11 @@ function injectStyles() {
       position: absolute; inset: 0;
       border-radius: 50%;
       background: #2c5d8f;
-      opacity: 0.35;
-      animation: ajnaGpsPulse 1.8s ease-out infinite;
-    }
-    @keyframes ajnaGpsPulse {
-      0%   { transform: scale(0.5); opacity: 0.55; }
-      100% { transform: scale(2.2); opacity: 0; }
+      /* A still halo, not an endless pulse: an infinite animation keeps the
+         WebView compositing at 60 fps — on the phone (30.10.) the largest
+         single cost on the map, more than half the app's CPU. */
+      opacity: 0.22;
+      transform: scale(1.8);
     }
   `
   document.head.appendChild(s)
