@@ -1,7 +1,7 @@
 # Sammelobjekte — Entwurf
 
-**Stand 05.11.2026: Fragenkatalog läuft, NICHT freigegeben.** Umgesetzt wird
-erst nach ausdrücklichem OK. Offene Fragen stehen unten.
+**Stand 05.11.2026: Fragenkatalog abgeschlossen, NICHT freigegeben.** Umgesetzt
+wird erst nach ausdrücklichem OK.
 
 Ein Objekt kann andere Objekte enthalten: Schrank → Server → VM → Sensorwert,
 UWB-Netz → Anker, Truhe → Beute, später Gebäude → Etage → Raum aus BIM.
@@ -50,19 +50,30 @@ darüber, nicht der Graph selbst.
 | Sammelaktionen | **nicht in der ersten Stufe**. Ein Agent kann am Elternobjekt eigene Aktionen anbieten und selbst verteilen. |
 | Einhängen in der Bedienung | Objekt **selektieren**, dann am Sammelobjekt die neue Aktion **„Hierin platzieren"**. Auf der **Karte** zusätzlich **Ziehen auf ein Objekt**, danach Rückfrage „Objekt1 in Objekt2 platzieren?". |
 
-## Offen (Runde 5, unterbrochen am 04.11.)
+### Einhängen im Detail (Runde 5, 05.11.)
 
-1. **Wer ist Sammelobjekt?** Nur ausdrücklich markierte (mit Container-Abschnitt,
-   nur die bieten „Hierin platzieren") — oder jedes Objekt? *Vorschlag: nur markierte.*
-2. **Wo landet ein Objekt nach „Hierin platzieren"?** Bleibt, wo es steht (Weltposition
-   wird in Versatz umgerechnet; weiter als ~50 m weg → ans Sammelobjekt), immer ans
-   Sammelobjekt, oder fragen? *Vorschlag: bleibt, wo es steht.*
-3. **Herausnehmen:** eigene Aktion „Herausnehmen" (eine Ebene höher oder frei, behält
-   Weltposition; Rechte: `edit` am Objekt und am bisherigen Eltern) — oder nur durch
-   Umhängen? *Vorschlag: eigene Aktion.*
-4. **Umfang der ersten Stufe**, zusätzlich zum Kern: Massenanlage per Agent-API,
-   Objektliste als Baum, UWB-Netze als Sammelobjekte (uwb-anchors-Agent), Beute-Truhe
-   im World-Director. *Vorschlag: Massenanlage per Agent-API.*
+| | Entscheidung |
+|---|---|
+| Wer ist Sammelobjekt | **nur ausdrücklich markierte** — ein Objekt mit Container-Abschnitt. Nur diese bieten „Hierin platzieren" an; kein versehentliches Einhängen in Baum oder Drachen. |
+| Ort nach „Hierin platzieren" | **bleibt, wo es steht**: die Weltposition wird in einen Versatz zum Sammelobjekt umgerechnet. Weiter als ~50 m weg → kommt ans Sammelobjekt, mit Hinweis. |
+| Herausnehmen | eigene Aktion **„Herausnehmen"**: eine Ebene höher (oder frei), behält die Weltposition. Rechte: `edit` am Objekt und am bisherigen Sammelobjekt. |
+
+## Umfang der ersten Stufe
+
+**Kern:** Datenmodell, Server-Hooks (Weltposition, Zyklen, Tiefe, Löschen,
+Rechte-Vererbung, Einhängen), Darstellung auf Karte und in AR (Abzeichen,
+Aufklappen, Liste, Explosionsansicht, Status-Durchschlag), „Hierin platzieren",
+„Herausnehmen", Ziehen auf der Karte, Container-Abschnitt im Editor.
+
+**Dazu:**
+* **Massenanlage per Agent-API** — ein Aufruf legt einen ganzen Baum an
+  (Voraussetzung für NetBox/PRTG).
+* **UWB-Netze als Sammelobjekte** — der uwb-anchors-Agent legt Netz-Objekte an
+  und hängt seine Anker ein (eigene Geo-Position). Erster echter Nutzer.
+* **Beute-Truhe im World-Director** — Truhen mit Gegenständen, Explosionsansicht.
+
+**Nicht in Stufe 1:** Sammelaktionen, Objektliste als Baum, Recht `contain`,
+Vereinigung mit dem Spieler-Inventar, volle 3D-Drehung.
 
 ## Schlüssel in Nutzdaten (Vorschlag, englisch)
 
