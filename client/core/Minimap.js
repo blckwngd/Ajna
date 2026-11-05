@@ -32,6 +32,7 @@
 import { makeDraggable } from './draggable.js'
 import { getFabBar } from './FabBar.js'
 import { iconOf } from './Appearance.js'
+import { worldObjects } from './containers.js'
 
 const STYLE_ID   = 'ajna-minimap-style'
 const KEY_POS    = 'ajna.minimap.pos'
@@ -554,7 +555,7 @@ export class Minimap {
     const radius = this._radiusM() * 1.2
     if (!radius) return
     const nah = []
-    for (const o of liste) {
+    for (const o of worldObjects(liste)) {           // Kinder zugeklappter Sammelobjekte bleiben draussen
       if (!Number.isFinite(o?.lat) || !Number.isFinite(o?.lon)) continue
       if (o.carried_by) continue                      // im Inventar, nicht in der Welt
       if (this.filters?.matches && !this.filters.matches(o)) continue

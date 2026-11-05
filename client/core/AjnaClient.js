@@ -4,6 +4,9 @@ import PocketBase, { LocalAuthStore } from 'pocketbase'
 // PB-Default-Token-Exp ist 7 Tage; 1h-Heartbeat lässt sehr viel Puffer und
 // merkt serverseitig revoked Tokens zeitnah. Catch-up-Poll ist Safety-Net,
 // falls PB_CONNECT mal nicht feuert oder ein SSE-Event verloren geht.
+// Erstabruf ohne die Kinder von Sammelobjekten, die „erst beim Aufklappen
+// laden" wollen. Wörtlich gleich mit containers.LAZY_FILTER (run-ui prüft das).
+const LAZY_FILTER = "parent = '' || parent.container.load != 'on_expand'"
 const TOKEN_REFRESH_INTERVAL_MS = 60 * 60 * 1000  // 1h
 const CATCHUP_POLL_INTERVAL_MS  = 30 * 1000       // 30s
 // Dedup-Fenster: ein PB_CONNECT-Trigger ignoriert refreshes, die innerhalb
@@ -389,7 +392,12 @@ export class AjnaClient {
     // Den Abbruch bloss abzufangen wäre schlimmer: Der Aufrufer liefe mit einer
     // LEEREN Objektliste weiter — ein Agent fand daraufhin sein eigenes Werkzeug
     // nicht und legte ein zweites an. Lieber gar nicht erst stornieren lassen.
-    const objects = await this.pb.collection('objects').getFullList({ requestKey: null })
+    //
+    // Kinder eines Sammelobjekts mit „erst beim Aufklappen laden" bleiben
+    // draussen (dieselbe Zeichenkette wie containers.LAZY_FILTER — hier
+    // wiederholt, weil Agenten diesen Client ohne die Oberfläche laden);
+    // loadChildren() holt sie, wenn der Spieler aufklappt.
+    const objects = await this.pb.collection('objects').getFullList({ requestKey: null, filter: LAZY_FILTER })
     this.objectMap.clear()
     for (const o of objects) {
       this._rewriteRecord(o)
@@ -421,11 +429,37 @@ export class AjnaClient {
     return obj
   }
 
-  async deleteObject(id) {
+  /**
+   * @param {string} id
+   * @param {{children?: 'delete'|'detach'}} [o]  ein Sammelobjekt mit Inhalt
+   *        braucht die Ansage — ohne sie antwortet der Server 409 has_children
+   */
+  async deleteObject(id, { children = null } = {}) {
     const raw = this._toRaw(id)
-    await this.pb.collection('objects').delete(raw)
+    await this.pb.collection('objects').delete(raw, children ? { query: { children } } : {})
     this.objectMap.delete(`${this.id}:${raw}`)
     this._emitObjectsChanged()
+  }
+
+  /** Kinder eines Sammelobjekts nachladen — für „erst beim Aufklappen laden". */
+  async loadChildren(id) {
+    const raw = this._toRaw(id)
+    const kids = await this.pb.collection('objects').getFullList({ requestKey: null, filter: `parent = "${raw}"` })
+    for (const k of kids) { this._rewriteRecord(k); this.objectMap.set(k.id, k) }
+    this._emitObjectsChanged()
+    return kids
+  }
+
+  /**
+   * Einen ganzen Baum in einem Aufruf anlegen (POST /api/objects/tree,
+   * docs/sammelobjekte.md). `objects` sind gewöhnliche Objekte mit
+   * `children: [...]`; Wurzeln dürfen `parent` (rohe ID) tragen.
+   * @returns {Promise<{ok:boolean, count:number, objects:Array}>}
+   */
+  async createTree(objects) {
+    const res = await this.pb.send('/api/objects/tree', { method: 'POST', body: { objects } })
+    await this.loadObjects()
+    return res
   }
 
   async setAnimation(id, state) {

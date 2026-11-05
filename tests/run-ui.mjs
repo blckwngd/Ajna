@@ -4708,6 +4708,31 @@ console.log('\n── Zeigepfad bei Bildschirm aus')
   check('Zeitgeber der Sitzung takten nicht schneller als 1 s', takte.length > 0 && takte.every(ms => ms >= 1000), takte.join(','))
 }
 
+// ── Sammelobjekte in der Darstellung (05.11.) ─────────────────────────────
+// Karte, AR, Minimap und Nähe-Liste gehen alle durch containers.worldObjects —
+// sonst zeigte eine Ansicht Kinder, die eine andere zugeklappt hat.
+console.log('\n── Sammelobjekte')
+{
+  const src = (p) => readFileSync(new URL(p, import.meta.url), 'utf8')
+  const map = src('../client/map.js'), main = src('../client/main.js')
+  const cont = src('../client/core/containers.js'), client = src('../client/core/AjnaClient.js')
+  check('die Karte zeichnet durch worldObjects', /const filtered = worldObjects\(/.test(map))
+  check('die AR-Szene gleicht durch worldObjects ab', /const filteredObjects = displayedObjects\(/.test(main))
+  check('Minimap und Nähe-Liste auch',
+    /worldObjects\(liste\)/.test(src('../client/core/Minimap.js')) && /worldObjects\(this\.ajna\.getObjectList/.test(src('../client/core/NearbyList.js')))
+  // Der Erstabruf lässt Kinder von „erst beim Aufklappen laden" aus — mit
+  // derselben Zeichenkette an beiden Stellen.
+  const lazy = (s) => (s.match(/LAZY_FILTER = (".*?")/) || [])[1]
+  check('AjnaClient und containers.js meinen denselben Lade-Filter', !!lazy(cont) && lazy(cont) === lazy(client), `${lazy(cont)} vs ${lazy(client)}`)
+  check('Beschriftungen kennen {badge}', /case 'badge':/.test(src('../client/core/Appearance.js')))
+  check('das Kontextmenü bietet Aufklappen, Vormerken, Hierin platzieren und Herausnehmen',
+    ['Aufklappen', 'Zum Platzieren vormerken', 'hierin platzieren', 'Herausnehmen'].every(s => src('../client/core/ObjectActions.js').includes(s)))
+  check('auf der Karte landet ein Objekt per Ziehen nach Rückfrage im Sammelobjekt',
+    /containerUnderPoint\(obj, event\.target\.getLatLng\(\)\)/.test(map) && /in „\{b\}" platzieren\?/.test(map))
+  check('Löschen fragt nach dem Inhalt (Editor und Kontextmenü)',
+    /deleteAsked\(/.test(src('../client/core/EditorUI.js')) && /deleteAsked\(/.test(src('../client/core/ObjectActions.js')))
+}
+
 // ---------------------------------------------------------------------------
 // Freundesliste (Arbeitspaket 0c, 23.10.). Das Verhalten prüft
 // tests/privacy/freunde.mjs am Server; hier die Eigenschaften, die beim

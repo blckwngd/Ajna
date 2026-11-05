@@ -154,7 +154,7 @@ Zielwahl bleibt in der WebView.
 Bildschirm aus mit der echten Fernbedienung, die Driftrate einer Uhr ohne
 Magnetometer, Zauberstab-Tasten als semantische Aktionen.
 
-### 0g · Sammelobjekte — **Server steht seit 05.11.**, Darstellung offen
+### 0g · Sammelobjekte — **Server, Darstellung und Bedienung stehen seit 05.11.**
 
 Ein Objekt enthält andere: Rack → Server → VM → Sensor, UWB-Netz → Anker,
 Truhe → Beute, später Gebäude aus BIM. Erstes Paket aus der Ideenliste für
@@ -167,13 +167,16 @@ Schnittstelle in `sammelobjekte.md`.
 (1793100000), Hooks in `pb_hooks/hierarchy.js` (Eltern, Zyklus, Tiefe 8,
 beidseitiges `edit`, Weltlage relativer Kinder samt Nachziehen), Rechte-
 Vererbung wie NTFS in `permissions.js`, Löschschutz (`?children=delete|detach`),
-`POST /api/objects/tree`. 10 Unit-, 37 E2E-Prüfungen.
+`POST /api/objects/tree`. Client: `core/containers.js` (worldObjects für
+Karte, AR, Minimap, Nähe-Liste; Abzeichen, Aufklappen pro Spieler,
+Explosionsansicht, Laden erst beim Aufklappen), Kontextmenü (Aufklappen,
+Vormerken, Hierin platzieren, Herausnehmen), Ziehen auf der Karte mit
+Rückfrage, Editor-Abschnitte, Löschen mit Nachfrage, `AjnaManager.createTree`.
+19 Unit-, 38 E2E-, 9 Quelltext-Prüfungen.
 
-**Offen, in dieser Reihenfolge:** Darstellung auf Karte und in AR (Abzeichen,
-Aufklappen pro Spieler, Liste, Explosionsansicht, Status-Durchschlag, Laden
-erst beim Aufklappen), Bedienung („Hierin platzieren", „Herausnehmen", Ziehen
-auf der Karte, Container-Abschnitt im Editor), Agent-Client (`createTree`),
-UWB-Netze als Sammelobjekte, Beute-Truhe im World-Director.
+**Offen:** UWB-Netze als Sammelobjekte (uwb-anchors-Agent), Beute-Truhe im
+World-Director. Danach aus der Ideenliste: Doku-Links und QR-/Marker-
+Generator, NetBox-/PRTG-Agent.
 
 ### 0d · Weltchat in der Umgebung — *eigenes Paket, nicht jetzt*
 

@@ -248,6 +248,9 @@ export function resolveLabel(template, record, ctx = {}) {
     switch (key) {
       case 'name':        return record?.name ?? ''
       case 'type':        return record?.type ?? ''
+      // Sammelobjekt: Anzahl und schlimmster Status der sichtbaren Kinder,
+      // von containers.worldObjects() auf die Kopie gestempelt.
+      case 'badge':       return record?._badge ?? ''
       case 'emoji':       return typeof a.emoji === 'string' ? a.emoji : ''
       case 'distance':    return Number.isFinite(d) ? formatDistance(d, locale) : ''
       case 'distance_m':  return Number.isFinite(d) ? String(Math.round(d)) : ''

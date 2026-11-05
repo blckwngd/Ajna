@@ -19,6 +19,7 @@ import { inSprache } from './Sprachwahl.js'
 import { rangiereNachPeilung } from './PointingResolver.js'
 import { PRESENCE_TYPE, zeigeAnwesenheit, anwesenheitsText } from './PresenceService.js'
 import { t } from './i18n.js'
+import { worldObjects } from './containers.js'
 
 const MAX_ROWS = 20
 const DATA_THROTTLE_MS = 500     // In-Place-Updates bündeln
@@ -186,7 +187,8 @@ export class NearbyList {
   _collect() {
     const pos = this.getPosition?.()
     if (!pos || !Number.isFinite(pos.lat)) return { pos: null, list: [] }
-    const list = (this.ajna.getObjectList?.() || [])
+    // worldObjects: Kinder zugeklappter Sammelobjekte bleiben draussen.
+    const list = worldObjects(this.ajna.getObjectList?.() || [])
       .filter(o => o && Number.isFinite(o.lat) && Number.isFinite(o.lon) && !o.carried_by)
       // Anwesenheiten gehören dazu — es sind Menschen in der Nähe, und die
       // sind interessanter als jede Laterne. Aber nur FREMDE und nur

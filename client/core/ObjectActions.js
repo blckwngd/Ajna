@@ -18,6 +18,10 @@ import { privacy } from './PrivacyPolicy.js'
 import { aktionErlaubt, reichweiteVon, abstandM } from './aktionsReichweite.js'
 import { wikiLinkOf } from './wikiLinks.js'
 import { t } from './i18n.js'
+import {
+  isContainer, containerConfig, isExpanded, toggleExpanded, ContainerIndex, parentIdOf,
+  placeCheck, placeInto, takeOut, markForPlacing, placingCandidate, deleteAsked,
+} from './containers.js'
 
 const FALLBACK_ACTIONS = [
   { key: 'examine', label: 'Untersuchen' }
@@ -45,11 +49,13 @@ const TALK_ACTIONS = new Set(['talk', 'sprechen'])
 const labelFor = (a) => a?.label || ACTION_LABELS[String(a?.key || '').toLowerCase()] || a?.key || '?'
 
 export class ObjectActions {
-  constructor({ ajna, editorUI, contextMenu, permissionDialog, onInteract, onInteractError, getPosition, onGizmo, onTalk, onQuestAccepted }) {
+  constructor({ ajna, editorUI, contextMenu, permissionDialog, onInteract, onInteractError, getPosition, onGizmo, onTalk, onQuestAccepted, notify }) {
     this.ajna = ajna
     this.editorUI = editorUI
     this.contextMenu = contextMenu
     this.permissionDialog = permissionDialog
+    // Kurze Meldung an den Spieler (Sammelobjekte: „steht jetzt am …"). Ohne: alert().
+    this.notify = notify || ((msg) => { try { alert(msg) } catch {} })
     // „Verschieben/Drehen": heftet das Editor-Gizmo an das Objekt (AR-View).
     this.onGizmo = onGizmo || null
     // „Sprechen“ öffnet ein Gespräch statt ein Interaktions-Ereignis zu senden.
@@ -118,11 +124,20 @@ export class ObjectActions {
     // schlägt die Abfrage fehl, bleibt es beim Besitzer-Check.
     const me = this._meFor(record)
     const isOwner = !!me && !!record.owner && me.id === record.owner
-    let ownerRight = isOwner
-    if (!ownerRight && me) {
+    let rights = isOwner ? ['view', 'edit', 'move', 'owner'] : []
+    if (!isOwner && me) {
       const r = await this.ajna.myRights?.(record.id)?.catch?.(() => null)
-      ownerRight = !!(r?.rights || []).includes('owner')
+      rights = r?.rights || []
     }
+    const ownerRight = isOwner || rights.includes('owner')
+    const canEdit = ownerRight || rights.includes('edit')
+
+    // Sammelobjekte (containers.js): auf-/zuklappen, vormerken, hineinlegen,
+    // herausnehmen. Der Kandidat fürs Hineinlegen ist das vorgemerkte Objekt.
+    const index = new ContainerIndex(this.ajna.getObjects?.() || [])
+    const candidate = placingCandidate(this.ajna)
+    const cfg = containerConfig(record)
+    const insideId = parentIdOf(record)
 
     // Einsammeln: eigene Objekte immer, fremde nur wenn `portable`. Nicht,
     // wenn das Objekt schon getragen wird. Server prüft die Rechte final.
@@ -137,6 +152,18 @@ export class ObjectActions {
     const items = [
       { label: 'Bearbeiten',     onClick: () => this.editorUI?.fillEditor?.(record) },
       this.onGizmo && { label: '✥ Verschieben/Drehen', onClick: () => this.onGizmo(record) },
+      cfg && {
+        label: isExpanded(record) ? t('▾ Zuklappen') : t('▸ Aufklappen'),
+        onClick: () => this._toggleContainer(record),
+      },
+      cfg && canEdit && candidate && candidate.id !== record.id && !placeCheck(candidate, record, index) && {
+        label: t('📥 „{name}" hierin platzieren', { name: candidate.name || candidate.id }),
+        onClick: () => this._placeInto(candidate, record),
+      },
+      canEdit && !record.carried_by && (candidate?.id === record.id
+        ? { label: t('📌 Vormerkung aufheben'), onClick: () => markForPlacing(null) }
+        : { label: t('📌 Zum Platzieren vormerken'), onClick: () => markForPlacing(record) }),
+      insideId && canEdit && { label: t('📤 Herausnehmen'), onClick: () => this._takeOut(record) },
       wikiUrl && {
         label: record.state?.wiki_kind === 'image' ? '🔗 Auf Commons öffnen' : '🔗 Wikipedia öffnen',
         onClick: () => window.open(wikiUrl, '_blank', 'noopener')
@@ -399,10 +426,39 @@ export class ObjectActions {
     const label = record.name || record.id
     if (!window.confirm(`"${label}" wirklich löschen?`)) return
     try {
-      await this.ajna.deleteObject(record.id)
+      // Ein Sammelobjekt mit Inhalt fragt, was mit dem Inhalt geschieht.
+      await deleteAsked(this.ajna, record, new ContainerIndex(this.ajna.getObjects?.() || []))
     } catch (err) {
       console.warn('deleteObject fehlgeschlagen', err)
-      alert(t('Löschen fehlgeschlagen: {grund}', { grund: err?.message || err }))
+      alert(t('Löschen fehlgeschlagen: {grund}', { grund: err?.response?.error || err?.message || err }))
+    }
+  }
+
+  // ── Sammelobjekte ──────────────────────────────────────────────────────
+
+  _toggleContainer(record) {
+    const on = toggleExpanded(record)
+    // „Erst beim Aufklappen laden": die Kinder sind noch nicht da.
+    if (on && containerConfig(record)?.load === 'on_expand') {
+      this.ajna.loadChildren?.(record.id)?.catch?.(err => this.notify(t('Inhalt laden fehlgeschlagen: {grund}', { grund: err?.message || err })))
+    }
+  }
+
+  async _placeInto(child, container) {
+    try {
+      await placeInto(this.ajna, child, container, { notify: this.notify })
+      this.notify(t('„{a}" liegt jetzt in „{b}".', { a: child.name || child.id, b: container.name || container.id }))
+    } catch (err) {
+      this.notify(t('Platzieren fehlgeschlagen: {grund}', { grund: err?.response?.error || err?.message || err }))
+    }
+  }
+
+  async _takeOut(record) {
+    try {
+      await takeOut(this.ajna, record)
+      this.notify(t('„{name}" ist herausgenommen und steht, wo es stand.', { name: record.name || record.id }))
+    } catch (err) {
+      this.notify(t('Herausnehmen fehlgeschlagen: {grund}', { grund: err?.response?.error || err?.message || err }))
     }
   }
 }

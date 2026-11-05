@@ -67,6 +67,8 @@ export async function run(t) {
   t.check('das Rack in seinen eigenen Server zu stecken ist ein Zyklus', r.status === 400 && r.data?.code === 'cycle', `status ${r.status} ${r.data?.code}`)
   r = await t.patch(chef.token, rack.id, { container: { badge: 'rot' } })
   t.check('ein unbekannter Abzeichen-Wert wird abgewiesen', r.status === 400 && r.data?.code === 'bad_container', `status ${r.status}`)
+  r = await t.patch(chef.token, rack.id, { container: null })
+  t.check('ein Rack mit Inhalt bleibt ein Sammelobjekt', r.status === 409 && r.data?.code === 'has_children', `status ${r.status} ${r.data?.code}`)
 
   // ── Einhängen braucht edit am Kind UND am Ziel ──────────────────────────
   const eigenes = await t.object(alice.token, { name: 'Alices Gerät', type: 'poi', lat: LAT, lon: LON, altitude: 0, state: {} })

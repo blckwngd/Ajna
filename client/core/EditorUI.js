@@ -5,6 +5,7 @@ import { SPAWN_ARCHETYPES } from './SpawnHere.js'
 import { emojiOf } from './Appearance.js'
 import { t, serverFehler } from './i18n.js'
 import { klickDaneben } from './klickDaneben.js'
+import { containerConfig, parentIdOf, takeOut, deleteAsked, ContainerIndex } from './containers.js'
 
 const EXT_MODELS_KEY = 'ajna_allow_ext_models'
 
@@ -219,6 +220,55 @@ export class EditorUI {
                       style="justify-self:start">Auftrag bearbeiten …</button>
               <div class="ed-full-label" data-role="call-reward-info" style="opacity:.75;font-weight:normal"></div>
             </div>
+            <!-- Sammelobjekt (docs/sammelobjekte.md): ein Objekt, das andere
+                 enthält. Die Darstellung gehört dem Besitzer, das Aufklappen
+                 jedem Spieler für sich. -->
+            <div id="containerFields" class="ed-anchor">
+              <div class="ed-full-label">Sammelobjekt</div>
+              <div class="ed-grid">
+                <label for="isContainer">Enthält Objekte</label>
+                <input id="isContainer" name="isContainer" type="checkbox" style="width:auto;justify-self:start">
+                <label for="containerBadge">Abzeichen</label>
+                <select id="containerBadge" name="containerBadge">
+                  <option value="both">Anzahl und Status</option>
+                  <option value="count">nur Anzahl</option>
+                  <option value="status">nur Status</option>
+                  <option value="none">keins</option>
+                </select>
+                <label for="containerView">Aufgeklappt</label>
+                <select id="containerView" name="containerView">
+                  <option value="placed">Kinder an ihrer Position</option>
+                  <option value="exploded">Kinder im Kreis (Explosionsansicht)</option>
+                </select>
+                <label for="containerExpanded">Anfangs aufgeklappt</label>
+                <input id="containerExpanded" name="containerExpanded" type="checkbox" style="width:auto;justify-self:start">
+                <label for="containerLoad">Inhalt laden</label>
+                <select id="containerLoad" name="containerLoad">
+                  <option value="always">sofort</option>
+                  <option value="on_expand">erst beim Aufklappen</option>
+                </select>
+                <label for="heading">Ausrichtung (°)</label>
+                <input id="heading" name="heading" type="text" inputmode="decimal" value="0"
+                       title="Im Uhrzeigersinn ab Nord — Bezug für den Versatz der Kinder" style="justify-self:start;width:90px">
+              </div>
+            </div>
+            <div id="parentFields" class="ed-anchor" hidden>
+              <div class="ed-full-label">Enthalten in</div>
+              <div class="ed-grid">
+                <label>Sammelobjekt</label>
+                <span data-role="parent-name" style="align-self:center"></span>
+                <label for="localEast">Versatz (m)</label>
+                <span class="ed-rot-cell">
+                  <input id="localEast" name="localEast" type="text" inputmode="decimal" value="0" title="rechts (Ost im Rahmen des Sammelobjekts)">
+                  <input id="localNorth" name="localNorth" type="text" inputmode="decimal" value="0" title="vorn (Nord im Rahmen des Sammelobjekts)">
+                  <input id="localUp" name="localUp" type="text" inputmode="decimal" value="0" title="hoch">
+                </span>
+                <label for="localHeading">Drehung (°)</label>
+                <input id="localHeading" name="localHeading" type="text" inputmode="decimal" value="0" style="justify-self:start;width:90px">
+                <label></label>
+                <button type="button" class="ed-btn" data-action="take-out" style="justify-self:start">Herausnehmen</button>
+              </div>
+            </div>
             <label for="stateJson" class="ed-full-label">State (JSON)</label>
             <textarea id="stateJson" name="stateJson" rows="4" class="ed-json" spellcheck="false"></textarea>
             <div class="ed-buttons">
@@ -264,6 +314,9 @@ export class EditorUI {
     this.typeSelect = this.editorOverlay?.querySelector('#type')
     this.anchorFields = this.editorOverlay?.querySelector('#anchorFields')   // UWB-Anker-Sektion
     this.callFields = this.editorOverlay?.querySelector('#callFields')        // Auftrag-/Call-Sektion
+    this.containerFields = this.editorOverlay?.querySelector('#containerFields')   // Sammelobjekt
+    this.parentFields = this.editorOverlay?.querySelector('#parentFields')         // „Enthalten in"
+    this._editingLocal = false   // relatives Kind: der Versatz wird mitgespeichert
     this._populateTypeSelect()
     this._populateModelSelect()
     this._wireEditorModal()
@@ -508,7 +561,8 @@ export class EditorUI {
         altitude: parseNum(this.editorForm.altitude.value) || 0,
         rotation: { x: d2r(this.editorForm.rotX.value), y: d2r(this.editorForm.rotY.value), z: d2r(this.editorForm.rotZ.value) },
         appearance: this._appearanceFromForm(),
-        state
+        state,
+        ...this._containerFromForm(),
       }
       const id = this.editorForm.objectId.value
       let obj
@@ -536,11 +590,34 @@ export class EditorUI {
     this.editorDeleteBtn.addEventListener('click', async () => {
       const id = this.editorForm.objectId.value
       if (!id) return
-      await this.ajna.deleteObject(id)
+      const rec = this.ajna.getObjectById?.(id) || { id }
+      try {
+        // Ein Sammelobjekt mit Inhalt fragt, was mit dem Inhalt geschieht.
+        await deleteAsked(this.ajna, rec, new ContainerIndex(this.ajna.getObjectList?.() || []))
+      } catch (err) {
+        this.setStatus(t('Löschen fehlgeschlagen: {grund}', { grund: err?.response?.error || err?.message || err }))
+        return
+      }
       this.editorForm.reset()
       this._closeEditor()
       this.renderObjectList()
       this.setStatus(t('Objekt gelöscht'))
+    })
+
+    // Sammelobjekt: die Darstellungsfelder gelten nur, wenn der Haken sitzt.
+    this.editorForm.isContainer?.addEventListener('change', () => this._updateContainerFieldsEnabled())
+    // „Herausnehmen": eine Ebene höher, die Weltlage bleibt (der Server macht das).
+    this.editorOverlay?.querySelector('[data-action="take-out"]')?.addEventListener('click', async () => {
+      const id = this.editorForm.objectId.value
+      const rec = id ? this.ajna.getObjectById?.(id) : null
+      if (!rec) return
+      try {
+        const obj = await takeOut(this.ajna, rec)
+        this.fillEditor(obj)
+        this.setStatus(t('Herausgenommen — das Objekt steht, wo es stand.'))
+      } catch (err) {
+        this.setStatus(t('Herausnehmen fehlgeschlagen: {grund}', { grund: err?.response?.error || err?.message || err }))
+      }
     })
 
     // Objekt-Liste NUR neu bauen, wenn sich die Liste STRUKTURELL ändert (Objekt
@@ -780,6 +857,64 @@ export class EditorUI {
   }
 
   // Auftrag-/Call-Sektion (Aufgabe + Belohnung) je nach Typ ein-/ausblenden.
+  // ── Sammelobjekt ───────────────────────────────────────────────────────
+
+  _fillContainerFields(obj) {
+    const f = this.editorForm
+    if (!f.isContainer) return
+    const cfg = containerConfig(obj)
+    f.isContainer.checked = !!cfg
+    f.containerBadge.value = cfg?.badge || 'both'
+    f.containerView.value = cfg?.view || 'placed'
+    f.containerExpanded.checked = !!cfg?.expanded
+    f.containerLoad.value = cfg?.load || 'always'
+    f.heading.value = Number.isFinite(Number(obj?.heading)) ? String(Number(obj.heading)) : '0'
+    this._updateContainerFieldsEnabled()
+
+    // „Enthalten in": nur bei einem Kind. Relativ (mit Versatz) oder mit
+    // eigener Lage — im zweiten Fall bleiben die Versatzfelder leer und
+    // werden nicht mitgeschickt.
+    const pid = parentIdOf(obj)
+    const parent = pid ? this.ajna.getObjectById?.(pid) : null
+    const local = obj?.local && typeof obj.local === 'object' ? obj.local : null
+    this._editingLocal = !!(pid && local)
+    if (this.parentFields) {
+      this.parentFields.hidden = !pid
+      const nameEl = this.parentFields.querySelector('[data-role="parent-name"]')
+      if (nameEl) nameEl.textContent = parent ? (parent.name || parent.id) : (pid ? t('(nicht sichtbar)') : '')
+      for (const [k, v] of [['localEast', local?.east], ['localNorth', local?.north], ['localUp', local?.up], ['localHeading', local?.heading]]) {
+        if (!f[k]) continue
+        f[k].value = local ? String(Number(v) || 0) : ''
+        f[k].disabled = !local
+        f[k].placeholder = local ? '' : t('eigene Lage')
+      }
+    }
+  }
+
+  _updateContainerFieldsEnabled() {
+    const f = this.editorForm
+    const on = !!f.isContainer?.checked
+    for (const k of ['containerBadge', 'containerView', 'containerExpanded', 'containerLoad']) if (f[k]) f[k].disabled = !on
+  }
+
+  /** Was vom Sammelobjekt-Abschnitt in den Datensatz geht. */
+  _containerFromForm() {
+    const f = this.editorForm
+    const out = {}
+    if (!f.isContainer) return out
+    out.heading = parseNum(f.heading.value) || 0
+    out.container = f.isContainer.checked
+      ? { badge: f.containerBadge.value, view: f.containerView.value, expanded: !!f.containerExpanded.checked, load: f.containerLoad.value }
+      : null
+    if (this._editingLocal) {
+      out.local = {
+        east: parseNum(f.localEast.value) || 0, north: parseNum(f.localNorth.value) || 0,
+        up: parseNum(f.localUp.value) || 0, heading: parseNum(f.localHeading.value) || 0,
+      }
+    }
+    return out
+  }
+
   _updateCallSectionVisible() {
     const isCall = (this.typeSelect?.value || '').toLowerCase() === 'call'
     if (this.callFields) this.callFields.hidden = !isCall
@@ -935,6 +1070,7 @@ export class EditorUI {
     this._updateAnchorSectionVisible()
     this._fillCallFields(obj)
     this._updateCallSectionVisible()
+    this._fillContainerFields(obj)
     this._editingAppearance = { ...ap }
     const isCall = (obj.type || '').toLowerCase() === 'call'
     if (this.editorTitle) this.editorTitle.textContent = isAnchor ? t('UWB-Anker bearbeiten') : isCall ? t('Auftrag bearbeiten') : t('Objekt bearbeiten')
@@ -970,6 +1106,7 @@ export class EditorUI {
     this._updateAnchorSectionVisible()
     this._fillCallFields({})
     this._updateCallSectionVisible()
+    this._fillContainerFields({})
     this._editingAppearance = {}
     if (this.editorTitle) this.editorTitle.textContent = t('Neues Objekt')
     this._openEditor()

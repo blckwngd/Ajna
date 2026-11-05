@@ -1,9 +1,11 @@
 # Sammelobjekte
 
-**Stand 05.11.2026: freigegeben; Server steht** (Datenmodell, Hooks,
-Rechte-Vererbung, Baum-Endpunkt — 10 Unit- und 37 E2E-Prüfungen). Offen:
-Darstellung auf Karte und in AR, Bedienung, UWB-Netze, Beute-Truhe. Die
-Entscheidungen des Fragenkatalogs stehen unten; die Schnittstelle am Ende.
+**Stand 05.11.2026: freigegeben; Server, Darstellung und Bedienung stehen**
+(Datenmodell, Hooks, Rechte-Vererbung, Baum-Endpunkt; Karte, AR, Minimap,
+Nähe-Liste; Kontextmenü, Ziehen auf der Karte, Editor — 10 + 9 Unit-, 38 E2E-
+und 9 Quelltext-Prüfungen). Offen: UWB-Netze als Sammelobjekte, Beute-Truhe im
+World-Director. Die Entscheidungen des Fragenkatalogs stehen unten, dann die
+Bedienung, dann die Schnittstelle.
 
 Ein Objekt kann andere Objekte enthalten: Schrank → Server → VM → Sensorwert,
 UWB-Netz → Anker, Truhe → Beute, später Gebäude → Etage → Raum aus BIM.
@@ -76,6 +78,41 @@ Aufklappen, Liste, Explosionsansicht, Status-Durchschlag), „Hierin platzieren"
 
 **Nicht in Stufe 1:** Sammelaktionen, Objektliste als Baum, Recht `contain`,
 Vereinigung mit dem Spieler-Inventar, volle 3D-Drehung.
+
+## Bedienung (Client, seit 05.11.)
+
+Alles Sichtbare läuft durch `client/core/containers.js` — `worldObjects()`
+entscheidet für Karte, AR, Minimap und Nähe-Liste gemeinsam, was gezeigt wird.
+
+* **Eingeklappt** zeigt ein Sammelobjekt sein Symbol, dahinter das Abzeichen
+  (Anzahl · schlimmster Status der sichtbaren Nachfahren, je nach `badge`) und
+  einen Pfeil ▸. In AR steht das Abzeichen in der Beschriftung (`{badge}` wird
+  an die Vorlage angehängt, Objekte ohne Vorlage bekommen `{name} {badge}`).
+  Orange bei Warnung, Rot bei Fehler.
+* **Aufklappen / Zuklappen** im Kontextmenü des Sammelobjekts. Gilt nur für
+  diesen Spieler auf diesem Gerät (`localStorage` `ajna.containers.expanded`);
+  ohne eigene Wahl zählt die Vorgabe des Besitzers. Bei „erst beim Aufklappen
+  laden" holt der Client die Kinder in diesem Moment nach.
+* **Aufgeklappt** stehen die Kinder an ihrer Lage; bei `view: exploded` in
+  einem Ring (1,5–6 m, nach Anzahl) um das Sammelobjekt, einen halben Meter
+  erhöht — nur in der Darstellung, der Datensatz bleibt unverändert.
+* **Hineinlegen:** am Objekt „📌 Zum Platzieren vormerken", dann am
+  Sammelobjekt „📥 … hierin platzieren". Es bleibt, wo es steht; weiter als
+  50 m entfernt kommt es ans Sammelobjekt, mit Hinweis. Auf der **Karte**
+  genügt Ziehen auf das Sammelobjekt, dann die Rückfrage „… in … platzieren?".
+  Angeboten wird nur, was der Server auch nähme (gleicher Server, kein Kreis,
+  nichts Getragenes, `edit` auf beiden Seiten).
+* **Herausnehmen** im Kontextmenü oder im Editor — eine Ebene höher, die
+  Weltlage bleibt.
+* **Editor:** Abschnitt „Sammelobjekt" (Haken „Enthält Objekte", Abzeichen,
+  Ansicht, anfangs aufgeklappt, Inhalt laden, Ausrichtung) und bei Kindern
+  „Enthalten in" mit Versatz (rechts/vorn/hoch, Drehung) und „Herausnehmen".
+* **Löschen** eines Sammelobjekts mit Inhalt fragt: alles mitlöschen oder nur
+  das Sammelobjekt (der Inhalt rückt eine Ebene hoch). Weiss der Client den
+  Inhalt nicht (nicht geladen), fragt er, wenn der Server 409 sagt.
+
+Agenten (`AjnaManager`): `createTree(objects)`, `loadChildren(id)`,
+`deleteObject(id, { children: 'delete' | 'detach' })`.
 
 ## Die Schnittstelle (Server, seit 05.11.)
 

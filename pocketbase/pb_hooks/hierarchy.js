@@ -219,6 +219,11 @@ function validateHierarchy(rec, { old = null, body = {}, user = null } = {}) {
   let container
   try { container = readContainer(rec) } catch (err) { return fail(400, err.message, "bad_container") }
   if (container !== null) rec.set("container", container)
+  // A container with contents stays a container — otherwise its children
+  // would be stuck under something that may not hold them.
+  if (container === null && old && isContainer(old) && childrenOf(rec.id).length) {
+    return fail(409, "the object still contains others", "has_children")
+  }
 
   let local
   try { local = readLocal(rec) } catch (err) { return fail(400, err.message, "bad_local") }

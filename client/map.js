@@ -37,6 +37,7 @@ import { getAccessoryHub } from "./core/AccessoryHub.js"
 import { InventoryUI, DRAG_MIME } from "./core/InventoryUI.js"
 import { inventoryDevices } from "./core/inventoryDevices.js"
 import { rayEndpointWgs84 } from "./core/PointingResolver.js"
+import { worldObjects, isContainer, placeCheck, ContainerIndex, rawId, onChanged as onContainersChanged } from "./core/containers.js"
 // Hinweis: Leaflet selbst (JS + CSS) wird via CDN-Tag in index*.html
 // geladen — kein npm-Bundle-Import noetig.
 
@@ -154,7 +155,9 @@ function mapUpdateMarkers(objects) {
   const inWorld = objects.filter(o => !o.carried_by
     && ((o.type || '').toLowerCase() !== 'uwb_anchor' || showAnchors)
     && (o.type !== PRESENCE_TYPE || String(o.owner || '') === _ich || zeigeAnwesenheit(o, _ich)))
-  const filtered = agentFilters ? inWorld.filter(o => agentFilters.matches(o)) : inWorld
+  // Sammelobjekte: Kinder zugeklappter Container bleiben weg, Container
+  // bekommen ihr Abzeichen, Explosionsansichten ihre Ringpositionen.
+  const filtered = worldObjects(agentFilters ? inWorld.filter(o => agentFilters.matches(o)) : inWorld)
   const bounds = window.map.getBounds().pad(VIEWPORT_PAD)
   const keep = new Set()   // ids, die einen Marker haben SOLLEN
 
@@ -169,7 +172,7 @@ function mapUpdateMarkers(objects) {
     // Signatur der Darstellung: Name (Label) + appearance (Emoji/Farbe/Modell).
     // Ändert sie sich, muss das Icon neu gebaut werden — sonst zeigt der Marker
     // das alte Bild bis zum Reload.
-    const sig = JSON.stringify([obj.name, obj.appearance ?? null])
+    const sig = JSON.stringify([obj.name, obj.appearance ?? null, obj._badge ?? null, obj._expanded ?? null])
     try {
       const m = markerLayer.get(obj.id)
       if (m) {
@@ -310,11 +313,17 @@ function markerIconFor(obj) {
   // UWB-Anker: Node-ID + Höhe statt Name (3D-Höhe auch auf der 2D-Karte sichtbar).
   // Anwesenheiten tragen den Anzeigenamen im state (vom Server eingestempelt),
   // nicht im Objektnamen — der heißt bei allen gleich.
+  // Sammelobjekt: Abzeichen (Anzahl · Status, containers.badgeText) und ein
+  // Pfeil für auf-/zugeklappt. Rot/Orange, wenn unten etwas nicht stimmt.
+  const badge = isContainer(obj)
+    ? ` <span class="map-badge${obj._childStatus === 'error' ? ' is-error' : obj._childStatus === 'warning' ? ' is-warning' : ''}">`
+      + `${escHtml(obj._badge ? obj._badge + ' ' : '')}${obj._expanded ? '▾' : '▸'}</span>`
+    : ''
   const html = type === 'uwb_anchor'
     ? `⚓ #${obj.state?.uwb?.nodeId ?? '?'} · ${(obj.altitude ?? 0).toFixed(1)}m`
     : type === PRESENCE_TYPE
       ? `${glyph} ${anwesenheitsText(obj).name}`
-      : `${glyph} ${obj.name}`
+      : `${glyph} ${obj.name}${badge}`
   return window.L.divIcon({
     className: def ? `map-marker ${def.cls}` : 'map-marker',
     iconSize: [28, 28],
@@ -479,6 +488,21 @@ function addMarker(obj) {
       // Smoother zurücksetzen, sonst lerpt er vom Pre-Drag-Punkt zur neuen
       // Position zurück und der Marker rutscht sichtbar zurück+nach vorn.
       markerSmoothers.get(obj.id)?.reset()
+      // Auf ein Sammelobjekt gezogen? Dann hineinlegen — nach Rückfrage. Die
+      // abgelegte Position wird der Versatz (der Server rechnet ihn aus).
+      const ziel = containerUnderPoint(obj, event.target.getLatLng())
+      if (ziel) {
+        const frisch = ajna.getObjectById(obj.id) || obj
+        if (window.confirm(t('„{a}" in „{b}" platzieren?', { a: frisch.name || frisch.id, b: ziel.name || ziel.id }))) {
+          try { await ajna.updateObject(obj.id, { parent: rawId(ziel.id), lat, lon: lng }) }
+          catch (err) { toast.show(err?.response?.error || err?.message || String(err), { title: t('Sammelobjekt') }) }
+        } else {
+          marker.setLatLng([frisch.lat, frisch.lon])   // nichts geschehen, zurück an den Platz
+        }
+        await ajna.loadObjects()
+        mapUpdateMarkers(ajna.getObjectList())
+        return
+      }
       await ajna.updateObject(obj.id, { lat, lon: lng })
       marker.setLatLng([lat, lng])
       coverageLayer.get(obj.id)?.setLatLng([lat, lng])
@@ -505,6 +529,24 @@ function addMarker(obj) {
   // sonst hunderte PB-Realtime-Abos + Sub/Unsub-Sturm bei jedem Pan (Culling).
   // Objekt-Daten kommen ohnehin über das globale objects:*-Abo + 30s-Poll.
   if (obj.state?.realtime === true) subscribeMarkerInteract(obj.id)
+}
+
+// Das Sammelobjekt, dessen Marker unter dem abgelegten Punkt liegt (höchstens
+// 24 px entfernt, das nächste gewinnt) — oder null. Nur Ziele, in die das
+// Objekt auch darf (placeCheck: gleicher Server, kein Kreis, nicht getragen).
+function containerUnderPoint(obj, latlng) {
+  if (!window.map) return null
+  const index = new ContainerIndex(ajna.getObjectList())
+  const p = window.map.latLngToContainerPoint(latlng)
+  let best = null, bestD = 24
+  for (const [id, m] of markerLayer) {
+    if (id === obj.id || typeof m.getLatLng !== 'function') continue
+    const rec = ajna.getObjectById(id)
+    if (!rec || !isContainer(rec) || placeCheck(obj, rec, index)) continue
+    const d = p.distanceTo(window.map.latLngToContainerPoint(m.getLatLng()))
+    if (d < bestD) { bestD = d; best = rec }
+  }
+  return best
 }
 
 function removeMarker(id) {
@@ -675,6 +717,10 @@ function injectHighlightStyles() {
        von beiden Basemaps ab. */
     .map-marker.map-aircraft { white-space: nowrap; }
     .map-aircraft .acft-wrap { display: inline-flex; align-items: center; gap: 3px; }
+    .map-badge { display: inline-block; margin-left: 2px; padding: 0 5px; border-radius: 9px;
+      background: rgba(20,22,28,0.82); color: #fff; font-size: 11px; line-height: 16px; vertical-align: middle; }
+    .map-badge.is-warning { background: #b8640a; }
+    .map-badge.is-error { background: #b3261e; }
     .map-aircraft .acft-rot {
       transform-origin: 50% 50%;
       transition: transform 400ms ease-out;   /* sanfte Kursdrehung statt Sprung */
@@ -913,6 +959,7 @@ async function init() {
     editorUI,
     contextMenu,
     permissionDialog,
+    notify: (msg) => toast.show(msg, { title: t('Sammelobjekt') }),
     // „Sprechen" öffnet den Privatchat im Verlaufsfenster. Das Panel gehört der
     // Mobile-Shell; dieses Bündel erreicht es über den Haken window.ajnaTalkTo.
     // Ohne Shell (eigenständige Seite) passiert nichts — die Figur antwortet
@@ -1034,6 +1081,8 @@ async function init() {
 
   // UWB-Anker-Debug-Sichtbarkeit umgeschaltet (Einstellungen) → Marker neu rendern.
   window.addEventListener('ajna:uwb-anchors', () => mapUpdateMarkers(ajna.getObjectList()))
+  // Sammelobjekt auf-/zugeklappt oder etwas vorgemerkt → Marker neu rendern.
+  onContainersChanged(() => mapUpdateMarkers(ajna.getObjectList()))
 
   // Eine Figur hat etwas gesagt (MessageLogPanel._onChat): Sprechblase am
   // Marker, zusätzlich zum Toast — so sieht man, WER gesprochen hat.

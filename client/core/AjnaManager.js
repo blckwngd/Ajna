@@ -403,8 +403,20 @@ export class AjnaManager {
     return this._clientFor(compositeId).updateObject(compositeId, data)
   }
 
-  async deleteObject(compositeId) {
-    return this._clientFor(compositeId).deleteObject(compositeId)
+  async deleteObject(compositeId, opts = {}) {
+    return this._clientFor(compositeId).deleteObject(compositeId, opts)
+  }
+
+  /** Kinder eines Sammelobjekts nachladen (containers.js, „erst beim Aufklappen laden"). */
+  async loadChildren(compositeId) {
+    return this._clientFor(compositeId).loadChildren(compositeId)
+  }
+
+  /** Einen Baum in einem Aufruf anlegen — siehe AjnaClient.createTree. */
+  async createTree(objects, { serverId } = {}) {
+    const c = serverId ? this.clients.get(serverId) : this.defaultClient
+    if (!c) throw new Error(`AjnaManager: unknown server "${serverId}"`)
+    return c.createTree(objects)
   }
 
   async setAnimation(compositeId, state) {

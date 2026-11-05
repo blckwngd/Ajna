@@ -43,6 +43,7 @@ import { ProximityReporter } from "./core/ProximityReporter.js"
 import { AjnaGeo } from "./core/AjnaGeo.js"
 import { ObjectActions } from "./core/ObjectActions.js"
 import { InWorldActionMenu } from "./core/InWorldActionMenu.js"
+import { worldObjects as displayedObjects, onChanged as onContainersChanged } from "./core/containers.js"
 import { Toast } from "./core/Toast.js"
 import { interactionReply, isCollectAction, protokolliereInteraktion } from "./core/InteractionReply.js"
 import { InventoryUI, DRAG_MIME } from "./core/InventoryUI.js"
@@ -1201,6 +1202,7 @@ async function init() {
     editorUI,
     contextMenu,
     permissionDialog,
+    notify: (msg) => { try { if (!_toast) _toast = new Toast(); _toast.show(msg, { title: t('Sammelobjekt') }) } catch {} },
     // Kontextmenü „Verschieben/Drehen" → Gizmo an das Objekt heften.
     onGizmo: (record) => {
       const go = objectMap.get(record.id)
@@ -1845,6 +1847,8 @@ async function init() {
   window.uwbAnchorOverlay = uwbAnchors
   ajnaManager.onObjectsChanged(() => uwbAnchors.refresh())
   uwbAnchors.refresh()
+  // Sammelobjekt auf-/zugeklappt → die Szene abgleichen wie bei einer Objektänderung.
+  onContainersChanged(() => ajnaManager.emitObjectsChanged())
   window.addEventListener('ajna:uwb-anchors', e => uwbAnchors.setVisible(!!e.detail))
 
   // Adress-Lupe: fluechtige Marker an den gefundenen Adressen. Hoert selbst auf
@@ -2616,9 +2620,12 @@ async function syncSceneObjects(scene, world, geo, objects) {
     !o.carried_by
     && (o.type || '').toLowerCase() !== 'uwb_anchor'
     && (o.type !== PRESENCE_TYPE || zeigeAnwesenheit(o, _ich)))
-  const filteredObjects = _agentFilters
+  // Sammelobjekte (core/containers.js): Kinder zugeklappter Container bleiben
+  // weg, Container tragen ihr Abzeichen in der Beschriftung ({badge}),
+  // Explosionsansichten liefern Ringpositionen auf Kopien.
+  const filteredObjects = displayedObjects(_agentFilters
     ? worldObjects.filter(o => _agentFilters.matches(o))
-    : worldObjects
+    : worldObjects)
 
   // Sichtweiten-Begrenzung: je Agent (Source) nur die X kamera-nächsten
   // Objekte rendern (X = render_budget der Source). Dichte Agents (WiGLE)
