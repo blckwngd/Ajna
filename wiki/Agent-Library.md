@@ -118,6 +118,8 @@ Handle und Siegel landen automatisch im Manifest — ein Hook stempelt sie beim 
 | `await publishManifest(ajna, manifest, warn?)` | Manifest veröffentlichen; Fehler warnen nur, sie töten nicht |
 | `commandAllowed(evt, allow)` | Darf dieser Absender Kommandos geben? |
 
+Sammelobjekte (Truhe → Beute, Netz → Anker, Rack → Server) brauchen keinen eigenen Helfer: `createTree`, `placeInto`, `takeOut`, `childrenOf` und `deleteObject(id, { children })` liegen in der [Ajna-Library](Ajna-Library.md#sammelobjekte) und laufen über `ajna` aus `bootAgent`. Der World-Director füllt so seine Truhen, `uwb-anchors` hängt Anker in ihr Netz.
+
 ```js
 await publishManifest(ajna, {
   source: 'mein-agent',

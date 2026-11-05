@@ -37,7 +37,7 @@ import { getAccessoryHub } from "./core/AccessoryHub.js"
 import { InventoryUI, DRAG_MIME } from "./core/InventoryUI.js"
 import { inventoryDevices } from "./core/inventoryDevices.js"
 import { rayEndpointWgs84 } from "./core/PointingResolver.js"
-import { worldObjects, isContainer, placeCheck, placeCarriedInto, ContainerIndex, rawId, onChanged as onContainersChanged } from "./core/containers.js"
+import { worldObjects, isContainer, placeCheck, placeCarriedInto, ContainerIndex, onChanged as onContainersChanged } from "./core/containers.js"
 // Hinweis: Leaflet selbst (JS + CSS) wird via CDN-Tag in index*.html
 // geladen — kein npm-Bundle-Import noetig.
 
@@ -494,7 +494,7 @@ function addMarker(obj) {
       if (ziel) {
         const frisch = ajna.getObjectById(obj.id) || obj
         if (window.confirm(t('„{a}" in „{b}" platzieren?', { a: frisch.name || frisch.id, b: ziel.name || ziel.id }))) {
-          try { await ajna.updateObject(obj.id, { parent: rawId(ziel.id), lat, lon: lng }) }
+          try { await ajna.placeInto(obj.id, ziel.id, { lat, lon: lng }) }
           catch (err) { toast.show(err?.response?.error || err?.message || String(err), { title: t('Sammelobjekt') }) }
         } else {
           marker.setLatLng([frisch.lat, frisch.lon])   // nichts geschehen, zurück an den Platz

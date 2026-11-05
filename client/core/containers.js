@@ -215,8 +215,7 @@ export function placeCheck(child, container, index = null) {
  */
 export async function placeInto(ajna, child, container, { notify: say = null } = {}) {
   const far = Number.isFinite(child.lat) && Number.isFinite(container.lat) && distanceM(child, container) > PLACE_SNAP_M
-  const local = far ? { east: 0, north: 0, up: 0, heading: 0 } : { from: 'world' }
-  const res = await ajna.updateObject(child.id, { parent: rawId(container.id), local })
+  const res = await ajna.placeInto(child.id, container.id, far ? { local: { east: 0, north: 0, up: 0, heading: 0 } } : {})
   if (far) say?.(t('„{name}" war weiter als {m} m entfernt und steht jetzt am Sammelobjekt.', { name: child.name || child.id, m: PLACE_SNAP_M }))
   if (placingId() === child.id) markForPlacing(null)
   return res
@@ -261,7 +260,7 @@ export async function placeCarriedInto(ajna, rec, ids, container, { notify: say 
 }
 
 /** „Herausnehmen": one level up (the server does that), world position kept. */
-export function takeOut(ajna, child) { return ajna.updateObject(child.id, { parent: '' }) }
+export function takeOut(ajna, child) { return ajna.takeOut(child.id) }
 
 /**
  * Delete, and if the object contains others, ask what happens to them —

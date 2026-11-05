@@ -464,6 +464,78 @@ export class AjnaClient {
     return res
   }
 
+  // ── Sammelobjekte (docs/sammelobjekte.md) ─────────────────────────────
+  // Alles, was ein Agent oder die Oberfläche mit Sammelobjekten tut, läuft
+  // über diese Methoden — kein `updateObject({ parent })` von Hand.
+
+  /**
+   * Ein Objekt zum Sammelobjekt machen (`container: {}` oder mit Angaben
+   * badge/view/expanded/load) oder es wieder zum einfachen Objekt machen
+   * (`null`; geht nur, solange es leer ist — sonst 409 has_children).
+   */
+  async setContainer(id, container = {}) {
+    return this.updateObject(id, { container: container === null ? null : { ...container } })
+  }
+
+  /**
+   * „Hierin platzieren": `id` kommt in das Sammelobjekt `containerId`.
+   * Ohne Angabe bleibt es stehen, wo es steht (der Server rechnet den
+   * Versatz aus). `local` setzt den Versatz ausdrücklich ({east, north, up,
+   * heading} in Metern/Grad relativ zum Sammelobjekt); `lat`/`lon`/`altitude`
+   * setzen stattdessen eine neue Weltlage, aus der der Versatz folgt.
+   * Braucht `edit` auf beiden Objekten.
+   */
+  async placeInto(id, containerId, { local = null, lat, lon, altitude } = {}) {
+    const patch = { parent: this._toRaw(containerId) }
+    if (local) patch.local = { ...local }
+    else if (lat !== undefined && lon !== undefined) {
+      patch.lat = lat; patch.lon = lon
+      if (altitude !== undefined) patch.altitude = altitude
+    } else patch.local = { from: 'world' }
+    return this.updateObject(id, patch)
+  }
+
+  /** „Herausnehmen": eine Ebene höher (der Server macht das), die Weltlage bleibt. */
+  async takeOut(id) {
+    return this.updateObject(id, { parent: '' })
+  }
+
+  /** Den Versatz eines eingehängten Objekts ändern ({east, north, up, heading}). */
+  async setLocal(id, local) {
+    return this.updateObject(id, { local: { ...local } })
+  }
+
+  /** Das Sammelobjekt, in dem `id` hängt — aus dem Zwischenspeicher, oder null. */
+  parentOf(id) {
+    const rec = this.objectMap.get(this._composite(id))
+    const p = rec && rec.parent ? this._toRaw(rec.parent) : ''
+    return p ? (this.objectMap.get(`${this.id}:${p}`) || null) : null
+  }
+
+  /** Die direkten Kinder von `id` — aus dem Zwischenspeicher (nachladen: loadChildren). */
+  childrenOf(id) {
+    const raw = this._toRaw(id)
+    const kids = []
+    for (const o of this.objectMap.values()) if (o.parent && this._toRaw(o.parent) === raw) kids.push(o)
+    return kids
+  }
+
+  /** Alle Nachfahren von `id`, Ebene für Ebene — aus dem Zwischenspeicher. */
+  descendantsOf(id) {
+    const out = [], seen = new Set()
+    const queue = [this._toRaw(id)]
+    while (queue.length) {
+      const cur = queue.shift()
+      for (const k of this.childrenOf(cur)) {
+        if (seen.has(k.id)) continue
+        seen.add(k.id); out.push(k); queue.push(k.id)
+      }
+    }
+    return out
+  }
+
+  _composite(id) { return String(id).includes(':') ? id : `${this.id}:${id}` }
+
   async setAnimation(id, state) {
     return this.updateObject(id, { animation_state: state })
   }

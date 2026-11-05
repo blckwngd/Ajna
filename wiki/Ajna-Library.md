@@ -118,8 +118,22 @@ Alle drei sind synchron und lesen nur lokal — teuer ist ausschließlich `refre
 | `await deleteObject(id, { children })` | Löschen. Ein Sammelobjekt mit Inhalt braucht `children: 'delete'` (alles mit) oder `'detach'` (Inhalt rückt eine Ebene hoch), sonst 409 |
 | `await setAnimation(id, state)` | Kurzform für `{ animation_state: state }` |
 | `await moveObject(id, lat, lon, altitude?)` | Kurzform für reine Positionsänderungen |
+
+### Sammelobjekte
+
+Ein Objekt mit `container`-Abschnitt enthält andere ([Objektmodell](Objektmodell.md#sammelobjekte--ein-objekt-enthält-andere)). Alles dazu geht über diese Methoden — kein `updateObject({ parent })` von Hand.
+
+| Methode | Beschreibung |
+|---|---|
+| `await setContainer(id, config?)` | Zum Sammelobjekt machen (`{}` oder `{ badge, view, expanded, load }`); `null` macht es wieder einfach — nur, solange es leer ist (sonst 409 `has_children`) |
+| `await placeInto(id, containerId, opts?)` | „Hierin platzieren". Ohne `opts` bleibt es stehen, der Server rechnet den Versatz. `{ local: { east, north, up, heading } }` setzt den Versatz, `{ lat, lon, altitude }` eine neue Weltlage. Braucht `edit` auf beiden |
+| `await takeOut(id)` | „Herausnehmen": eine Ebene höher, Weltlage bleibt |
+| `await setLocal(id, local)` | Versatz eines eingehängten Objekts ändern |
 | `await createTree(objects, { serverId })` | Einen ganzen Baum in einem Aufruf anlegen — Objekte mit `children: [...]`, Wurzeln dürfen `parent` tragen |
 | `await loadChildren(id)` | Kinder eines Sammelobjekts nachladen, das „erst beim Aufklappen laden" will |
+| `parentOf(id)` · `childrenOf(id)` · `descendantsOf(id)` | Aus dem Zwischenspeicher, synchron: das Sammelobjekt darüber, die direkten Kinder, alle Nachfahren |
+| `await deleteObject(id, { children })` | siehe oben — `'delete'` oder `'detach'` |
+| `await place(id, { parent })` | Getragenes Objekt aus dem Inventar in ein Sammelobjekt legen — siehe [Inventar](#inventar) |
 
 ```js
 // Ein Rack mit zwei Servern und einer VM — vier Objekte, ein Aufruf
@@ -134,7 +148,12 @@ const { objects } = await ajna.createTree([{
 objects[0].id   // die ID des Racks; objects[0].children[1].children[0].id die der VM
 ```
 
-Einhängen und Herausnehmen sind gewöhnliche Änderungen: `updateObject(id, { parent: rackId, local: { from: 'world' } })` lässt das Objekt stehen und rechnet den Versatz aus, `updateObject(id, { parent: '' })` nimmt es heraus. Was ein Sammelobjekt ausmacht: [Objektmodell](Objektmodell.md#sammelobjekte--ein-objekt-enthält-andere).
+```js
+await ajna.placeInto(sensor.id, rackId)                      // bleibt stehen, Versatz folgt
+await ajna.placeInto(lampe.id, rackId, { local: { up: 2 } }) // zwei Meter über dem Rack
+ajna.childrenOf(rackId).length                               // was der Zwischenspeicher kennt
+await ajna.takeOut(sensor.id)
+```
 
 ```js
 const npc = await ajna.createObject({

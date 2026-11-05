@@ -419,6 +419,21 @@ export class AjnaManager {
     return c.createTree(objects)
   }
 
+  // ── Sammelobjekte — siehe AjnaClient; beide IDs müssen auf einem Server liegen ──
+  async setContainer(compositeId, container = {}) {
+    return this._clientFor(compositeId).setContainer(compositeId, container)
+  }
+  async placeInto(compositeId, containerId, opts = {}) {
+    const c = this._clientFor(compositeId)
+    if (this._clientFor(containerId) !== c) throw new Error('AjnaManager: placeInto — beide Objekte müssen auf demselben Server liegen')
+    return c.placeInto(compositeId, containerId, opts)
+  }
+  async takeOut(compositeId) { return this._clientFor(compositeId).takeOut(compositeId) }
+  async setLocal(compositeId, local) { return this._clientFor(compositeId).setLocal(compositeId, local) }
+  parentOf(compositeId) { return this._clientFor(compositeId).parentOf(compositeId) }
+  childrenOf(compositeId) { return this._clientFor(compositeId).childrenOf(compositeId) }
+  descendantsOf(compositeId) { return this._clientFor(compositeId).descendantsOf(compositeId) }
+
   async setAnimation(compositeId, state) {
     return this._clientFor(compositeId).setAnimation(compositeId, state)
   }

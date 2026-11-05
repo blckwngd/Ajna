@@ -14,7 +14,7 @@
 //   list-objects [filter]            Objekte listen (optionaler PB-Filter)
 //   create-object <json>             Objekt anlegen
 //   update-object <id> <json>        Objekt patchen
-//   delete-object <id>               Objekt löschen
+//   delete-object <id> [delete|detach] Objekt löschen; Sammelobjekt mit Inhalt braucht die Ansage
 //   add-permission <objectId> <ace>  ACE auf Objekt setzen
 //   debug-view <id>                  View-Rule klauselweise auswerten
 //
@@ -73,7 +73,8 @@ Commands:
   list-objects [filter]            Objekte listen. Optionaler PB-Filter (z. B. 'name ~ "Fox"').
   create-object <json>             Objekt aus JSON-Body anlegen.
   update-object <id> <json>        Objekt patchen.
-  delete-object <id>               Objekt löschen.
+  delete-object <id> [delete|detach] Objekt löschen. Ein Sammelobjekt mit Inhalt braucht die Ansage:
+                                   delete (Inhalt mit) oder detach (Inhalt rückt eine Ebene hoch).
   prune-objects <filter> [--loeschen]
                                    Viele Objekte auf einmal wegräumen. OHNE
                                    --loeschen nur zählen und zeigen (Trockenlauf).
@@ -211,11 +212,12 @@ async function cmdUpdateObject(pb, [id, patch]) {
   console.error(`✓ aktualisiert: ${updated.id}`)
 }
 
-async function cmdDeleteObject(pb, [id]) {
-  if (!id) die('Args: delete-object <id>')
+async function cmdDeleteObject(pb, [id, children]) {
+  if (!id) die('Args: delete-object <id> [delete|detach]  — die Ansage braucht ein Sammelobjekt mit Inhalt')
+  if (children && !['delete', 'detach'].includes(children)) die('zweites Argument: delete (Inhalt mit) oder detach (Inhalt rückt eine Ebene hoch)')
   await login(pb)
   try {
-    await pb.collection('objects').delete(id)
+    await pb.collection('objects').delete(id, children ? { query: { children } } : {})
   } catch (err) {
     die(`delete fehlgeschlagen: ${describePbError(err)}`)
   }

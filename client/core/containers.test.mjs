@@ -91,12 +91,12 @@ test('placeCheck refuses self, non-containers, other servers, cycles, carried', 
 
 test('placeInto keeps the place when near and snaps to the container when far', async () => {
   const calls = []
-  const ajna = { updateObject: async (id, data) => { calls.push([id, data]); return {} } }
+  const ajna = { placeInto: async (id, containerId, opts) => { calls.push([id, containerId, opts]); return {} } }
   const rack = mk('rack', { container: {} })
   await placeInto(ajna, mk('nah', { lat: rack.lat + 0.0001 }), rack)
   await placeInto(ajna, mk('fern', { lat: rack.lat + 0.01 }), rack)
-  assert.deepEqual(calls[0][1], { parent: 'rack', local: { from: 'world' } })
-  assert.deepEqual(calls[1][1], { parent: 'rack', local: { east: 0, north: 0, up: 0, heading: 0 } })
+  assert.deepEqual(calls[0], ['srv:nah', 'srv:rack', {}])
+  assert.deepEqual(calls[1], ['srv:fern', 'srv:rack', { local: { east: 0, north: 0, up: 0, heading: 0 } }])
   assert.ok(distanceM(rack, mk('fern', { lat: rack.lat + 0.01 })) > PLACE_SNAP_M)
 })
 

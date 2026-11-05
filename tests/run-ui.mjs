@@ -4749,6 +4749,20 @@ console.log('\n── Sammelobjekte')
     /if \(ziel && isContainer\(ziel\)\) \{\s*\n\s*if \(!_toast\)[^\n]*\n\s*placeCarriedInto\(ajnaManager, auftrag\.rec, auftrag\.ids, ziel/.test(main))
   check('die Hinweise nennen das Sammelobjekt als Ziel',
     /Tippe auf die Karte – oder auf ein Sammelobjekt –/.test(map) && (main.match(/Tippe in die Szene – oder auf ein Sammelobjekt –/g) || []).length === 2)
+  // Alles mit Sammelobjekten läuft über die Bibliothek: kein
+  // updateObject({ parent }) von Hand in Oberfläche oder Agenten, und der
+  // Manager reicht jede Methode durch.
+  const ui = ['../client/map.js', '../client/main.js', '../client/core/containers.js', '../client/core/ObjectActions.js',
+    '../client/core/EditorUI.js', '../agents/world-director.mjs', '../agents/uwb-anchors.mjs'].map(src).join('\n')
+  check('Einhängen und Herausnehmen gehen durch placeInto/takeOut der Bibliothek',
+    !/updateObject\([^)]*\{\s*parent:/.test(ui) && /ajna\.placeInto\(obj\.id, ziel\.id, \{ lat, lon: lng \}\)/.test(map)
+      && /ajna\.placeInto\(child\.id, container\.id/.test(cont) && /return ajna\.takeOut\(child\.id\)/.test(cont))
+  const manager = src('../client/core/AjnaManager.js')
+  check('der Manager kennt jede Sammelobjekt-Methode des Clients',
+    ['setContainer', 'placeInto', 'takeOut', 'setLocal', 'parentOf', 'childrenOf', 'descendantsOf', 'loadChildren', 'createTree']
+      .every(m => new RegExp(`\\b${m}\\(`).test(manager) && new RegExp(`(async )?${m}\\(`).test(client)))
+  check('die Bibliothek ist dokumentiert (Ajna-Library: Sammelobjekte)',
+    /### Sammelobjekte/.test(src('../wiki/Ajna-Library.md')) && /placeInto/.test(src('../wiki/Agent-Library.md')))
 }
 
 // ---------------------------------------------------------------------------
