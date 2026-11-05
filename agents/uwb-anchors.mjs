@@ -71,20 +71,28 @@ const warn = (...a) => console.warn('[uwb-anchors]', ...a)
 const VIEW_ACE = { subject_type: 'authenticated', rights: ['view'], interact_actions: [] }
 
 // Networks first (idempotent over networkId), so anchors can reference them.
+//
+// A network is a Sammelobjekt (docs/sammelobjekte.md): its anchors hang in it
+// as children with their OWN position (no `local`), so the map shows one
+// marker with „12 ▸" until someone expands it. `parent` is the raw object id.
+const rawId = (id) => String(id || '').replace(/^[^:]*:/, '')
+const networkObjectIds = new Map()   // pan → raw object id
 for (const nd of networkDefs) {
   const pan = nd.networkId ?? nd.panId
   if (pan == null) { warn('Netz ohne networkId übersprungen:', nd); continue }
   try {
-    const { created } = await ensureObject(ajna, {
+    const { obj, created } = await ensureObject(ajna, {
       match: o => o?.type === 'uwb_network' && String(o?.state?.uwb_network?.networkId ?? '') === String(pan),
       fields: {
         name: nd.name || `UWB-Netz ${pan}`,
         type: 'uwb_network',
         lat: nd.lat || 0, lon: nd.lon || 0, altitude: nd.altitude || 0,
+        container: { badge: 'count', view: 'placed', expanded: false, load: 'always' },
         state: { uwb_network: { networkId: pan } }
       },
       update: true, ace: VIEW_ACE, warn,
     })
+    networkObjectIds.set(String(pan), rawId(obj.id))
     console.log(`[uwb-anchors] Netz ${created ? 'angelegt    ' : 'aktualisiert'}  pan=${pan}`)
   } catch (e) { warn(`Netz pan=${pan} fehlgeschlagen:`, e?.message || e) }
 }
@@ -95,6 +103,8 @@ for (const d of anchorDefs) {
   }
   const uwb = { nodeId: d.nodeId, local: d.local || { x: 0, y: 0, z: 0 } }
   if (d.network != null) uwb.network = d.network   // PANS network membership
+  // In its network's Sammelobjekt, when that network is defined in this file.
+  const parent = d.network != null ? (networkObjectIds.get(String(d.network)) || '') : ''
   try {
     const { created } = await ensureObject(ajna, {
       match: o => o?.type === 'uwb_anchor' && o?.state?.uwb?.nodeId === d.nodeId,
@@ -102,6 +112,7 @@ for (const d of anchorDefs) {
         name: d.name || `UWB-Anker ${d.nodeId}`,
         type: 'uwb_anchor',
         lat: d.lat, lon: d.lon, altitude: d.altitude || 0,
+        parent,
         state: { uwb }
       },
       update: true, ace: VIEW_ACE, warn,

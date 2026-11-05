@@ -1017,8 +1017,12 @@ routerAdd("POST", "/api/objects/{id}/pickup", (e) => {
     }
 
     obj.set("carried_by", user.id)
+    // Aus einer Truhe genommen ist aus der Truhe heraus: Ein getragenes
+    // Objekt hat kein Sammelobjekt mehr (docs/sammelobjekte.md).
+    const ausSammelobjekt = !!obj.get("parent")
+    if (ausSammelobjekt) { obj.set("parent", ""); obj.set("local", null) }
     $app.save(obj)
-    if (ownerChanged) { try { recomputeForObject(obj.id) } catch (_) {} }
+    if (ownerChanged || ausSammelobjekt) { try { recomputeForObject(obj.id) } catch (_) {} }
     return e.json(200, { ok: true, id: obj.id, owner: obj.get("owner") })
   } catch (err) {
     console.log("[pickup] error: " + (err && err.message ? err.message : err))

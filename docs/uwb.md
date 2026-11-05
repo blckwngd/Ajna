@@ -107,6 +107,10 @@ type              = "uwb_network"
 state.uwb_network = { networkId: <panId> }   // the PAN id, as entered in the DRTLS app
 ```
 
+- The network object is a **Sammelobjekt** (`container: { badge: "count" }`,
+  docs/sammelobjekte.md): `uwb-anchors` hangs each anchor of a network defined
+  in the same file into it (`parent` = the network's object id, own position).
+  The map shows one marker „UWB-Netz … 12 ▸"; expanding reveals the anchors.
 - Each `uwb_anchor` references its network via `state.uwb.network` (= the same
   PAN id). `UwbManager` filters positioning to the **active** network
   (`uwb.setNetwork(panId)` / Settings → „UWB-Netz"; persisted `ajna_uwb_network`;

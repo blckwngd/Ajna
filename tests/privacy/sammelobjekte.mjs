@@ -146,6 +146,16 @@ export async function run(t) {
   s = await read(chef.token, vm.id)
   t.check('mitlöschen nimmt die VM mit', (r.status === 204 || r.status === 200) && s.status === 404, `del ${r.status} vm ${s.status}`)
 
+  // ── Aus der Truhe genommen ist aus der Truhe heraus ─────────────────────
+  const truhe = await t.object(chef.token, { name: 'Prüf-Truhe', type: 'poi', lat: LAT, lon: LON, altitude: 0, container: { view: 'exploded' }, state: {} })
+  const beute = await t.object(chef.token, { name: 'Prüf-Beute', type: 'item', parent: truhe.id, local: { up: 0.3 }, state: { portable: true } })
+  await ace(chef.token, truhe.id, { subject_type: 'user', subject: bob.id, rights: ['view'] })
+  r = await t.carry(bob.token, beute.id)
+  s = await read(bob.token, beute.id)
+  t.check('Einsammeln nimmt das Stück aus der Truhe',
+    r.status === 200 && s.status === 200 && !s.data?.parent && !s.data?.local && s.data?.carried_by === bob.id,
+    `carry ${r.status} parent ${JSON.stringify(s.data?.parent)} local ${JSON.stringify(s.data?.local)}`)
+
   // ── Der Baum-Endpunkt ───────────────────────────────────────────────────
   const baum = (tiefe) => {
     let k = { name: `Ebene ${tiefe}` }

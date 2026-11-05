@@ -154,7 +154,7 @@ Zielwahl bleibt in der WebView.
 Bildschirm aus mit der echten Fernbedienung, die Driftrate einer Uhr ohne
 Magnetometer, Zauberstab-Tasten als semantische Aktionen.
 
-### 0g · Sammelobjekte — **Server, Darstellung und Bedienung stehen seit 05.11.**
+### 0g · Sammelobjekte — **Stufe 1 steht seit 05.11.**, Agenten noch nicht im Betrieb gelaufen
 
 Ein Objekt enthält andere: Rack → Server → VM → Sensor, UWB-Netz → Anker,
 Truhe → Beute, später Gebäude aus BIM. Erstes Paket aus der Ideenliste für
@@ -172,11 +172,14 @@ Karte, AR, Minimap, Nähe-Liste; Abzeichen, Aufklappen pro Spieler,
 Explosionsansicht, Laden erst beim Aufklappen), Kontextmenü (Aufklappen,
 Vormerken, Hierin platzieren, Herausnehmen), Ziehen auf der Karte mit
 Rückfrage, Editor-Abschnitte, Löschen mit Nachfrage, `AjnaManager.createTree`.
-19 Unit-, 38 E2E-, 9 Quelltext-Prüfungen.
+Erste Nutzer: UWB-Netze (`uwb-anchors`: Netz = Sammelobjekt, Anker darin
+mit eigener Lage) und Beute-Truhen (`world-director`, Archetyp `chest`:
+Explosionsansicht, 1–3 Stück Beute, Nachfüllen beim Start; Aufheben nimmt
+aus der Truhe). 19 Unit-, 39 E2E-, 9 Quelltext-Prüfungen.
 
-**Offen:** UWB-Netze als Sammelobjekte (uwb-anchors-Agent), Beute-Truhe im
-World-Director. Danach aus der Ideenliste: Doku-Links und QR-/Marker-
-Generator, NetBox-/PRTG-Agent.
+**Offen:** die beiden Agenten einmal gegen den laufenden Stack starten
+(bisher nur die Hooks geprüft, die sie rufen). Danach aus der Ideenliste:
+Doku-Links und QR-/Marker-Generator, NetBox-/PRTG-Agent.
 
 ### 0d · Weltchat in der Umgebung — *eigenes Paket, nicht jetzt*
 

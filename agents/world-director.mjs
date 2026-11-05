@@ -68,7 +68,7 @@ import { Bewegungsplan, bewegungsUpdate } from './lib/bewegung.mjs'
 import { ladeFiguren, alsObjekt, unterschied, alsAuftragsObjekt, auftragsUnterschied,
          auftragsBody, alsBelohnungsObjekt } from './lib/figuren.mjs'
 import { yawFuerKurs } from '../client/core/yaw.js'
-import { Kampf, hpVon, beuteObjekt } from './lib/kampf.mjs'
+import { Kampf, hpVon, beuteObjekt, BEUTE_AUSSEHEN } from './lib/kampf.mjs'
 import { Konfig } from './lib/konfig.mjs'
 import { npcParley } from './lib/dialogs.mjs'
 import { dialogNameFor, dialogVarsFor, talkSessionId } from '../client/core/Parley.js'
@@ -478,7 +478,8 @@ const NAME_GEN = {
   dragon: () => `${pick(NAME_POOLS.dragonA)}${pick(NAME_POOLS.dragonB)}`,
   item:   () => `${pick(NAME_POOLS.itemAdj)} ${pick(NAME_POOLS.itemN)}`,
   hint:   () => 'Hinweis',
-  diamond: () => 'Diamant'
+  diamond: () => 'Diamant',
+  chest:  () => pick(['Verwitterte Truhe', 'Eisenbeschlagene Truhe', 'Moosige Kiste', 'Seemannskiste', 'Vergessene Truhe'])
 }
 
 // Beschreibung (Top-Level-Feld), die "examine" ausgibt. Prozedural wie Namen.
@@ -498,7 +499,8 @@ const DESCRIPTION_GEN = {
   dragon: () => 'Ein fliegendes Wesen, das hoch über den Dächern seine Bahnen zieht.',
   item:   () => 'Ein Gegenstand. Aktuell ohne Funktion — vielleicht später aufsammelbar.',
   hint:   () => pick(HINT_LINES),
-  diamond: () => 'Ein funkelnder Diamant. Einsammeln und stapeln — später wertvoll.'
+  diamond: () => 'Ein funkelnder Diamant. Einsammeln und stapeln — später wertvoll.',
+  chest:  () => 'Eine Truhe. Aufklappen zeigt, was darin liegt — und das lässt sich mitnehmen.'
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -522,7 +524,11 @@ const ARCHETYPES = {
   // Diamanten: bewusst SELTEN (kleiner count), einsammelbar + stapelbar. Später
   // Zahlungsmittel / Loot / NPC-Belohnung. Kein explizites collect in actions —
   // portable=true blendet „🎒 Einsammeln" ohnehin ein.
-  diamond: { count: 3, actions: [{ key: 'examine', label: 'Untersuchen' }], initialAnim: null,  flying: false }
+  diamond: { count: 3, actions: [{ key: 'examine', label: 'Untersuchen' }], initialAnim: null,  flying: false },
+  // Truhen: Sammelobjekte (docs/sammelobjekte.md) mit ein bis drei Stück Beute
+  // darin. Aufklappen zeigt die Beute im Kreis (Explosionsansicht), Einsammeln
+  // nimmt sie heraus; beim nächsten Start füllt der Director leere Truhen nach.
+  chest:   { count: 1, actions: [{ key: 'examine', label: 'Untersuchen' }], initialAnim: null,  flying: false }
 }
 const actionKeys = a => ARCHETYPES[a].actions.map(x => x.key)
 // Zustand OHNE die Felder eines einzelnen Laufs. `walk_path` und `motion`
@@ -571,7 +577,8 @@ const MODEL_POOL = {
   dragon: ['Dragon.glb', 'wyvern.glb'],   // wyvern: Animationen „metarig|idol|flaping|flying|walk"
   item:   ['Sword.glb', 'TreasureChest.glb'],
   hint:   [],  // kein Modell → Viewer nutzt den appearance-/Typ-Platzhalter
-  diamond: ['Diamond.glb']
+  diamond: ['Diamond.glb'],
+  chest:  ['TreasureChest.glb']
 }
 // Aus den Modell-Profilen abgeleitet (world-director.profiles.mjs — dort ist
 // die eine Quelle der Wahrheit für Physis-Eigenschaften pro Modell):
@@ -645,6 +652,9 @@ function buildSpawn(archetype, center = { lat: CENTER_LAT, lon: CENTER_LON }, op
     animation_state: arch.initialAnim,
     state
   }
+  // Truhe = Sammelobjekt: Abzeichen zählt die Beute, aufgeklappt liegt sie im
+  // Kreis um die Truhe. Kinder liegen in der Truhe (Versatz 0), siehe fuelleTruhe.
+  if (archetype === 'chest') spawn.container = { badge: 'count', view: 'exploded', expanded: false, load: 'always' }
   // appearance.gltf nur setzen, wenn der Archetyp ein Modell hat — sonst
   // bleibt das Feld leer und der Viewer fällt auf den Typ-Platzhalter zurück.
   // sizeScale (Größen-Adjektiv) als appearance.scale mitgeben.
@@ -814,7 +824,7 @@ async function publishManifest() {
       // "all"-artig und Abwählen einzelner Archetypen bliebe wirkungslos.
       layers: Object.keys(ARCHETYPES).map(a => ({
         key: a,
-        label: ({ npc: 'NPCs', enemy: 'Gegner', animal: 'Tiere', dragon: 'Drachen', item: 'Items', hint: 'Hinweise', diamond: 'Diamanten' })[a] || a,
+        label: ({ npc: 'NPCs', enemy: 'Gegner', animal: 'Tiere', dragon: 'Drachen', item: 'Items', hint: 'Hinweise', diamond: 'Diamanten', chest: 'Truhen' })[a] || a,
         predicate: { field: 'state.archetype', equals: a },
       }))
     }))
@@ -972,7 +982,8 @@ for (const obj of await ladeBestand(ajna, { tag: 'director' })) {
   // Im Interest-Area-Modus NICHT am fixen Zentrum despawnen — das macht
   // reconcile() später relativ zu den aktiven Zentren (Spieler-Positionen).
   if (!KEEP_OUTSIDE && !FOLLOW_AREAS && Number.isFinite(dist) && dist > DESPAWN_RADIUS_M) {
-    try { await ajna.deleteObject(obj.id); despawned++; continue }
+    // children=delete: eine Truhe nimmt ihren Inhalt mit (sonst 409).
+    try { await ajna.deleteObject(obj.id, { children: 'delete' }); despawned++; continue }
     catch (err) { console.warn(`[director] despawn ${obj.id} fehlgeschlagen: ${err?.message || err}`) }
   }
   existingByArch[a]++; managed.push(obj)
@@ -985,7 +996,39 @@ async function spawnOne(archetype, center, opts = {}) {
   const data = buildSpawn(archetype, center, opts)
   const obj = await ajna.createObject(data)
   console.log(`[director] + ${archetype.padEnd(6)} "${data.name}" @ ${data.lat.toFixed(5)}, ${data.lon.toFixed(5)} → ${obj.id}`)
+  if (archetype === 'chest') {
+    try { await fuelleTruhe(obj) }
+    catch (err) { console.warn(`[director] Truhe ${obj.id} füllen fehlgeschlagen: ${err?.response?.error || err?.message || err}`) }
+  }
   return obj
+}
+
+// Ein bis drei Stück Beute IN die Truhe legen — ein Baum-Aufruf, die Stücke
+// sitzen am Ort der Truhe (Versatz 0, 30 cm hoch); die Explosionsansicht
+// zeigt sie im Kreis, sobald jemand aufklappt. Dieselbe Beute wie bei einem
+// Gefallenen (kampf.mjs): einsammelbar, wer zuerst kommt. Kein `director`-
+// Merker — sonst zählten sie als Items zur Soll-Population.
+const rohId = (id) => String(id || '').replace(/^[^:]*:/, '')
+async function fuelleTruhe(truhe) {
+  const namen = sample(Object.keys(BEUTE_AUSSEHEN), randInt(1, 3))
+  const stuecke = namen.map(name => ({
+    ...beuteObjekt(name, { lat: truhe.lat, lon: truhe.lon, altitude: truhe.altitude || 0, quelle: 'world-director' }),
+    parent: rohId(truhe.id),
+    local: { east: 0, north: 0, up: 0.3, heading: 0 },
+  }))
+  const res = await ajna.createTree(stuecke)
+  console.log(`[director]   ⌐ Truhe "${truhe.name}": ${namen.join(', ')} (${res?.count ?? stuecke.length} Stück)`)
+  return res
+}
+// Hat die Truhe noch Inhalt? Die Stücke tragen die rohe ID der Truhe als `parent`.
+const truheHatInhalt = (truhe) => ajna.getObjects().some(o => String(o?.parent || '') === rohId(truhe.id))
+
+// Leere Truhen nachfüllen: Was Spieler herausgenommen haben, kommt beim
+// nächsten Start nach — die Truhe bleibt stehen, nur der Inhalt wechselt.
+for (const obj of managed) {
+  if (obj?.state?.archetype !== 'chest' || truheHatInhalt(obj)) continue
+  try { await fuelleTruhe(obj) }
+  catch (err) { console.warn(`[director] Truhe ${obj.id} nachfüllen fehlgeschlagen: ${err?.response?.error || err?.message || err}`) }
 }
 
 // Boot-Fill nur ohne Interest-Area-Modus — sonst übernimmt reconcile() das

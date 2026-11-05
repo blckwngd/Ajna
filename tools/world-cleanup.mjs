@@ -182,7 +182,9 @@ async function main() {
 
   let ok = 0, fehler = 0
   for (const { o } of weg) {
-    try { await pb.collection('objects').delete(o.id); ok++ }
+    // children=delete: ein Sammelobjekt (Truhe) nimmt seinen Inhalt mit —
+    // ohne die Ansage antwortet der Server 409 (docs/sammelobjekte.md).
+    try { await pb.collection('objects').delete(o.id, { query: { children: 'delete' } }); ok++ }
     catch (err) { fehler++; if (fehler < 5) console.error(`  ✗ ${o.id}: ${err?.message || err}`) }
     if (ok % 250 === 0 && ok) console.error(`  … ${ok} gelöscht`)
   }

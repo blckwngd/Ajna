@@ -1,11 +1,24 @@
 # Sammelobjekte
 
-**Stand 05.11.2026: freigegeben; Server, Darstellung und Bedienung stehen**
-(Datenmodell, Hooks, Rechte-Vererbung, Baum-Endpunkt; Karte, AR, Minimap,
-Nähe-Liste; Kontextmenü, Ziehen auf der Karte, Editor — 10 + 9 Unit-, 38 E2E-
-und 9 Quelltext-Prüfungen). Offen: UWB-Netze als Sammelobjekte, Beute-Truhe im
-World-Director. Die Entscheidungen des Fragenkatalogs stehen unten, dann die
-Bedienung, dann die Schnittstelle.
+**Stand 05.11.2026: Stufe 1 steht** — Server (Datenmodell, Hooks, Rechte-
+Vererbung, Baum-Endpunkt), Client (Karte, AR, Minimap, Nähe-Liste; Kontextmenü,
+Ziehen auf der Karte, Editor) und die beiden ersten Nutzer: UWB-Netze
+(`agents/uwb-anchors.mjs`) und Beute-Truhen (`agents/world-director.mjs`).
+19 Unit-, 39 E2E- und 9 Quelltext-Prüfungen; die Agenten sind gegen die
+Hooks geprüft, aber noch nicht im Betrieb gelaufen. Die Entscheidungen des
+Fragenkatalogs stehen unten, dann die Bedienung, dann die Schnittstelle.
+
+**Erste Nutzer:**
+* **UWB-Netz** — das `uwb_network`-Objekt ist ein Sammelobjekt (Abzeichen:
+  Anzahl), seine Anker hängen darin mit eigener Lage. Auf der Karte ein
+  Marker „UWB-Netz 0x89AB 12 ▸"; die Anker erscheinen beim Aufklappen (und nur,
+  wenn der Debug-Schalter für Anker an ist).
+* **Beute-Truhe** — Archetyp `chest` des World-Directors (Soll-Bestand
+  `WD_COUNT_CHEST`, Vorgabe 1): Modell TreasureChest, Explosionsansicht, ein bis
+  drei Stück Beute aus `kampf.mjs` darin. Aufklappen zeigt sie im Kreis,
+  „Einsammeln" nimmt sie aus der Truhe (der Server löscht `parent` beim
+  Aufheben), beim nächsten Start füllt der Director leere Truhen nach. Auch
+  „auf Zuruf" im Spawn-Menü.
 
 Ein Objekt kann andere Objekte enthalten: Schrank → Server → VM → Sensorwert,
 UWB-Netz → Anker, Truhe → Beute, später Gebäude → Etage → Raum aus BIM.
@@ -159,6 +172,9 @@ jedes Anlegen ohne das Feld auf false — „false = erbt" ist die sichere Vorga
   zieht die Enkel nach. Geschrieben wird nur, was sich ändert.
 * **Verwaiste Kinder** (Eltern am Hook vorbei gelöscht, etwa vom Verfalls-Cron)
   heilen beim nächsten Schreiben zu freien Objekten.
+* **Aufheben** (`POST /api/objects/{id}/pickup`) nimmt ein Objekt aus seinem
+  Sammelobjekt: `parent` und `local` werden geleert. Was in der Tasche ist,
+  liegt in keiner Truhe mehr.
 
 ### Rechte-Vererbung (`pb_hooks/permissions.js`)
 

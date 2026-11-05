@@ -149,6 +149,7 @@ export const DIRECTOR_SPAWNS = [
   { archetype: 'npc',    label: 'NPC' },
   { archetype: 'dragon', label: 'Drache' },
   { archetype: 'diamond', label: 'Diamant' },
+  { archetype: 'chest',  label: 'Truhe' },
 ]
 
 /**
