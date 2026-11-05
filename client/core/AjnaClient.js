@@ -1010,11 +1010,15 @@ export class AjnaClient {
     return this.pb.send(`/api/objects/${raw}/pickup`, { method: 'POST', body: {} })
   }
 
-  /** Getragenes Objekt an neuer Position wieder in die Welt setzen. */
-  async place(objectId, { lat, lon, altitude } = {}) {
+  /**
+   * Getragenes Objekt wieder in die Welt setzen — an einer Position oder,
+   * mit `parent` (ID eines Sammelobjekts), in dieses hinein; dann sitzt es
+   * am Sammelobjekt und lat/lon entfallen.
+   */
+  async place(objectId, { lat, lon, altitude, parent } = {}) {
     const raw = this._toRaw(objectId)
-    const body = { lat, lon }
-    if (altitude !== undefined) body.altitude = altitude
+    const body = parent ? { parent: this._toRaw(parent) } : { lat, lon }
+    if (!parent && altitude !== undefined) body.altitude = altitude
     return this.pb.send(`/api/objects/${raw}/place`, { method: 'POST', body })
   }
 

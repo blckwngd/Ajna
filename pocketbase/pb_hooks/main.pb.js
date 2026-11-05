@@ -1123,6 +1123,8 @@ routerAdd("GET", "/api/objects/{id}/owner", (e) => {
 // =====================================================================
 // Nur der Träger (carried_by) darf platzieren. Setzt lat/lon(/altitude) und
 // leert carried_by → Objekt erscheint an der neuen Position wieder in der Welt.
+// Mit `parent` statt lat/lon landet es in einem Sammelobjekt (am Sammelobjekt
+// selbst, Versatz 0) — „aus dem Rucksack in die Truhe".
 // =====================================================================
 routerAdd("POST", "/api/objects/{id}/place", (e) => {
   try {
@@ -1150,6 +1152,25 @@ routerAdd("POST", "/api/objects/{id}/place", (e) => {
     }
 
     const body = info.body || {}
+
+    // Into a container ("from the backpack into the chest"): the piece is
+    // laid on the container, its world position follows from there. The
+    // hierarchy rules (container, not carried, depth, edit on the target)
+    // are the same as for any hang-in; a new chain means new inherited rights.
+    const parentId = body.parent ? String(body.parent) : ""
+    if (parentId) {
+      const H = require(`${__hooks}/hierarchy.js`)
+      const alt = $app.findRecordById("objects", objectId)
+      obj.set("parent", parentId)
+      obj.set("local", { east: 0, north: 0, up: 0, heading: 0 })
+      obj.set("carried_by", "")
+      const fehler = H.validateHierarchy(obj, { old: alt, body: { parent: parentId, local: obj.get("local") }, user })
+      if (fehler) return e.json(fehler.status, { error: fehler.error, code: fehler.code })
+      $app.save(obj)
+      try { require(`${__hooks}/permissions.js`).recomputeForObject(obj.id) } catch (_) {}
+      return e.json(200, { ok: true, id: obj.id, parent: parentId })
+    }
+
     const lat = Number(body.lat), lon = Number(body.lon)
     if (!isFinite(lat) || !isFinite(lon)) {
       return e.json(400, { error: "fields 'lat' and 'lon' (numbers) are required" })

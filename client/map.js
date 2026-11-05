@@ -37,7 +37,7 @@ import { getAccessoryHub } from "./core/AccessoryHub.js"
 import { InventoryUI, DRAG_MIME } from "./core/InventoryUI.js"
 import { inventoryDevices } from "./core/inventoryDevices.js"
 import { rayEndpointWgs84 } from "./core/PointingResolver.js"
-import { worldObjects, isContainer, placeCheck, ContainerIndex, rawId, onChanged as onContainersChanged } from "./core/containers.js"
+import { worldObjects, isContainer, placeCheck, placeCarriedInto, ContainerIndex, rawId, onChanged as onContainersChanged } from "./core/containers.js"
 // Hinweis: Leaflet selbst (JS + CSS) wird via CDN-Tag in index*.html
 // geladen — kein npm-Bundle-Import noetig.
 
@@ -517,6 +517,17 @@ function addMarker(obj) {
     // Aktuelle Position des Records aus dem AjnaManager-Cache holen
     // (kann sich durch Realtime-Updates seit addMarker geändert haben).
     const fresh = ajna.getObjectById(obj.id) || obj
+    // „Tippe auf die Karte …" läuft und der Tipp traf einen Marker: ein
+    // Sammelobjekt nimmt das Stück auf (aus dem Rucksack in die Truhe), jedes
+    // andere Objekt ist nur eine Stelle auf der Karte. Leaflet reicht den
+    // Klick nicht an die Karte weiter, deshalb hier.
+    if (_placing) {
+      const auftrag = _placing
+      _endPlacing()
+      if (isContainer(fresh)) placeCarriedInto(ajna, auftrag.rec, auftrag.ids, fresh, { notify: (m) => toast.show(m, { title: t('Platzieren') }) })
+      else _placeAt(auftrag.rec, marker.getLatLng(), auftrag.ids)
+      return
+    }
     if (!objectActions) return
     const origEvt = e.originalEvent
     objectActions.showFor(fresh, origEvt.clientX, origEvt.clientY)
@@ -530,6 +541,27 @@ function addMarker(obj) {
   // Objekt-Daten kommen ohnehin über das globale objects:*-Abo + 30s-Poll.
   if (obj.state?.realtime === true) subscribeMarkerInteract(obj.id)
 }
+
+// ── Platzieren aus dem Inventar (Tipp-Modus) ──────────────────────────────
+// Ein oder mehrere Stücke ablegen — alle auf DIESELBE Stelle. Ein Stapel in
+// der Welt ist nichts weiter als mehrere Datensätze am selben Punkt.
+// Nacheinander, nicht parallel: Jedes `place` läuft durch die Server-Hooks.
+let _placing = null   // { rec, ids } während „Tippe auf die Karte …"
+async function _placeAt(rec, latlng, ids = null) {
+  const liste = (Array.isArray(ids) && ids.length) ? ids : [rec.id]
+  let ok = 0, fehler = null
+  for (const id of liste) {
+    try { await ajna.place(id, { lat: latlng.lat, lon: latlng.lng }); ok++ }
+    catch (err) { fehler = err; break }
+  }
+  if (fehler) {
+    toast.show(t('Platzieren fehlgeschlagen: ') + (fehler?.response?.error || fehler?.message || fehler)
+      + (ok ? ` (${ok} von ${liste.length} abgelegt)` : ''), { title: 'Platzieren' })
+  } else if (liste.length > 1) {
+    toast.show(`${ok}× „${rec.name || 'Objekt'}" abgelegt`, { title: 'Platzieren' })
+  }
+}
+function _endPlacing() { _placing = null; if (window.map) window.map.getContainer().style.cursor = '' }
 
 // Das Sammelobjekt, dessen Marker unter dem abgelegten Punkt liegt (höchstens
 // 24 px entfernt, das nächste gewinnt) — oder null. Nur Ziele, in die das
@@ -986,28 +1018,9 @@ async function init() {
   window.ajnaUI.editorUI = editorUI
 
   // ── Inventar: Fenster + Platzieren (Tipp-Modus & Drag&Drop) ──
-  let _placing = null
-  /**
-   * Ein oder mehrere Stücke ablegen — alle auf DIESELBE Stelle. Ein Stapel in
-   * der Welt ist nichts weiter als mehrere Datensätze am selben Punkt.
-   *
-   * Nacheinander, nicht parallel: Jedes `place` läuft durch die Server-Hooks.
-   */
-  const _placeAt = async (rec, latlng, ids = null) => {
-    const liste = (Array.isArray(ids) && ids.length) ? ids : [rec.id]
-    let ok = 0, fehler = null
-    for (const id of liste) {
-      try { await ajna.place(id, { lat: latlng.lat, lon: latlng.lng }); ok++ }
-      catch (err) { fehler = err; break }
-    }
-    if (fehler) {
-      toast.show(t('Platzieren fehlgeschlagen: ') + (fehler?.response?.error || fehler?.message || fehler)
-        + (ok ? ` (${ok} von ${liste.length} abgelegt)` : ''), { title: 'Platzieren' })
-    } else if (liste.length > 1) {
-      toast.show(`${ok}× „${rec.name || 'Objekt'}" abgelegt`, { title: 'Platzieren' })
-    }
-  }
-  const _endPlacing = () => { _placing = null; if (window.map) window.map.getContainer().style.cursor = '' }
+  // Der Tipp-Modus selbst (_placing, _placeAt) lebt auf Modulebene: der
+  // Klick auf einen Marker (addMarker) muss ihn sehen, damit ein angetipptes
+  // Sammelobjekt das Stück aufnimmt.
   window.map.on('click', (e) => {
     if (!_placing) return
     const auftrag = _placing
@@ -1063,7 +1076,7 @@ async function init() {
       _placing = { rec, ids: liste }
       window.map.getContainer().style.cursor = 'crosshair'
       const was = liste.length > 1 ? `${liste.length}× „${rec.name || 'Objekt'}"` : `„${rec.name || 'Objekt'}"`
-      toast.show(`Tippe auf die Karte, um ${was} zu platzieren`, { title: 'Platzieren' })
+      toast.show(`Tippe auf die Karte – oder auf ein Sammelobjekt –, um ${was} zu platzieren`, { title: 'Platzieren' })
     },
     getDevices: () => inventoryDevices(_hub),
   })

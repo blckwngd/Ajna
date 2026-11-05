@@ -115,6 +115,11 @@ entscheidet für Karte, AR, Minimap und Nähe-Liste gemeinsam, was gezeigt wird.
   genügt Ziehen auf das Sammelobjekt, dann die Rückfrage „… in … platzieren?".
   Angeboten wird nur, was der Server auch nähme (gleicher Server, kein Kreis,
   nichts Getragenes, `edit` auf beiden Seiten).
+* **Aus dem Rucksack in die Truhe:** im Inventar „📍 Platzieren" wählen und
+  dann das Sammelobjekt antippen — auf der Karte seinen Marker, in AR seine
+  Figur. Das Stück (oder der ganze Stapel) landet am Sammelobjekt, Versatz 0.
+  Tippt man ein gewöhnliches Objekt an, wird an dessen Stelle abgelegt; neben
+  alles andere wie bisher. Voraussetzung: `edit` auf dem Sammelobjekt.
 * **Herausnehmen** im Kontextmenü oder im Editor — eine Ebene höher, die
   Weltlage bleibt.
 * **Editor:** Abschnitt „Sammelobjekt" (Haken „Enthält Objekte", Abzeichen,
@@ -185,6 +190,15 @@ für den ganzen Teilbaum neu gerechnet, wenn eine ACE, `parent` oder
 `acl_break` sich ändert. **Der Besitzer eines Sammelobjekts ist nicht
 automatisch Besitzer der Kinder** — `owner` ist ein Feld, keine ACE; wer das
 will, setzt sich eine ACE auf das Sammelobjekt.
+
+### Aus dem Inventar in ein Sammelobjekt
+
+`POST /api/objects/{id}/place` mit `{ parent: "<id>" }` statt `lat`/`lon`:
+das getragene Objekt verliert seinen Träger und hängt mit Versatz 0 im
+Sammelobjekt, Weltlage = Lage des Sammelobjekts. Dieselben Prüfungen wie beim
+Einhängen (`not_a_container`, `parent_carried`, `too_deep`, `parent_forbidden`
+ohne `edit` auf dem Ziel), danach werden die geerbten Rechte neu berechnet.
+Nur der Träger darf das — wie bei jedem `place`.
 
 ### Löschen
 

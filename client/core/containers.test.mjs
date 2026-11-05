@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   worldObjects, ContainerIndex, summarize, badgeText, explodedPositions,
-  placeCheck, parentIdOf, isExpanded, distanceM, PLACE_SNAP_M, placeInto,
+  placeCheck, parentIdOf, isExpanded, distanceM, PLACE_SNAP_M, placeInto, placeCarriedInto, carriedPlaceCheck,
 } from './containers.js'
 
 const S = 'srv'
@@ -98,4 +98,19 @@ test('placeInto keeps the place when near and snaps to the container when far', 
   assert.deepEqual(calls[0][1], { parent: 'rack', local: { from: 'world' } })
   assert.deepEqual(calls[1][1], { parent: 'rack', local: { east: 0, north: 0, up: 0, heading: 0 } })
   assert.ok(distanceM(rack, mk('fern', { lat: rack.lat + 0.01 })) > PLACE_SNAP_M)
+})
+
+test('placeCarriedInto: every piece of the stack goes in, the check speaks before the server', async () => {
+  const calls = [], said = []
+  const ajna = { place: async (id, data) => { calls.push([id, data]); return {} } }
+  const rack = mk('rack', { container: {} })
+  const stein = mk('stein', { carried_by: 'u1' })
+  assert.equal(await placeCarriedInto(ajna, stein, [stein.id, 'srv:stein2'], rack, { notify: m => said.push(m) }), 2)
+  assert.deepEqual(calls, [['srv:stein', { parent: 'srv:rack' }], ['srv:stein2', { parent: 'srv:rack' }]])
+  assert.match(said[0], /2× „stein" liegt jetzt in „rack"/)
+  assert.equal(await placeCarriedInto(ajna, stein, null, mk('s1'), { notify: m => said.push(m) }), 0)   // no container
+  assert.equal(calls.length, 2)
+  assert.ok(carriedPlaceCheck(stein, { ...rack, carried_by: 'u2' }))
+  assert.ok(carriedPlaceCheck({ ...stein, _origin: 'other' }, rack))
+  assert.equal(carriedPlaceCheck(stein, rack), null)
 })

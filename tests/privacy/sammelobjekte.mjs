@@ -149,12 +149,30 @@ export async function run(t) {
   // ── Aus der Truhe genommen ist aus der Truhe heraus ─────────────────────
   const truhe = await t.object(chef.token, { name: 'Prüf-Truhe', type: 'poi', lat: LAT, lon: LON, altitude: 0, container: { view: 'exploded' }, state: {} })
   const beute = await t.object(chef.token, { name: 'Prüf-Beute', type: 'item', parent: truhe.id, local: { up: 0.3 }, state: { portable: true } })
-  await ace(chef.token, truhe.id, { subject_type: 'user', subject: bob.id, rights: ['view'] })
+  const bobsAce = await ace(chef.token, truhe.id, { subject_type: 'user', subject: bob.id, rights: ['view'] })
   r = await t.carry(bob.token, beute.id)
   s = await read(bob.token, beute.id)
   t.check('Einsammeln nimmt das Stück aus der Truhe',
     r.status === 200 && s.status === 200 && !s.data?.parent && !s.data?.local && s.data?.carried_by === bob.id,
     `carry ${r.status} parent ${JSON.stringify(s.data?.parent)} local ${JSON.stringify(s.data?.local)}`)
+
+  // ── Aus dem Rucksack in die Truhe: /place mit `parent` ─────────────────
+  const place = (token, id, body) => req(`/api/objects/${id}/place`, { method: 'POST', token, body })
+  r = await place(bob.token, beute.id, { parent: truhe.id })
+  t.check('ohne edit auf der Truhe bleibt das Stück im Rucksack',
+    r.status === 403 && r.data?.code === 'parent_forbidden', `status ${r.status} ${JSON.stringify(r.data)}`)
+  r = await place(bob.token, beute.id, { parent: server.id })
+  t.check('in ein gelöschtes oder fremdes Ziel geht es nicht',
+    r.status === 400 && ['parent_not_found', 'not_a_container'].includes(r.data?.code), `status ${r.status} ${JSON.stringify(r.data)}`)
+  await req(`/api/collections/object_permissions/records/${bobsAce.data?.id}`, { method: 'PATCH', token: chef.token, body: { rights: ['view', 'edit'] } })
+  r = await place(bob.token, beute.id, { parent: truhe.id })
+  s = await read(bob.token, beute.id)
+  t.check('mit edit landet es in der Truhe: kein Träger mehr, Versatz 0, Lage der Truhe',
+    r.status === 200 && s.status === 200 && s.data?.parent === truhe.id && !s.data?.carried_by
+      && s.data?.local?.east === 0 && s.data?.local?.north === 0 && near(s.data?.lat, LAT, 1e-7) && near(s.data?.lon, LON, 1e-7),
+    `place ${r.status} ${JSON.stringify(r.data)} parent ${s.data?.parent} carried ${JSON.stringify(s.data?.carried_by)} local ${JSON.stringify(s.data?.local)}`)
+  r = await place(bob.token, beute.id, { parent: truhe.id })
+  t.check('nur der Träger darf platzieren — auch in eine Truhe', r.status === 403, `status ${r.status}`)
 
   // ── Der Baum-Endpunkt ───────────────────────────────────────────────────
   const baum = (tiefe) => {

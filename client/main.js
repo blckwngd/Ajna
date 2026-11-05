@@ -43,7 +43,7 @@ import { ProximityReporter } from "./core/ProximityReporter.js"
 import { AjnaGeo } from "./core/AjnaGeo.js"
 import { ObjectActions } from "./core/ObjectActions.js"
 import { InWorldActionMenu } from "./core/InWorldActionMenu.js"
-import { worldObjects as displayedObjects, onChanged as onContainersChanged } from "./core/containers.js"
+import { worldObjects as displayedObjects, isContainer, placeCarriedInto, onChanged as onContainersChanged } from "./core/containers.js"
 import { Toast } from "./core/Toast.js"
 import { interactionReply, isCollectAction, protokolliereInteraktion } from "./core/InteractionReply.js"
 import { InventoryUI, DRAG_MIME } from "./core/InventoryUI.js"
@@ -1408,7 +1408,7 @@ async function init() {
     _placingRecord = { rec, ids: Array.isArray(ids) && ids.length ? ids : [rec.id] }
     if (!_toast) _toast = new Toast()
     const n = _placingRecord.ids.length
-    _toast.show(`Tippe in die Szene, um ${n > 1 ? `${n}× ` : ''}„${rec.name || 'Objekt'}" abzulegen`,
+    _toast.show(`Tippe in die Szene – oder auf ein Sammelobjekt –, um ${n > 1 ? `${n}× ` : ''}„${rec.name || 'Objekt'}" abzulegen`,
       { title: 'Platzieren' })
   }
 
@@ -1449,7 +1449,7 @@ async function init() {
       _placingRecord = { rec, ids: liste }
       if (!_toast) _toast = new Toast()
       const was = liste.length > 1 ? `${liste.length}× „${rec.name || 'Objekt'}"` : `„${rec.name || 'Objekt'}"`
-      _toast.show(`Tippe in die Szene, um ${was} abzulegen`, { title: 'Platzieren' })
+      _toast.show(`Tippe in die Szene – oder auf ein Sammelobjekt –, um ${was} abzulegen`, { title: 'Platzieren' })
     },
     getDevices: () => inventoryDevices(accessories),
   })
@@ -1553,13 +1553,22 @@ async function init() {
   scene.onPointerObservable.add(eventData => {
     if (eventData.type !== BABYLON.PointerEventTypes.POINTERTAP) return
 
-    // Inventar-Platzieren aktiv? Nächster Tap legt das Objekt auf den Boden.
+    // Inventar-Platzieren aktiv? Nächster Tap legt das Objekt auf den Boden —
+    // oder in ein angetipptes Sammelobjekt (aus dem Rucksack in die Truhe).
     if (_placingRecord) {
+      const auftrag = _placingRecord
+      _placingRecord = null
+      const zielPick = scene.pick(scene.pointerX, scene.pointerY, mesh => !!mesh.metadata?.gameObject)
+      const zielGo = zielPick?.hit ? zielPick.pickedMesh?.metadata?.gameObject : pickGameObjectTolerant(scene.pointerX, scene.pointerY)
+      const ziel = zielGo?.id ? ajnaManager.getObjectById(zielGo.id) : null
+      if (ziel && isContainer(ziel)) {
+        if (!_toast) _toast = new Toast()
+        placeCarriedInto(ajnaManager, auftrag.rec, auftrag.ids, ziel, { notify: (m) => _toast.show(m, { title: t('Platzieren') }) })
+        return
+      }
       // Im immersiven XR zeigt der Controller, nicht der Mauszeiger — dann
       // zaehlt der Strahl aus dem Ereignis.
       const geoPos = _groundGeoAt(scene.pointerX, scene.pointerY, eventData.pickInfo?.ray || null)
-      const auftrag = _placingRecord
-      _placingRecord = null
       if (geoPos) _placeRecordAt(auftrag.rec, geoPos, auftrag.ids)
       return
     }

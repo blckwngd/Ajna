@@ -321,6 +321,7 @@ mitgelieferten Sätze von Platte.
 |---|---|
 | `await pickup(id)` | Objekt aufnehmen — setzt `carried_by` serverseitig und nimmt es aus seinem Sammelobjekt |
 | `await place(id, { lat, lon, altitude })` | Getragenes Objekt wieder ablegen |
+| `await place(id, { parent })` | Getragenes Objekt in ein Sammelobjekt legen (es sitzt dann dort, `lat`/`lon` entfallen); braucht `edit` auf dem Sammelobjekt |
 | `inventoryItems()` | Getragene Objekte des angemeldeten Nutzers, serverübergreifend |
 | `isCarried(record)` | Wird gerade getragen (also nicht in der Welt)? |
 

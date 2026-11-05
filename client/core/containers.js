@@ -222,6 +222,44 @@ export async function placeInto(ajna, child, container, { notify: say = null } =
   return res
 }
 
+/**
+ * Placing from the inventory onto a tapped container. Unlike placeCheck, the
+ * piece IS carried — that is the point. null when it may go in.
+ */
+export function carriedPlaceCheck(rec, container) {
+  if (!rec || !container) return t('Nichts gewählt')
+  if (!isContainer(container)) return t('Kein Sammelobjekt')
+  if ((rec._origin || '') !== (container._origin || '')) return t('Beide Objekte müssen auf demselben Server liegen')
+  if (container.carried_by) return t('Ein getragenes Sammelobjekt nimmt nichts auf')
+  return null
+}
+
+/**
+ * „Aus dem Rucksack in die Truhe": every piece of the stack goes into the
+ * container, one after the other (each `place` runs through the server
+ * hooks). Reports through `notify`; returns how many made it.
+ */
+export async function placeCarriedInto(ajna, rec, ids, container, { notify: say = null } = {}) {
+  const liste = Array.isArray(ids) && ids.length ? ids : [rec.id]
+  const grund = carriedPlaceCheck(rec, container)
+  if (grund) { say?.(grund); return 0 }
+  let ok = 0, fehler = null
+  for (const id of liste) {
+    try { await ajna.place(id, { parent: container.id }); ok++ }
+    catch (err) { fehler = err; break }
+  }
+  const name = rec.name || t('Objekt'), ziel = container.name || container.id
+  if (fehler) {
+    say?.(t('Platzieren fehlgeschlagen: ') + (fehler?.response?.error || fehler?.message || fehler)
+      + (ok ? ` (${ok} von ${liste.length} abgelegt)` : ''))
+  } else if (ok > 1) {
+    say?.(t('{n}× „{a}" liegt jetzt in „{b}".', { n: ok, a: name, b: ziel }))
+  } else {
+    say?.(t('„{a}" liegt jetzt in „{b}".', { a: name, b: ziel }))
+  }
+  return ok
+}
+
 /** „Herausnehmen": one level up (the server does that), world position kept. */
 export function takeOut(ajna, child) { return ajna.updateObject(child.id, { parent: '' }) }
 

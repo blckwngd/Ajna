@@ -4735,6 +4735,20 @@ console.log('\n── Sammelobjekte')
   // Mit dem falschen Namen scheiterte createTree erst im laufenden Director.
   const tree = client.slice(client.indexOf('async createTree('), client.indexOf('async createTree(') + 600)
   check('createTree lädt nach dem Anlegen mit refreshObjects nach', /await this\.refreshObjects\(\)/.test(tree) && !/this\.loadObjects\(/.test(tree))
+  // „Aus dem Rucksack in die Truhe": im Tipp-Modus des Inventars nimmt ein
+  // angetipptes Sammelobjekt das Stück auf — auf der Karte wie in AR, über
+  // denselben Helfer und denselben Server-Endpunkt (/place mit parent).
+  const hook = src('../pocketbase/pb_hooks/main.pb.js')
+  const placeRoute = hook.slice(hook.indexOf('routerAdd("POST", "/api/objects/{id}/place"'))
+  check('/place nimmt ein Sammelobjekt als Ziel an und prüft es wie jedes Einhängen',
+    /const parentId = body\.parent/.test(placeRoute) && /H\.validateHierarchy\(obj, \{ old: alt, body: \{ parent: parentId/.test(placeRoute))
+  check('AjnaClient.place reicht parent als rohe ID weiter', /body = parent \? \{ parent: this\._toRaw\(parent\) \} : \{ lat, lon \}/.test(client))
+  check('auf der Karte fängt der Marker-Klick den Tipp-Modus ab, bevor das Menü aufgeht',
+    map.indexOf("if (_placing) {") < map.indexOf("if (!objectActions) return") && /if \(isContainer\(fresh\)\) placeCarriedInto\(ajna, auftrag\.rec, auftrag\.ids, fresh/.test(map))
+  check('in AR geht der Tipp zuerst an ein getroffenes Sammelobjekt',
+    /if \(ziel && isContainer\(ziel\)\) \{\s*\n\s*if \(!_toast\)[^\n]*\n\s*placeCarriedInto\(ajnaManager, auftrag\.rec, auftrag\.ids, ziel/.test(main))
+  check('die Hinweise nennen das Sammelobjekt als Ziel',
+    /Tippe auf die Karte – oder auf ein Sammelobjekt –/.test(map) && (main.match(/Tippe in die Szene – oder auf ein Sammelobjekt –/g) || []).length === 2)
 }
 
 // ---------------------------------------------------------------------------

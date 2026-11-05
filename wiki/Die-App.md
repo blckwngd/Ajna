@@ -26,7 +26,7 @@ Zweidimensionale Übersicht auf Basis von OpenStreetMap. Objekte erscheinen als 
 - **Eigene Objekte verschieben**: mit gedrücktem Zeiger ziehen.
 - **Rechtsklick / langes Tippen** auf freie Fläche legt ein neues Objekt an dieser Stelle an.
 - **Inhaltsfilter** (Knopf *Filter*): Agents melden an, welche Ebenen sie liefern. Hier wählst du pro Agent aus, was du sehen willst — z. B. POIs ja, WLAN-Netze nein.
-- **Sammelobjekte**: Ein Objekt kann andere enthalten — ein Serverschrank seine Server, eine Truhe ihre Beute, ein UWB-Netz seine Anker. Eingeklappt zeigt es ein Abzeichen (Anzahl · Status, orange bei Warnung, rot bei Fehler) und einen Pfeil ▸. **Aufklappen** im Aktionsmenü zeigt den Inhalt — an seiner Lage oder, bei Truhen, im Kreis darum. Was du auf- und zuklappst, gilt nur für dich. Ein Objekt **hineinlegen**: am Objekt „📌 Zum Platzieren vormerken", dann am Sammelobjekt „📥 … hierin platzieren" — oder es auf der Karte einfach auf das Sammelobjekt ziehen und die Rückfrage bestätigen. Es bleibt, wo es steht, und wandert ab jetzt mit. „📤 Herausnehmen" holt es wieder heraus. Löschst du ein Sammelobjekt mit Inhalt, fragt die App, ob der Inhalt mit soll oder eine Ebene hochrückt.
+- **Sammelobjekte**: Ein Objekt kann andere enthalten — ein Serverschrank seine Server, eine Truhe ihre Beute, ein UWB-Netz seine Anker. Eingeklappt zeigt es ein Abzeichen (Anzahl · Status, orange bei Warnung, rot bei Fehler) und einen Pfeil ▸. **Aufklappen** im Aktionsmenü zeigt den Inhalt — an seiner Lage oder, bei Truhen, im Kreis darum. Was du auf- und zuklappst, gilt nur für dich. Ein Objekt **hineinlegen**: am Objekt „📌 Zum Platzieren vormerken", dann am Sammelobjekt „📥 … hierin platzieren" — oder es auf der Karte einfach auf das Sammelobjekt ziehen und die Rückfrage bestätigen. Es bleibt, wo es steht, und wandert ab jetzt mit. Aus dem **Rucksack** geht es direkt: im Inventar „📍 Platzieren" wählen und dann das Sammelobjekt antippen statt einer freien Stelle — der Gegenstand liegt danach in der Truhe. „📤 Herausnehmen" holt es wieder heraus. Löschst du ein Sammelobjekt mit Inhalt, fragt die App, ob der Inhalt mit soll oder eine Ebene hochrückt.
 
 ## 🥽 AR
 
@@ -42,7 +42,7 @@ Dieselbe Welt in 3D, am selben Ort stehend. Mit immersivem WebXR mit Kamerabild,
   Objekte im sichtbaren Umkreis erscheinen als reines Symbol und laufen live mit; den Namen zeigt ein Tooltip beim Überfahren (am Telefon beim Antippen). Anfassen lässt sich dort nichts — gehandelt wird in der AR-Ansicht oder auf der großen Karte. Der Inhaltsfilter gilt auch hier.
   Der Ausschnitt folgt der Flughöhe: je höher die Kamera, desto weiter der abgedeckte Radius. Zoomst du von Hand, gilt dein Abstand zur automatischen Stufe weiter — beim Steigen und Sinken zoomt die Karte dann entsprechend mit.
 - **Inventar** (🎒) und **Verlauf** (💬) liegen als schwebende Knöpfe daneben.
-- **Sammelobjekte** verhalten sich wie auf der Karte: eingeklappt tragen sie das Abzeichen in ihrer Beschriftung, Aufklappen und Hineinlegen laufen über das Aktionsmenü. Beute aus einer aufgeklappten Truhe lässt sich einsammeln — damit ist sie aus der Truhe heraus.
+- **Sammelobjekte** verhalten sich wie auf der Karte: eingeklappt tragen sie das Abzeichen in ihrer Beschriftung, Aufklappen und Hineinlegen laufen über das Aktionsmenü; aus dem Inventar heraus „📍 Platzieren" wählen und die Truhe antippen. Beute aus einer aufgeklappten Truhe lässt sich einsammeln — damit ist sie aus der Truhe heraus.
 - **Schnellzugriff**: das anvisierte Objekt zeigt am rechten Rand seine wichtigsten Aktionen.
 
 ## 📋 Objekte
