@@ -96,6 +96,17 @@ Der Zwischenspeicher existiert, weil PocketBase-Filter keine rekursive Gruppenau
 
 Praktische Folge: `myRights()` liest den Zwischenspeicher und deckt Besitz sowie Benutzer- und Gruppeneinträge ab. Rechte, die nur über eine implizite Zielgruppe bestehen, tauchen dort **nicht** auf — für sie gilt „sichtbar heißt `view`". Wer die vollständige Antwort braucht, nimmt `getEffectiveRights()`.
 
+### Vererbung in Sammelobjekten
+
+Steckt ein Objekt in einem Sammelobjekt ([Objektmodell](Objektmodell.md#sammelobjekte--ein-objekt-enthält-andere)), erbt es dessen Rechteregeln — und die aller Sammelobjekte darüber, wie eine Datei die Rechte ihrer Ordner. Eigene Regeln kommen dazu; verboten wird nichts. Ein Kind mit `acl_break: true` erbt nicht nach oben.
+
+Zwei Dinge sind mit Absicht so:
+
+- **Der Besitzer vererbt sich nicht.** Wer ein Rack besitzt, besitzt damit nicht die Server eines anderen Kontos darin. Wer die eigenen Kinder verwalten will, gibt sich eine Regel mit `owner`-Recht auf das Sammelobjekt — sie erbt sich nach unten.
+- **Sehen ohne Sammelobjekt.** Darf jemand ein Kind sehen, aber nicht das Sammelobjekt, steht das Kind allein in der Welt; vom Sammelobjekt erfährt er nichts.
+
+Das Abzeichen eines Sammelobjekts zählt nur, was der Betrachter sehen darf.
+
 ## Prüfen
 
 ```bash

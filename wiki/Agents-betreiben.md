@@ -14,7 +14,7 @@ Agents sind normale Node-Prozesse, die sich als regulärer Benutzer anmelden und
 
 | Agent | Start | Was er tut | Braucht |
 |---|---|---|---|
-| **World-Director** | `npm run director` | Belebt die Welt: setzt Figuren, plant Wege über das Straßennetz, lässt Vögel und Drachen fliegen. Folgt den Interessensbereichen der Spieler. | — |
+| **World-Director** | `npm run director` | Belebt die Welt: setzt Figuren, plant Wege über das Straßennetz, lässt Vögel und Drachen fliegen, verteilt Truhen mit Beute (`WD_COUNT_CHEST`, Vorgabe 1; leere Truhen füllt er beim Start nach). Folgt den Interessensbereichen der Spieler. | — |
 | **POI-Bridge** | `npm run poi` | Legt Punkte von Interesse aus OpenStreetMap an (Bänke, Cafés, Brunnen), dazu Wikipedia-Artikel, Commons-Fotos und **Denkmäler** (Natur-, Kultur-, Stolpersteine) — drei getrennt schaltbare Quellen. | — |
 | **Karte von Morgen** | Teil von `npm run poi` | Initiativen, Projekte und Unternehmen, die Unterstützung verdienen (kartevonmorgen.org). Eigene Quelle `kartevonmorgen` mit eigenem Schalter — `POI_KVM=0` schaltet sie ab. Veranstaltungen bleiben draussen, bis Objekte eine Lebensdauer haben. | — |
 | **AIS-Bridge** | `npm run ais` | Schiffspositionen von aisstream.io. | API-Schlüssel |
@@ -25,7 +25,7 @@ Agents sind normale Node-Prozesse, die sich als regulärer Benutzer anmelden und
 | **Movebank-Bridge** | `npm run movebank` | Besenderte Wildtiere aus Movebank. | Zugangsdaten |
 | **Home-Assistant-Gateway** | `npm run ha-gateway` | Smart-Home-Geräte als Objekte, in beide Richtungen. Eigene Anleitung: [`docs/homeassistant.md`](https://github.com/blckwngd/Ajna/blob/main/docs/homeassistant.md) | HA-Instanz |
 | **Roboter** | `npm run robot` | Betreibt ein teilautonomes Gerät (Rover, Hexapod) als Spielobjekt: Wegpunkte, Spielaktionen, Telemetrie. Mit `ROBOT_DRIVER=sim` **ohne jede Hardware** ausprobierbar — Agent, Navigation und Ajna-Objekt sind echt, nur die Räder nicht. Einen eigenen Antrieb anschliessen: siehe `agents/lib/robot-driver.mjs`. | — (Simulation) |
-| **UWB-Anker** | `npm run uwb-anchors` | Legt UWB-Anker aus einer JSON-Datei als Objekte an. Siehe [`docs/uwb.md`](https://github.com/blckwngd/Ajna/blob/main/docs/uwb.md) | Ankerdatei |
+| **UWB-Anker** | `npm run uwb-anchors` | Legt UWB-Anker aus einer JSON-Datei als Objekte an; ein Netz wird zum Sammelobjekt, seine Anker hängen darin. Siehe [`docs/uwb.md`](https://github.com/blckwngd/Ajna/blob/main/docs/uwb.md) | Ankerdatei |
 | **Wand-Agent** | `npm run wand-agent` | Gegenstück zum Zeigegerät. Siehe [`docs/wand-slice.md`](https://github.com/blckwngd/Ajna/blob/main/docs/wand-slice.md) | Zauberstab |
 | **Persona** | `npm run persona -- --persona <name>` | **Eine** Figur mit **eigenem Konto** je Prozess — geht die Wege eines Spielers statt die des Directors und stößt an dieselben Wände. Einmalig `--setup` (legt das Konto als Superuser an und versiegelt es). Beschreibung in [`personas/README.md`](https://github.com/blckwngd/Ajna/blob/main/personas/README.md) | `AJNA_SU`/`AJNA_SU_PASS` fürs Setup |
 

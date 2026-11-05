@@ -458,7 +458,9 @@ export class AjnaClient {
    */
   async createTree(objects) {
     const res = await this.pb.send('/api/objects/tree', { method: 'POST', body: { objects } })
-    await this.loadObjects()
+    // refreshObjects, nicht loadObjects — das gibt es nur am Manager. Beim
+    // ersten Start des Directors stand die Truhe deshalb leer da.
+    await this.refreshObjects()
     return res
   }
 

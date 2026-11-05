@@ -49,6 +49,7 @@ Es ist kein Spiel mit fester Regelwelt, sondern der Unterbau dafür: Objekte, Re
 | **Mehrere Server gleichzeitig** | Ein Client verbindet sich mit mehreren Instanzen und sieht deren Inhalte nebeneinander — getrennte Anmeldung, Gruppen und Inventare. |
 | **Eine Bibliothek für beide Seiten** | Derselbe Quelltext im Browser und in Node. Agent und Renderer rechnen mit derselben Geo-Mathematik. |
 | **Aufträge und Inventar** | Gegenstände aufnehmen und ablegen; Aufträge mit treuhänderisch gebundener Belohnung und atomarem Tausch. |
+| **Sammelobjekte** | Ein Objekt enthält andere — Serverschrank → Server → Dienst, UWB-Netz → Anker, Truhe → Beute. Mit Abzeichen, Auf- und Zuklappen je Spieler, vererbten Rechten und einem Baum-Aufruf für Agenten. |
 | **Ein Origin** | Caddy bündelt Client, Datenbank und API unter einer Adresse — kein Mixed-Content, ein Speicherbereich. |
 
 ---

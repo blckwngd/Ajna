@@ -115,9 +115,26 @@ Alle drei sind synchron und lesen nur lokal — teuer ist ausschließlich `refre
 |---|---|
 | `await createObject(data, { serverId })` | Neu anlegen. `owner` setzt der Server |
 | `await updateObject(id, patch)` | Beliebige Felder ändern |
-| `await deleteObject(id)` | Löschen |
+| `await deleteObject(id, { children })` | Löschen. Ein Sammelobjekt mit Inhalt braucht `children: 'delete'` (alles mit) oder `'detach'` (Inhalt rückt eine Ebene hoch), sonst 409 |
 | `await setAnimation(id, state)` | Kurzform für `{ animation_state: state }` |
 | `await moveObject(id, lat, lon, altitude?)` | Kurzform für reine Positionsänderungen |
+| `await createTree(objects, { serverId })` | Einen ganzen Baum in einem Aufruf anlegen — Objekte mit `children: [...]`, Wurzeln dürfen `parent` tragen |
+| `await loadChildren(id)` | Kinder eines Sammelobjekts nachladen, das „erst beim Aufklappen laden" will |
+
+```js
+// Ein Rack mit zwei Servern und einer VM — vier Objekte, ein Aufruf
+const { objects } = await ajna.createTree([{
+  name: 'Rack A3', type: 'poi', lat: 50.4466, lon: 7.5971, altitude: 0, container: {},
+  children: [
+    { name: 'srv-01', type: 'poi', local: { up: 1.2 }, state: { status: 'ok' } },
+    { name: 'srv-02', type: 'poi', local: { up: 1.6 }, container: {},
+      children: [{ name: 'vm-web', type: 'poi', state: { status: 'warning' } }] },
+  ],
+}])
+objects[0].id   // die ID des Racks; objects[0].children[1].children[0].id die der VM
+```
+
+Einhängen und Herausnehmen sind gewöhnliche Änderungen: `updateObject(id, { parent: rackId, local: { from: 'world' } })` lässt das Objekt stehen und rechnet den Versatz aus, `updateObject(id, { parent: '' })` nimmt es heraus. Was ein Sammelobjekt ausmacht: [Objektmodell](Objektmodell.md#sammelobjekte--ein-objekt-enthält-andere).
 
 ```js
 const npc = await ajna.createObject({
@@ -302,7 +319,7 @@ mitgelieferten Sätze von Platte.
 
 | Methode | Beschreibung |
 |---|---|
-| `await pickup(id)` | Objekt aufnehmen — setzt `carried_by` serverseitig |
+| `await pickup(id)` | Objekt aufnehmen — setzt `carried_by` serverseitig und nimmt es aus seinem Sammelobjekt |
 | `await place(id, { lat, lon, altitude })` | Getragenes Objekt wieder ablegen |
 | `inventoryItems()` | Getragene Objekte des angemeldeten Nutzers, serverübergreifend |
 | `isCarried(record)` | Wird gerade getragen (also nicht in der Welt)? |

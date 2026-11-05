@@ -27,8 +27,44 @@ Ein Objekt ist ein Datensatz der `objects`-Collection. Es ist die einzige Sache,
 | `animation_state` | Text | Logischer Animationszustand: `idle`, `walk`, `fly`, … |
 | `owner` | Verweis | Wird serverseitig gesetzt |
 | `carried_by` | Verweis | Gesetzt heißt: im Inventar, nicht in der Welt |
+| `parent` | Verweis | Das Sammelobjekt, in dem dieses Objekt steckt — siehe unten |
+| `local` | JSON | `{ east, north, up, heading }`: Versatz zum Sammelobjekt in Metern und Grad. Leer = eigene Lage |
+| `heading` | Zahl | Ausrichtung um die Hochachse, Grad im Uhrzeigersinn ab Nord — Bezug für den Versatz der Kinder |
+| `acl_break` | Wahrheitswert | `true` = erbt die Rechte des Sammelobjekts nicht |
+| `container` | JSON | Vorhanden = darf andere Objekte enthalten: `{ badge, view, expanded, load }` — siehe unten |
 
 > **`name` ist öffentlich.** Jeder, der das Objekt sehen darf, sieht das Feld. Anwendungen mit Personenbezug legen solche Daten in eigene Felder mit engeren Rechten und lassen `name` neutral.
+
+---
+
+## Sammelobjekte — ein Objekt enthält andere
+
+Ein Serverschrank enthält Server, ein Server Dienste, ein UWB-Netz seine Anker, eine Truhe ihre Beute. Dafür trägt ein Objekt einen **`container`**-Abschnitt — erst dann darf es Kinder aufnehmen — und ein Kind verweist mit **`parent`** auf sein Sammelobjekt. Ein Kind hat genau ein Sammelobjekt, höchstens acht Ebenen tief, Kreise lehnt der Server ab.
+
+```js
+// Ein Rack, das seine Server im Kreis zeigt, sobald jemand aufklappt
+await ajna.createObject({
+  name: 'Rack A3', type: 'poi', lat: 50.4466, lon: 7.5971, altitude: 0, heading: 90,
+  container: { badge: 'both', view: 'placed', expanded: false, load: 'always' },
+})
+```
+
+| `container.` | Werte | Bedeutung |
+|---|---|---|
+| `badge` | `both` (Vorgabe), `count`, `status`, `none` | Was das eingeklappte Sammelobjekt anzeigt: Anzahl und/oder schlimmsten Status seiner Kinder |
+| `view` | `placed` (Vorgabe), `exploded` | Aufgeklappt: Kinder an ihrer Lage — oder im Kreis um das Sammelobjekt (Beute) |
+| `expanded` | `false` (Vorgabe) | Anfangs aufgeklappt? Jeder Spieler kann das für sich übersteuern |
+| `load` | `always` (Vorgabe), `on_expand` | Kinder sofort mitladen oder erst beim Aufklappen (große Sensorbäume) |
+
+**Lage eines Kindes.** Entweder **relativ**: `local = { east, north, up, heading }` im Rahmen des Sammelobjekts (`north` ist, wohin es blickt, `east` rechts davon); der Server rechnet daraus `lat`/`lon`/`altitude`/`heading` und zieht das Kind nach, wenn sich das Sammelobjekt bewegt oder dreht. Oder **eigen**: `parent` gesetzt, `local` leer, das Kind steht an seinen eigenen Koordinaten (UWB-Anker in ihrem Netz). `local: { from: "world" }` beim Einhängen heißt „bleib, wo du stehst, rechne den Versatz aus". Schickt man einem relativen Kind eine neue Weltlage, wird der Versatz daraus zurückgerechnet.
+
+**Status.** Ein Kind meldet `state.status` als `ok`, `warning`, `error` oder `unknown`; das Sammelobjekt zeigt den schlimmsten Status seiner sichtbaren Nachfahren — ein Rack wird rot, wenn ein Sensor rot ist.
+
+**Rechte.** Kinder erben die Rechte ihres Sammelobjekts wie Dateien die ihres Ordners, bis ein `acl_break` die Kette abschneidet; eigene Rechte kommen dazu. Der *Besitzer* vererbt sich nicht — wer die Kinder anderer verwalten will, gibt sich eine Rechteregel auf das Sammelobjekt ([Berechtigungen](Berechtigungen.md)). Einhängen braucht `edit` am Kind **und** am Sammelobjekt.
+
+**Löschen** eines Sammelobjekts mit Inhalt verlangt eine Ansage: `deleteObject(id, { children: 'delete' })` nimmt alles mit (nur, wenn man jedes Kind löschen darf), `{ children: 'detach' }` lässt die Kinder eine Ebene hochrutschen. Ohne Ansage antwortet der Server 409. **Aufheben** (`pickup`) nimmt ein Objekt aus seinem Sammelobjekt heraus.
+
+Einen ganzen Baum legt `ajna.createTree([...])` in einem Aufruf an ([Ajna-Library](Ajna-Library.md)). Alles Weitere, samt der Entscheidungen dahinter: [`docs/sammelobjekte.md`](https://github.com/blckwngd/Ajna/blob/main/docs/sammelobjekte.md).
 
 ---
 

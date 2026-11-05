@@ -15,6 +15,8 @@ späteren 3D-Modell-Autoren — nicht der Implementierungsplan.
 | `dragon` | fliegende Wesen    | freier Flug (ignoriert Straßen, nutzt `altitude`) | `examine` |
 | `item`   | Gegenstände        | statisch                       | — (vorerst ohne Funktion) |
 | `hint`   | Hinweise/Tipps     | statisch                       | `examine`               |
+| `diamond`| Diamanten          | statisch, leicht schwebend     | `examine` (einsammelbar, stapelbar) |
+| `chest`  | Truhen (Sammelobjekt, `docs/sammelobjekte.md`) | statisch | `examine`; 1–3 Stück Beute darin, Explosionsansicht beim Aufklappen, leere Truhen füllt der Director beim Start nach |
 
 Unbekannte Types rendern als roter Würfel (3D) bzw. ❌-Marker (Karte) — nie ein Fehler.
 
@@ -128,7 +130,7 @@ Position, Name, `interact_actions`, Ausmustern) — durch den Director beim Neus
 ```jsonc
 state: {
   "director":  true,        // Eigentums-/Herkunftsmarker des World-Director
-  "archetype": "npc",       // npc | enemy | animal | dragon | item | hint
+  "archetype": "npc",       // npc | enemy | animal | dragon | item | hint | diamond | chest
   "species":   "passerby",  // optionaler Subtyp (z. B. Tierart, NPC-Rolle)
   "spawn_id":  "<uuid>",    // stabile ID über Neustarts hinweg
   "actions":   [{ "key": "talk", "label": "Sprechen" }],  // Menü-Aktionen (Client)

@@ -4731,6 +4731,10 @@ console.log('\n── Sammelobjekte')
     /containerUnderPoint\(obj, event\.target\.getLatLng\(\)\)/.test(map) && /in „\{b\}" platzieren\?/.test(map))
   check('Löschen fragt nach dem Inhalt (Editor und Kontextmenü)',
     /deleteAsked\(/.test(src('../client/core/EditorUI.js')) && /deleteAsked\(/.test(src('../client/core/ObjectActions.js')))
+  // Der Client kennt nur refreshObjects(); loadObjects() gibt es am Manager.
+  // Mit dem falschen Namen scheiterte createTree erst im laufenden Director.
+  const tree = client.slice(client.indexOf('async createTree('), client.indexOf('async createTree(') + 600)
+  check('createTree lädt nach dem Anlegen mit refreshObjects nach', /await this\.refreshObjects\(\)/.test(tree) && !/this\.loadObjects\(/.test(tree))
 }
 
 // ---------------------------------------------------------------------------
