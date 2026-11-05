@@ -211,7 +211,9 @@ function moveNurPosition(e) {
     if (rights.indexOf("edit") !== -1 || rights.indexOf("owner") !== -1) { e.next(); return }
     if (rights.indexOf("move") === -1) { e.next(); return }   // die Regel lehnt ohnehin ab
 
-    const ERLAUBT = ["lat", "lon", "altitude", "rotation"]
+    // `local` und `heading` sind die Lage eines Kindes im Sammelobjekt —
+    // Bewegen heisst dort, den Versatz zu ändern. `parent` gehört NICHT dazu.
+    const ERLAUBT = ["lat", "lon", "altitude", "rotation", "local", "heading"]
     const EGAL = ["id", "created", "updated"]
     const { jsonText } = require(`${__hooks}/utf8.js`)
     const alt = $app.findRecordById("objects", e.record.id)
@@ -239,6 +241,192 @@ function moveNurPosition(e) {
   e.next()
 }
 onRecordUpdateRequest(moveNurPosition, "objects")
+
+
+// =====================================================================
+// Sammelobjekte — ein Objekt enthält andere (docs/sammelobjekte.md).
+//
+// Die Logik steht in hierarchy.js; hier hängen nur die vier Stellen, an
+// denen sie greift:
+//   • vor dem Schreiben: Eltern prüfen (Container? Zyklus? Tiefe? Recht?)
+//     und die Weltlage eines relativen Kindes ausrechnen,
+//   • nach dem Schreiben: hat sich `parent` oder `acl_break` geändert,
+//     den Rechte-Cache des Teilbaums neu aufbauen,
+//   • nach JEDEM Speichern (auch intern): relative Kinder nachziehen,
+//   • beim Löschen: Kinder nicht stillschweigend mitreissen.
+// =====================================================================
+
+function hierarchieBeimSchreiben(e) {
+  let vorher = null, alt = null, altBreak = false
+  try {
+    const H = require(`${__hooks}/hierarchy.js`)
+    const neu = !e.record.id || !(alt = H.findObject(e.record.id))
+    if (!neu) { vorher = alt.get("parent") || ""; altBreak = !!alt.get("acl_break") }
+    const info = e.requestInfo()
+    const fehler = H.validateHierarchy(e.record, { old: neu ? null : alt, body: info.body || {}, user: e.auth || null })
+    if (fehler) return e.json(fehler.status, { error: fehler.error, code: fehler.code })
+  } catch (err) {
+    console.log("[objects.hierarchy] " + (err && err.message ? err.message : err))
+  }
+  e.next()
+  // Gespeichert. Eine neue Kette bedeutet neue geerbte Rechte — für das
+  // Objekt und alles darunter.
+  try {
+    const nachher = e.record.get("parent") || ""
+    if (alt && (nachher !== vorher || !!e.record.get("acl_break") !== altBreak)) {
+      const { recomputeForObject } = require(`${__hooks}/permissions.js`)
+      recomputeForObject(e.record.id)
+    }
+  } catch (err) {
+    console.log("[objects.hierarchy.after] " + (err && err.message ? err.message : err))
+  }
+}
+onRecordCreateRequest(hierarchieBeimSchreiben, "objects")
+onRecordUpdateRequest(hierarchieBeimSchreiben, "objects")
+
+// Nach jedem Speichern, auch durch Agenten-Endpunkte und Hooks: Hat sich
+// das Objekt bewegt oder gedreht, folgen seine relativen Kinder. Deren
+// Speichern löst denselben Hook aus — so läuft es den Baum hinunter.
+onRecordAfterUpdateSuccess((e) => {
+  try {
+    const H = require(`${__hooks}/hierarchy.js`)
+    H.propagatePosition(e.record)
+  } catch (err) {
+    console.log("[objects.propagate] " + (err && err.message ? err.message : err))
+  }
+  e.next()
+}, "objects")
+
+// Löschen mit Inhalt: ausdrücklich sagen, was mit den Kindern geschieht.
+//   ?children=delete  alle Nachfahren mit — nur, wenn man jeden löschen darf
+//   ?children=detach  Kinder rutschen eine Ebene hoch (behalten ihre Lage)
+// Ohne Angabe: 409 has_children.
+onRecordDeleteRequest((e) => {
+  try {
+    const H = require(`${__hooks}/hierarchy.js`)
+    const rec = e.record
+    const kinder = H.childrenOf(rec.id)
+    if (!kinder.length) { e.next(); return }
+    // Im Lösch-Ereignis gibt es kein e.request — die Abfrage steht in requestInfo().
+    const info = e.requestInfo()
+    const modus = String((info.query && info.query.children) || "")
+    if (modus !== "delete" && modus !== "detach") {
+      return e.json(409, { error: "the object contains others — say ?children=delete or ?children=detach", code: "has_children", children: kinder.length })
+    }
+    const user = e.auth || null
+    if (modus === "delete") {
+      const alle = H.descendants(rec.id)
+      const verboten = alle.filter(d => !H.hasRight(user, d, "owner") && !(user && String(d.get("owner")) === String(user.id)))
+      if (verboten.length) {
+        return e.json(403, { error: "not allowed to delete every contained object", code: "children_not_owned", children: verboten.map(d => d.id) })
+      }
+      for (let i = alle.length - 1; i >= 0; i--) $app.delete(alle[i])
+    } else {
+      // Zum Grosseltern — dort war das Kind schon, es bekommt nichts Neues.
+      const oben = rec.get("parent") || ""
+      const obenRec = oben ? H.findObject(oben) : null
+      const { recomputeForObject } = require(`${__hooks}/permissions.js`)
+      for (const k of kinder) {
+        let local = null
+        try { local = H.readLocal(k) } catch (err) { local = null }
+        k.set("parent", oben)
+        if (local && !local.from) k.set("local", obenRec ? H.worldToLocal(H.worldOf(obenRec), H.worldOf(k)) : null)
+        $app.save(k)
+        try { recomputeForObject(k.id) } catch (err) { /* der Cache holt es beim nächsten Anlass nach */ }
+      }
+    }
+  } catch (err) {
+    // Ein Schutz, der kaputtgeht, lässt NICHT durch — sonst blieben Waisen.
+    console.log("[objects.delete.children] " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err), code: "children_check_failed" })
+  }
+  e.next()
+}, "objects")
+
+// ---------------------------------------------------------------------
+// POST /api/objects/tree — einen ganzen Baum in einem Aufruf anlegen.
+//
+// Für Agenten, die aus NetBox, PRTG oder einem UWB-Netz hunderte Objekte
+// mitbringen: Ein Rack mit vierzig Servern ist EIN Aufruf, nicht vierzig
+// plus vierzig Umhängungen. Jeder Knoten ist ein gewöhnliches Objekt
+// (dieselben Felder wie beim Anlegen), dazu `children: [...]`. Wurzeln
+// dürfen `parent` tragen. Der Aufrufer wird Besitzer aller Objekte.
+//
+// Erst wird alles geprüft (Form, Tiefe, Recht auf den Ziel-Container),
+// dann angelegt — ein Fehler in Knoten 300 soll nicht 299 Waisen lassen.
+// Keine Transaktion: Scheitert ein Speichern mittendrin, meldet die
+// Antwort die bis dahin angelegten IDs, damit der Agent aufräumen kann.
+// ---------------------------------------------------------------------
+routerAdd("POST", "/api/objects/tree", (e) => {
+  const angelegt = []
+  try {
+    const H = require(`${__hooks}/hierarchy.js`)
+    const { mayActForSource } = require(`${__hooks}/sources.js`)
+    const info = e.requestInfo()
+    const user = info.auth
+    if (!user) return e.json(401, { error: "authentication required" })
+    const body = info.body || {}
+    const wurzeln = Array.isArray(body.objects) ? body.objects : (body.object ? [body.object] : null)
+    if (!wurzeln || !wurzeln.length) return e.json(400, { error: "objects: [...] missing", code: "bad_body" })
+
+    const FELDER = ["name", "type", "model_url", "lat", "lon", "altitude", "rotation", "scale", "state",
+      "animation_state", "actions", "description", "heading", "local", "container", "acl_break"]
+
+    // Durchgang 1: zählen, Form und Tiefe prüfen.
+    let anzahl = 0
+    const pruefe = (knoten, pfad, tiefe) => {
+      if (!knoten || typeof knoten !== "object") throw { status: 400, error: `${pfad}: not an object`, code: "bad_node" }
+      if (++anzahl > H.MAX_TREE_NODES) throw { status: 400, error: `more than ${H.MAX_TREE_NODES} objects`, code: "too_many" }
+      if (String(knoten.type || "").toLowerCase() === "player") throw { status: 400, error: `${pfad}: a presence cannot be created here`, code: "bad_type" }
+      if (knoten.parent && tiefe > 0) throw { status: 400, error: `${pfad}: only roots may carry parent`, code: "bad_parent" }
+      try { H.parseLocal(knoten.local); H.parseContainer(knoten.container) }
+      catch (err) { throw { status: 400, error: `${pfad}: ${err.message}`, code: "bad_shape" } }
+      const kinder = Array.isArray(knoten.children) ? knoten.children : []
+      if (kinder.length && H.parseContainer(knoten.container) === null) {
+        throw { status: 400, error: `${pfad}: has children but no container section`, code: "not_a_container" }
+      }
+      const quelle = knoten.state && typeof knoten.state === "object" ? knoten.state.source : null
+      if (quelle && !mayActForSource(String(quelle), user.id)) {
+        throw { status: 403, error: `${pfad}: source "${quelle}" belongs to another account`, code: "source_forbidden" }
+      }
+      let hoehe = 0
+      kinder.forEach((k, i) => { hoehe = Math.max(hoehe, 1 + pruefe(k, `${pfad}.children[${i}]`, tiefe + 1)) })
+      return hoehe
+    }
+    wurzeln.forEach((w, i) => {
+      const hoehe = pruefe(w, `objects[${i}]`, 0)
+      const oben = w.parent ? H.ancestorIds(String(w.parent)) : []
+      if (w.parent) {
+        const p = H.findObject(String(w.parent))
+        if (!p) throw { status: 400, error: `objects[${i}]: parent not found`, code: "parent_not_found" }
+        if (!H.isContainer(p)) throw { status: 400, error: `objects[${i}]: parent is not a container`, code: "not_a_container" }
+        if (!H.hasRight(user, p, "edit")) throw { status: 403, error: `objects[${i}]: no edit right on the container`, code: "parent_forbidden" }
+      }
+      if (!H.depthAllowed(oben.length, hoehe)) throw { status: 400, error: `objects[${i}]: at most ${H.MAX_DEPTH} levels`, code: "too_deep" }
+    })
+
+    // Durchgang 2: anlegen, Eltern vor Kindern.
+    const col = $app.findCollectionByNameOrId("objects")
+    const lege = (knoten, parentId) => {
+      const rec = new Record(col)
+      for (const f of FELDER) if (knoten[f] !== undefined) rec.set(f, knoten[f])
+      rec.set("owner", user.id)
+      if (parentId) rec.set("parent", parentId)
+      const fehler = H.validateHierarchy(rec, { old: null, body: knoten, user: null })
+      if (fehler) throw { status: fehler.status, error: fehler.error, code: fehler.code }
+      $app.save(rec)
+      angelegt.push(rec.id)
+      const kinder = Array.isArray(knoten.children) ? knoten.children : []
+      return { id: rec.id, children: kinder.map(k => lege(k, rec.id)) }
+    }
+    const ergebnis = wurzeln.map(w => lege(w, w.parent ? String(w.parent) : ""))
+    return e.json(200, { ok: true, count: angelegt.length, objects: ergebnis })
+  } catch (err) {
+    if (err && err.status) return e.json(err.status, { error: err.error, code: err.code, created: angelegt })
+    console.log("[objects.tree] " + (err && err.message ? err.message : err))
+    return e.json(500, { error: "" + (err && err.message ? err.message : err), created: angelegt })
+  }
+})
 
 
 // =====================================================================
@@ -549,10 +737,10 @@ onRecordUpdateRequest(stampeManifestIdentitaet, "agent_manifests")
 onRecordAfterCreateSuccess((e) => {
   try {
     const owner = e.record.get("owner")
-    if (owner) {
+    if (owner || e.record.get("parent")) {
       const { applyOwnerDefaults, recomputeForObject } = require(`${__hooks}/permissions.js`)
-      applyOwnerDefaults(owner, e.record.id)
-      recomputeForObject(e.record.id)
+      if (owner) applyOwnerDefaults(owner, e.record.id)
+      recomputeForObject(e.record.id)   // auch geerbte Rechte eines Kindes
     }
   } catch (err) {
     console.log("[objects.afterCreate] error: " + (err && err.message ? err.message : err))

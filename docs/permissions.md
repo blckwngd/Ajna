@@ -134,14 +134,40 @@ Der Resolver erkennt Zyklen nicht — beim Hinzufügen einer Sub-Group muss die 
 
 `resolveExplicit(userId, object)` — wie oben, aber ohne implicit audiences. Wird für den Cache benutzt.
 
+## Vererbung über Sammelobjekte
+
+Seit dem 05.11.2026 (docs/sammelobjekte.md) erbt ein Objekt die ACEs seiner
+Eltern wie eine Datei die ihres Ordners: `aclChainIds(object)` liefert das
+Objekt selbst, dann `parent`, dessen `parent` … bis zum ersten Objekt mit
+`acl_break = true` (dieses eingeschlossen — es bricht nur nach oben ab),
+höchstens acht Stufen. `aggregateAces` läuft über alle ACEs dieser Kette;
+Vereinigung wie bisher.
+
+Zwei Grenzen, mit Absicht:
+
+* **Der Besitzer vererbt sich nicht.** `owner` ist ein Feld, keine ACE. Wer
+  ein Rack besitzt, besitzt damit nicht die Server eines anderen Kontos darin
+  (Colocation). Wer seine eigenen Kinder verwalten will, setzt sich eine ACE
+  mit `owner`-Recht auf das Sammelobjekt — sie erbt sich nach unten.
+* **Sehen ohne Eltern.** Darf jemand ein Kind sehen, aber nicht sein
+  Sammelobjekt, steht das Kind allein in der Welt; Name und Existenz des
+  Eltern bleiben verborgen.
+
+`recomputeForObject` rechnet den Cache und die Spalten `view_auth`/`view_anon`
+aus der ganzen Kette und steigt dann in alle Kinder ohne `acl_break` ab. Ein
+Rack mit 500 Sensoren kostet bei einer ACE-Änderung 500 Neuberechnungen — das
+ist der Preis dafür, dass die Leseregel unverändert eine Spalte und einen Join
+braucht.
+
 ## Cache-Invalidation
 
 Hooks in [`pb_hooks/main.pb.js`](../pocketbase/pb_hooks/main.pb.js) sorgen für automatischen Refresh:
 
 | Trigger | Effekt |
 |---|---|
-| `objects.afterCreate` | Default-Permissions aus `users.default_permissions` materialisieren + `recomputeForObject` |
-| `object_permissions.afterCreate/Update/Delete` | `recomputeForObject(ace.object)` |
+| `objects.afterCreate` | Default-Permissions aus `users.default_permissions` materialisieren + `recomputeForObject` (auch für geerbte Rechte eines Kindes) |
+| `objects` Create/Update-Request mit geändertem `parent` oder `acl_break` | `recomputeForObject` für das Objekt und seinen Teilbaum |
+| `object_permissions.afterCreate/Update/Delete` | `recomputeForObject(ace.object)` — steigt in Kinder ohne `acl_break` ab |
 | `groups.afterUpdate/Delete` | `recomputeForGroup` → alle Objekte mit ACE auf diese Gruppe (oder Vorfahre-Gruppe) neu berechnen |
 
 `recomputeForObject` sammelt alle (User-IDs + transitive Group-Member), die durch ACEs Rechte am Objekt haben, und schreibt einen Cache-Eintrag pro User. Stale Einträge werden entfernt. Owner bekommt keinen Cache-Eintrag (die `viewRule` deckt `owner = @request.auth.id` direkt ab).

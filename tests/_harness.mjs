@@ -203,7 +203,9 @@ export function createContext(prefix) {
         let deleted = false
         let allMissing = true   // meldeten ALLE 404, ist es wirklich weg
         for (const u of users) {
-          const s = (await req(`/api/collections/objects/records/${id}`, { method: 'DELETE', token: u.token })).status
+          // `children=delete`: ein Sammelobjekt nimmt seinen Inhalt mit — sonst
+          // bliebe ein Prüf-Rack mit Servern als 409 liegen.
+          const s = (await req(`/api/collections/objects/records/${id}?children=delete`, { method: 'DELETE', token: u.token })).status
           if (s < 400) { deleted = true; break }
           // 404 heißt nur „für DIESEN Nutzer nicht sichtbar" — ein anderer kann
           // es nach dem Tausch trotzdem besitzen, also weiterprobieren.

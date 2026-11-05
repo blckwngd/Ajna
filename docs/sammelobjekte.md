@@ -1,7 +1,9 @@
-# Sammelobjekte — Entwurf
+# Sammelobjekte
 
-**Stand 05.11.2026: Fragenkatalog abgeschlossen, NICHT freigegeben.** Umgesetzt
-wird erst nach ausdrücklichem OK.
+**Stand 05.11.2026: freigegeben; Server steht** (Datenmodell, Hooks,
+Rechte-Vererbung, Baum-Endpunkt — 10 Unit- und 37 E2E-Prüfungen). Offen:
+Darstellung auf Karte und in AR, Bedienung, UWB-Netze, Beute-Truhe. Die
+Entscheidungen des Fragenkatalogs stehen unten; die Schnittstelle am Ende.
 
 Ein Objekt kann andere Objekte enthalten: Schrank → Server → VM → Sensorwert,
 UWB-Netz → Anker, Truhe → Beute, später Gebäude → Etage → Raum aus BIM.
@@ -75,18 +77,91 @@ Aufklappen, Liste, Explosionsansicht, Status-Durchschlag), „Hierin platzieren"
 **Nicht in Stufe 1:** Sammelaktionen, Objektliste als Baum, Recht `contain`,
 Vereinigung mit dem Spieler-Inventar, volle 3D-Drehung.
 
-## Schlüssel in Nutzdaten (Vorschlag, englisch)
+## Die Schnittstelle (Server, seit 05.11.)
+
+### Felder an `objects` (Migration `1793100000_sammelobjekte.js`)
 
 ```
-parent          → objects (single)          Elternobjekt
-local           { east, north, up, heading } Versatz in m + Drehung, nur bei relativen Kindern
-heading         Grad, Ausrichtung um die Hochachse (am Objekt selbst)
-inherit_acl     bool, Standard true          false = Vererbung unterbrochen
-container       { badge: "count"|"status"|"both"|"none",
-                  view: "placed"|"exploded",
-                  expanded: bool,             Standard des Besitzers
-                  load: "always"|"on_expand" }
-state.status    "ok"|"warning"|"error"|"unknown"
+parent      → objects       das Sammelobjekt, in dem dieses Objekt steckt
+local       json            { east, north, up, heading } — Versatz in Metern und Grad
+                            im Rahmen des Eltern (north = wohin das Eltern blickt,
+                            east = rechts davon); leer = eigene Lage
+heading     number          Ausrichtung um die Hochachse, Grad im Uhrzeigersinn ab Nord
+acl_break   bool            true = erbt die ACEs des Eltern NICHT (Vorgabe false = erbt)
+container   json            vorhanden = darf Kinder aufnehmen:
+                            { badge: "count"|"status"|"both"|"none",   Vorgabe both
+                              view: "placed"|"exploded",               Vorgabe placed
+                              expanded: bool,                          Vorgabe false
+                              load: "always"|"on_expand" }             Vorgabe always
+state.status  "ok"|"warning"|"error"|"unknown"   (Konvention, kein Schema)
 ```
 
-Die genaue Form wird mit der Freigabe festgelegt.
+`acl_break` statt `inherit_acl`: Ein bool-Feld steht für alte Zeilen und für
+jedes Anlegen ohne das Feld auf false — „false = erbt" ist die sichere Vorgabe.
+
+### Was der Server beim Schreiben tut (`pb_hooks/hierarchy.js`)
+
+* **Eltern prüfen:** muss existieren, einen `container`-Abschnitt tragen, darf
+  nicht getragen sein (`carried_by`), kein Zyklus, höchstens 8 Ebenen
+  (Vorfahren + dieses Objekt + sein Teilbaum). Fehler kommen als 400 mit
+  `code`: `not_a_container`, `cycle`, `too_deep`, `parent_not_found`,
+  `parent_carried`, `bad_local`, `bad_container`.
+* **Rechte:** Ändert sich `parent`, braucht der Aufrufer `edit` am Objekt (die
+  Regel) UND am neuen wie am bisherigen Sammelobjekt → sonst 403
+  `parent_forbidden`. `move` darf `local` und `heading` ändern, `parent` nicht.
+* **Lage eines relativen Kindes** — Vorrang in dieser Reihenfolge:
+  1. `local` im Aufruf → Weltlage daraus. `local: { from: "world" }` heisst:
+     rechne den Versatz aus der aktuellen Weltlage („bleibt, wo es steht").
+  2. `lat/lon/altitude/heading` im Aufruf, ohne `local` → der Versatz wird
+     aus der neuen Weltlage zurückgerechnet (Gizmo, Ziehen auf der Karte).
+  3. neues Kind ohne beides → sitzt am Eltern (`local` = Nullen).
+  4. neues Kind mit Weltlage, ohne `local` → eigene Lage, `local` bleibt leer
+     (UWB-Anker). Ohne `parent` wird `local` immer geleert.
+* **Nachziehen:** Nach jedem Speichern eines Objekts (auch durch Agenten und
+  Hooks) bekommen seine relativen Kinder die neue Weltlage; deren Speichern
+  zieht die Enkel nach. Geschrieben wird nur, was sich ändert.
+* **Verwaiste Kinder** (Eltern am Hook vorbei gelöscht, etwa vom Verfalls-Cron)
+  heilen beim nächsten Schreiben zu freien Objekten.
+
+### Rechte-Vererbung (`pb_hooks/permissions.js`)
+
+Für ein Objekt gelten die ACEs seiner Kette: es selbst, dann aufwärts bis zum
+ersten `acl_break` (dieses eingeschlossen). Vereinigung, keine Verbote. Der
+Cache `effective_permissions` und die Spalten `view_auth`/`view_anon` werden
+für den ganzen Teilbaum neu gerechnet, wenn eine ACE, `parent` oder
+`acl_break` sich ändert. **Der Besitzer eines Sammelobjekts ist nicht
+automatisch Besitzer der Kinder** — `owner` ist ein Feld, keine ACE; wer das
+will, setzt sich eine ACE auf das Sammelobjekt.
+
+### Löschen
+
+`DELETE /api/collections/objects/records/{id}` mit Kindern → **409
+`has_children`**, bis man sagt, was geschehen soll:
+
+* `?children=delete` — alle Nachfahren mit; nur, wenn der Aufrufer jedes
+  einzelne löschen darf (Besitzer oder `owner`-Recht), sonst 403
+  `children_not_owned` mit den IDs.
+* `?children=detach` — die Kinder rutschen zum Grosseltern (dort waren sie
+  schon, sie bekommen nichts Neues) oder werden frei; relative Kinder
+  behalten ihre Weltlage.
+
+### Baum in einem Aufruf
+
+```
+POST /api/objects/tree
+{ "objects": [ { ...Felder wie beim Anlegen, "parent"?: id,
+                 "children": [ { ...Felder, "children": [...] } ] } ] }
+→ { ok, count, objects: [ { id, children: [ { id, children: [...] } ] } ] }
+```
+
+Der Aufrufer wird Besitzer aller Knoten; Wurzeln dürfen `parent` tragen
+(braucht `edit` dort). Erst wird alles geprüft (Form, Tiefe, Container,
+Quellenanspruch `state.source`), dann angelegt — ohne Transaktion; scheitert
+ein Speichern mittendrin, nennt die Antwort unter `created` die bis dahin
+angelegten IDs. Höchstens 2000 Knoten je Aufruf. `type: "player"` geht hier
+nicht.
+
+### Prüfungen
+
+`pocketbase/pb_hooks/hierarchy.test.mjs` (Geometrie, Formen, Tiefe) und
+`tests/privacy/sammelobjekte.mjs` (alles oben am lebenden System).

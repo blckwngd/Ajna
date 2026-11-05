@@ -15,6 +15,8 @@
 //   - implicit audiences (authenticated/anonymous/everyone) werden NICHT
 //     im Cache materialisiert; resolveEffective löst sie on-the-fly auf,
 //     die API-Rules prüfen sie direkt gegen object_permissions.
+//   - Sammelobjekte: ein Kind erbt die ACEs seiner Eltern (aclChainIds),
+//     bis ein `acl_break` die Kette nach oben abschneidet.
 // =====================================================================
 
 const ALL_RIGHTS  = ["view", "edit", "move", "owner"]
@@ -133,14 +135,48 @@ function coerceStringArray(value) {
   return value   // bereits ein echtes String-Array
 }
 
-/** Aggregiert alle ACEs eines Objekts, deren subject-Key in subjectKeys liegt. */
-function aggregateAces(objectId, subjectKeys) {
-  const aces = $app.findRecordsByFilter(
-    "object_permissions",
-    "object = {:obj}",
-    "", 500, 0,
-    { obj: objectId }
-  )
+// ----------------------------------------------------------------------
+// Vererbung (Sammelobjekte, docs/sammelobjekte.md)
+//
+// Ein Kind erbt die ACEs seiner Vorfahren wie eine Datei die ihres Ordners:
+// eigene ACEs plus die aller Eltern bis zum ersten Objekt mit `acl_break`
+// (dieses eingeschlossen — es bricht nur nach OBEN ab). Vereinigung wie
+// bisher, keine Verbote. Der Besitzer eines Eltern erbt sich NICHT nach
+// unten: `owner` ist ein Feld, keine ACE. Wer das will, setzt sich eine.
+// ----------------------------------------------------------------------
+
+const ACL_MAX_DEPTH = 8
+
+/** Die Objekte, deren ACEs für dieses Objekt gelten: es selbst, dann aufwärts. */
+function aclChainIds(objectRecord) {
+  const ids = [objectRecord.id]
+  let cur = objectRecord
+  for (let i = 0; i < ACL_MAX_DEPTH; i++) {
+    if (cur.get("acl_break")) break
+    const p = cur.get("parent")
+    if (!p) break
+    let pr
+    try { pr = $app.findRecordById("objects", p) } catch (err) { break }
+    if (ids.indexOf(pr.id) !== -1) break
+    ids.push(pr.id)
+    cur = pr
+  }
+  return ids
+}
+
+/** Alle ACEs der genannten Objekte (eigene plus geerbte). */
+function acesOf(objectIds) {
+  const out = []
+  for (const id of objectIds) {
+    const aces = $app.findRecordsByFilter("object_permissions", "object = {:obj}", "", 500, 0, { obj: id })
+    for (const a of aces) out.push(a)
+  }
+  return out
+}
+
+/** Aggregiert alle ACEs der Objekte (eigene plus geerbte), deren subject-Key in subjectKeys liegt. */
+function aggregateAces(objectIds, subjectKeys) {
+  const aces = acesOf(objectIds)
 
   const rights   = new Set()
   const interact = new Set()
@@ -179,7 +215,7 @@ function resolveEffective(user, objectRecord) {
     subjectKeys.add("anonymous:")
   }
 
-  return aggregateAces(objectRecord.id, subjectKeys)
+  return aggregateAces(aclChainIds(objectRecord), subjectKeys)
 }
 
 /**
@@ -197,7 +233,7 @@ function resolveExplicit(userId, objectRecord) {
   const subjectKeys = new Set([`user:${userId}`])
   for (const g of transitiveGroupsOf(userId)) subjectKeys.add(`group:${g}`)
 
-  return aggregateAces(objectRecord.id, subjectKeys)
+  return aggregateAces(aclChainIds(objectRecord), subjectKeys)
 }
 
 /** Hilfsfunktion: prüft, ob ein Action-Key durch das effective-set abgedeckt ist. */
@@ -273,19 +309,16 @@ function recomputeFor(userId, objectRecord) {
  * die per ACE direkt oder über transitive Gruppen-Mitgliedschaft Rechte
  * darauf hätten, und schreibt sie in den Cache.
  */
-function recomputeForObject(objectId) {
+function recomputeForObject(objectId, tiefe) {
+  tiefe = tiefe || 0
   let obj
   try { obj = $app.findRecordById("objects", objectId) }
   catch { return { error: "object not found", objectId } }
 
   const affectedUsers = new Set()
 
-  const aces = $app.findRecordsByFilter(
-    "object_permissions",
-    "object = {:obj}",
-    "", 500, 0,
-    { obj: objectId }
-  )
+  // Eigene ACEs plus die geerbten — der Cache ist der Abdruck der ganzen Kette.
+  const aces = acesOf(aclChainIds(obj))
 
   console.log(`[recompute] object=${objectId} aces=${aces.length}`)
 
@@ -336,6 +369,17 @@ function recomputeForObject(objectId) {
   // Neu berechnen
   for (const userId of affectedUsers) {
     recomputeFor(userId, obj)
+  }
+
+  // Was hier gilt, gilt auch unten: Kinder, die nicht abbrechen, erben die
+  // Änderung. Tiefe begrenzt wie der Baum selbst — ein Zyklus kann durch
+  // die Prüfung beim Schreiben nicht entstehen, das Netz bleibt trotzdem.
+  if (tiefe < ACL_MAX_DEPTH) {
+    const kinder = $app.findRecordsByFilter("objects", "parent = {:p}", "", 1000, 0, { p: objectId })
+    for (const k of kinder) {
+      if (k.get("acl_break")) continue
+      recomputeForObject(k.id, tiefe + 1)
+    }
   }
 
   return { objectId, aces: aces.length, affectedUsers: Array.from(affectedUsers) }
@@ -483,5 +527,6 @@ module.exports = {
   recomputeForGroup,
   applyOwnerDefaults,
   transitiveGroupsOf,
-  transitiveMembersOf
+  transitiveMembersOf,
+  aclChainIds
 }

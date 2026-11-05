@@ -4580,8 +4580,10 @@ process.on('exit', (code) => {
   check('der Hook greift nur, wenn move das einzige Schreibrecht ist',
     /rights\.indexOf\("edit"\) !== -1 \|\| rights\.indexOf\("owner"\) !== -1\) \{ e\.next\(\); return \}/.test(hook)
     && /rights\.indexOf\("move"\) === -1\) \{ e\.next\(\); return \}/.test(hook))
+  // Seit den Sammelobjekten (05.11.) gehören `local` und `heading` zur Lage —
+  // `parent` ausdrücklich nicht: Umhängen ist kein Bewegen.
   check('erlaubt sind Lage und Drehung, verglichen gegen den gespeicherten Stand',
-    /const ERLAUBT = \["lat", "lon", "altitude", "rotation"\]/.test(hook)
+    /const ERLAUBT = \["lat", "lon", "altitude", "rotation", "local", "heading"\]/.test(hook)
     && /const alt = \$app\.findRecordById\("objects", e\.record\.id\)/.test(hook))
   const moveMig = readFileSync(new URL('../pocketbase/pb_migrations/1792900000_update_rule_move.js', import.meta.url), 'utf8')
   check('die Regel lässt move in der ?=-Fassung durch',

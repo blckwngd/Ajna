@@ -25,5 +25,6 @@ import * as aceSchreiben from './privacy/ace-schreiben.mjs'
 import * as realtimeThemen from './privacy/realtime-themen.mjs'
 import * as postfach from './privacy/postfach.mjs'
 import * as freunde from './privacy/freunde.mjs'
+import * as sammelobjekte from './privacy/sammelobjekte.mjs'
 
-await runSuites('Privatsphäre', 'ptest', [proximity, agentCommand, gastkonten, publicSettings, clientzugang, fluechtig, quelleBeute, aceSchreiben, realtimeThemen, postfach, freunde])
+await runSuites('Privatsphäre', 'ptest', [proximity, agentCommand, gastkonten, publicSettings, clientzugang, fluechtig, quelleBeute, aceSchreiben, realtimeThemen, postfach, freunde, sammelobjekte])
