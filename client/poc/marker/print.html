@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<!--
+  ArUco-Tags zum Drucken (Wörterbuch ARUCO_MIP_36h12, 250 IDs, 8×8 Zellen).
+
+  URL-Parameter:
+    ?ids=17           eine ID, eine Liste (3,4,5) oder ein Bereich (0-11)
+    ?mm=60            Kantenlänge des SCHWARZEN Quadrats in Millimetern — der
+                      Wert, der später als „size" gilt (Ruhezone kommt dazu)
+    ?dict=ARUCO       anderes Wörterbuch (Vorgabe ARUCO_MIP_36h12)
+    ?name=Rack%20A3   Beschriftung unter dem Tag
+
+  Drucken mit „Tatsächliche Größe"/100 %, matt, flach aufkleben. Die weiße
+  Ruhezone um das schwarze Quadrat gehört zum Tag — nicht abschneiden.
+-->
+<meta charset="utf-8">
+<title>Ajna — ArUco-Tags drucken</title>
+<style>
+  body { margin: 10mm; font: 11pt/1.4 system-ui, sans-serif; color: #111; background: #fff; }
+  #hint { margin-bottom: 8mm; color: #444; }
+  .sheet { display: flex; flex-wrap: wrap; gap: 10mm; }
+  .tag { break-inside: avoid; text-align: center; }
+  .tag svg { display: block; shape-rendering: crispEdges; }
+  .tag .label { margin-top: 1mm; font-size: 9pt; }
+  @media print { #hint { display: none; } body { margin: 10mm; } }
+</style>
+<p id="hint">Drucken mit 100 % (keine Seitenanpassung). <code>?ids=0-11&amp;mm=60</code> für ein Blatt mit zwölf Tags.</p>
+<div class="sheet" id="sheet"></div>
+
+<script src="vendor/cv.js"></script>
+<script src="vendor/aruco.js"></script>
+<script>
+const q = new URLSearchParams(location.search)
+const dictName = q.get('dict') || 'ARUCO_MIP_36h12'
+const mm = Math.max(10, parseFloat(q.get('mm') || '60'))
+const name = q.get('name') || ''
+const dict = new AR.Dictionary(dictName)
+const ids = []
+for (const part of (q.get('ids') || '0').split(',')) {
+  const m = part.trim().match(/^(\d+)(?:-(\d+))?$/)
+  if (!m) continue
+  const a = parseInt(m[1], 10), b = m[2] ? parseInt(m[2], 10) : a
+  for (let i = a; i <= b && i < dict.codeList.length; i++) ids.push(i)
+}
+// Das SVG der Bibliothek hat (markSize+2) Einheiten Kante: 1 Einheit weiße
+// Ruhezone, dann das schwarze Quadrat mit markSize Einheiten. „mm" meint das
+// schwarze Quadrat — daher die Gesamtkante hochrechnen.
+const units = dict.markSize + 2
+const totalMm = mm * units / dict.markSize
+const sheet = document.getElementById('sheet')
+for (const id of ids) {
+  const el = document.createElement('div')
+  el.className = 'tag'
+  el.innerHTML = dict.generateSVG(id)
+  const svg = el.querySelector('svg')
+  svg.setAttribute('width', totalMm + 'mm'); svg.setAttribute('height', totalMm + 'mm')
+  const label = document.createElement('div')
+  label.className = 'label'
+  label.textContent = `${dictName} · ID ${id} · ${mm} mm${name ? ' · ' + name : ''}`
+  el.appendChild(label)
+  sheet.appendChild(el)
+}
+document.title = `Ajna — ArUco ${ids.join(',')} · ${mm} mm`
+</script>

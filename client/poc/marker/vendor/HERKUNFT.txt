@@ -1,0 +1,2 @@
+js-aruco2 2.0.0 (MIT, https://github.com/damianofalcioni/js-aruco2) — unveraendert aus dem npm-Paket:
+aruco.js, cv.js, svd.js, posit1.js (posit1 braucht svd davor). Das Woerterbuch ARUCO_MIP_36h12 (250 IDs, 8x8) steckt in aruco.js.

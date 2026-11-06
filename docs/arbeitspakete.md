@@ -154,7 +154,7 @@ Zielwahl bleibt in der WebView.
 Bildschirm aus mit der echten Fernbedienung, die Driftrate einer Uhr ohne
 Magnetometer, Zauberstab-Tasten als semantische Aktionen.
 
-### 0g · Sammelobjekte — **Stufe 1 steht seit 05.11.**, Agenten noch nicht im Betrieb gelaufen
+### 0g · Sammelobjekte — **Stufe 1 steht seit 05.11.**, Director im Betrieb, `uwb-anchors` noch nicht
 
 Ein Objekt enthält andere: Rack → Server → VM → Sensor, UWB-Netz → Anker,
 Truhe → Beute, später Gebäude aus BIM. Erstes Paket aus der Ideenliste für
@@ -172,14 +172,41 @@ Karte, AR, Minimap, Nähe-Liste; Abzeichen, Aufklappen pro Spieler,
 Explosionsansicht, Laden erst beim Aufklappen), Kontextmenü (Aufklappen,
 Vormerken, Hierin platzieren, Herausnehmen), Ziehen auf der Karte mit
 Rückfrage, Editor-Abschnitte, Löschen mit Nachfrage, `AjnaManager.createTree`.
+Seit 05./06.11. dazu: aus dem Inventar „Platzieren" und ein Sammelobjekt
+antippen legt hinein (`/place` mit `parent`); die Bibliothek trägt alles
+(`setContainer`, `placeInto`, `takeOut`, `setLocal`, `parentOf`, `childrenOf`,
+`descendantsOf`), Oberfläche und Agenten gehen nur noch darüber.
 Erste Nutzer: UWB-Netze (`uwb-anchors`: Netz = Sammelobjekt, Anker darin
 mit eigener Lage) und Beute-Truhen (`world-director`, Archetyp `chest`:
 Explosionsansicht, 1–3 Stück Beute, Nachfüllen beim Start; Aufheben nimmt
 aus der Truhe). 19 Unit-, 39 E2E-, 9 Quelltext-Prüfungen.
 
-**Offen:** die beiden Agenten einmal gegen den laufenden Stack starten
-(bisher nur die Hooks geprüft, die sie rufen). Danach aus der Ideenliste:
-Doku-Links und QR-/Marker-Generator, NetBox-/PRTG-Agent.
+**Offen:** `uwb-anchors` einmal gegen den laufenden Stack (der Director lief
+am 05.11. live: Truhe angelegt, das Füllen scheiterte an `loadObjects` →
+behoben in 01d5b8c). Danach aus der Ideenliste: Doku-Links, NetBox-/PRTG-Agent.
+
+### 0h · Marker: ArUco neben Bild-Targets, Anlage aus dem Objekt, Fixiert/Mobil — *gestartet 06.11.*
+
+Zweiter Marker-Pfad neben den 8th-Wall-Bild-Targets: ArUco-Tags (js-aruco2,
+reines JS) an Serverschränken, Robotern, Gegenständen; Bild-Marker bleiben für
+Wohnräume. Beide liefern dieselbe Relativpose an den vorhandenen Snap, SLAM
+wird dadurch in präparierten Umgebungen entbehrlich und bleibt getrennt
+schaltbar. Marker entstehen aus dem Objekt heraus (Generieren oder Bild
+hochladen) und sind **Fixiert** (Spieler richtet sich nach dem Marker) oder
+**Mobil** (Objekt folgt dem Marker; mit Telemetrie bleibt es Referenz, ohne
+schreibt der Beobachter — auch eine feste Kamera als Agent — mit `move`).
+Entscheidungen, Datenmodell und Reihenfolge in `marker.md`; Optical Flow
+ersetzt SLAM ausdrücklich nicht (Begründung dort).
+
+**Steht:** Spike-Harness `client/poc/marker/` (`aruco.html` misst Bildrate,
+Erkennungszeit und Posen-Rauschen, `print.html` druckt Tags in exakter Größe,
+Kalibrierung der Brennweite über `?d=`).
+
+**Offen, in dieser Reihenfolge:** 1 Spike am Gerät (Telefon + gedruckter Tag,
+Protokoll zurück), 2 Marker-Pfad im Client (Frame-Quelle, Detektor, Overlay,
+`state.marker.aruco`, Kalibrierung), 3 Anlage aus dem Editor mit ID-Vergabe,
+4 marker-relatives Rendern samt Sammelobjekt-Kindern, 5 Gyro+Flow-Brücke und
+Mobil ohne Telemetrie.
 
 ### 0d · Weltchat in der Umgebung — *eigenes Paket, nicht jetzt*
 

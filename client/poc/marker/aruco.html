@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<!--
+  ArUco-Spike — beantwortet Schritt 1 aus docs/marker.md:
+
+    Reicht js-aruco2 (reines JS, ohne OpenCV) auf dem Telefon für Tags von
+    5–7 cm auf 0,5–2 m — bei welcher Bildrate, mit welchem Posen-Rauschen?
+
+  Die Seite läuft OHNE 8th Wall: Kamera per getUserMedia in ein <video>,
+  daraus ein verkleinertes Bild (?w=640) → AR.Detector → POS.Posit. Genau so
+  sähe die Bildquelle im Passthrough-Modus des Clients aus; im SLAM-Modus käme
+  dasselbe Bild von der 8th-Wall-Canvas.
+
+  URL-Parameter:
+    ?w=640          Breite des Verarbeitungsbilds in Pixeln (480 / 640 / 960)
+    ?size=0.06      Kantenlänge des SCHWARZEN Quadrats in Metern, wie gedruckt
+    ?f=700          Brennweite in Pixeln des Verarbeitungsbilds (aus ?d= ermittelt)
+    ?d=1.0          Kalibrierung: Tag steht in d Metern Abstand → f wird angezeigt
+    ?dict=ARUCO_MIP_36h12   oder ARUCO (7x7, 1023 IDs)
+    ?hz=0           0 = jedes Bild (rAF), sonst Erkennungen pro Sekunde (z. B. 10)
+
+  Unten links „Protokoll kopieren“: fasst Gerät, Einstellungen, Bildrate,
+  Erkennungszeiten und das Rauschen je Tag zusammen — das ist, was zurückkommt.
+
+  Sensoren braucht die Seite keine. Läuft auch in Brave.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Ajna — Marker-Spike · ArUco</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; color: #cfe8ff; }
+  #video, #overlay { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  #overlay { pointer-events: none; }
+  #hud { position: fixed; left: 8px; top: 8px; right: 8px; background: rgba(0,0,0,0.6); border: 1px solid #2b4a66; border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; pointer-events: none; }
+  #bar { position: fixed; left: 8px; right: 8px; bottom: 8px; display: flex; gap: 8px; }
+  button { font: inherit; color: #fff; background: #1d4ed8; border: 0; border-radius: 8px; padding: 10px 14px; }
+  button.alt { background: #334155; }
+  .ok { color: #6ee787; } .warn { color: #ffcf6f; } .err { color: #ff8f8f; }
+  #tap { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.88); text-align: center; padding: 24px; }
+  #tap p { max-width: 36em; }
+</style>
+
+<video id="video" playsinline muted autoplay></video>
+<canvas id="overlay"></canvas>
+<canvas id="proc" hidden></canvas>
+<div id="hud">…</div>
+<div id="bar">
+  <button id="copy">Protokoll kopieren</button>
+  <button id="reset" class="alt">Messung neu</button>
+</div>
+<div id="tap"><p><b>Ajna · ArUco-Spike</b><br><br>Antippen startet die Rückkamera.<br>Tag aus <code>print.html</code> drucken, Kantenlänge des schwarzen Quadrats als <code>?size=</code> angeben (Vorgabe 0,06 m).</p></div>
+
+<script src="vendor/cv.js"></script>
+<script src="vendor/aruco.js"></script>
+<script src="vendor/svd.js"></script>     <!-- posit1 braucht SVD davor -->
+<script src="vendor/posit1.js"></script>
+<script>
+const q = new URLSearchParams(location.search)
+const CFG = {
+  w: Math.max(240, parseInt(q.get('w') || '640', 10)),
+  sizeM: parseFloat(q.get('size') || '0.06'),
+  f: q.get('f') ? parseFloat(q.get('f')) : null,
+  calibD: q.get('d') ? parseFloat(q.get('d')) : null,
+  dict: q.get('dict') || 'ARUCO_MIP_36h12',
+  hz: parseFloat(q.get('hz') || '0'),
+}
+
+const video = document.getElementById('video')
+const overlay = document.getElementById('overlay')
+const proc = document.getElementById('proc')
+const hud = document.getElementById('hud')
+const octx = overlay.getContext('2d')
+const pctx = proc.getContext('2d', { willReadFrequently: true })
+
+let detector = null, posit = null
+let procH = 0
+// Messwerte
+const stats = { frames: 0, t0: 0, grabMs: [], detMs: [], seen: new Map() /* id → {n, side[], t[], err[]} */ }
+let lastHud = 0, lastDet = 0, fpsEma = 0, lastFrameT = 0, calibF = []
+
+const pct = (arr, p) => { if (!arr.length) return 0; const s = [...arr].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))] }
+const mean = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0
+const std = (a) => { if (a.length < 2) return 0; const m = mean(a); return Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / (a.length - 1)) }
+const sideOf = (c) => { let s = 0; for (let i = 0; i < 4; i++) { const a = c[i], b = c[(i + 1) % 4]; s += Math.hypot(a.x - b.x, a.y - b.y) } return s / 4 }
+
+function resetStats() {
+  stats.frames = 0; stats.t0 = performance.now(); stats.grabMs = []; stats.detMs = []; stats.seen = new Map(); calibF = []
+}
+
+async function start() {
+  document.getElementById('tap').remove()
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false })
+  video.srcObject = stream
+  await new Promise(r => { video.onloadedmetadata = r })
+  await video.play()
+  procH = Math.round(CFG.w * video.videoHeight / video.videoWidth)
+  proc.width = CFG.w; proc.height = procH
+  detector = new AR.Detector({ dictionaryName: CFG.dict })
+  // POSIT rechnet in Millimetern; die Brennweite gilt für das Verarbeitungsbild.
+  posit = new POS.Posit(CFG.sizeM * 1000, CFG.f || CFG.w)
+  resetStats()
+  requestAnimationFrame(loop)
+}
+
+function loop(now) {
+  requestAnimationFrame(loop)
+  if (lastFrameT) { const fps = 1000 / (now - lastFrameT); fpsEma = fpsEma ? fpsEma * 0.9 + fps * 0.1 : fps }
+  lastFrameT = now
+  if (CFG.hz > 0 && now - lastDet < 1000 / CFG.hz) return
+  lastDet = now
+  stats.frames++
+
+  const t1 = performance.now()
+  pctx.drawImage(video, 0, 0, CFG.w, procH)
+  const img = pctx.getImageData(0, 0, CFG.w, procH)
+  const t2 = performance.now()
+  const markers = detector.detect(img)
+  const t3 = performance.now()
+  stats.grabMs.push(t2 - t1); stats.detMs.push(t3 - t2)
+  if (stats.grabMs.length > 600) { stats.grabMs.shift(); stats.detMs.shift() }
+
+  const poses = markers.map(m => {
+    const corners = m.corners.map(c => ({ x: c.x - CFG.w / 2, y: procH / 2 - c.y }))
+    const pose = posit.pose(corners)
+    const side = sideOf(m.corners)
+    const s = stats.seen.get(m.id) || { n: 0, side: [], tx: [], ty: [], tz: [], err: [] }
+    s.n++; s.side.push(side)
+    if (pose) {
+      s.tx.push(pose.bestTranslation[0]); s.ty.push(pose.bestTranslation[1]); s.tz.push(pose.bestTranslation[2]); s.err.push(pose.bestError)
+      for (const k of ['side', 'tx', 'ty', 'tz', 'err']) if (s[k].length > 120) s[k].shift()
+    }
+    stats.seen.set(m.id, s)
+    // Kalibrierung: f = Seitenlänge_px · Abstand / Kantenlänge
+    if (CFG.calibD && markers.length === 1) { calibF.push(side * CFG.calibD / CFG.sizeM); if (calibF.length > 120) calibF.shift() }
+    return { m, pose, side }
+  })
+
+  draw(poses)
+  if (now - lastHud > 250) { lastHud = now; hud.textContent = summary(poses) }
+}
+
+// Verarbeitungsbild → Bildschirm (object-fit: contain)
+function mapping() {
+  const W = overlay.clientWidth, H = overlay.clientHeight
+  if (overlay.width !== W || overlay.height !== H) { overlay.width = W; overlay.height = H }
+  const sc = Math.min(W / CFG.w, H / procH)
+  return { sc, ox: (W - CFG.w * sc) / 2, oy: (H - procH * sc) / 2 }
+}
+
+function draw(poses) {
+  const { sc, ox, oy } = mapping()
+  octx.clearRect(0, 0, overlay.width, overlay.height)
+  octx.lineWidth = 3; octx.font = '16px ui-monospace, monospace'
+  for (const { m, pose } of poses) {
+    octx.strokeStyle = '#6ee787'; octx.beginPath()
+    m.corners.forEach((c, i) => { const x = ox + c.x * sc, y = oy + c.y * sc; i ? octx.lineTo(x, y) : octx.moveTo(x, y) })
+    octx.closePath(); octx.stroke()
+    // erste Ecke markieren (Orientierung)
+    octx.fillStyle = '#ff8f8f'; octx.beginPath(); octx.arc(ox + m.corners[0].x * sc, oy + m.corners[0].y * sc, 5, 0, Math.PI * 2); octx.fill()
+    const d = pose ? Math.hypot(...pose.bestTranslation) / 1000 : NaN
+    const label = `ID ${m.id}` + (pose ? ` · ${d.toFixed(2)} m` : '')
+    const x = ox + m.corners[0].x * sc, y = oy + m.corners[0].y * sc - 10
+    octx.fillStyle = 'rgba(0,0,0,0.6)'; octx.fillRect(x - 4, y - 16, octx.measureText(label).width + 8, 20)
+    octx.fillStyle = '#fff'; octx.fillText(label, x, y)
+  }
+}
+
+function summary(poses) {
+  const secs = (performance.now() - stats.t0) / 1000
+  const lines = [
+    `Ajna ArUco-Spike · ${CFG.dict} · Kamera ${video.videoWidth}×${video.videoHeight} → ${CFG.w}×${procH}` +
+      ` · Tag ${(CFG.sizeM * 100).toFixed(1)} cm · f=${CFG.f ? CFG.f + ' px' : (CFG.w + ' px (UNKALIBRIERT, ?f= setzen)')}`,
+    `Bildrate ${fpsEma.toFixed(1)} fps · Erkennungen ${(stats.frames / Math.max(secs, 0.01)).toFixed(1)}/s über ${secs.toFixed(0)} s` +
+      ` · Bild holen ${pct(stats.grabMs, 0.5).toFixed(1)} ms · erkennen p50 ${pct(stats.detMs, 0.5).toFixed(1)} / p95 ${pct(stats.detMs, 0.95).toFixed(1)} ms`,
+    `Im Bild: ${poses.length ? poses.map(p => 'ID ' + p.m.id).join(', ') : '—'}`,
+  ]
+  if (CFG.calibD) lines.push(calibF.length ? `KALIBRIERUNG bei ${CFG.calibD} m: f ≈ ${mean(calibF).toFixed(0)} px (σ ${std(calibF).toFixed(0)}, n=${calibF.length}) → diese Seite mit ?f=${mean(calibF).toFixed(0)} neu laden` : `KALIBRIERUNG: genau EINEN Tag in ${CFG.calibD} m Abstand zeigen`)
+  for (const [id, s] of stats.seen) {
+    const d = s.tz.map((z, i) => Math.hypot(s.tx[i], s.ty[i], z) / 1000)
+    lines.push(`ID ${id}: ${s.n} Sichtungen · Seite ${mean(s.side).toFixed(0)} px · Abstand ${mean(d).toFixed(2)} m` +
+      ` · Rauschen σ x/y/z ${std(s.tx).toFixed(0)}/${std(s.ty).toFixed(0)}/${std(s.tz).toFixed(0)} mm · POSIT-Fehler ${mean(s.err).toFixed(1)}`)
+  }
+  return lines.join('\n')
+}
+
+document.getElementById('tap').addEventListener('click', () => start().catch(e => { hud.textContent = 'Kamera: ' + (e?.message || e); hud.className = 'err' }))
+document.getElementById('reset').addEventListener('click', resetStats)
+document.getElementById('copy').addEventListener('click', async () => {
+  const text = `${navigator.userAgent}\n${location.search}\n${summary([])}`
+  try { await navigator.clipboard.writeText(text); hud.textContent += '\n\n✓ kopiert' } catch { prompt('Protokoll:', text) }
+})
+</script>
